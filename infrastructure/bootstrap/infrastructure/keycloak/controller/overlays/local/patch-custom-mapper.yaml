@@ -1,0 +1,28 @@
+# Patch to add custom mapper JAR download to init container
+# This downloads the JAR from the built file served via Python HTTP server
+# For production, this should download from GitHub releases
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: keycloak-theme-puller
+          command:
+            - sh
+            - -c
+            - |
+              cd /tmp
+              # Download theme
+              wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.2.1/keycloak-nl-design-system.jar
+              cp keycloak-nl-design-system.jar /opt/keycloak/providers/
+
+              # Download custom mapper from local build (for testing)
+              # Change this URL to GitHub releases for production
+              # wget http://host.docker.internal:8000/keycloak-saml-nameid-mapper-1.0.0.jar || echo "⚠️  Could not download custom mapper from local server"
+              # if [ -f keycloak-saml-nameid-mapper-1.0.0.jar ]; then
+              #   cp keycloak-saml-nameid-mapper-1.0.0.jar /opt/keycloak/providers/
+              #   echo "✅ Custom mapper loaded"
+              # fi

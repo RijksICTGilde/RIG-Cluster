@@ -1,0 +1,998 @@
+{#
+  Self-Service Portal - Nieuw Project Aanvragen
+  
+  Een moderne, gebruiksvriendelijke interface voor het aanvragen van nieuwe projecten
+  in het Kubernetes platform met geïntegreerde services.
+#}
+
+<c-page title="Nieuw Project - Self Service Portal" lang="nl" bodyClass="rvo-theme rvo-responsive">
+
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header
+            text="Zelfservice voor Applicatie Deployment"
+            subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+            link="/"/>
+
+        <c-layout-flow gap="xl" size="lg">
+            {# MenuBar #}
+            <c-menubar
+                size="md"
+                :useIcons="true"
+                iconPlacement="before"
+                maxWidth="lg"
+                :items="menu_items"/>
+
+            <c-layout-flow gap="2xl" size="lg">
+                <main>
+                    <c-layout-flow gap="xl">
+
+                        {# Page Header #}
+                        <div>
+                            <c-heading type="h1" textContent="Nieuw Project Aanmaken"/>
+                            <p class="rvo-paragraph rvo-paragraph--zwart rvo-paragraph--lg">
+                                Een applicatie bestaat uit 1 of meerdere onderdelen, gebouwd als een Docker / Container
+                                image, deze onderdelen noemen we componenten.
+                            </p>
+                            <p class="rvo-paragraph rvo-paragraph--zwart rvo-paragraph--lg">
+                                Daarnaast kan een applicatie services nodig hebben, zoals een database.
+                            </p>
+                            <p class="rvo-paragraph rvo-paragraph--zwart rvo-paragraph--lg">
+                                Via een project kun je de configuratie van de benodigde services en één of meerdere
+                                componenten die samen een applicatie vormen beheren.
+                            </p>
+                            <p class="rvo-paragraph rvo-paragraph--zwart rvo-paragraph--lg">
+                                Services worden voor je ingericht en de benodigde gegevens worden aan de componenten
+                                beschikbaar gesteld.
+                            </p>
+                            <p class="rvo-paragraph rvo-paragraph--zwart rvo-paragraph--lg">
+                                Bij het uitvoeren van je configuratie, wordt alles voor je opzet en klaargezet en is je
+                                applicatie beschikbaar voor gebruik.
+                            </p>
+                        </div>
+
+                        {# Main Form #}
+                        <form id="project-form" method="post" action="/projects/new" autocomplete="off">
+                            <c-layout-flow gap="xl">
+
+                                {# Section 1: Project Informatie #}
+                                <c-fieldset legend="Projectgegevens">
+                                    <c-layout-flow gap="md">
+                                        <p class="rvo-text--subtle">
+                                            Basis informatie over uw project. Deze gegevens worden gebruikt voor
+                                            identificatie en documentatie.
+                                        </p>
+
+                                        <c-text-input-field
+
+                                            id="display-name"
+                                            name="display-name"
+                                            label="Projectnaam"
+                                            helperText="Een beschrijvende naam voor uw project"
+                                            :required="true"
+                                            placeholder="Mijn Nieuwe Applicatie"></c-text-input-field>
+
+                                        <c-textarea-field
+                                            id="project-description"
+                                            name="project-description"
+                                            label="Projectomschrijving"
+                                            helperText="Korte beschrijving van het doel en de scope van het project"
+                                            rows="4"
+                                            :required="true"
+                                            placeholder="Dit project heeft als doel..."/>
+
+                                        <c-select-field
+                                            id="cluster"
+                                            name="cluster"
+                                            label="Cluster"
+                                            helperText="Selecteer het gewenste cluster voor uw project"
+                                            :required="true"
+                                            :options="[
+                                                {'value': '', 'label': 'Selecteer een cluster'},
+                                                {'value': 'local', 'label': 'Lokaal'},
+                                                {'value': 'odcn-staging', 'label': 'Staging Cluster (ODC-Noord)'},
+                                                {'value': 'odcn-production', 'label': 'Productie Cluster (ODC-Noord)'}
+                                            ]"></c-select-field>
+                                    </c-layout-flow>
+                                </c-fieldset>
+
+                                {# Section 2: Gebruikersbeheer #}
+                                <c-fieldset legend="Projectleden">
+                                    <c-layout-flow gap="md">
+                                        <p class="rvo-text--subtle">
+                                            Voeg teamleden toe die toegang moeten krijgen tot het project. U kunt
+                                            meerdere gebruikers toevoegen met verschillende rollen.
+                                        </p>
+
+                                        <div id="users-container">
+                                            {# First user row (template) #}
+                                            <div class="user-row rvo-card rvo-card--padding-sm"
+                                                 style="background: var(--rvo-color-grijs-50); margin-bottom: var(--rvo-space-md);">
+                                                <div
+                                                    class="rvo-layout-row rvo-layout-gap--md rvo-layout-align-items-end">
+                                                    <div style="flex: 3;">
+                                                        <c-text-input-field
+                                                            id="user-email-1"
+                                                            name="user-email[]"
+                                                            label="E-mailadres"
+                                                            type="email"
+                                                            :required="true"
+                                                            placeholder="naam@organisatie.nl"
+                                                            helperText="Rijksoverheid e-mailadres"/>
+                                                    </div>
+                                                    <div style="flex: 2;">
+                                                        <c-select-field
+                                                            id="user-role-1"
+                                                            name="user-role[]"
+                                                            label="Rol"
+                                                            :required="true"
+                                                            :options="[
+                                                                {'value': 'admin', 'label': 'Administrator'},
+                                                                {'value': 'developer', 'label': 'Developer'},
+                                                                {'value': 'operator', 'label': 'Operator'}
+                                                            ]"/>
+                                                    </div>
+                                                    <div style="flex: 0 0 auto; padding-bottom: var(--rvo-space-xs);">
+                                                        <c-button
+                                                            label="Verwijderen"
+                                                            kind="tertiary"
+                                                            size="sm"
+                                                            showIcon="before"
+                                                            icon="verwijderen"
+                                                            @click="removeUserRow(this)"></c-button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <c-button
+                                                label="Gebruiker toevoegen"
+                                                kind="tertiary"
+                                                size="sm"
+                                                showIcon="before"
+                                                icon="plus"
+                                                @click="addUserRow()"/>
+                                        </div>
+
+                                        <div class="rvo-alert rvo-alert--info">
+                                            <c-icon icon="info" size="md"/>
+                                            <div class="rvo-alert__content">
+                                                <p><strong>Rollen uitleg:</strong></p>
+                                                <ul class="rvo-ul rvo-ul--icon rvo-ul--icon-option">
+                                                    <li><strong>Administrator:</strong> Volledige toegang tot alle
+                                                        resources en instellingen
+                                                    </li>
+                                                    <li><strong>Developer:</strong> Kan applicaties deployen en logs
+                                                        bekijken
+                                                    </li>
+                                                    <li><strong>Operator:</strong> Alleen-lezen toegang voor monitoring
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </c-layout-flow>
+                                </c-fieldset>
+
+                                {# Section 3: Services Selectie #}
+                                <c-fieldset legend="Beschikbare Services">
+                                    <c-layout-flow gap="md">
+                                        <p class="rvo-text--subtle">
+                                            Selecteer de services die u wilt activeren voor uw project. U kunt deze
+                                            later altijd aanpassen.
+                                        </p>
+
+                                        <div class="rvo-layout-grid rvo-layout-gap--lg"
+                                             style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+
+                                            {# Service: Web Publishing #}
+                                            <c-card class="service-card" padding="md" background="color"
+                                                    backgroundColor="wit" :outline="true">
+                                                <div class="service-card-content">
+                                                    <div class="service-card-info">
+                                                        <div class="service-card-icon">
+                                                            <c-icon icon="wereldbol" size="3xl" color="hemelblauw"
+                                                                    ariaLabel="Web"/>
+                                                        </div>
+                                                        <c-heading type="h3" textContent="Publiceren op het web"/>
+                                                        <p class="rvo-text--sm">
+                                                            Maak de applicatie toegankelijk via het publieke internet.
+                                                        </p>
+                                                    </div>
+                                                    <div class="service-card-checkbox">
+                                                        <c-checkbox
+                                                            id="service-web"
+                                                            name="services[]"
+                                                            value="publish-on-web"/>
+                                                    </div>
+                                                </div>
+                                            </c-card>
+
+                                            {# Service: SSO #}
+                                            <c-card class="service-card" padding="md" background="color"
+                                                    backgroundColor="wit" :outline="true">
+                                                <div class="service-card-content">
+                                                    <div class="service-card-info">
+                                                        <div class="service-card-icon">
+                                                            <c-icon icon="sleutel" size="3xl" color="groen"
+                                                                    ariaLabel="SSO"/>
+                                                        </div>
+                                                        <c-heading type="h3" textContent="Single Sign-On Rijk"/>
+                                                        <p class="rvo-text--sm">
+                                                            Integreer met de Rijksoverheid SSO voor veilige
+                                                            authenticatie via
+                                                            Keycloak.
+                                                        </p>
+                                                    </div>
+                                                    <div class="service-card-checkbox">
+                                                        <c-checkbox
+                                                            id="service-sso"
+                                                            name="services[]"
+                                                            value="sso-rijk"/>
+                                                    </div>
+                                                </div>
+                                            </c-card>
+
+                                            {# Service: PVC #}
+                                            <c-card class="service-card" padding="md" background="color"
+                                                    backgroundColor="wit" :outline="true">
+                                                <div class="service-card-content">
+                                                    <div class="service-card-info">
+                                                        <div class="service-card-icon">
+                                                            <c-icon icon="server" size="3xl" color="oranje-750"
+                                                                    ariaLabel="Storage"/>
+                                                        </div>
+                                                        <c-heading type="h3" textContent="Permanente opslag"/>
+                                                        <p class="rvo-text--sm">
+                                                            Gegevens blijven bewaard
+                                                            tijdens de levenscyclus van de applicatie.
+                                                        </p>
+                                                    </div>
+                                                    <div class="service-card-checkbox">
+                                                        <c-checkbox
+                                                            id="service-pvc"
+                                                            name="services[]"
+                                                            value="persistent-storage"/>
+                                                    </div>
+                                                </div>
+                                            </c-card>
+
+                                            {# Service: Temp Storage #}
+                                            <c-card class="service-card" padding="md" background="color"
+                                                    backgroundColor="wit" :outline="true">
+                                                <div class="service-card-content">
+                                                    <div class="service-card-info">
+                                                        <div class="service-card-icon">
+                                                            <c-icon icon="klok" size="3xl" color="oranje"
+                                                                    ariaLabel="Temp"/>
+                                                        </div>
+                                                        <c-heading type="h3" textContent="Tijdelijke schijfruimte"/>
+                                                        <p class="rvo-text--sm">
+                                                            Gegevens worden
+                                                            niet bewaard tijdens de levenscyclus van de applicatie.
+                                                        </p>
+                                                    </div>
+                                                    <div class="service-card-checkbox">
+                                                        <c-checkbox id="service-temp"
+                                                                    name="services[]"
+                                                                    value="temp-storage"/>
+                                                    </div>
+                                                </div>
+                                            </c-card>
+
+                                            {# Service: PostgreSQL #}
+                                            <c-card class="service-card" padding="md" background="color"
+                                                    backgroundColor="wit" :outline="true">
+                                                <div class="service-card-content">
+                                                    <div class="service-card-info">
+                                                        <div class="service-card-icon">
+                                                            <c-icon icon="database" size="3xl" color="donkerblauw"
+                                                                    ariaLabel="Database"/>
+                                                        </div>
+                                                        <c-heading type="h3" textContent="PostgreSQL Database"/>
+                                                        <p class="rvo-text--sm">Database service voor applicaties.</p>
+                                                    </div>
+                                                    <div class="service-card-checkbox">
+                                                        <c-checkbox id="service-postgres" name="services[]"
+                                                                    value="postgresql-database"/>
+                                                    </div>
+                                                </div>
+                                            </c-card>
+
+                                            {# Service: MinIO #}
+                                            <c-card class="service-card" padding="md" background="color"
+                                                    backgroundColor="wit" :outline="true">
+                                                <div class="service-card-content">
+                                                    <div class="service-card-info">
+                                                        <div class="service-card-icon">
+                                                            <c-icon icon="map" size="3xl" color="rood"
+                                                                    ariaLabel="Object Storage"/>
+                                                        </div>
+                                                        <c-heading type="h3" textContent="MinIO Object Storage"/>
+                                                        <p class="rvo-text--sm">
+                                                            S3-compatible object storage voor documenten, afbeeldingen
+                                                            en grote
+                                                            bestanden.
+                                                        </p>
+                                                    </div>
+                                                    <div class="service-card-checkbox">
+                                                        <c-checkbox
+                                                            id="service-minio"
+                                                            name="services[]"
+                                                            value="minio-storage"/>
+                                                    </div>
+                                                </div>
+                                            </c-card>
+
+                                        </div>
+                                    </c-layout-flow>
+                                </c-fieldset>
+
+                                {# Components Section #}
+                                <c-fieldset legend="4. Components Configuratie">
+                                    <div class="rvo-alert rvo-alert--info">
+                                        <c-icon icon="info" size="md"/>
+                                        <div class="rvo-alert__content">
+                                            <p><strong>Components:</strong> Configureer de applicatie components die u
+                                                wilt deployen. Elk component kan gekoppeld worden aan specifieke
+                                                services.</p>
+                                        </div>
+                                    </div>
+
+                                    <c-layout-flow gap="lg">
+                                        <div id="components-list">
+                                            {# Initial component block #}
+                                            <div class="component-item rvo-card rvo-card--outline rvo-card--padding-lg">
+                                                <c-layout-flow gap="md">
+                                                    <div
+                                                        style="display: flex; justify-content: space-between; align-items: center;">
+                                                        <c-heading type="h3" textContent="Component 1"/>
+                                                        <c-button
+                                                            kind="quaternary"
+                                                            size="sm"
+                                                            :showIcon="'before'"
+                                                            :icon="'verwijderen'"
+                                                            @click="removeComponentRow(this)">
+                                                            Verwijderen
+                                                        </c-button>
+                                                    </div>
+
+                                                    <c-layout-row gap="md">
+                                                        <c-layout-column size="md-6">
+                                                            <c-select-field
+                                                                id="component-type-1"
+                                                                name="components[0][type]"
+                                                                label="Component Type"
+                                                                :options="[
+                                                                        {'label': 'Single (All-in-one)', 'value': 'single'},
+                                                                        {'label': 'Frontend', 'value': 'frontend'},
+                                                                        {'label': 'Backend', 'value': 'backend'}
+                                                                    ]"
+                                                                :value="'single'"/>
+                                                        </c-layout-column>
+                                                        <c-layout-column size="md-6">
+                                                            <c-text-input-field
+                                                                id="component-port-1"
+                                                                name="components[0][port]"
+                                                                label="Poort"
+                                                                type="number"
+                                                                placeholder="8080"
+                                                                helperText="Poort waarop de applicatie draait"/>
+                                                        </c-layout-column>
+                                                    </c-layout-row>
+
+                                                    <c-text-input-field
+                                                        id="component-image-1"
+                                                        name="components[0][image]"
+                                                        label="Container Image"
+                                                        placeholder="registry.example.com/my-app:latest"
+                                                        helperText="Docker image van uw applicatie. Moet een rootless image zijn (draait niet als root gebruiker)."
+                                                        expandableHelperText="true"
+                                                        expandableHelperTextTitle="Meer info over rootless images"/>
+
+                                                    <c-layout-row gap="md">
+                                                        <c-layout-column size="md-6">
+                                                            <c-select-field
+                                                                id="component-cpu-1"
+                                                                name="components[0][cpu_limit]"
+                                                                label="CPU Limiet"
+                                                                :options="[
+                                                                        {'label': '1 CPU', 'value': '1'},
+                                                                        {'label': '2 CPU', 'value': '2'},
+                                                                        {'label': '3 CPU', 'value': '3'},
+                                                                        {'label': '4 CPU', 'value': '4'}
+                                                                    ]"
+                                                                :value="'1'"
+                                                                helperText="Aantal CPU cores toegewezen aan dit component"
+                                                                :expandableHelperText="true"
+                                                                expandableHelperTextTitle="Meer info over CPU limieten"/>
+                                                        </c-layout-column>
+                                                        <c-layout-column size="md-6">
+                                                            <c-select-field
+                                                                id="component-memory-1"
+                                                                name="components[0][memory_limit]"
+                                                                label="Memory Limiet"
+                                                                :options="[
+                                                                        {'label': '128 MB', 'value': '128Mi'},
+                                                                        {'label': '256 MB', 'value': '256Mi'},
+                                                                        {'label': '512 MB', 'value': '512Mi'},
+                                                                        {'label': '768 MB', 'value': '768Mi'},
+                                                                        {'label': '1 GB', 'value': '1Gi'}
+                                                                    ]"
+                                                                :value="'256Mi'"
+                                                                helperText="Maximum RAM geheugen beschikbaar voor dit component"
+                                                                :expandableHelperText="true"
+                                                                expandableHelperTextTitle="Meer info over memory limieten"/>
+                                                        </c-layout-column>
+                                                    </c-layout-row>
+
+                                                    <c-textarea-field
+                                                        id="component-env-vars-1"
+                                                        name="components[0][env_vars]"
+                                                        label="Environment Variables"
+                                                        placeholder="KEY=VALUE format:
+EXAMPLE_VAR=value
+DATABASE_URL=postgresql://...
+DEBUG=false
+
+Or YAML format:
+EXAMPLE_VAR: value
+DATABASE_URL: postgresql://...
+DEBUG: false"
+                                                        rows="6"
+                                                        helperText="Environment variables voor dit component. Ondersteunt beide formaten: KEY=VALUE (een per regel) of YAML syntax"/>
+
+                                                    {# Service binding for this component #}
+                                                    <div class="service-binding">
+                                                        <c-heading type="h4" textContent="Gekoppelde Services"/>
+                                                        <p class="rvo-text--sm">Selecteer welke services dit component
+                                                            mag gebruiken:</p>
+
+                                                        <c-layout-row gap="md" class="component-services-container">
+                                                            {# Services will be dynamically added here based on selected main services #}
+                                                        </c-layout-row>
+                                                    </div>
+                                                </c-layout-flow>
+                                            </div>
+                                        </div>
+
+                                        <c-button
+                                            kind="tertiary"
+                                            size="sm"
+                                            :showIcon="'before'"
+                                            :icon="'plus'"
+                                            @click="addComponentRow()">
+                                            Component Toevoegen
+                                        </c-button>
+
+                                        <div class="rvo-alert rvo-alert--info">
+                                            <c-icon icon="info" size="md"/>
+                                            <div class="rvo-alert__content">
+                                                <p><strong>Rootless Images:</strong> Voor beveiliging accepteert het
+                                                    platform alleen container images die niet als root-gebruiker
+                                                    draaien. Zorg ervoor dat uw Dockerfile een USER instructie bevat die
+                                                    een non-root gebruiker specificeert (bijv. USER 1001).</p>
+                                            </div>
+                                        </div>
+                                    </c-layout-flow>
+                                </c-fieldset>
+
+                                {# Action Buttons #}
+                                <c-layout-flow gap="md">
+                                    <c-action-group
+                                        :actions="[
+                                            {
+                                                'type': 'button',
+                                                'buttonType': 'submit',
+                                                'kind': 'primary',
+                                                'size': 'md',
+                                                'label': 'Project Aanmaken',
+                                                'showIcon': 'after',
+                                                'icon': 'pijl-naar-rechts',
+                                                'onclick': 'document.getElementById(\'project-form\').submit()'
+                                            },
+                                            {
+                                                'type': 'button',
+                                                'kind': 'tertiary',
+                                                'size': 'md',
+                                                'label': 'Annuleren',
+                                                'onclick': 'window.location.href=\'/dashboard/\''
+                                            }
+                                            ]" />
+
+                                </c-layout-flow>
+
+                            </c-layout-flow>
+                        </form>
+                    </c-layout-flow>
+                </main>
+            </c-layout-flow>
+
+            {# Footer #}
+            <c-footer
+                maxWidth="lg"
+                :primaryMenu="[
+                    {
+                        'label': 'Platform',
+                        'items': [
+                            {'content': 'Over het platform', 'link': '/about'},
+                            {'content': 'Architectuur', 'link': '/architecture'},
+                            {'content': 'Documentatie', 'link': '/docs'},
+                            {'content': 'API Referentie', 'link': '/api'},
+                            {'content': 'Status', 'link': '/status'}
+                        ]
+                    }
+                ]"
+                :secondaryMenu="[
+                    {
+                        'label': 'Organisatie',
+                        'items': [
+                            {'content': 'Over ODC-Noord', 'link': '/organization'},
+                            {'content': 'Privacyverklaring', 'link': '/privacy'},
+                            {'content': 'Toegankelijkheid', 'link': '/accessibility'},
+                            {'content': 'Cookieverklaring', 'link': '/cookies'}
+                        ]
+                    }
+                ]" />
+
+            
+        </c-layout-flow>
+    </div>
+
+    {# JavaScript for user row cloning #}
+    <script>
+      let userCount = 1;
+      let componentCount = 1;
+
+      function addUserRow() {
+        userCount++;
+        const container = document.getElementById('users-container');
+        const template = container.querySelector('.user-row');
+        const newRow = template.cloneNode(true);
+
+        // Update IDs and clear values
+        newRow.querySelectorAll('input, select').forEach(element => {
+          if (element.id) {
+            element.id = element.id.replace(/\d+/, userCount);
+          }
+          element.value = '';
+        });
+
+        // Clear any validation messages
+        newRow.querySelectorAll('.rvo-form-field__error-text, .rvo-form-field__warning-text').forEach(el => {
+          el.remove();
+        });
+
+        container.appendChild(newRow);
+
+        // Focus on the new email field
+        const newEmailField = newRow.querySelector('input[type="email"]');
+        if (newEmailField) {
+          newEmailField.focus();
+        }
+      }
+
+      function removeUserRow(button) {
+        const container = document.getElementById('users-container');
+        const rows = container.querySelectorAll('.user-row');
+
+        // Keep at least one row
+        if (rows.length > 1) {
+          button.closest('.user-row').remove();
+        } else {
+          // Clear the last row instead of removing it
+          const row = button.closest('.user-row');
+          row.querySelectorAll('input, select').forEach(element => {
+            element.value = '';
+          });
+        }
+      }
+
+      function addComponentRow() {
+        componentCount++;
+        const container = document.getElementById('components-list');
+        const template = container.querySelector('.component-item');
+        const newComponent = template.cloneNode(true);
+
+        // Update all IDs and names with new component index
+        newComponent.querySelectorAll('input, select, textarea').forEach(element => {
+          if (element.id) {
+            // Replace component number in ID (e.g., component-type-1 -> component-type-2)
+            element.id = element.id.replace(/-\d+/, `-${componentCount}`);
+          }
+          if (element.name) {
+            // Replace array index in name (e.g., components[0][type] -> components[1][type])
+            element.name = element.name.replace(/\[\d+\]/, `[${componentCount - 1}]`);
+          }
+          // Clear values
+          if (element.type === 'checkbox') {
+            element.checked = false;
+          } else {
+            element.value = '';
+          }
+        });
+
+        // Update labels to reference new IDs
+        newComponent.querySelectorAll('label').forEach(label => {
+          if (label.getAttribute('for')) {
+            label.setAttribute('for', label.getAttribute('for').replace(/-\d+/, `-${componentCount}`));
+          }
+        });
+
+        // Clear any validation messages
+        newComponent.querySelectorAll('.rvo-form-field__error-text, .rvo-form-field__warning-text').forEach(el => {
+          el.remove();
+        });
+
+        container.appendChild(newComponent);
+
+        // Update component services based on selected main services
+        updateComponentServices(newComponent, componentCount - 1);
+
+        // Focus on the new component type field
+        const newTypeField = newComponent.querySelector('select');
+        if (newTypeField) {
+          newTypeField.focus();
+        }
+      }
+
+      // Service template mapping: service value -> template ID
+      const serviceTemplates = {
+        'sso-rijk': 'service-sso-template',
+        'postgresql-database': 'service-postgresql-template',
+        'minio-storage': 'service-minio-template',
+        'publish-on-web': 'service-web-publishing-template',
+        'persistent-storage': 'service-pvc-template',
+        'temp-storage': 'service-temp-storage-template'
+      };
+
+      // Update component services based on selected main services
+      function updateComponentServices(componentElement = null, componentIndex = null) {
+        // Get selected main services
+        const selectedMainServices = [];
+        document.querySelectorAll('input[name="services[]"]:checked').forEach(checkbox => {
+          selectedMainServices.push(checkbox.value);
+        });
+
+        // If no component specified, update all components
+        const componentsToUpdate = componentElement ? [componentElement] : document.querySelectorAll('.component-item');
+
+        componentsToUpdate.forEach((component, index) => {
+          const actualIndex = componentIndex !== null ? componentIndex : index;
+          const serviceBindingContainer = component.querySelector('.component-services-container');
+
+          if (serviceBindingContainer) {
+            // Clear existing services
+            serviceBindingContainer.innerHTML = '';
+
+            // Add services that are selected in main services
+            selectedMainServices.forEach(serviceKey => {
+              const templateId = serviceTemplates[serviceKey];
+              if (templateId) {
+                const template = document.getElementById(templateId);
+                if (template) {
+                  const clone = template.content.cloneNode(true);
+
+                  // Replace INDEX placeholders with actual component index
+                  clone.querySelectorAll('*').forEach(el => {
+                    ['id', 'name', 'for'].forEach(attr => {
+                      if (el.hasAttribute(attr)) {
+                        el.setAttribute(attr, el.getAttribute(attr).replace(/INDEX/g, actualIndex));
+                      }
+                    });
+                  });
+
+                  // Auto-check the service checkbox when it's added to a component
+                  const serviceCheckbox = clone.querySelector('input[type="checkbox"]');
+                  if (serviceCheckbox) {
+                    serviceCheckbox.checked = true;
+                  }
+
+                  serviceBindingContainer.appendChild(clone);
+                }
+              }
+            });
+          }
+        });
+      }
+
+      // Listen for changes in main service checkboxes
+      document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('input[name="services[]"]').forEach(checkbox => {
+          checkbox.addEventListener('change', function () {
+            updateComponentServices();
+          });
+        });
+
+        // Initialize component services on page load
+        updateComponentServices();
+      });
+
+      function removeComponentRow(button) {
+        const container = document.getElementById('components-list');
+        const components = container.querySelectorAll('.component-item');
+
+        // Keep at least one component
+        if (components.length > 1) {
+          button.closest('.component-item').remove();
+        } else {
+          // Clear the last component instead of removing it
+          const component = button.closest('.component-item');
+          component.querySelectorAll('input, select').forEach(element => {
+            if (element.type === 'checkbox') {
+              element.checked = false;
+            } else {
+              element.value = '';
+            }
+          });
+        }
+      }
+
+      // Service card click to toggle checkbox
+      document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('.service-card').forEach(card => {
+          card.addEventListener('click', function (e) {
+            // Don't toggle if clicking directly on checkbox
+            if (e.target.type !== 'checkbox') {
+              const checkbox = this.querySelector('input[type="checkbox"]');
+              if (checkbox) {
+                checkbox.checked = !checkbox.checked;
+                // Trigger change event to update component services
+                checkbox.dispatchEvent(new Event('change'));
+              }
+            }
+
+            // Visual feedback - keep white background, just change border
+            if (this.querySelector('input[type="checkbox"]').checked) {
+              this.style.borderColor = 'var(--rvo-color-hemelblauw)';
+              this.style.borderWidth = '2px';
+              this.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+            } else {
+              this.style.borderColor = '';
+              this.style.borderWidth = '';
+              this.style.boxShadow = '';
+            }
+          });
+
+          // Hover effect
+          card.addEventListener('mouseenter', function () {
+            if (!this.querySelector('input[type="checkbox"]').checked) {
+              this.style.borderColor = 'var(--rvo-color-hemelblauw-300)';
+            }
+          });
+
+          card.addEventListener('mouseleave', function () {
+            if (!this.querySelector('input[type="checkbox"]').checked) {
+              this.style.borderColor = '';
+            }
+          });
+
+          // Apply initial styling for pre-checked cards
+          const checkbox = card.querySelector('input[type="checkbox"]');
+          if (checkbox && checkbox.checked) {
+            card.style.borderColor = 'var(--rvo-color-hemelblauw)';
+            card.style.borderWidth = '2px';
+            card.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+          }
+        });
+      });
+    </script>
+
+    {# Service Templates for Dynamic Component Services #}
+    <template id="service-sso-template">
+        <c-layout-column>
+            <c-card outline="true" padding="sm" backgroundColor="wit">
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="sleutel" size="md" color="groen"/>
+                    <c-layout-column style="flex: 1;">
+                        <div style="font-weight: 600;">Single Sign-On Rijk</div>
+                    </c-layout-column>
+                    <c-checkbox
+                        id="component-INDEX-service-sso"
+                        name="components[INDEX][services][]"
+                        value="sso-rijk"/>
+                </c-layout-row>
+            </c-card>
+        </c-layout-column>
+    </template>
+
+    <template id="service-postgresql-template">
+        <c-layout-column>
+            <c-card outline="true" padding="sm" backgroundColor="wit">
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="database" size="md" color="donkerblauw"/>
+                    <c-layout-column style="flex: 1;">
+                        <div style="font-weight: 600;">PostgreSQL Database</div>
+                    </c-layout-column>
+                    <c-checkbox
+                        id="component-INDEX-service-postgres"
+                        name="components[INDEX][services][]"
+                        value="postgresql-database"/>
+                </c-layout-row>
+            </c-card>
+        </c-layout-column>
+    </template>
+
+    <template id="service-minio-template">
+        <c-layout-column>
+            <c-card outline="true" padding="sm" backgroundColor="wit">
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="map" size="md" color="rood"/>
+                    <c-layout-column style="flex: 1;">
+                        <div style="font-weight: 600;">MinIO Object Storage</div>
+                    </c-layout-column>
+                    <c-checkbox
+                        id="component-INDEX-service-minio"
+                        name="components[INDEX][services][]"
+                        value="minio-storage"/>
+                </c-layout-row>
+            </c-card>
+        </c-layout-column>
+    </template>
+
+    <template id="service-web-publishing-template">
+        <c-layout-column>
+            <c-card outline="true" padding="sm" backgroundColor="wit">
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="wereldbol" size="md" color="hemelblauw"/>
+                    <c-layout-column style="flex: 1;">
+                        <div style="font-weight: 600;">Publiceren op het web</div>
+                    </c-layout-column>
+                    <c-checkbox
+                        id="component-INDEX-service-web"
+                        name="components[INDEX][services][]"
+                        value="publish-on-web"/>
+                </c-layout-row>
+            </c-card>
+        </c-layout-column>
+    </template>
+
+    <template id="service-pvc-template">
+        <c-layout-column>
+            <c-card outline="true" padding="sm" backgroundColor="wit">
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="server" size="md" color="oranje-750"/>
+                    <c-layout-column style="flex: 1;">
+                        <div style="font-weight: 600;">Permanente opslag</div>
+                    </c-layout-column>
+                    <c-checkbox
+                        id="component-INDEX-service-pvc"
+                        name="components[INDEX][services][]"
+                        value="persistent-storage"/>
+                </c-layout-row>
+            </c-card>
+        </c-layout-column>
+    </template>
+
+    <template id="service-temp-storage-template">
+        <c-layout-column>
+            <c-card outline="true" padding="sm" backgroundColor="wit">
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="klok" size="md" color="oranje"/>
+                    <c-layout-column style="flex: 1;">
+                        <div style="font-weight: 600;">Tijdelijke schijfruimte</div>
+                    </c-layout-column>
+                    <c-checkbox
+                        id="component-INDEX-service-temp"
+                        name="components[INDEX][services][]"
+                        value="temp-storage"/>
+                </c-layout-row>
+            </c-card>
+        </c-layout-column>
+    </template>
+
+    <style>
+        /* Service cards using proven flexbox pattern */
+        .service-card {
+            display: flex;
+            height: 100%;
+        }
+
+        .service-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .service-card-content {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            padding: var(--rvo-space-md);
+        }
+
+        .service-card-info {
+            display: flex;
+            flex-direction: column;
+            min-height: 250px;
+        }
+
+        .service-card-icon {
+            text-align: center;
+            padding: var(--rvo-space-lg);
+            margin-bottom: var(--rvo-space-sm);
+        }
+
+        .service-card-info .rvo-text--sm {
+            flex: 1 0 auto; /* This expands to fill space and pushes checkbox down */
+            margin-bottom: var(--rvo-space-md);
+        }
+
+        .service-card-checkbox {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: var(--rvo-space-md);
+            border-top: 1px solid var(--rvo-color-grijs-200);
+            background-color: var(--rvo-color-grijs-25);
+            margin-top: auto; /* Alternative approach - pushes to bottom */
+        }
+
+        /* Grid container ensures equal heights */
+        .rvo-layout-grid {
+            display: grid;
+            align-items: stretch; /* All grid items stretch to same height */
+        }
+
+        .user-row {
+            position: relative;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Ensure proper spacing in grid layouts */
+        .rvo-layout-grid {
+            display: grid;
+        }
+
+        /* Footer column title styling */
+        .rvo-footer__column-title {
+            color: white !important;
+        }
+
+        /* Conceptual Diagram Styles */
+        .concept-diagram {
+            margin: var(--rvo-space-lg) 0;
+        }
+
+        .diagram-svg {
+            width: 100%;
+            height: auto;
+            max-height: 500px;
+            border: 1px solid var(--rvo-color-grijs-200);
+            border-radius: 4px;
+            background: white;
+        }
+
+        /* Responsive adjustments for diagram */
+        @media (max-width: 768px) {
+            .diagram-svg {
+                max-height: 400px;
+            }
+
+            .concept-diagram svg text {
+                font-size: 10px !important;
+            }
+
+            .concept-diagram svg text[font-size="12"] {
+                font-size: 9px !important;
+            }
+
+            .concept-diagram svg text[font-size="11"] {
+                font-size: 8px !important;
+            }
+        }
+
+    </style>
+
+
+</c-page>

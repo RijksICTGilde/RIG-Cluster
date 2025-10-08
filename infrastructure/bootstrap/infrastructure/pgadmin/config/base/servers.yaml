@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgadmin-servers
+  namespace: rig-system
+data:
+  # Note: This is just a placeholder config.
+  # The actual server configuration is handled directly in the HelmRelease 
+  # at implementation/bootstrap/infrastructure/pgadmin/controller/base/helm-release.yaml
+  servers.json: |
+    {
+      "Servers": {}
+    }

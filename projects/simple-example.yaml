@@ -1,0 +1,82 @@
+name: example-project
+description: "A simple example project for demonstration purposes"
+
+# Available clusters
+clusters:
+  - local
+  - odcn-production
+
+# Repository configuration
+repositories:
+  - name: main-repo
+    url: "ssh://git@host.docker.internal:2222/srv/git/example-project-infra.git"
+    branch: "main"
+    path: "infra"
+  - name: github-repo
+    url: "https://github.com/RijksICTGilde/rig-cluster-application-test.git"
+    username: "git"
+    password: |
+      -----BEGIN AGE ENCRYPTED FILE-----
+      YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA0K28zZERxZ29ZMjVuQVNP
+      WEpMU0wwMXNPN2F1T3ZSK2M5TmN4b3RNY3dnCmhLN3FxLzcvN01OdmIxWXVFL00z
+      dCt0L0drcVFZUTBKOERIZ3NQK3VFUGcKLS0tIFNCQUM3Z1U0MGJ3eTYxeC9Tb29Z
+      ZmxTWm9BRGtpUExUVlN3N1JPUjRhV0kKt96lbcSOqLThEgvr67Pk3i4IBV6j8mPo
+      ATTaHv3CMKcMQOrDcJ4Z2ilL6CgB/RUw+5G3mBZ/A0f1n5HdqYfXfLi8slY7348S
+      DQ==
+      -----END AGE ENCRYPTED FILE-----
+    branch: "main"
+    path: "."
+  - name: main-repo-autocreated
+    url: "ssh://git@host.docker.internal:2222/srv/git/example-project-infra-autocreated.git"
+    branch: "main"
+#    path: "infra"
+
+components:
+  - name: frontend
+    publish-on-web: true
+    type: deployment
+    storage:
+      - type: persistent
+        size: 10Gi
+        mount-path: /data
+      - type: ephemeral
+        size: 2Gi
+        mount-path: /tmp
+    ports:
+      inbound: [8080]
+      outbound: [443, 80]  # for external API calls, CDN, etc.
+    sso-rijk: true
+    uses-services: []  # no direct service dependencies
+    uses-components: [backend]
+
+# Deployments - combining environment/namespace and ArgoCD application info
+deployments:
+  - name: just-a-name
+    cluster: local
+    # TODO: namespace is too kubernetes specific; maybe 'target: 'shared' or target: 'unique'?
+    namespace: example-project  # This is derived from the project name
+    repository: main-repo
+    components:
+      - reference: frontend
+        image: "nginxdemos/hello"
+  - name: second-name
+    cluster: local
+    namespace: example-project  # This is derived from the project name
+    repository: main-repo-autocreated
+    components:
+      - reference: frontend
+        image: "strm/helloworld-http" #"tutum/hello-world"
+  - name: third-name
+    cluster: local
+    namespace: example-project  # This is derived from the project name
+    repository: github-repo
+    components:
+      - reference: frontend
+        image: "tutum/hello-world"
+  - name: odcn-name
+    cluster: odcn-production
+    namespace: example-project  # This is derived from the project name
+    repository: github-repo
+    components:
+      - reference: frontend
+        image: "tutum/hello-world"

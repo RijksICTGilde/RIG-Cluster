@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: rig-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: keycloak-theme-puller
+          command:
+            - sh
+            - -c
+            - |
+              cd /tmp
+              wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.2.1/keycloak-nl-design-system.jar
+              cp keycloak-nl-design-system.jar /opt/keycloak/providers/
+          image: busybox:1.37.0
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - mountPath: /opt/keycloak/providers/
+              name: keycloak-provider
+            - mountPath: /tmp
+              name: tmp-volume
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:25.0.1
+          args:
+            ["start", "--proxy-headers=forwarded", "--hostname-strict=false", "--spi-theme-welcome-theme=nl-design-system" ]
+          env:
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin-credentials
+                  key: KEYCLOAK_ADMIN
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin-credentials
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: KC_PROXY
+              value: "edge"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HOSTNAME
+              value: "http://keycloak.kind"
+            - name: KC_DB
+              value: "postgres"
+            - name: KC_DB_URL
+              value: "jdbc:postgresql://rig-db-rw:5432/keycloak"
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-db-credentials
+                  key: username
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-db-credentials
+                  key: password
+            - name: ORGANIZATION
+              value: "RIG Cluster"
+            - name: KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED
+              value: "true"
+            - name: KC_FEATURES
+              value: "admin-api,scripts"
+            - name: KEYCLOAK_ADMIN_IMPORT_ENABLED
+              value: "true"
+            - name: KEYCLOAK_ADMIN_EXPORT_ENABLED
+              value: "true"
+          resources:
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+              ephemeral-storage: "1Gi"
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /realms/master
+              port: 8080
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: keycloak-provider
+              mountPath: /opt/keycloak/providers/
+      volumes:
+        - name: keycloak-provider
+          emptyDir: {}
+        - name: tmp-volume
+          emptyDir: {}

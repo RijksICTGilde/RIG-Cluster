@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"  
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: {{ type }} # like git
+  url: {{ repository_url }}
+  name: {{ name }}
+  sshPrivateKey: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+    QyNTUxOQAAACA7PaPRSC82Y+5KKt4GCqrqSqhu0ipYnisQPvARVfZyMAAAAKAaFTLLGhUy
+    ywAAAAtzc2gtZWQyNTUxOQAAACA7PaPRSC82Y+5KKt4GCqrqSqhu0ipYnisQPvARVfZyMA
+    AAAEDlx/fI1Ltvc4yAMBqkwVxcLSCliicddNYOz5+VL+83pzs9o9FILzZj7koq3gYKqupK
+    qG7SKlieKxA+8BFV9nIwAAAAFnJvYmJlcnR1aXR0ZW5icm9la0BNYWMBAgMEBQYH
+    -----END OPENSSH PRIVATE KEY-----

@@ -1,0 +1,45 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ name }}
+  namespace: {{ namespace }}
+  labels:
+    project: {{ labels.project }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    # https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/#manifest-paths-annotation
+    argocd.argoproj.io/manifest-generate-paths: .
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ argo_project }}
+  source:
+    repoURL: {{ repoURL }}
+    targetRevision: {{ targetRevision }}
+    path: {{ repoPath }}
+    plugin:
+      name: kustomize-sops-v1.0
+      env:
+        - name: SOPS_KEY_SECRET
+          value: "sops-age-key"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: {{ destination.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=false
+      - PrunePropagationPolicy=foreground
+      - Replace=true
+      - PruneLast=false
+      - Delete=true
+    retry:
+      limit: 2
+      backoff:
+        duration: 30s
+        factor: 1
+        maxDuration: 30s
+  revisionHistoryLimit: 3

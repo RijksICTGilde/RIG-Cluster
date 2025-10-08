@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Self-Service Platform Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        // Namespace management
+        const namespaceContainer = document.getElementById('namespace-container');
+        const addNamespaceBtn = document.getElementById('add-namespace-btn');
+
+        addNamespaceBtn.addEventListener('click', function() {
+          const namespaceItem = document.createElement('div');
+          namespaceItem.className = 'flex items-center gap-2 mb-2';
+          namespaceItem.innerHTML = `
+                    <input type="text" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter namespace name">
+                    <button type="button" class="p-2 text-red-500 hover:text-red-700 remove-namespace">
+                        <i class="fas fa-times"></i>
+                    </button>
+                `;
+          namespaceContainer.appendChild(namespaceItem);
+
+          // Add remove event listener
+          namespaceItem.querySelector('.remove-namespace').addEventListener('click', function() {
+            namespaceItem.remove();
+          });
+        });
+
+        // User management with lookup
+        const userSelect = document.getElementById('user-select');
+        const roleSelect = document.getElementById('role-select');
+        const addUserBtn = document.getElementById('add-user-btn');
+        const userList = document.getElementById('user-list');
+
+        // Dummy user data
+        const users = [
+          {id: 1, name: 'Alice Johnson', email: 'alice@example.com'},
+          {id: 2, name: 'Bob Smith', email: 'bob@example.com'},
+          {id: 3, name: 'Charlie Davis', email: 'charlie@example.com'},
+          {id: 4, name: 'Diana Miller', email: 'diana@example.com'},
+          {id: 5, name: 'Edward Wilson', email: 'edward@example.com'},
+          {id: 6, name: 'Fiona Brown', email: 'fiona@example.com'},
+          {id: 7, name: 'George Taylor', email: 'george@example.com'},
+          {id: 8, name: 'Hannah Moore', email: 'hannah@example.com'},
+          {id: 9, name: 'Ian Wright', email: 'ian@example.com'},
+          {id: 10, name: 'Julia Roberts', email: 'julia@example.com'}
+        ];
+
+        // Populate user select
+        users.forEach(user => {
+          const option = document.createElement('option');
+          option.value = user.id;
+          option.textContent = `${user.name} (${user.email})`;
+          userSelect.appendChild(option);
+        });
+
+        addUserBtn.addEventListener('click', function() {
+          const userId = userSelect.value;
+          const role = roleSelect.value;
+
+          if (userId && role) {
+            const user = users.find(u => u.id == userId);
+            const userItem = document.createElement('div');
+            userItem.className = 'flex justify-between items-center p-3 mb-2 bg-gray-50 rounded-md border border-gray-200';
+            userItem.innerHTML = `
+                        <div>
+                            <span class="font-medium">${user.name}</span>
+                            <span class="text-gray-500 text-sm ml-2">(${user.email})</span>
+                            <span class="ml-2 px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">${role}</span>
+                        </div>
+                        <button type="button" class="text-red-500 hover:text-red-700">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    `;
+            userList.appendChild(userItem);
+
+            // Add remove event listener
+            userItem.querySelector('button').addEventListener('click', function() {
+              userItem.remove();
+            });
+
+            // Reset selects
+            userSelect.value = '';
+            roleSelect.value = '';
+          }
+        });
+
+        // Service management with tiles
+        const serviceTiles = document.querySelectorAll('.service-tile');
+        const serviceList = document.getElementById('service-list');
+
+        serviceTiles.forEach(tile => {
+          tile.addEventListener('click', function() {
+            const serviceType = this.getAttribute('data-service');
+            let placeholders = {};
+
+            switch(serviceType) {
+              case 'postgres':
+                placeholders = {name: 'Schema name', user: 'Database username'};
+                break;
+              case 'minio':
+                placeholders = {name: 'Bucket name', user: 'Storage username'};
+                break;
+              case 'rabbitmq':
+                placeholders = {name: 'Queue name', user: 'Queue username'};
+                break;
+            }
+
+            const serviceItem = document.createElement('div');
+            serviceItem.className = 'p-4 mb-4 bg-white rounded-lg shadow-md border border-gray-200';
+            serviceItem.innerHTML = `
+                        <div class="flex justify-between items-center mb-3">
+                            <h4 class="text-lg font-medium capitalize">${serviceType}</h4>
+                            <button type="button" class="text-red-500 hover:text-red-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Resource Name</label>
+                                <input type="text" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="${placeholders.name}">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                                <input type="text" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="${placeholders.user}">
+                            </div>
+                        </div>
+                    `;
+            serviceList.appendChild(serviceItem);
+
+            // Add remove event listener
+            serviceItem.querySelector('button').addEventListener('click', function() {
+              serviceItem.remove();
+            });
+          });
+        });
+      });
+    </script>
+</head>
+<body class="bg-gray-50">
+<div class="min-h-screen p-6">
+    <div class="max-w-5xl mx-auto">
+        <!-- Header -->
+        <div class="bg-blue-600 text-white p-6 rounded-t-lg shadow-md">
+            <h1 class="text-2xl font-bold">Self-Service Platform Portal</h1>
+            <p class="mt-1 text-blue-100">Create and manage your project resources</p>
+        </div>
+
+        <!-- Form container -->
+        <div class="bg-white rounded-b-lg shadow-md p-6">
+            <h2 class="text-xl font-bold mb-6 text-gray-800">Create New Project</h2>
+
+            <form id="project-form">
+                <!-- Project Details Section -->
+                <div class="mb-8 pb-6 border-b border-gray-200">
+                    <h3 class="text-lg font-medium mb-4 text-gray-700">Project Details</h3>
+
+                    <div class="mb-4">
+                        <label for="project-name" class="block text-sm font-medium text-gray-700 mb-1">Project Name</label>
+                        <input type="text" id="project-name" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter project name" value="my-awesome-app">
+                    </div>
+
+                    <div class="mb-4">
+                        <span class="block text-sm font-medium text-gray-700 mb-1">Environment</span>
+                        <div class="flex gap-4">
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="environment" value="development" class="h-4 w-4 text-blue-600" checked>
+                                <span class="ml-2">Development</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="environment" value="production" class="h-4 w-4 text-blue-600">
+                                <span class="ml-2">Production</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Namespaces Section -->
+                <div class="mb-8 pb-6 border-b border-gray-200">
+                    <h3 class="text-lg font-medium mb-4 text-gray-700">Namespaces</h3>
+
+                    <div id="namespace-container">
+                        <div class="flex items-center gap-2 mb-2">
+                            <input type="text" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter namespace name" value="team-a-backend">
+                            <button type="button" class="p-2 text-red-500 hover:text-red-700 remove-namespace">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button type="button" id="add-namespace-btn" class="mt-2 flex items-center gap-1 text-blue-600 hover:text-blue-800">
+                        <i class="fas fa-plus-circle"></i>
+                        <span>Add another namespace</span>
+                    </button>
+                </div>
+
+                <!-- Users and Roles Section -->
+                <div class="mb-8 pb-6 border-b border-gray-200">
+                    <h3 class="text-lg font-medium mb-4 text-gray-700">Users and Roles</h3>
+
+                    <div class="flex flex-wrap items-end gap-4 mb-4">
+                        <div class="flex-1">
+                            <label for="user-select" class="block text-sm font-medium text-gray-700 mb-1">User</label>
+                            <select id="user-select" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">Select a user</option>
+                                <!-- Options will be populated via JavaScript -->
+                            </select>
+                        </div>
+                        <div class="w-40">
+                            <label for="role-select" class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                            <select id="role-select" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">Select role</option>
+                                <option value="Admin">Admin</option>
+                                <option value="Developer">Developer</option>
+                                <option value="Viewer">Viewer</option>
+                            </select>
+                        </div>
+                        <button type="button" id="add-user-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                            Add User
+                        </button>
+                    </div>
+
+                    <div id="user-list" class="space-y-2">
+                        <!-- User items will be added here via JavaScript -->
+                        <div class="flex justify-between items-center p-3 mb-2 bg-gray-50 rounded-md border border-gray-200">
+                            <div>
+                                <span class="font-medium">Alice Johnson</span>
+                                <span class="text-gray-500 text-sm ml-2">(alice@example.com)</span>
+                                <span class="ml-2 px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">Admin</span>
+                            </div>
+                            <button type="button" class="text-red-500 hover:text-red-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="flex justify-between items-center p-3 mb-2 bg-gray-50 rounded-md border border-gray-200">
+                            <div>
+                                <span class="font-medium">Bob Smith</span>
+                                <span class="text-gray-500 text-sm ml-2">(bob@example.com)</span>
+                                <span class="ml-2 px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">Developer</span>
+                            </div>
+                            <button type="button" class="text-red-500 hover:text-red-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Services Section -->
+                <div class="mb-8 pb-6 border-b border-gray-200">
+                    <h3 class="text-lg font-medium mb-4 text-gray-700">Services</h3>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                        <div class="service-tile cursor-pointer p-4 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors text-center" data-service="postgres">
+                            <div class="w-16 h-16 mx-auto mb-2 bg-blue-100 rounded-full flex items-center justify-center">
+                                <i class="fas fa-database text-blue-600 text-xl"></i>
+                            </div>
+                            <h4 class="font-medium">PostgreSQL</h4>
+                            <p class="text-sm text-gray-500">Database service</p>
+                            <div class="mt-2 text-blue-600">
+                                <i class="fas fa-plus-circle"></i> Add
+                            </div>
+                        </div>
+
+                        <div class="service-tile cursor-pointer p-4 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors text-center" data-service="minio">
+                            <div class="w-16 h-16 mx-auto mb-2 bg-blue-100 rounded-full flex items-center justify-center">
+                                <i class="fas fa-cloud text-blue-600 text-xl"></i>
+                            </div>
+                            <h4 class="font-medium">MinIO</h4>
+                            <p class="text-sm text-gray-500">Object storage</p>
+                            <div class="mt-2 text-blue-600">
+                                <i class="fas fa-plus-circle"></i> Add
+                            </div>
+                        </div>
+
+                        <div class="service-tile cursor-pointer p-4 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors text-center" data-service="rabbitmq">
+                            <div class="w-16 h-16 mx-auto mb-2 bg-blue-100 rounded-full flex items-center justify-center">
+                                <i class="fas fa-envelope text-blue-600 text-xl"></i>
+                            </div>
+                            <h4 class="font-medium">RabbitMQ</h4>
+                            <p class="text-sm text-gray-500">Message queue</p>
+                            <div class="mt-2 text-blue-600">
+                                <i class="fas fa-plus-circle"></i> Add
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="service-list" class="space-y-4">
+                        <!-- Service items will be added here via JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Form Actions -->
+                <div class="flex justify-end gap-3">
+                    <button type="button" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                        Cancel
+                    </button>
+                    <button type="button" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                        Create Project
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Summary section -->
+        <div class="mt-8 bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-bold mb-6 text-gray-800">Project Summary & Access Information</h2>
+
+            <div class="p-4 mb-6 bg-blue-50 border border-blue-200 rounded-md">
+                <div class="flex items-start">
+                    <div class="flex-shrink-0 pt-0.5">
+                        <i class="fas fa-info-circle text-blue-500"></i>
+                    </div>
+                    <div class="ml-3">
+                        <h3 class="text-lg font-medium text-blue-800">my-awesome-app (Development)</h3>
+                        <p class="mt-1 text-blue-700">Your project has been created successfully. Below is the access information for all services.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h3 class="text-lg font-medium mb-2 text-gray-700">Namespaces</h3>
+                <div class="flex flex-wrap gap-2">
+                    <span class="px-3 py-1 bg-gray-100 rounded-full text-gray-800">team-a-frontend</span>
+                    <span class="px-3 py-1 bg-gray-100 rounded-full text-gray-800">team-a-backend</span>
+                </div>
+            </div>
+
+            <h3 class="text-lg font-medium mb-4 text-gray-700">Services</h3>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Service</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Password</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Connection Details</th>
+                    </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <div class="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                                    <i class="fas fa-database text-blue-600"></i>
+                                </div>
+                                <div class="ml-4">
+                                    <div class="text-sm font-medium text-gray-900">PostgreSQL</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">app_db</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">app_user</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="px-2 py-1 text-xs font-medium text-gray-500">••••••••</span>
+                            <button class="ml-2 text-blue-600 hover:text-blue-800 text-xs">
+                                <i class="fas fa-eye"></i> Show
+                            </button>
+                        </td>
+                        <td class="px-6 py-4">
+                            <div class="text-sm text-gray-900">Host: postgres.central.svc.cluster.local</div>
+                            <div class="text-sm text-gray-900">Port: 5432</div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <div class="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                                    <i class="fas fa-cloud text-blue-600"></i>
+                                </div>
+                                <div class="ml-4">
+                                    <div class="text-sm font-medium text-gray-900">MinIO</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">app-assets</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">app_storage</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="px-2 py-1 text-xs font-medium text-gray-500">••••••••</span>
+                            <button class="ml-2 text-blue-600 hover:text-blue-800 text-xs">
+                                <i class="fas fa-eye"></i> Show
+                            </button>
+                        </td>
+                        <td class="px-6 py-4">
+                            <div class="text-sm text-gray-900">Endpoint: http://minio.central.svc.cluster.local:9000</div>
+                            <div class="text-sm text-gray-900">API Key: Available in Vault</div>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-6">
+                <h3 class="text-lg font-medium mb-2 text-gray-700">Connection Examples</h3>
+                <div class="bg-gray-800 text-white p-4 rounded-md overflow-x-auto">
+                        <pre class="text-sm"><code># PostgreSQL connection example
+psql -h postgres.team-a-backend.svc.cluster.local -U app_user -d app_db
+
+# MinIO connection example
+mc alias set app-minio http://minio.team-a-backend.svc.cluster.local:9000 app_storage PASSWORD</code></pre>
+                </div>
+            </div>
+
+            <div class="mt-6">
+                <h3 class="text-lg font-medium mb-2 text-gray-700">Credential Management</h3>
+                <p class="text-gray-600">All service credentials are stored in Vault at path: <code class="px-2 py-1 bg-gray-100 rounded text-sm">secret/my-awesome-app/</code></p>
+                <p class="text-gray-600 mt-1">Users can retrieve credentials through Vault using their Keycloak identity.</p>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

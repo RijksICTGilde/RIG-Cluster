@@ -1,0 +1,96 @@
+{#
+  Base Template - Self Service Portal
+  
+  Gemeenschappelijke layout voor alle pagina's in het Self Service Portal
+  inclusief header, navigatie en footer.
+#}
+
+{% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
+<c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive">
+    
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header 
+            text="Zelfservice voor Applicatie Deployment"
+            subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+            link="/" />
+        
+        <c-layout-flow gap="xl" size="lg">
+            {# MenuBar #}
+            <c-menubar 
+                size="md"
+                :useIcons="true"
+                iconPlacement="before"
+                maxWidth="lg"
+                :items="menu_items" />
+            
+            {# Main Content Area #}
+            <main>
+                {% block content %}
+                {# Default content - override in child templates #}
+                <c-layout-flow gap="lg">
+                    <c-heading type="h1" textContent="Welkom bij het Self Service Portal" />
+                    <p>Gebruik de navigatie om door de verschillende secties te bladeren.</p>
+                </c-layout-flow>
+                {% endblock %}
+            </main>
+            
+            {# Footer #}
+            <c-footer 
+                maxWidth="lg"
+                :primaryMenu="[
+                    {
+                        'label': 'Platform',
+                        'items': [
+                            {'content': 'Over het platform', 'link': '/about'},
+                            {'content': 'Architectuur', 'link': '/architecture'},
+                            {'content': 'Documentatie', 'link': '/docs'},
+                            {'content': 'API Referentie', 'link': '/api'},
+                            {'content': 'Status', 'link': '/status'}
+                        ]
+                    }
+                ]"
+                :secondaryMenu="[
+                    {
+                        'label': 'Organisatie',
+                        'items': [
+                            {'content': 'Over ODC-Noord', 'link': '/organization'},
+                            {'content': 'Privacyverklaring', 'link': '/privacy'},
+                            {'content': 'Toegankelijkheid', 'link': '/accessibility'},
+                            {'content': 'Cookieverklaring', 'link': '/cookies'}
+                        ]
+                    }
+                ]" />
+        </c-layout-flow>
+
+        <style>
+            .rvo-footer__column-title {
+                color: white !important;
+            }
+            
+            /* Icon alignment for headings */
+            h1 .utrecht-icon,
+            h2 .utrecht-icon,
+            h3 .utrecht-icon,
+            h4 .utrecht-icon,
+            h5 .utrecht-icon,
+            h6 .utrecht-icon {
+                vertical-align: text-bottom;
+                margin-right: 0.1em;
+            }
+        </style>
+
+        {% block additional_styles %}
+        {# Additional CSS can be added here by child templates #}
+        <style>
+        .rvo-footer__column-title {
+            color: white !important;
+        }
+        </style>
+        {% endblock %}
+        
+        {% block additional_scripts %}
+        {# Additional JavaScript can be added here by child templates #}
+        {% endblock %}
+    </div>
+</c-page>

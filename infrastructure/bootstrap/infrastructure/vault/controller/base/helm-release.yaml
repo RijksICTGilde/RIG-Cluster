@@ -1,0 +1,44 @@
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: vault
+  namespace: rig-system
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: vault
+      version: "0.24.1"
+      sourceRef:
+        kind: HelmRepository
+        name: hashicorp
+        namespace: rig-system
+  values:
+    server:
+      # Configure as a single shared Vault instance
+      standalone:
+        enabled: true
+      ha:
+        enabled: false
+      dataStorage:
+        size: 1Gi
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+      service:
+        enabled: true
+    ui:
+      enabled: true
+    injector:
+      enabled: true
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "50m"
+        limits:
+          memory: "256Mi"
+          cpu: "250m"

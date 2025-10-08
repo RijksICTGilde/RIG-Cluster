@@ -1,0 +1,28 @@
+projects:
+  name: robbert1
+  services:
+    - name: postgress
+      user: postgresuser1
+      schema: schema1
+    - name: minio
+      user: miniouser1
+      bucket: my-bucket
+  deployments:
+    - name: frontend
+      base-image: some.storage/frontend
+      tag: v1
+      requests:
+        cpu: 1
+        memory: 1Gb
+      ports: 8080
+      base-ingress: www.myapp.example.com
+      keycloak-SSO: true
+    - name: backend
+      base-image: some.storage/backend
+      tag: v1
+      ports: 8080
+      base-ingress: www.myapp.example.com/api
+
+
+
+

@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rg:*)",
+      "Bash(poetry run:*)",
+      "Bash(rm:*)",
+      "Bash(ruff check:*)",
+      "Bash(gemini:*)",
+      "Bash(pyright:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(python tests:*)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(find:*)",
+      "Bash(mv:*)",
+      "Bash(sops:*)",
+      "mcp__brave-search__brave_web_search",
+      "mcp__fetch__fetch",
+      "Bash(ENVIRONMENT=production python:*)",
+      "Bash(task:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl logs:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(grep:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:saikiranpikili.medium.com)",
+      "Bash(mkdir:*)",
+      "Bash(npm run build:*)",
+      "Bash(poetry install:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": []
+  }
+}

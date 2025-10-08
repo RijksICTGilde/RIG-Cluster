@@ -1,0 +1,88 @@
+<c-page title="Project Aanmaak Fout" lang="nl" bodyClass="rvo-theme rvo-responsive">
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header
+            text="Zelfservice voor Applicatie Deployment"
+            subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+            link="/"/>
+
+        <c-layout-flow gap="xl" size="lg">
+            {# MenuBar #}
+            <c-menubar
+                size="md"
+                :useIcons="true"
+                iconPlacement="before"
+                maxWidth="lg"
+                :items="menu_items"/>
+
+            <c-layout-flow gap="2xl" size="lg">
+                <main>
+                    <c-layout-flow gap="xl">
+                        
+                        {# Error Message #}
+                        <c-alert
+                            kind="error"
+                            heading="Fout bij het aanmaken van het project"
+                            messages="Er is een fout opgetreden tijdens het verwerken van uw project aanvraag."/>
+
+                        <c-content>
+                            <c-heading type="h1" textContent="Project aanmaak mislukt"/>
+                            
+                            <c-layout-flow gap="md">
+                                <p class="rvo-paragraph rvo-paragraph--lg">
+                                    Er is een fout opgetreden tijdens het verwerken van uw project aanvraag. Het project kon niet worden aangemaakt.
+                                </p>
+                                
+                                <c-layout-flow gap="sm">
+                                    <p class="rvo-paragraph">
+                                        <strong>Foutdetails:</strong>
+                                    </p>
+                                    <div class="rvo-code-block">
+                                        <pre><code>{{ error_message }}</code></pre>
+                                    </div>
+                                </c-layout-flow>
+
+                                <c-alert
+                                    kind="info"
+                                    heading="Mogelijke oplossingen"
+                                    messages="Controleer uw invoer en probeer het opnieuw, of neem contact op met de systeembeheerder als het probleem aanhoudt."/>
+                                    
+                                <c-layout-flow gap="md">
+                                    <c-action-group
+                                        :actions="[
+                                            {
+                                                'type': 'link',
+                                                'kind': 'primary',
+                                                'size': 'md',
+                                                'label': 'Probeer Opnieuw',
+                                                'showIcon': 'after',
+                                                'icon': 'pijl-naar-rechts',
+                                                'url': '/projects/new'
+                                            },
+                                            {
+                                                'type': 'link',
+                                                'kind': 'secondary',
+                                                'size': 'md', 
+                                                'label': 'Ga naar Dashboard',
+                                                'showIcon': 'after',
+                                                'icon': 'pijl-naar-rechts',
+                                                'url': '/dashboard'
+                                            },
+                                            {
+                                                'type': 'link',
+                                                'kind': 'tertiary',
+                                                'size': 'md',
+                                                'label': 'Hulp Zoeken',
+                                                'url': '/help'
+                                            }
+                                        ]"/>
+                                </c-layout-flow>
+                            </c-layout-flow>
+                        </c-content>
+                        
+                    </c-layout-flow>
+                </main>
+            </c-layout-flow>
+        </c-layout-flow>
+    </div>
+</c-page>

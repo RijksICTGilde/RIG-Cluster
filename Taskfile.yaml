@@ -1,0 +1,977 @@
+version: '3'
+
+dotenv: ['.env', '.env-taskfile-current']
+
+vars:
+  KIND_VERSION: 1.32.0
+  # Cluster configuration - can be overridden by .env-taskfile-current or environment variables
+  KIND_CLUSTER_NAME: '{{default "gitops-fluxcd" .KIND_CLUSTER_NAME}}'
+  CLUSTER_TYPE: '{{default "local" .CLUSTER_TYPE}}'
+  RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
+
+#set: ['e', 'x']  # equivalent to set -ex
+
+tasks:
+  default:
+    desc: "Help / Show available tasks."
+    cmds:
+      - task --list-all
+    silent: true
+
+  select-cluster:
+    desc: "Select target cluster and load corresponding environment file"
+    cmds:
+      - |
+        echo "🎯 Cluster Selection"
+        echo "=================="
+        echo ""
+        echo "Available clusters:"
+        echo "1) local (kind cluster)"
+        echo "2) odcn-production"
+        echo ""
+        printf "Select cluster [1-2]: "
+        read -r CLUSTER_CHOICE
+        
+        case $CLUSTER_CHOICE in
+          1)
+            ENV_FILE=".env-taskfile-local"
+            CLUSTER_NAME="local"
+            ;;
+          2)
+            ENV_FILE=".env-taskfile-odcn-production"
+            CLUSTER_NAME="odcn-production"
+            ;;
+          *)
+            echo "❌ Invalid selection. Defaulting to local cluster."
+            ENV_FILE=".env-taskfile-local"
+            CLUSTER_NAME="local"
+            ;;
+        esac
+        
+        if [ ! -f "$ENV_FILE" ]; then
+          echo "❌ Environment file not found: $ENV_FILE"
+          exit 1
+        fi
+        
+        # Copy the selected env file to .env-taskfile-current
+        cp "$ENV_FILE" .env-taskfile-current
+        
+        echo "✅ Selected: $CLUSTER_NAME cluster"
+        echo "📁 Loaded configuration from: $ENV_FILE"
+        echo ""
+        echo "📝 Active configuration:"
+        cat .env-taskfile-current | grep -v "^#" | grep -v "^$"
+        echo ""
+        echo "💡 Configuration is now active for all Taskfile tasks"
+    silent: false
+
+  requirements-check:
+    desc: "Check whether the user has all the required tools installed locally."
+    preconditions:
+      - sh: command -v kind
+        msg: |
+          🚨 kind is not installed! Use 'asdf' or 'brew' to install it.
+      - sh: command -v kubectl
+        msg: |
+          🚨 kubectl is not installed! Use 'asdf' or 'brew' to install it.
+      - sh: command -v kustomize
+        msg: |
+          🚨 kustomize is not installed! Use 'asdf' or 'brew' to install it.
+      - sh: command -v sops
+        msg: |
+          🚨 sops is not installed! Install with 'brew install sops' on MacOS or 'apt-get install sops' on Linux.
+      - sh: command -v pwgen
+        msg: |
+          🚨 pwgen is not installed! Install with 'brew install pwgen' on MacOS or 'apt-get install pwgen' on Linux.
+      - sh: command -v age-keygen
+        msg: |
+          🚨 age is not installed! Install with 'brew install age' on MacOS or 'apt-get install age' on Linux.
+    cmds:
+      - echo -e "\n✅  All preconditions have been met.\n"
+    silent: true
+
+  prepare-argocd-operator:
+    desc: "Download and prepare a customized ArgoCD operator"
+    vars:
+      VERSION: '{{default "v0.14.0" .VERSION}}'
+      OUTPUT_DIR: '{{default "bootstrap/crd/operator" .OUTPUT_DIR}}'
+      APPLY: '{{default "true" .APPLY}}'
+    cmds:
+      - |
+        echo "Preparing ArgoCD Operator version {{.VERSION}}..."
+        
+        # Print current directory for debugging
+        echo "Current working directory: $(pwd)"
+        echo "Target output directory: {{.OUTPUT_DIR}}"
+        
+        # Create temp directory
+        TEMP_DIR="/tmp/argocd-operator-prep"
+        mkdir -p $TEMP_DIR
+        
+        # Check if Prometheus CRD exists
+        if ! kubectl get crd prometheuses.monitoring.coreos.com &>/dev/null; then
+          echo "⚠️  WARNING: Prometheus CRD not found in the cluster."
+          echo "⚠️  This is required by the ArgoCD operator. Applying fake Prometheus CRD as a workaround."
+          echo "⚠️  Note: This is only a temporary solution. For production, install Prometheus Operator properly."
+          
+          # Apply the fake Prometheus CRD
+          kubectl apply -f bootstrap/crd/prometheus/fake-prometheus.yaml
+          
+          echo "✅ Fake Prometheus CRD applied successfully."
+        else
+          echo "✅ Prometheus CRD already exists in the cluster."
+        fi
+        
+        # Download the operator source
+        echo "Downloading ArgoCD Operator source code..."
+        curl -sL "https://github.com/argoproj-labs/argocd-operator/archive/refs/tags/{{.VERSION}}.tar.gz" -o $TEMP_DIR/argocd-operator.tar.gz
+        
+        # Extract the source
+        echo "Extracting source code..."
+        tar -xzf $TEMP_DIR/argocd-operator.tar.gz -C $TEMP_DIR
+        
+        # Save the original directory path before changing
+        ORIGINAL_DIR="$(pwd)"
+        
+        # Navigate to extracted directory
+        OPERATOR_DIR="$TEMP_DIR/argocd-operator-$(echo {{.VERSION}} | tr -d 'v')"
+        echo "Changing to directory: $OPERATOR_DIR"
+        cd $OPERATOR_DIR
+        
+        # Apply the customizations
+        echo "Applying customizations..."
+        
+        # 1. Disable webhooks in kustomization.yaml
+        sed -i.bak 's/- path: manager_webhook_patch.yaml/#- path: manager_webhook_patch.yaml/' config/default/kustomization.yaml
+        sed -i.bak 's/- ..\/webhook/#- ..\/webhook/' config/default/kustomization.yaml
+        
+        # TODO: delete step 2, it seems image 0.14 exists and we need to use that instead of latest
+        # 2. Use latest image tag in manager kustomization.yaml
+        # sed -i.bak 's/newTag: {{.VERSION}}/newTag: latest/' config/manager/kustomization.yaml
+        
+        # Create output directory with absolute path
+        mkdir -p "$ORIGINAL_DIR/{{.OUTPUT_DIR}}"
+        OUTPUT_FILE="$ORIGINAL_DIR/{{.OUTPUT_DIR}}/argocd-operator-install.yaml"
+        
+        # Build the customized installation yaml
+        echo "Building customized installation YAML..."
+        kustomize build config/default > "$OUTPUT_FILE"
+        
+        echo "Output written to: $OUTPUT_FILE"
+        
+        # Return to original directory
+        cd "$ORIGINAL_DIR"
+        
+        # Apply to cluster if requested
+        if [[ "{{.APPLY}}" == "true" ]]; then
+          echo "Applying ArgoCD operator to cluster..."
+          kubectl replace --force -f "$OUTPUT_FILE"
+          echo "✅ ArgoCD operator applied to cluster"
+        else
+          echo "To apply this to your cluster, run:"
+          echo "kubectl replace --force -f {{.OUTPUT_DIR}}/argocd-operator-install.yaml"
+        fi
+        
+        # Clean up
+        rm -rf $TEMP_DIR
+        
+        echo "✅ ArgoCD operator preparation complete"
+    silent: false
+
+  generate-age-key:
+    desc: "Generate AGE key for SOPS encryption (only if security/key.txt doesn't exist)"
+    cmds:
+      - |
+        # Check if key already exists
+        if [[ -f "security/key.txt" ]]; then
+          echo "✅ AGE key already exists: security/key.txt"
+          echo "🔑 Current public key: $(sed -n '2p' security/key.txt | sed 's/# public key: //')"
+          echo "⚠️  To generate a new key, first remove the existing security/key.txt file"
+          exit 0
+        fi
+
+        # Check if age-keygen is installed
+        if ! command -v age-keygen &> /dev/null; then
+          echo "❌ age-keygen is not installed. Please install age or add it to your PATH."
+          echo "   MacOS: brew install age"
+          echo "   Linux: apt-get install age or download from https://github.com/FiloSottile/age"
+          exit 1
+        fi
+
+        # Create security directory if it doesn't exist
+        mkdir -p security
+
+        # Generate a new age key directly to security/key.txt
+        echo "🔐 Generating new AGE key for SOPS encryption..."
+        age-keygen -o security/key.txt
+
+        # Extract the public key
+        PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+
+        echo ""
+        echo "✅ AGE key generated successfully!"
+        echo "🔑 Key saved to: security/key.txt"
+        echo "🔑 Public key: $PUBLIC_KEY"
+        echo ""
+        echo "⚠️  IMPORTANT: The security/key.txt file is gitignored and must be managed securely!"
+        echo "⚠️  For production use, consider storing the key in a secure vault or HSM."
+    silent: true
+
+  configure-coredns-kind-domains:
+    desc: "Configure CoreDNS to resolve *.kind domains to ingress controller (re-runnable)"
+    cmds:
+      - |
+        echo "🔧 Configuring CoreDNS to resolve *.kind domains..."
+        echo ""
+
+        # Get current CoreDNS Corefile
+        CURRENT_COREFILE=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}')
+
+        # Check if rewrite rule already exists
+        if echo "$CURRENT_COREFILE" | grep -q "name regex.*\.kind"; then
+          echo "✅ CoreDNS rewrite rule for *.kind already exists"
+          echo "   No changes needed"
+          exit 0
+        fi
+
+        echo "📝 Adding rewrite rule for *.kind domains..."
+        echo "   All *.kind domains will resolve to: ingress-nginx-controller.ingress-nginx.svc.cluster.local"
+        echo ""
+
+        # Create new Corefile with rewrite rule inserted after 'ready' line
+        NEW_COREFILE=$(echo "$CURRENT_COREFILE" | awk '
+          /ready/ {
+            print
+            print "    rewrite stop {"
+            print "        name regex (.+)\\.kind ingress-nginx-controller.ingress-nginx.svc.cluster.local"
+            print "        answer auto"
+            print "    }"
+            next
+          }
+          {print}
+        ')
+
+        # Create a temporary file with the patch
+        TEMP_FILE=$(mktemp)
+        cat > "$TEMP_FILE" <<EOF
+        {
+          "data": {
+            "Corefile": $(echo "$NEW_COREFILE" | jq -Rs .)
+          }
+        }
+        EOF
+
+        # Apply the patch
+        echo "🔄 Patching CoreDNS ConfigMap..."
+        kubectl patch configmap coredns -n kube-system --type merge --patch-file "$TEMP_FILE"
+
+        # Clean up temp file
+        rm "$TEMP_FILE"
+
+        # Restart CoreDNS to apply changes
+        echo "🔄 Restarting CoreDNS deployment..."
+        kubectl rollout restart deployment coredns -n kube-system
+
+        echo ""
+        echo "✅ CoreDNS configured successfully!"
+        echo "   All *.kind domains now resolve to ingress-nginx-controller"
+        echo ""
+        echo "💡 You can verify by running:"
+        echo "   kubectl run -it --rm --restart=Never --image=busybox:1.28 dnstest -- nslookup keycloak.kind"
+    silent: false
+
+  bootstrap-argo-system:
+    desc: "Apply minimal bootstrap (namespace + ArgoCD) to start the GitOps process"
+    vars:
+      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+      DRY_RUN: '{{default "false" .DRY_RUN}}'
+    cmds:
+      - |
+        
+        echo "🚀 Bootstrapping minimal RIG Cluster with source type: {{.CLUSTER}}"
+        
+        # Set flags for kubectl apply
+        KUBECTL_FLAGS=""
+        if [[ "{{.DRY_RUN}}" == "true" ]]; then
+          KUBECTL_FLAGS="--dry-run=client"
+          echo "🔍 Dry run mode enabled"
+        fi
+        
+        # Build and apply
+        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        
+        # Restart ArgoCD deployments to ensure they pick up any configuration changes
+        if [[ "{{.DRY_RUN}}" != "true" ]]; then
+          echo "Restarting ArgoCD deployments to apply configuration changes..."
+          kubectl rollout restart deployment/argocd-repo-server
+          kubectl rollout restart deployment/argocd-server
+        fi
+
+        echo "✅ Bootstrap applied successfully!"
+        echo "#TODO: info below is for local only and should be cluster specific"
+        echo "ArgoCD will now deploy the infrastructure components."
+        echo "You can check the status using:"
+        echo "kubectl get pods -n {{.RIG_NAMESPACE}}"
+        echo ""
+        echo "To access the ArgoCD UI, run:"
+        echo "kubectl port-forward svc/argocd-server -n {{.RIG_NAMESPACE}} 8080:80"
+        echo "Then open http://localhost:8080 in your browser"
+        echo "If ingress is set up, use: http://argo.kind/"
+        echo "Default credentials: admin / admin"
+    silent: false
+    
+  uninstall-local-kind-cluster:
+    desc: "Uninstall local set-up by deleting the Kind cluster."
+    cmds:
+      - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
+      - echo -e "✅ Kind cluster '{{.KIND_CLUSTER_NAME}}' successfully uninstalled\n"
+    silent: true
+
+  generate-env-secrets-for-operations-manager:
+    desc: "Generate SOPS-encrypted secret from cluster-specific env file for operations-manager"
+    vars:
+      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+      ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER}}.secrets'
+      OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
+      SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
+      NAMESPACE: '{{default .RIG_NAMESPACE .NAMESPACE}}'
+    cmds:
+      - |
+        echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
+        echo "Using cluster-specific secrets file: {{.ENV_FILE}}"
+        
+        # Check if cluster-specific env file exists
+        if [ ! -f "{{.ENV_FILE}}" ]; then
+          echo "⚠️  Cluster-specific secrets file not found: {{.ENV_FILE}}"
+          echo "⚠️  Creating empty secrets file for cluster {{.CLUSTER}}"
+          
+          # Create the file with a comment
+          echo "# Environment secrets for cluster: {{.CLUSTER}}" > "{{.ENV_FILE}}"
+          echo "# Add your cluster-specific secret environment variables here" >> "{{.ENV_FILE}}"
+          echo "# Example:" >> "{{.ENV_FILE}}"
+          echo "# KEYCLOAK_MASTER_OIDC_CLIENT_SECRET=your-secret-here" >> "{{.ENV_FILE}}"
+          echo "# DATABASE_ADMIN_PASSWORD=your-password-here" >> "{{.ENV_FILE}}"
+          echo "✅ Created empty secrets file: {{.ENV_FILE}}"
+          echo "📝 Please edit this file and add the required secrets for your cluster"
+        fi
+        
+        # Check if SOPS key file exists
+        if [ ! -f "security/key.txt" ]; then
+          echo "❌ SOPS key file not found: security/key.txt"
+          exit 1
+        fi
+        
+        # Create output directory
+        mkdir -p "{{.OUTPUT_DIR}}"
+        
+        # Start creating the secret YAML
+        SECRET_FILE="{{.OUTPUT_DIR}}/{{.SECRET_NAME}}.yaml"
+        
+        cat > "$SECRET_FILE" << 'EOF'
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: {{.SECRET_NAME}}
+          namespace: {{.NAMESPACE}}
+        type: Opaque
+        data:
+        EOF
+        
+        # Process env file and add base64 encoded values
+        echo "Processing environment variables from {{.ENV_FILE}}..."
+        
+        # Use grep to filter and process the file instead of while loop
+        grep -v '^[[:space:]]*#' "{{.ENV_FILE}}" | grep -v '^[[:space:]]*$' | while IFS='=' read -r key value; do
+          # Remove any surrounding quotes from value
+          value=$(echo "$value" | sed 's/^["'\'']//' | sed 's/["'\'']$//')
+          
+          # Base64 encode the value
+          encoded_value=$(echo -n "$value" | base64)
+          
+          # Add to secret file
+          echo "  $key: $encoded_value" >> "$SECRET_FILE"
+          echo "  Added: $key"
+        done
+        
+        echo "Finished processing environment variables."
+        echo "Generated secret file content:"
+        cat "$SECRET_FILE"
+        
+        # Encrypt with SOPS using the AGE key
+        echo "Encrypting secret with SOPS..."
+        AGE_PUBLIC_KEY="$(sed -n '2p' security/key.txt | sed 's/# public key: //')"
+        sops --encrypt --output-type yaml --age "$AGE_PUBLIC_KEY" --in-place "$SECRET_FILE"
+        
+        echo "✅ SOPS-encrypted secret generated: $SECRET_FILE"
+        echo "Secret name: {{.SECRET_NAME}}"
+        echo "Namespace: {{.NAMESPACE}}"
+    silent: true
+
+  update-operations-manager:
+    desc: "Build and deploy the operations-manager to the current cluster"
+    vars:
+      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+    deps: [generate-env-secrets-for-operations-manager]
+    cmds:
+      - |
+        echo "Copying jinja-roos-components for Docker build..."
+        mkdir -p ./jinja-roos-components
+        cp -r ../jinja-roos-components/jinja-roos-components ./jinja-roos-components/
+      - |
+        echo "Building operations-manager Docker image with BuildKit optimizations..."
+        # Use image-based caching which is compatible with standard Docker driver
+        DOCKER_BUILDKIT=1 docker build \
+          --target application \
+          --cache-from operations-manager:latest \
+          --cache-from operations-manager:cache-base-system \
+          --cache-from operations-manager:cache-dependencies \
+          -t operations-manager \
+          -f operations-manager/Dockerfile .
+      - |
+        echo "Cleaning up copied jinja-roos-components..."
+        rm -rf ./jinja-roos-components
+      - |
+        echo "Loading image into kind cluster..."
+        kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
+      - |
+        echo "Updating operations-manager deployment..."
+        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+      - echo -e "✅ Operations manager updated successfully!"
+    silent: true
+
+  deploy-operations-manager:
+    desc: "Deploy the operations-manager to the current cluster"
+    vars:
+      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+    deps: [generate-env-secrets-for-operations-manager]
+    cmds:
+      - |
+        echo "Updating operations-manager deployment..."
+        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+      - echo -e "✅ Operations manager updated successfully!"
+    silent: true
+
+  publish-operations-manager:
+    desc: "Build and publish the operations-manager to GitHub Container Registry"
+    deps: [requirements-check, generate-env-secrets-for-operations-manager]
+    cmds:
+      - |
+        echo "Copying jinja-roos-components for Docker build..."
+        mkdir -p ./jinja-roos-components
+        cp -r ../jinja-roos-components/jinja-roos-components ./jinja-roos-components/
+      - |
+        echo "Building operations-manager locally for validation with BuildKit cache..."
+        # Build intermediate cache images for better layer reuse
+        echo "Building base system cache..."
+        DOCKER_BUILDKIT=1 docker build \
+          --target base-system \
+          --cache-from operations-manager:cache-base-system \
+          -t operations-manager:cache-base-system \
+          -f operations-manager/Dockerfile . || echo "Base system cache failed, continuing..."
+        
+        echo "Building dependencies cache..."
+        DOCKER_BUILDKIT=1 docker build \
+          --target dependencies \
+          --cache-from operations-manager:cache-base-system \
+          --cache-from operations-manager:cache-dependencies \
+          -t operations-manager:cache-dependencies \
+          -f operations-manager/Dockerfile . || echo "Dependencies cache failed, continuing..."
+        
+        echo "Building final application image..."
+        DOCKER_BUILDKIT=1 docker build \
+          --target application \
+          --cache-from operations-manager:cache-base-system \
+          --cache-from operations-manager:cache-dependencies \
+          --cache-from operations-manager:latest \
+          -t operations-manager:test \
+          -f operations-manager/Dockerfile .
+        echo "✅ Local build successful"
+        echo ""
+      - |
+        echo "Cleaning up copied jinja-roos-components..."
+        rm -rf ./jinja-roos-components
+      - |
+        echo "Publishing operations-manager to GHCR..."
+        echo "Registry: ghcr.io/minbzk/base-images/operations-manager:latest"
+        echo ""
+        echo "Prerequisites:"
+        echo "- Docker buildx installed"
+        echo "- Authenticated with GHCR: docker login ghcr.io"
+        echo "- Push permissions to minbzk/base-images repository"
+        echo ""
+        printf "Continue with publishing? [y/N]: "
+        read -r REPLY
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+          echo "Copying jinja-roos-components for multi-platform build..."
+          mkdir -p ./jinja-roos-components
+          cp -r ../jinja-roos-components/jinja-roos-components ./jinja-roos-components/
+          echo "Building and pushing multi-platform image with registry-based caching..."
+          
+          # First, create a buildx builder if it doesn't exist (supports registry caching)
+          docker buildx create --name operations-manager-builder --use --driver docker-container 2>/dev/null || docker buildx use operations-manager-builder
+          
+          # Build and push with registry cache (works with buildx driver)
+          DOCKER_BUILDKIT=1 docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --target application \
+            --cache-from type=registry,ref=ghcr.io/minbzk/base-images/operations-manager:cache \
+            --cache-to type=registry,ref=ghcr.io/minbzk/base-images/operations-manager:cache,mode=max \
+            -f operations-manager/Dockerfile \
+            -t ghcr.io/minbzk/base-images/operations-manager:latest \
+            --push .
+          echo "Cleaning up copied jinja-roos-components..."
+          rm -rf ./jinja-roos-components
+          echo "✅ Operations manager published successfully to GHCR with registry cache!"
+          echo "Cleaning up local images..."
+          docker rmi operations-manager:test || true
+          docker rmi operations-manager:cache-base-system || true
+          docker rmi operations-manager:cache-dependencies || true
+        else
+          echo "Publishing cancelled."
+          echo "Cleaning up local images..."
+          docker rmi operations-manager:test || true
+          docker rmi operations-manager:cache-base-system || true
+          docker rmi operations-manager:cache-dependencies || true
+          exit 1
+        fi
+    silent: true
+
+  update-cmp-kustomize-sops:
+    desc: "Build and deploy the cmp-kustomize-sops image to the local kind cluster"
+    vars:
+      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+    cmds:
+      - |
+        echo "Building cmp-kustomize-sops Docker image..."
+        docker build --no-cache --progress=plain -t rig-cmp-argo-kustomize-sops:latest -f images/cmp-kustomize-sops/Dockerfile .
+      - |
+        echo "Loading image into kind cluster..."
+        kind load docker-image rig-cmp-argo-kustomize-sops:latest --name {{.KIND_CLUSTER_NAME}}
+      - |
+        echo "Restarting ArgoCD repo-server to pick up new CMP image..."
+        kubectl rollout restart deployment argocd-repo-server -n {{.RIG_NAMESPACE}}
+      - echo -e "✅ CMP kustomize-sops image updated successfully!"
+    silent: true
+
+  publish-cmp-kustomize-sops:
+    desc: "Build and publish the cmp-kustomize-sops image to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      - |
+        echo "Building cmp-kustomize-sops locally for validation..."
+        docker build --no-cache -t rig-cmp-argo-kustomize-sops:test -f images/cmp-kustomize-sops/Dockerfile .
+        echo "✅ Local build successful"
+        echo ""
+      - |
+        echo "Publishing cmp-kustomize-sops to GHCR..."
+        echo "Registry: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest"
+        echo ""
+        echo "Prerequisites:"
+        echo "- Docker buildx installed"
+        echo "- Authenticated with GHCR: docker login ghcr.io"
+        echo "- Push permissions to minbzk/base-images repository"
+        echo ""
+        printf "Continue with publishing? [y/N]: "
+        read -r REPLY
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+          echo "Building multi-platform image and pushing to GHCR..."
+          docker buildx build --platform linux/amd64,linux/arm64 -f images/cmp-kustomize-sops/Dockerfile -t ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest --push .
+          echo "✅ CMP kustomize-sops image published successfully to GHCR!"
+          echo "Cleaning up local test image..."
+          docker rmi rig-cmp-argo-kustomize-sops:test || true
+        else
+          echo "Publishing cancelled."
+          docker rmi rig-cmp-argo-kustomize-sops:test || true
+          exit 1
+        fi
+    silent: true
+
+  # Internal shared task for secret generation
+  _generate-secrets-shared:
+    internal: true
+    silent: true
+    vars:
+      MODE: '{{.MODE}}'  # "infrastructure" or "bootstrap"
+      TEMPLATES_DIR: '{{.TEMPLATES_DIR}}'
+      OUTPUT_DIR: '{{.OUTPUT_DIR}}'
+      CLUSTER_TYPE: '{{.CLUSTER_TYPE}}'
+      CLUSTER_FOLDER: '{{.CLUSTER_FOLDER}}'
+    cmds:
+      - |
+        if [ ! -f ".env-taskfile-current" ]; then
+          echo "❌ No cluster selected. Please run 'task select-cluster' first."
+          exit 1
+        fi
+        if [ ! -f "security/key.txt" ]; then
+          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+          exit 1
+        fi
+      - |
+        echo "🔐 Generating {{.MODE}} secrets for cluster: {{.CLUSTER_NAME}}"
+        echo "📁 Templates directory: {{.TEMPLATES_DIR}}"
+        echo "📁 Output directory: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
+        echo ""
+        
+        # Create output directory
+        mkdir -p "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
+        
+        # Initialize overview file
+        OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
+        if [ -f "$OVERVIEW_FILE" ]; then
+          echo "❌ Overview file already exists: $OVERVIEW_FILE"
+          echo "   This file may contain passwords you haven't saved yet."
+          echo "   Please copy any needed passwords and delete this file before running again."
+          exit 1
+        fi
+        
+        echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}" > "$OVERVIEW_FILE"
+        echo "# Generated on $(date)" >> "$OVERVIEW_FILE"
+        echo "# WARNING: This file contains plaintext passwords - handle with care!" >> "$OVERVIEW_FILE"
+        echo "# This file is added to .gitignore - copy passwords and delete this file manually" >> "$OVERVIEW_FILE"
+        echo "" >> "$OVERVIEW_FILE"
+        
+        # Process each template
+        for template in {{.TEMPLATES_DIR}}/*.yaml; do
+          if [ ! -f "$template" ]; then
+            echo "No template files found in {{.TEMPLATES_DIR}}"
+            continue
+          fi
+          
+          filename=$(basename "$template")
+          
+          # Only process files that are clearly secrets (contain '-secret' or '.secret' in filename)
+          if [[ "$filename" != *"-secret.yaml" ]] && [[ "$filename" != *".secret.yaml" ]]; then
+            echo "Skipping non-secret file: $filename"
+            continue
+          fi
+          
+          echo "Processing: $filename"
+          
+          # Copy template to temp file
+          temp_file=$(mktemp)
+          cp "$template" "$temp_file"
+          
+          # Add filename to overview
+          echo "# === $filename ===" >> "$OVERVIEW_FILE"
+          
+          # Find all @secret-gen annotations and process them
+          grep -n "# @secret-gen:" "$template" | while IFS=':' read -r line_num rest; do
+            # Get the full line
+            full_line=$(sed -n "${line_num}p" "$template")
+            
+            # Extract field name (everything before first colon)
+            field_name=$(echo "$full_line" | cut -d':' -f1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+            
+            # Extract annotation details (everything after # @secret-gen:)
+            annotation=$(echo "$full_line" | sed 's/.*# @secret-gen://')
+            
+            # Parse annotation: type:length[,path=...] or skip
+            if echo "$annotation" | grep -q "skip"; then
+              echo "  Skipping line $line_num (marked with @secret-gen:skip)"
+              continue
+            fi
+            
+            # Parse type and length
+            type_length=$(echo "$annotation" | cut -d',' -f1)
+            password_type=$(echo "$type_length" | cut -d':' -f1)
+            password_length=$(echo "$type_length" | cut -d':' -f2)
+            
+            # Parse path if present
+            path_annotation=""
+            if echo "$annotation" | grep -q "path="; then
+              path_annotation=$(echo "$annotation" | sed 's/.*path=//')
+            fi
+            
+            if [ -z "$field_name" ]; then
+              echo "  ❌ Could not find field name on line $line_num"
+              continue
+            fi
+            
+            # Generate password based on type
+            case "$password_type" in
+              "random")
+                password=$(openssl rand -base64 $password_length | tr -d "=+/" | cut -c1-$password_length)
+                ;;
+              "bcrypt")
+                plain_password=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+                password=$(echo -n "$plain_password" | openssl passwd -6 -stdin)
+                ;;
+              *)
+                echo "❌ Unknown password type: $password_type"
+                continue
+                ;;
+            esac
+            
+            echo "  Generated $password_type password for field: $field_name"
+            
+            # Use yq to replace the field value (more reliable than sed)
+            yq eval ".stringData.\"$field_name\" = \"$password\"" -i "$temp_file"
+            
+            # Add to overview file
+            if [ "$password_type" = "bcrypt" ]; then
+              echo "$field_name: \"$plain_password\"  # Original password (bcrypt hash in secret)" >> "$OVERVIEW_FILE"
+            else
+              echo "$field_name: \"$password\"" >> "$OVERVIEW_FILE"
+            fi
+          done
+          
+          echo "" >> "$OVERVIEW_FILE"
+          
+          # Path substitution not needed - path annotation is only for informational purposes
+          
+          # Copy to final location and encrypt with SOPS using AGE key
+          output_file="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/${filename}.sops.yaml"
+          cp "$temp_file" "$output_file"
+          
+          AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+          echo "  Encrypting: $output_file"
+          sops --encrypt --output-type yaml --age "$AGE_PUBLIC_KEY" --in-place "$output_file"
+          
+          # Clean up temp file
+          rm "$temp_file"
+        done
+        
+        # Generate kustomization.yaml and decrypt-sops.yaml for infrastructure mode
+        if [ "{{.MODE}}" = "infrastructure" ]; then
+          echo "Generating kustomization.yaml and decrypt-sops.yaml..."
+          
+          # Create decrypt-sops.yaml with all generated .sops.yaml files
+          cat > "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/decrypt-sops.yaml" << 'DECRYPT_EOF'
+        apiVersion: viaduct.ai/v1
+        kind: ksops
+        metadata:
+          name: secret-generator
+          annotations:
+            config.kubernetes.io/function: "exec:\n  path: ksops\n"
+        files:
+        DECRYPT_EOF
+          
+          # Add all secret .sops.yaml files to decrypt-sops.yaml
+          for template in {{.TEMPLATES_DIR}}/*.yaml; do
+            if [ -f "$template" ]; then
+              filename=$(basename "$template")
+              # Only include files that are clearly secrets (contain '-secret' or '.secret' in filename)
+              if [[ "$filename" == *"-secret.yaml" ]] || [[ "$filename" == *".secret.yaml" ]]; then
+                echo "  - ${filename}.sops.yaml" >> "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/decrypt-sops.yaml"
+              fi
+            fi
+          done
+          
+          # Create kustomization.yaml
+          cat > "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/kustomization.yaml" << 'KUSTOMIZATION_EOF'
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+
+        generators:
+        - decrypt-sops.yaml
+        KUSTOMIZATION_EOF
+        
+          echo "  ✅ Generated kustomization.yaml and decrypt-sops.yaml"
+        fi
+        
+        echo ""
+        echo "✅ {{.MODE | title}} secrets generated successfully!"
+        echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore)"
+        echo "🗂️  Encrypted secrets: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/"
+        if [ "{{.MODE}}" = "infrastructure" ]; then
+          echo "📝 Configuration files: kustomization.yaml, decrypt-sops.yaml"
+        fi
+        echo ""
+        echo "⚠️  IMPORTANT: The overview file contains plaintext passwords."
+        echo "   Copy any needed passwords and delete the overview file manually for security."
+
+  generate-infrastructure-secrets-for-cluster:
+    desc: "Generate infrastructure secrets for selected cluster from templates (run 'task select-cluster' first)"
+    cmds:
+      - task: _generate-secrets-shared
+        vars:
+          MODE: "infrastructure"
+          TEMPLATES_DIR: "infrastructure/bootstrap/infrastructure/secrets/templates"
+          OUTPUT_DIR: "infrastructure/bootstrap/infrastructure/secrets/config/overlays"
+          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
+          CLUSTER_FOLDER: "{{.INFRASTRUCTURE_CLUSTER_FOLDER}}"
+
+  generate-bootstrap-secrets-for-cluster:
+    desc: "Generate bootstrap secrets for selected cluster from templates (ArgoCD, etc.) (run 'task select-cluster' first)"
+    cmds:
+      - task: _generate-secrets-shared
+        vars:
+          MODE: "bootstrap"
+          TEMPLATES_DIR: "bootstrap/rig-system/kustomize/secrets/templates"
+          OUTPUT_DIR: "bootstrap/rig-system/kustomize/overlays"
+          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
+          CLUSTER_FOLDER: "{{.BOOTSTRAP_CLUSTER_FOLDER}}"
+
+  build-keycloak-custom-mapper:
+    desc: "Build the Keycloak custom mapper JAR"
+    cmds:
+      - |
+        echo "🔨 Building Keycloak custom mapper..."
+        cd keycloak-migration/custom-mapper
+        mvn clean package
+        echo "✅ JAR built: keycloak-migration/custom-mapper/target/keycloak-saml-nameid-mapper-1.0.0.jar"
+    silent: false
+
+  test-keycloak-custom-mapper:
+    desc: "Run unit tests for the Keycloak custom mapper"
+    deps: [build-keycloak-custom-mapper]
+    cmds:
+      - |
+        echo "🧪 Running tests..."
+        cd keycloak-migration/custom-mapper
+        mvn test
+    silent: false
+
+  test-keycloak-custom-mapper-docker:
+    desc: "Test Keycloak custom mapper in standalone Docker container"
+    deps: [build-keycloak-custom-mapper]
+    cmds:
+      - |
+        cd keycloak-migration/custom-mapper
+        ./test-local-docker.sh
+    silent: false
+
+  publish-keycloak-custom-mapper:
+    desc: "Build and publish the Keycloak custom mapper JAR to GitHub Container Registry"
+    deps: [build-keycloak-custom-mapper]
+    cmds:
+      - |
+        echo "📦 Publishing Keycloak custom mapper to GHCR..."
+        echo "Registry: ghcr.io/minbzk/base-images/keycloak-custom-mappers/keycloak-saml-nameid-mapper-1.0.0.jar"
+        echo ""
+        echo "Prerequisites:"
+        echo "- GitHub CLI (gh) installed"
+        echo "- Authenticated with GitHub: gh auth login"
+        echo "- Push permissions to minbzk/base-images repository"
+        echo ""
+        printf "Continue with publishing? [y/N]: "
+        read -r REPLY
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+          echo "Creating release and uploading JAR..."
+
+          # Create a GitHub release for the JAR
+          cd keycloak-migration/custom-mapper
+
+          # Tag and release version
+          VERSION="v1.0.0"
+          REPO="minbzk/base-images"
+
+          # Check if release exists, if not create it
+          if ! gh release view "$VERSION" --repo "$REPO" 2>/dev/null; then
+            echo "Creating release $VERSION..."
+            gh release create "$VERSION" \
+              --repo "$REPO" \
+              --title "Keycloak Custom Mapper $VERSION" \
+              --notes "Unrestricted XPath Attribute Mapper for Keycloak - allows extracting SAML NameID to user attributes"
+          fi
+
+          # Upload JAR as release asset
+          echo "Uploading JAR to release..."
+          gh release upload "$VERSION" \
+            --repo "$REPO" \
+            --clobber \
+            target/keycloak-saml-nameid-mapper-1.0.0.jar
+
+          echo "✅ Keycloak custom mapper published successfully!"
+          echo "📥 Download URL: https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.0.0.jar"
+        else
+          echo "Publishing cancelled."
+          exit 1
+        fi
+    silent: false
+
+  export-keycloak-users:
+    desc: "Export all Keycloak users with credentials and federation data"
+    vars:
+      OUTPUT_FILE: '{{.OUTPUT_FILE | default "users.json"}}'
+      MAX_USERS: '{{.MAX_USERS | default "10000"}}'
+      AUTH_REALM: '{{.AUTH_REALM | default "master"}}'
+    cmds:
+      - |
+        # Prompt for inputs
+        printf "Enter Keycloak host [http://localhost:8080]: "
+        read KEYCLOAK_URL
+        KEYCLOAK_URL=${KEYCLOAK_URL:-http://localhost:8080}
+
+        printf "Enter realm to export from: "
+        read EXPORT_REALM
+
+        printf "Enter Keycloak admin password: "
+        read -s ADMIN_PASSWORD
+        echo ""
+
+        printf "Enter output directory [./exports]: "
+        read OUTPUT_DIR
+        OUTPUT_DIR=${OUTPUT_DIR:-./exports}
+
+        if [ -z "$EXPORT_REALM" ]; then
+          echo "❌ Realm is required"
+          exit 1
+        fi
+
+        if [ -z "$ADMIN_PASSWORD" ]; then
+          echo "❌ Admin password is required"
+          exit 1
+        fi
+
+        echo ""
+        echo "🔐 Authenticating with Keycloak..."
+        TOKEN=$(curl -s -X POST "$KEYCLOAK_URL/realms/{{.AUTH_REALM}}/protocol/openid-connect/token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "username=admin" \
+          -d "password=$ADMIN_PASSWORD" \
+          -d "grant_type=password" \
+          -d "client_id=admin-cli" | jq -r '.access_token')
+
+        if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+          echo "❌ Authentication failed. Please check credentials."
+          exit 1
+        fi
+
+        echo "✅ Authentication successful"
+
+        mkdir -p "$OUTPUT_DIR"
+        OUTPUT_PATH="$OUTPUT_DIR/{{.OUTPUT_FILE}}"
+
+        echo "📥 Exporting users from realm: $EXPORT_REALM"
+        echo "📁 Output location: $OUTPUT_PATH"
+
+        # Export users with full data
+        HTTP_STATUS=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TOKEN" \
+          "$KEYCLOAK_URL/admin/realms/$EXPORT_REALM/users?max={{.MAX_USERS}}&briefRepresentation=false" \
+          -o "$OUTPUT_PATH.tmp")
+
+        HTTP_CODE=$(echo "$HTTP_STATUS" | tail -n1)
+
+        if [ "$HTTP_CODE" != "200" ]; then
+          echo "❌ Export failed with HTTP status: $HTTP_CODE"
+          cat "$OUTPUT_PATH.tmp"
+          rm -f "$OUTPUT_PATH.tmp"
+          exit 1
+        fi
+
+        # Format JSON for readability
+        jq '.' "$OUTPUT_PATH.tmp" > "$OUTPUT_PATH" 2>/dev/null || mv "$OUTPUT_PATH.tmp" "$OUTPUT_PATH"
+        rm -f "$OUTPUT_PATH.tmp"
+
+        USER_COUNT=$(jq '. | length' "$OUTPUT_PATH")
+        echo "✅ Successfully exported $USER_COUNT users to $OUTPUT_PATH"
+
+        # Check for federation links
+        FED_USERS=$(jq '[.[] | select(.federationLink != null)] | length' "$OUTPUT_PATH")
+        echo "📊 Found $FED_USERS federated users"
+
+        # Export realm config for IDPs reference
+        echo "📥 Exporting realm configuration for IDP reference..."
+        curl -s -H "Authorization: Bearer $TOKEN" \
+          "$KEYCLOAK_URL/admin/realms/$EXPORT_REALM" | \
+          jq '{realm: .realm, identityProviders: .identityProviders, identityProviderMappers: .identityProviderMappers}' \
+          > "$OUTPUT_DIR/realm-idps.json"
+
+        echo "✅ Realm IDP configuration saved to $OUTPUT_DIR/realm-idps.json"
+        echo ""
+        echo "📋 Export complete. Files created:"
+        echo "   - $OUTPUT_PATH (users with credentials)"
+        echo "   - $OUTPUT_DIR/realm-idps.json (IDP configurations)"

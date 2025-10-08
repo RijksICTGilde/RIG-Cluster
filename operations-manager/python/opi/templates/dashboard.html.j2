@@ -1,0 +1,632 @@
+{% extends "base.html.j2" %}
+
+{#
+  Dashboard - Self Service Portal
+  
+  Overzicht van alle projecten, deployments en resource metrics
+  met real-time monitoring en status updates.
+#}
+
+{% block page_title %}Dashboard - Self Service Portal{% endblock %}
+
+
+{% block content %}
+<c-layout-flow gap="xl">
+    
+    {# Page Header #}
+    <div>
+        <c-heading type="h1" textContent="Dashboard (dit is dummy / fake!)" />
+        <p class="rvo-text--lg">
+            Hier vindt u een overzicht van al uw projecten, deployments en resource usage.
+        </p>
+    </div>
+
+    {# Quick Stats Cards #}
+    <div class="stats-grid">
+        <c-card class="stat-card" outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="stat-header">
+                    <c-icon icon="applicatie" size="lg" />
+                    <span class="stat-number">12</span>
+                </div>
+                <c-heading type="h3" textContent="Actieve Projecten" />
+                <p class="rvo-text--sm rvo-text--subtle">3 nieuwe deze maand</p>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card class="stat-card" outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="stat-header">
+                    <c-icon icon="server" size="lg" />
+                    <span class="stat-number">47</span>
+                </div>
+                <c-heading type="h3" textContent="Deployments" />
+                <p class="rvo-text--sm rvo-text--subtle">5 updates vandaag</p>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card class="stat-card" outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="stat-header">
+                    <c-icon icon="user" size="lg" />
+                    <span class="stat-number">89</span>
+                </div>
+                <c-heading type="h3" textContent="Gebruikers" />
+                <p class="rvo-text--sm rvo-text--subtle">12 online nu</p>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card class="stat-card" outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="stat-header">
+                    <c-icon icon="vinkje" size="lg" />
+                    <span class="stat-number status-healthy">99.8{{ '%' }}</span>
+                </div>
+                <c-heading type="h3" textContent="Uptime" />
+                <p class="rvo-text--sm rvo-text--subtle">Laatste 30 dagen</p>
+            </c-layout-flow>
+        </c-card>
+    </div>
+
+    {# Resource Usage Section #}
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" textContent="Resource Usage" />
+        
+        <div class="metrics-grid">
+            {# CPU Usage Gauge #}
+            <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3" textContent="CPU Usage" />
+                    <div class="gauge-container">
+                        <canvas id="cpu-gauge" class="gauge"></canvas>
+                        <div class="gauge-value">
+                            <span class="gauge-percentage">67{{ '%' }}</span>
+                            <span class="gauge-label">van 24 cores</span>
+                        </div>
+                    </div>
+                    <p class="rvo-text--sm rvo-text--subtle">Gemiddeld over alle nodes</p>
+                </c-layout-flow>
+            </c-card>
+            
+            {# Memory Usage Gauge #}
+            <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3" textContent="Memory Usage" />
+                    <div class="gauge-container">
+                        <canvas id="memory-gauge" class="gauge"></canvas>
+                        <div class="gauge-value">
+                            <span class="gauge-percentage">84{{ '%' }}</span>
+                            <span class="gauge-label">van 64GB</span>
+                        </div>
+                    </div>
+                    <p class="rvo-text--sm rvo-text--subtle">Totaal cluster geheugen</p>
+                </c-layout-flow>
+            </c-card>
+            
+            {# Storage Usage Gauge #}
+            <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3" textContent="Storage Usage" />
+                    <div class="gauge-container">
+                        <canvas id="storage-gauge" class="gauge"></canvas>
+                        <div class="gauge-value">
+                            <span class="gauge-percentage">45{{ '%' }}</span>
+                            <span class="gauge-label">van 2TB</span>
+                        </div>
+                    </div>
+                    <p class="rvo-text--sm rvo-text--subtle">Persistent volumes</p>
+                </c-layout-flow>
+            </c-card>
+            
+            {# Network Traffic #}
+            <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3" textContent="Network Traffic" />
+                    <div class="chart-container">
+                        <canvas id="network-chart" class="chart"></canvas>
+                    </div>
+                    <p class="rvo-text--sm rvo-text--subtle">Inbound/Outbound per minuut</p>
+                </c-layout-flow>
+            </c-card>
+        </div>
+    </c-layout-flow>
+
+    {# Projects Overview #}
+    <c-layout-flow gap="lg">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <c-heading type="h2" textContent="Mijn Projecten" />
+            <c-button 
+                label="Nieuw Project"
+                kind="primary"
+                size="md"
+                showIcon="before"
+                icon="plus"
+                @click="window.location.href='/new-project'" />
+        </div>
+        
+        <div class="projects-grid">
+            {# Project 1 #}
+            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <div class="project-header">
+                        <c-heading type="h3" textContent="webshop-backend" />
+                        <div class="project-status status-running">Running</div>
+                    </div>
+                    <p class="rvo-text--sm">E-commerce backend API met PostgreSQL en Redis</p>
+                    <div class="project-metrics">
+                        <div class="metric">
+                            <c-icon icon="server" size="sm" />
+                            <span>3 components</span>
+                        </div>
+                        <div class="metric">
+                            <c-icon icon="user" size="sm" />
+                            <span>1,247 visitors</span>
+                        </div>
+                        <div class="metric">
+                            <c-icon icon="waarschuwing" size="sm" />
+                            <span>2 errors</span>
+                        </div>
+                    </div>
+                    <div class="project-actions">
+                        <c-button label="Dashboard" kind="tertiary" size="sm" />
+                        <c-button label="Logs" kind="tertiary" size="sm" />
+                        <c-button label="Settings" kind="tertiary" size="sm" />
+                    </div>
+                </c-layout-flow>
+            </c-card>
+            
+            {# Project 2 #}
+            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <div class="project-header">
+                        <c-heading type="h3" textContent="analytics-dashboard" />
+                        <div class="project-status status-deploying">Deploying</div>
+                    </div>
+                    <p class="rvo-text--sm">Real-time analytics dashboard met ClickHouse</p>
+                    <div class="project-metrics">
+                        <div class="metric">
+                            <c-icon icon="server" size="sm" />
+                            <span>2 components</span>
+                        </div>
+                        <div class="metric">
+                            <c-icon icon="user" size="sm" />
+                            <span>456 visitors</span>
+                        </div>
+                        <div class="metric">
+                            <c-icon icon="vinkje" size="sm" />
+                            <span>0 errors</span>
+                        </div>
+                    </div>
+                    <div class="project-actions">
+                        <c-button label="Dashboard" kind="tertiary" size="sm" />
+                        <c-button label="Logs" kind="tertiary" size="sm" />
+                        <c-button label="Settings" kind="tertiary" size="sm" />
+                    </div>
+                </c-layout-flow>
+            </c-card>
+            
+            {# Project 3 #}
+            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <div class="project-header">
+                        <c-heading type="h3" textContent="mobile-app-api" />
+                        <div class="project-status status-error">Error</div>
+                    </div>
+                    <p class="rvo-text--sm">REST API voor mobiele applicatie</p>
+                    <div class="project-metrics">
+                        <div class="metric">
+                            <c-icon icon="server" size="sm" />
+                            <span>1 component</span>
+                        </div>
+                        <div class="metric">
+                            <c-icon icon="user" size="sm" />
+                            <span>89 visitors</span>
+                        </div>
+                        <div class="metric">
+                            <c-icon icon="waarschuwing" size="sm" />
+                            <span>15 errors</span>
+                        </div>
+                    </div>
+                    <div class="project-actions">
+                        <c-button label="Dashboard" kind="tertiary" size="sm" />
+                        <c-button label="Logs" kind="tertiary" size="sm" />
+                        <c-button label="Settings" kind="tertiary" size="sm" />
+                    </div>
+                </c-layout-flow>
+            </c-card>
+        </div>
+    </c-layout-flow>
+
+    {# Recent Activity #}
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" textContent="Recente Activiteit" />
+        
+        <c-card outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="md">
+                {# Activity Item 1 #}
+                <div class="activity-item">
+                    <div class="activity-icon activity-success">
+                        <c-icon icon="plus" size="sm" />
+                    </div>
+                    <div class="activity-content">
+                        <p><strong>webshop-backend</strong> deployment succesvol bijgewerkt naar versie 2.1.4</p>
+                        <p class="rvo-text--sm rvo-text--subtle">2 minuten geleden</p>
+                    </div>
+                </div>
+                
+                {# Activity Item 2 #}
+                <div class="activity-item">
+                    <div class="activity-icon activity-warning">
+                        <c-icon icon="waarschuwing" size="sm" />
+                    </div>
+                    <div class="activity-content">
+                        <p><strong>mobile-app-api</strong> heeft hoge error rate (15 errors in laatste 5 minuten)</p>
+                        <p class="rvo-text--sm rvo-text--subtle">8 minuten geleden</p>
+                    </div>
+                </div>
+                
+                {# Activity Item 3 #}
+                <div class="activity-item">
+                    <div class="activity-icon activity-info">
+                        <c-icon icon="info" size="sm" />
+                    </div>
+                    <div class="activity-content">
+                        <p><strong>analytics-dashboard</strong> nieuwe component wordt gedeployed</p>
+                        <p class="rvo-text--sm rvo-text--subtle">15 minuten geleden</p>
+                    </div>
+                </div>
+                
+                {# Activity Item 4 #}
+                <div class="activity-item">
+                    <div class="activity-icon activity-success">
+                        <c-icon icon="user" size="sm" />
+                    </div>
+                    <div class="activity-content">
+                        <p>Nieuwe gebruiker <strong>jan.vries@odc.nl</strong> toegevoegd aan project <strong>webshop-backend</strong></p>
+                        <p class="rvo-text--sm rvo-text--subtle">1 uur geleden</p>
+                    </div>
+                </div>
+                
+                <div style="text-align: center; margin-top: var(--rvo-space-md);">
+                    <c-button label="Alle activiteit bekijken" kind="tertiary" size="sm" />
+                </div>
+            </c-layout-flow>
+        </c-card>
+    </c-layout-flow>
+</c-layout-flow>
+{% endblock %}
+
+{% block additional_styles %}
+<style>
+    /* Stats Grid */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--rvo-space-lg);
+        margin-bottom: var(--rvo-space-xl);
+    }
+    
+    .stat-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .stat-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .stat-number {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--rvo-color-hemelblauw);
+    }
+    
+    .status-healthy {
+        color: var(--rvo-color-groen);
+    }
+
+    /* Metrics Grid */
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: var(--rvo-space-lg);
+    }
+    
+    .metric-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    /* Gauge Styles */
+    .gauge-container {
+        position: relative;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 150px;
+    }
+    
+    .gauge {
+        max-width: 150px;
+        max-height: 150px;
+    }
+    
+    .gauge-value {
+        position: absolute;
+        text-align: center;
+        top: 60%;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+    
+    .gauge-percentage {
+        display: block;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--rvo-color-hemelblauw);
+    }
+    
+    .gauge-label {
+        font-size: 0.875rem;
+        color: var(--rvo-color-grijs-700);
+    }
+
+    /* Chart Styles */
+    .chart-container {
+        height: 120px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .chart {
+        max-width: 100%;
+        max-height: 120px;
+    }
+
+    /* Projects Grid */
+    .projects-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: var(--rvo-space-lg);
+    }
+    
+    .project-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    
+    .project-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    .project-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .project-status {
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .status-running {
+        background: var(--rvo-color-groen-50);
+        color: var(--rvo-color-groen);
+    }
+    
+    .status-deploying {
+        background: var(--rvo-color-oranje-50);
+        color: var(--rvo-color-oranje);
+    }
+    
+    .status-error {
+        background: var(--rvo-color-rood-50);
+        color: var(--rvo-color-rood);
+    }
+    
+    .project-metrics {
+        display: flex;
+        gap: var(--rvo-space-md);
+        flex-wrap: wrap;
+    }
+    
+    .metric {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-xs);
+        font-size: 0.875rem;
+        color: var(--rvo-color-grijs-700);
+    }
+    
+    .project-actions {
+        display: flex;
+        gap: var(--rvo-space-sm);
+        flex-wrap: wrap;
+    }
+
+    /* Activity Styles */
+    .activity-item {
+        display: flex;
+        gap: var(--rvo-space-md);
+        align-items: flex-start;
+        padding-bottom: var(--rvo-space-md);
+        border-bottom: 1px solid var(--rvo-color-grijs-200);
+    }
+    
+    .activity-item:last-of-type {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+    
+    .activity-icon {
+        flex-shrink: 0;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .activity-success {
+        background: var(--rvo-color-groen-50);
+        color: var(--rvo-color-groen);
+    }
+    
+    .activity-warning {
+        background: var(--rvo-color-oranje-50);
+        color: var(--rvo-color-oranje);
+    }
+    
+    .activity-info {
+        background: var(--rvo-color-hemelblauw-50);
+        color: var(--rvo-color-hemelblauw);
+    }
+    
+    .activity-content {
+        flex: 1;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .stats-grid,
+        .metrics-grid,
+        .projects-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Initialize gauges and charts when the page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        initializeGauges();
+        initializeCharts();
+    });
+
+    function initializeGauges() {
+        // CPU Gauge
+        createGauge('cpu-gauge', 67, 'CPU Usage', '#1f5e99');
+        
+        // Memory Gauge
+        createGauge('memory-gauge', 84, 'Memory Usage', '#e17000');
+        
+        // Storage Gauge
+        createGauge('storage-gauge', 45, 'Storage Usage', '#007bc7');
+    }
+    
+    function createGauge(canvasId, percentage, label, color) {
+        const canvas = document.getElementById(canvasId);
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 150;
+        canvas.height = 150;
+        
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const radius = 60;
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw background arc
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, Math.PI, 2 * Math.PI);
+        ctx.strokeStyle = '#f0f0f0';
+        ctx.lineWidth = 12;
+        ctx.stroke();
+        
+        // Draw progress arc
+        const angle = Math.PI + (Math.PI * percentage / 100);
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, Math.PI, angle);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 12;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        
+        // Draw center circle
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+    }
+    
+    function initializeCharts() {
+        // Network Traffic Chart
+        const networkCtx = document.getElementById('network-chart').getContext('2d');
+        new Chart(networkCtx, {
+            type: 'line',
+            data: {
+                labels: ['10:00', '10:05', '10:10', '10:15', '10:20', '10:25', '10:30'],
+                datasets: [{
+                    label: 'Inbound',
+                    data: [12, 19, 15, 25, 22, 18, 24],
+                    borderColor: '#007bc7',
+                    backgroundColor: 'rgba(0, 123, 199, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Outbound',
+                    data: [8, 11, 9, 15, 14, 11, 16],
+                    borderColor: '#e17000',
+                    backgroundColor: 'rgba(225, 112, 0, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        display: false
+                    },
+                    x: {
+                        display: false
+                    }
+                }
+            }
+        });
+    }
+    
+    // Auto-refresh data every 30 seconds
+    setInterval(function() {
+        // In a real application, this would fetch fresh data from the API
+        updateGauges();
+    }, 30000);
+    
+    function updateGauges() {
+        // Generate some random variations for demo purposes
+        const cpuVariation = Math.floor(Math.random() * 10) - 5;
+        const memoryVariation = Math.floor(Math.random() * 10) - 5;
+        const storageVariation = Math.floor(Math.random() * 5) - 2;
+        
+        createGauge('cpu-gauge', Math.max(0, Math.min(100, 67 + cpuVariation)), 'CPU Usage', '#1f5e99');
+        createGauge('memory-gauge', Math.max(0, Math.min(100, 84 + memoryVariation)), 'Memory Usage', '#e17000');
+        createGauge('storage-gauge', Math.max(0, Math.min(100, 45 + storageVariation)), 'Storage Usage', '#007bc7');
+    }
+</script>
+{% endblock %}

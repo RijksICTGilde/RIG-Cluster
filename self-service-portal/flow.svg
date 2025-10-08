@@ -1,0 +1,122 @@
+<svg viewBox="0 0 800 700" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background -->
+    <rect width="800" height="700" fill="#f8f9fa" rx="10" ry="10"/>
+
+    <!-- Title -->
+    <text x="400" y="30" font-family="Arial, sans-serif" font-size="22" text-anchor="middle" font-weight="bold">Self-Service Platform Workflow</text>
+
+    <!-- Portal Login Section -->
+    <rect x="50" y="60" width="700" height="80" fill="#E1ECF7" stroke="#4285F4" stroke-width="2" rx="5" ry="5"/>
+    <text x="400" y="90" font-family="Arial, sans-serif" font-size="16" text-anchor="middle" font-weight="bold">User Authentication via Keycloak</text>
+    <circle cx="100" cy="100" r="20" fill="#4285F4"/>
+    <text x="100" y="105" font-family="Arial, sans-serif" font-size="16" fill="white" text-anchor="middle">👤</text>
+    <path d="M130,100 L200,100" stroke="#4285F4" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <rect x="200" y="80" width="120" height="40" fill="#FFFFFF" stroke="#4285F4" stroke-width="1" rx="5" ry="5"/>
+    <text x="260" y="105" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Login</text>
+    <path d="M330,100 L400,100" stroke="#4285F4" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <rect x="400" y="80" width="250" height="40" fill="#FFFFFF" stroke="#4285F4" stroke-width="1" rx="5" ry="5"/>
+    <text x="525" y="105" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">Self-Service Portal Dashboard</text>
+
+    <!-- Project Creation Section -->
+    <rect x="50" y="160" width="700" height="180" fill="#E5F6DF" stroke="#34A853" stroke-width="2" rx="5" ry="5"/>
+    <text x="400" y="185" font-family="Arial, sans-serif" font-size="16" text-anchor="middle" font-weight="bold">Project Creation / Management</text>
+
+    <!-- Project Details -->
+    <rect x="70" y="200" width="320" height="120" fill="#FFFFFF" stroke="#34A853" stroke-width="1" rx="5" ry="5"/>
+
+    <text x="90" y="225" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Project Details:</text>
+
+    <text x="100" y="250" font-family="Arial, sans-serif" font-size="12">• Project Name</text>
+    <text x="100" y="275" font-family="Arial, sans-serif" font-size="12">• Users &amp; Roles Assignment</text>
+    <text x="100" y="300" font-family="Arial, sans-serif" font-size="12">• Namespace Configuration</text>
+
+    <circle cx="330" cy="235" r="15" fill="#34A853"/>
+    <text x="330" y="240" font-family="Arial, sans-serif" font-size="14" fill="white" text-anchor="middle">✓</text>
+
+    <!-- Environment Type -->
+    <rect x="410" y="200" width="320" height="50" fill="#FFFFFF" stroke="#34A853" stroke-width="1" rx="5" ry="5"/>
+    <text x="430" y="230" font-family="Arial, sans-serif" font-size="14">Environment:</text>
+
+    <rect x="530" y="210" width="30" height="30" fill="#FFFFFF" stroke="#34A853" stroke-width="1"/>
+    <text x="545" y="230" font-family="Arial, sans-serif" font-size="14" text-anchor="middle">✓</text>
+    <text x="570" y="230" font-family="Arial, sans-serif" font-size="14">Development</text>
+
+    <rect x="670" y="210" width="30" height="30" fill="#FFFFFF" stroke="#34A853" stroke-width="1"/>
+    <text x="710" y="230" font-family="Arial, sans-serif" font-size="14">Production</text>
+
+    <!-- Service Selection -->
+    <rect x="410" y="260" width="320" height="60" fill="#FFFFFF" stroke="#34A853" stroke-width="1" rx="5" ry="5"/>
+    <text x="430" y="280" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Submit →</text>
+
+    <!-- Services Selection Section -->
+    <rect x="50" y="360" width="700" height="180" fill="#FEEED7" stroke="#FBBC04" stroke-width="2" rx="5" ry="5"/>
+    <text x="400" y="385" font-family="Arial, sans-serif" font-size="16" text-anchor="middle" font-weight="bold">Services Selection</text>
+
+    <!-- Service icons -->
+    <rect x="70" y="400" width="100" height="120" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1" rx="5" ry="5"/>
+    <text x="120" y="430" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">PostgreSQL</text>
+    <text x="120" y="450" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Schema name:</text>
+    <rect x="80" y="460" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+    <text x="120" y="490" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">User:</text>
+    <rect x="80" y="500" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+
+    <rect x="180" y="400" width="100" height="120" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1" rx="5" ry="5"/>
+    <text x="230" y="430" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">MinIO</text>
+    <text x="230" y="450" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Bucket name:</text>
+    <rect x="190" y="460" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+    <text x="230" y="490" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">User:</text>
+    <rect x="190" y="500" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+
+    <rect x="290" y="400" width="100" height="120" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1" rx="5" ry="5"/>
+    <text x="340" y="430" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">Redis</text>
+    <text x="340" y="450" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Instance:</text>
+    <rect x="300" y="460" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+    <text x="340" y="490" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">User:</text>
+    <rect x="300" y="500" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+
+    <rect x="400" y="400" width="100" height="120" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1" rx="5" ry="5"/>
+    <text x="450" y="430" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">RabbitMQ</text>
+    <text x="450" y="450" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Queue name:</text>
+    <rect x="410" y="460" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+    <text x="450" y="490" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">User:</text>
+    <rect x="410" y="500" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+
+    <rect x="510" y="400" width="100" height="120" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1" rx="5" ry="5"/>
+    <text x="560" y="430" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">Kafka</text>
+    <text x="560" y="450" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Topic:</text>
+    <rect x="520" y="460" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+    <text x="560" y="490" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">User:</text>
+    <rect x="520" y="500" width="80" height="20" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1"/>
+
+    <rect x="620" y="400" width="100" height="120" fill="#FFFFFF" stroke="#FBBC04" stroke-width="1" rx="5" ry="5"/>
+    <text x="670" y="450" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">+ More</text>
+    <text x="670" y="470" font-family="Arial, sans-serif" font-size="12" text-anchor="middle">Services</text>
+
+    <!-- Git Integration Section -->
+    <rect x="50" y="560" width="700" height="120" fill="#FADBE1" stroke="#EA4335" stroke-width="2" rx="5" ry="5"/>
+    <text x="400" y="585" font-family="Arial, sans-serif" font-size="16" text-anchor="middle" font-weight="bold">Automated GitOps/Infrastructure Updates</text>
+
+    <rect x="70" y="600" width="200" height="60" fill="#FFFFFF" stroke="#EA4335" stroke-width="1" rx="5" ry="5"/>
+    <text x="170" y="625" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" font-weight="bold">Git Repository</text>
+    <text x="170" y="645" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">• Namespace Configs</text>
+
+    <rect x="300" y="600" width="200" height="60" fill="#FFFFFF" stroke="#EA4335" stroke-width="1" rx="5" ry="5"/>
+    <text x="400" y="625" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" font-weight="bold">Vault</text>
+    <text x="400" y="645" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">• Service Credentials</text>
+
+    <rect x="530" y="600" width="200" height="60" fill="#FFFFFF" stroke="#EA4335" stroke-width="1" rx="5" ry="5"/>
+    <text x="630" y="625" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" font-weight="bold">Service Configurations</text>
+    <text x="630" y="645" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">• Database/Bucket Creation</text>
+
+    <!-- Arrows connecting sections -->
+    <path d="M400,140 L400,160" stroke="#000000" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <path d="M400,340 L400,360" stroke="#000000" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <path d="M400,540 L400,560" stroke="#000000" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+    <!-- Arrowhead marker -->
+    <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#000000"/>
+        </marker>
+    </defs>
+</svg>

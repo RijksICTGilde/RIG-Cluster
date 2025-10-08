@@ -1,0 +1,28 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Unit test / coverage reports
+python/tests/
+python/.pytest_cache/
+python/.coverage
+python/htmlcov/
+
+# Local development files
+.env.local
+.env.development
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+*.log
+*.tmp
+
+# Don't ignore the keys directory in parent folder
+!../keys/

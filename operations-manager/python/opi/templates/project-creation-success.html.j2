@@ -1,0 +1,99 @@
+<c-page title="Project Succesvol Aangemaakt" lang="nl" bodyClass="rvo-theme rvo-responsive">
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header
+            text="Zelfservice voor Applicatie Deployment"
+            subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+            link="/"/>
+
+        <c-layout-flow gap="xl" size="lg">
+            {# MenuBar #}
+            <c-menubar
+                size="md"
+                :useIcons="true"
+                iconPlacement="before"
+                maxWidth="lg"
+                :items="menu_items"/>
+
+            <c-layout-flow gap="2xl" size="lg">
+                <main>
+                    <c-layout-flow gap="xl">
+                        
+                        {# Success Message #}
+                        <c-alert
+                            kind="success"
+                            heading="Project succesvol aangemaakt!"
+                            messages="Uw project is succesvol verwerkt en alle resources zijn aangemaakt."/>
+
+                        <c-content>
+                            <c-heading type="h1" textContent="Project {{ project_name }} is klaar"/>
+                            
+                            <c-layout-flow gap="md">
+                                <p class="rvo-paragraph rvo-paragraph--lg">
+                                    Gefeliciteerd! Uw project <strong>{{ project_name }}</strong> is succesvol aangemaakt en geconfigureerd.
+                                </p>
+                                
+                                {% if project_description %}
+                                <p class="rvo-paragraph">
+                                    <strong>Beschrijving:</strong> {{ project_description }}
+                                </p>
+                                {% endif %}
+
+                                <c-layout-flow gap="sm">
+                                    <p class="rvo-paragraph">
+                                        <strong>Projectdetails:</strong>
+                                    </p>
+                                    <ul class="rvo-ul">
+                                        <li>Aantal componenten: {{ components_count }}</li>
+                                        {% if team_members_count > 0 %}
+                                        <li>Teamleden: {{ team_members_count }}</li>
+                                        {% endif %}
+                                        <li>Verwerkingstijd: {{ elapsed_time }} seconden</li>
+                                        <li>Projectbestand: {{ file_path }}</li>
+                                    </ul>
+                                </c-layout-flow>
+
+                                <c-alert
+                                    kind="info"
+                                    heading="Volgende stappen"
+                                    messages="Uw project wordt nu automatisch uitgerold via ArgoCD. Het kan enkele minuten duren voordat alle resources beschikbaar zijn."/>
+                                    
+                                <c-layout-flow gap="md">
+                                    <c-action-group
+                                        :actions="[
+                                            {
+                                                'type': 'link',
+                                                'kind': 'primary',
+                                                'size': 'md',
+                                                'label': 'Ga naar Dashboard',
+                                                'showIcon': 'after',
+                                                'icon': 'pijl-naar-rechts',
+                                                'url': '/dashboard'
+                                            },
+                                            {
+                                                'type': 'link',
+                                                'kind': 'secondary',
+                                                'size': 'md', 
+                                                'label': 'Projectoverzicht',
+                                                'showIcon': 'after',
+                                                'icon': 'pijl-naar-rechts',
+                                                'url': '/projects'
+                                            },
+                                            {
+                                                'type': 'link',
+                                                'kind': 'tertiary',
+                                                'size': 'md',
+                                                'label': 'Nieuw Project',
+                                                'url': '/projects/new'
+                                            }
+                                        ]"/>
+                                </c-layout-flow>
+                            </c-layout-flow>
+                        </c-content>
+                        
+                    </c-layout-flow>
+                </main>
+            </c-layout-flow>
+        </c-layout-flow>
+    </div>
+</c-page>

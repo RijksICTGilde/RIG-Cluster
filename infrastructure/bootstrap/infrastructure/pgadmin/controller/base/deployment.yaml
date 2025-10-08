@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin
+  namespace: rig-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgadmin
+  template:
+    metadata:
+      labels:
+        app: pgadmin
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 5050
+        runAsGroup: 5050
+        fsGroup: 5050
+        fsGroupChangePolicy: "Always"
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pgadmin
+          image: dpage/pgadmin4:9.8.0
+          imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - DAC_OVERRIDE
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+              ephemeral-storage: "2Gi"
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: pgadmin-credentials
+                  key: PGADMIN_DEFAULT_EMAIL
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgadmin-credentials
+                  key: PGADMIN_DEFAULT_PASSWORD
+            - name: PGADMIN_DISABLE_POSTFIX
+              value: "True"
+            - name: PGADMIN_CONFIG_PASSWORD_LENGTH_MIN
+              value: "12"
+            - name: PGADMIN_CONFIG_LOGIN_BANNER
+              value: "'Unauthorised use is strictly forbidden.'"
+            - name: PGADMIN_CONFIG_MAX_SESSION_IDLE_TIME
+              value: "20"
+            - name: PGADMIN_CONFIG_ALLOW_SAVE_PASSWORD
+              value: "False"
+            - name: PGADMIN_CONFIG_MFA_ENABLED
+              value: "False"
+            - name: PGADMIN_CONFIG_MFA_FORCE_REGISTRATION
+              value: "False"
+            - name: PGADMIN_CONFIG_MFA_SUPPORTED_METHODS
+              value: '["authenticator"]'
+            - name: PGADMIN_CONFIG_LOG_ROTATION_MAX_LOG_FILES
+              value: "10"
+            - name: PGADMIN_CONFIG_LOG_ROTATION_SIZE
+              value: "10"
+            - name: PGADMIN_LISTEN_PORT
+              value: "8080"
+          readinessProbe:
+            httpGet:
+              path: /misc/ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /misc/ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: pgadmin-data
+              mountPath: /var/lib/pgadmin
+      volumes:
+        - name: pgadmin-data
+          persistentVolumeClaim:
+            claimName: pgadmin

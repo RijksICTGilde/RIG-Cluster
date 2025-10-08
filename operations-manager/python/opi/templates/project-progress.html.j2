@@ -1,0 +1,565 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Project Progress - {{ project_name }}{% endblock %}
+
+{% block content %}
+<c-page>
+    <c-layout-flow gap="xl">
+                {# Header #}
+                <c-layout-flow gap="md">
+                    <c-heading type="h1" textContent="Project Voortgang"/>
+                    <p>Project: <strong>{{ project_name }}</strong></p>
+                </c-layout-flow>
+
+                {# Progress Bar Section #}
+                <c-card outline="true" padding="md">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3" textContent="Algemene Voortgang"/>
+                        <div class="progress-wrapper">
+                            <div class="progress-container">
+                                <div id="progress-bar" class="progress-bar" style="width: {{ initial_progress }}%">
+                                    <span id="progress-text">{{ initial_progress }}%</span>
+                                </div>
+                            </div>
+                        </div>
+                        <p id="current-step">{{ current_step }}</p>
+                    </c-layout-flow>
+                </c-card>
+
+                {# Tasks Section #}
+                <c-card outline="true" padding="md">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3" textContent="Taken Overzicht"/>
+                        <div id="tasks-container">
+                            <div id="tasks-list" class="tasks-list">
+                                <p>Taken worden geladen...</p>
+                            </div>
+                        </div>
+                    </c-layout-flow>
+                </c-card>
+
+                {# Web Addresses Section #}
+                <c-card outline="true" padding="md" id="web-addresses-section" style="display: none;">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3" textContent="Applicatie URLs"/>
+                        <div id="web-addresses-list" class="web-addresses-list">
+                            <p>Web adressen worden geladen...</p>
+                        </div>
+                    </c-layout-flow>
+                </c-card>
+
+                {# Logs Section #}
+                <c-card outline="true" padding="md" id="logs-section" style="display: none;">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3" textContent="Deployment Logs"/>
+                        <pre id="logs-content" class="logs-output"></pre>
+                    </c-layout-flow>
+                </c-card>
+
+                {# Events Section #}
+                <c-card outline="true" padding="md" id="events-section" style="display: none;">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3" textContent="Kubernetes Events"/>
+                        <div id="events-list" class="events-list"></div>
+                    </c-layout-flow>
+                </c-card>
+
+                {# Success Message #}
+                <div id="success-message" style="display: none;">
+                    <c-alert kind="success" heading="Project Succesvol Aangemaakt!" 
+                             content="Uw project is klaar voor gebruik."/>
+                </div>
+
+                {# Error Message #}
+                <div id="error-message" style="display: none;">
+                    <c-alert kind="error" heading="Er is een fout opgetreden" 
+                             content="Er ging iets mis tijdens het aanmaken van uw project.">
+                        <div id="error-details"></div>
+                    </c-alert>
+                </div>
+
+                {# Actions #}
+                <c-action-group
+                    :actions="[
+                        {
+                            'type': 'link',
+                            'kind': 'primary',
+                            'size': 'md',
+                            'label': 'Terug naar Dashboard',
+                            'url': '/dashboard',
+                            'icon': 'home'
+                        }
+                    ]"/>
+            </c-layout-flow>
+</c-page>
+
+<style>
+    .progress-wrapper {
+        margin: 1rem 0;
+    }
+    
+    .progress-container {
+        width: 100%;
+        height: 30px;
+        background-color: #f0f0f0;
+        border-radius: 15px;
+        overflow: hidden;
+        position: relative;
+    }
+    
+    .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #007bc7 0%, #0099ff 100%);
+        border-radius: 15px;
+        transition: width 0.5s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        min-width: 40px;
+    }
+    
+    .tasks-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .task-item {
+        padding: 0.75rem;
+        background: #f8f9fa;
+        border-radius: 4px;
+        border-left: 4px solid #007bc7;
+    }
+    
+    .task-item.completed {
+        border-left-color: #28a745;
+        background: #f1f8f4;
+    }
+    
+    .task-item.failed {
+        border-left-color: #dc3545;
+        background: #fdf3f4;
+    }
+    
+    .task-item.running {
+        border-left-color: #ffc107;
+        background: #fff9e6;
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.7; }
+        100% { opacity: 1; }
+    }
+    
+    .task-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.25rem;
+    }
+    
+    .task-name {
+        font-weight: 500;
+    }
+    
+    .task-status {
+        font-size: 0.9rem;
+        padding: 0.125rem 0.5rem;
+        border-radius: 12px;
+        background: white;
+    }
+    
+    .task-time {
+        font-size: 0.85rem;
+        color: #666;
+    }
+    
+    .subtask-item {
+        margin-left: 2rem;
+        margin-top: 0.5rem;
+        padding: 0.5rem;
+        background: white;
+        border-left: 2px solid #ddd;
+        border-radius: 4px;
+    }
+    
+    .subtask-item.completed {
+        border-left-color: #28a745;
+    }
+    
+    .subtask-item.running {
+        border-left-color: #ffc107;
+    }
+    
+    .logs-output {
+        background: #1e1e1e;
+        color: #00ff00;
+        padding: 1rem;
+        border-radius: 4px;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9rem;
+        max-height: 300px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+    }
+    
+    .events-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .event-item {
+        padding: 0.75rem;
+        background: white;
+        border-radius: 4px;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .event-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 0.25rem;
+    }
+    
+    .event-type {
+        font-weight: 500;
+        padding: 0.125rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
+    }
+    
+    .event-type.Normal {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .event-type.Warning {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .event-time {
+        font-size: 0.85rem;
+        color: #666;
+    }
+    
+    .event-message {
+        color: #333;
+    }
+    
+    .web-addresses-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    
+    .web-address-item {
+        padding: 1rem;
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        transition: all 0.2s ease;
+    }
+    
+    .web-address-item:hover {
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        transform: translateY(-1px);
+    }
+    
+    .web-address-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+    
+    .web-address-component {
+        font-weight: 600;
+        color: #007bc7;
+        font-size: 1.1rem;
+    }
+    
+    .web-address-status {
+        padding: 0.25rem 0.75rem;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .web-address-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1rem;
+        background: linear-gradient(90deg, #007bc7 0%, #0099ff 100%);
+        color: white;
+        text-decoration: none;
+        border-radius: 6px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+    
+    .web-address-link:hover {
+        background: linear-gradient(90deg, #005a9e 0%, #0077cc 100%);
+        text-decoration: none;
+        color: white;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0,123,199,0.3);
+    }
+    
+    .web-address-link:visited {
+        color: white;
+    }
+    
+    .web-address-link::after {
+        content: ' →';
+        font-size: 0.9rem;
+    }
+</style>
+
+<script>
+    const TASK_ID = '{{ task_id }}';
+    const POLL_INTERVAL = 2000; // 2 seconds
+    let pollTimer = null;
+
+    // Status icons mapping
+    const STATUS_ICONS = {
+        'pending': '',
+        'running': '',
+        'completed': '',
+        'failed': ''
+    };
+
+    // Status text mapping
+    const STATUS_TEXT = {
+        'pending': 'Wachtend',
+        'running': 'Bezig',
+        'completed': 'Voltooid',
+        'failed': 'Mislukt'
+    };
+
+    function updateProgressBar(progress) {
+        const validProgress = (progress !== undefined && progress !== null && !isNaN(progress)) ? progress : 0;
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        
+        if (progressBar) {
+            progressBar.style.width = validProgress + '%';
+        }
+        if (progressText) {
+            progressText.textContent = validProgress + '%';
+        }
+    }
+
+    function updateCurrentStep(step) {
+        const stepElement = document.getElementById('current-step');
+        if (stepElement && step) {
+            stepElement.innerHTML = `<strong>Huidige stap:</strong> ${step}`;
+        }
+    }
+
+    function renderTasks(tasks) {
+        const tasksList = document.getElementById('tasks-list');
+        if (!tasksList) return;
+        
+        if (!tasks || tasks.length === 0) {
+            tasksList.innerHTML = '<span>Geen taken beschikbaar.</span>';
+            return;
+        }
+        
+        let html = '';
+        tasks.forEach(task => {
+            const statusClass = task.status.toLowerCase();
+            const statusText = STATUS_TEXT[task.status] || task.status;
+            
+            html += `
+                <div class="task-item ${statusClass}">
+                    <div class="task-header">
+                        <span class="task-name">${task.name}</span>
+                        <span class="task-status">${statusText}</span>
+                    </div>
+                    ${task.created_at ? `<div class="task-time">Gestart: ${new Date(task.created_at).toLocaleTimeString('nl-NL')}</div>` : ''}
+                    ${task.completed_at ? `<div class="task-time">Voltooid: ${new Date(task.completed_at).toLocaleTimeString('nl-NL')}</div>` : ''}
+                    ${task.error ? `<div style="color: red; margin-top: 0.5rem;">${task.error}</div>` : ''}
+            `;
+            
+            // Render subtasks
+            if (task.subtasks && task.subtasks.length > 0) {
+                task.subtasks.forEach(subtask => {
+                    const subtaskClass = subtask.status.toLowerCase();
+                    const subtaskText = STATUS_TEXT[subtask.status] || subtask.status;
+                    
+                    html += `
+                        <div class="subtask-item ${subtaskClass}">
+                            <div class="task-header">
+                                <span class="task-name">${subtask.name}</span>
+                                <span class="task-status">${subtaskText}</span>
+                            </div>
+                            ${subtask.error ? `<div style="color: red; font-size: 0.85rem;">${subtask.error}</div>` : ''}
+                        </div>
+                    `;
+                });
+            }
+            
+            html += '</div>';
+        });
+        
+        tasksList.innerHTML = html;
+    }
+
+    function renderLogs(logs) {
+        if (!logs || logs.length === 0) return;
+        
+        const logsSection = document.getElementById('logs-section');
+        const logsContent = document.getElementById('logs-content');
+        
+        if (logsSection && logsContent) {
+            logsContent.textContent = logs.join('\n');
+            logsSection.style.display = 'block';
+            // Auto-scroll to bottom
+            logsContent.scrollTop = logsContent.scrollHeight;
+        }
+    }
+
+    function renderEvents(events) {
+        if (!events || events.length === 0) return;
+        
+        const eventsSection = document.getElementById('events-section');
+        const eventsList = document.getElementById('events-list');
+        
+        if (eventsSection && eventsList) {
+            let html = '';
+            events.forEach(event => {
+                const eventTime = new Date(event.time).toLocaleTimeString('nl-NL');
+                html += `
+                    <div class="event-item">
+                        <div class="event-header">
+                            <span class="event-type ${event.type}">${event.type} - ${event.reason}</span>
+                            <span class="event-time">${eventTime}</span>
+                        </div>
+                        <div class="event-message">${event.message}</div>
+                        ${event.object ? `<div style="font-size: 0.85rem; color: #666; margin-top: 0.25rem;">${event.object}</div>` : ''}
+                    </div>
+                `;
+            });
+            eventsList.innerHTML = html;
+            eventsSection.style.display = 'block';
+        }
+    }
+
+    function renderWebAddresses(webAddresses) {
+        if (!webAddresses || Object.keys(webAddresses).length === 0) return;
+        
+        const webAddressesSection = document.getElementById('web-addresses-section');
+        const webAddressesList = document.getElementById('web-addresses-list');
+        
+        if (webAddressesSection && webAddressesList) {
+            let html = '';
+            Object.entries(webAddresses).forEach(([componentName, webAddress]) => {
+                // Extract domain from URL for display
+                let displayUrl = webAddress;
+                try {
+                    const url = new URL(webAddress);
+                    displayUrl = url.hostname + (url.pathname !== '/' ? url.pathname : '');
+                } catch (e) {
+                    // Keep original if URL parsing fails
+                }
+                
+                html += `
+                    <div class="web-address-item">
+                        <div class="web-address-header">
+                            <span class="web-address-component">${componentName}</span>
+                            <span class="web-address-status">Actief</span>
+                        </div>
+                        <div>
+                            <a href="${webAddress}" target="_blank" rel="noopener noreferrer" class="web-address-link">
+                                Open ${displayUrl}
+                            </a>
+                        </div>
+                    </div>
+                `;
+            });
+            webAddressesList.innerHTML = html;
+            webAddressesSection.style.display = 'block';
+        }
+    }
+
+    function showSuccess() {
+        const successMessage = document.getElementById('success-message');
+        if (successMessage) {
+            successMessage.style.display = 'block';
+        }
+    }
+
+    function showError(error) {
+        const errorMessage = document.getElementById('error-message');
+        const errorDetails = document.getElementById('error-details');
+        
+        if (errorMessage) {
+            errorMessage.style.display = 'block';
+        }
+        if (errorDetails && error) {
+            errorDetails.textContent = error;
+        }
+    }
+
+    async function pollTaskStatus() {
+        try {
+            const response = await fetch(`/api/tasks/${TASK_ID}/status`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            console.log('Received data:', data);
+            
+            // Update all UI elements
+            updateProgressBar(data.progress);
+            updateCurrentStep(data.current_step);
+            renderTasks(data.tasks);
+            renderLogs(data.logs);
+            renderEvents(data.events);
+            renderWebAddresses(data.web_addresses);
+            
+            // Show namespace monitoring if available
+            if (data.namespace && (data.logs || data.events)) {
+                updateCurrentStep(`Live monitoring actief voor namespace: ${data.namespace}`);
+            }
+            
+            // Handle completion
+            if (data.status === 'completed') {
+                clearInterval(pollTimer);
+                showSuccess();
+            } else if (data.status === 'failed') {
+                clearInterval(pollTimer);
+                showError(data.error || 'Project aanmaak mislukt');
+            }
+            
+        } catch (error) {
+            console.error('Error polling task status:', error);
+            if (error.message.includes('404')) {
+                clearInterval(pollTimer);
+                showError('Task niet gevonden');
+            }
+        }
+    }
+
+    // Initialize progress bar
+    updateProgressBar({{ initial_progress }});
+
+    // Start polling
+    pollTimer = setInterval(pollTaskStatus, POLL_INTERVAL);
+    
+    // Initial poll
+    setTimeout(pollTaskStatus, 100);
+</script>
+{% endblock %}

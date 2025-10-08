@@ -1,0 +1,10 @@
+apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: secret-generator
+  annotations:
+    config.kubernetes.io/function: "exec:\n  path: ksops\n"
+files:
+  - ../../github-repo-for-argo-applications.sops.yaml
+  - argocd-repo-secret.yaml.sops.yaml
+  - argocd-admin-secret.yaml.sops.yaml

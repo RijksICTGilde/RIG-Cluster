@@ -1,0 +1,256 @@
+{#
+  Improved ROOS Form - Project Creation
+  
+  This demonstrates the proper usage of jinja-roos-components for building forms
+  using the newly created form field components that match RVO patterns.
+#}
+
+<c-page title="Project Aanmaken - ROOS (Verbeterd)" 
+        lang="nl"
+        bodyClass="rvo-theme rvo-responsive">
+    
+    {# Header with proper RVO styling #}
+    <c-header title="ROOS Operations Manager" 
+              subtitle="Project Management Platform" />
+    
+    {# Main Content with proper layout #}
+    <main class="rvo-max-width-layout rvo-max-width-layout--lg">
+        <c-layout-flow gap="xl">
+            
+            {# Page Header Section #}
+            <section class="rvo-page-header">
+                <c-card background="color" backgroundColor="hemelblauw" padding="lg">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h1" textContent="Nieuw Project Aanmaken" noMargins="true" 
+                                  class="rvo-heading--wit" />
+                        <p class="rvo-text--lg" style="color: rgba(255,255,255,0.9);">
+                            Maak een nieuw Kubernetes project aan in de geselecteerde cluster omgeving
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+            </section>
+            
+            {# Alert for Important Information #}
+            <c-alert kind="info"
+                     heading="Project configuratie"
+                     content="Controleer alle gegevens voordat u het project aanmaakt. Na aanmaak kunnen sommige instellingen niet meer gewijzigd worden."
+                     maxWidth="lg" />
+            
+            {# Main Form #}
+            <c-card outline="true" padding="xl">
+                <form method="POST" action="/api/projects/create-basic">
+                    <c-layout-flow gap="xl">
+                        
+                        {# Basic Project Information Section #}
+                        <c-fieldset legend="Basisgegevens">
+                            <c-layout-flow gap="lg">
+                                
+                                <c-text-input-field 
+                                    id="project-name"
+                                    name="project-name"
+                                    label="Projectnaam"
+                                    type="text"
+                                    placeholder="mijn-project"
+                                    required="true"
+                                    helperText="Gebruik alleen kleine letters, cijfers en koppeltekens. De naam moet uniek zijn binnen de cluster." />
+                                
+                                <c-text-input-field 
+                                    id="project-description"
+                                    name="project-description"
+                                    label="Projectbeschrijving"
+                                    type="text"
+                                    placeholder="Korte beschrijving van het project"
+                                    helperText="Optionele beschrijving die helpt bij het identificeren van het project." />
+                                
+                            </c-layout-flow>
+                        </c-fieldset>
+                        
+                        {# Infrastructure Configuration Section #}
+                        <c-fieldset legend="Infrastructuur configuratie">
+                            <c-layout-flow gap="lg">
+                                
+                                <c-select-field 
+                                    id="cluster"
+                                    name="cluster"
+                                    label="Doelcluster"
+                                    required="true"
+                                    placeholder="Selecteer een cluster"
+                                    helperText="De Kubernetes cluster waar het project gedeployed wordt."
+                                    :options="[
+                                        {'label': 'Development Cluster (dev-k8s)', 'value': 'dev-k8s'},
+                                        {'label': 'Staging Cluster (staging-k8s)', 'value': 'staging-k8s'},
+                                        {'label': 'Production Cluster (prod-k8s)', 'value': 'prod-k8s'}
+                                    ]" />
+                                
+                                <c-text-input-field 
+                                    id="image-url"
+                                    name="image-url"
+                                    label="Container Image"
+                                    type="text"
+                                    placeholder="nginxdemos/hello"
+                                    required="true"
+                                    helperText="Docker image inclusief tag (bijv. nginx:latest, registry.example.com/app:v1.0)" />
+                                
+                                <c-grid columns="two" gap="lg">
+                                    <c-text-input-field 
+                                        id="cpu-limit"
+                                        name="cpu-limit"
+                                        label="CPU Limiet"
+                                        type="text"
+                                        placeholder="500m"
+                                        size="sm"
+                                        helperText="CPU limiet in millicores (bijv. 100m, 1000m)" />
+                                    
+                                    <c-text-input-field 
+                                        id="memory-limit"
+                                        name="memory-limit"
+                                        label="Geheugen Limiet"
+                                        type="text"
+                                        placeholder="512Mi"
+                                        size="sm"
+                                        helperText="Geheugen limiet (bijv. 256Mi, 1Gi)" />
+                                </c-grid>
+                                
+                            </c-layout-flow>
+                        </c-fieldset>
+                        
+                        {# Service Configuration Section #}
+                        <c-fieldset legend="Service configuratie">
+                            <c-layout-flow gap="lg">
+                                
+                                <div class="rvo-form-group">
+                                    <span class="utrecht-form-label">Netwerk opties</span>
+                                    <c-layout-flow gap="md">
+                                        <c-checkbox id="expose-web" 
+                                                  name="expose-web" 
+                                                  label="Publiceren op web (Ingress)" />
+                                        
+                                        <c-checkbox id="internal-service"
+                                                  name="internal-service"
+                                                  label="Interne service (ClusterIP)" />
+                                    </c-layout-flow>
+                                </div>
+                                
+                                <div class="rvo-form-group">
+                                    <span class="utrecht-form-label">Authenticatie en beveiliging</span>
+                                    <c-layout-flow gap="md">
+                                        <c-checkbox id="sso-rijk"
+                                                  name="sso-rijk"
+                                                  label="SSO-Rijk integratie" />
+                                        
+                                        <c-checkbox id="network-policy"
+                                                  name="network-policy"
+                                                  label="Network Policy toepassen" />
+                                    </c-layout-flow>
+                                </div>
+                                
+                            </c-layout-flow>
+                        </c-fieldset>
+                        
+                        {# Advanced Settings Section #}
+                        <details class="rvo-details">
+                            <summary class="rvo-details__summary">
+                                <c-icon icon="pijl-naar-rechts" size="sm" />
+                                Geavanceerde instellingen
+                            </summary>
+                            <div class="rvo-details__content">
+                                <c-layout-flow gap="lg">
+                                    
+                                    <c-select-field 
+                                        id="restart-policy"
+                                        name="restart-policy"
+                                        label="Restart Policy"
+                                        value="Always"
+                                        :options="[
+                                            {'label': 'Always', 'value': 'Always'},
+                                            {'label': 'OnFailure', 'value': 'OnFailure'},
+                                            {'label': 'Never', 'value': 'Never'}
+                                        ]"
+                                        helperText="Beleid voor het herstarten van containers bij failures." />
+                                    
+                                    <c-text-input-field 
+                                        id="replicas"
+                                        name="replicas"
+                                        label="Aantal Replicas"
+                                        type="number"
+                                        value="1"
+                                        size="sm"
+                                        helperText="Aantal pod instanties die actief moeten zijn." />
+                                    
+                                </c-layout-flow>
+                            </div>
+                        </details>
+                        
+                        {# Form Actions with ActionGroup #}
+                        <c-action-group 
+                            alignment="space-between"
+                            gap="lg"
+                            :actions="[
+                                {'type': 'link', 'href': '/projects', 'label': 'Terug naar overzicht', 'class': 'rvo-link--subtle'},
+                                {'type': 'button', 'buttonType': 'button', 'kind': 'tertiary', 'label': 'Opslaan als concept'},
+                                {'type': 'button', 'buttonType': 'submit', 'kind': 'primary', 'label': 'Project Aanmaken'}
+                            ]" />
+                        
+                    </c-layout-flow>
+                </form>
+            </c-card>
+            
+            {# Information Cards #}
+            <c-grid columns="two" gap="lg">
+                
+                <c-card title="Hulp nodig?" outline="true" padding="lg">
+                    <c-layout-flow gap="md">
+                        <p>Meer informatie over het aanmaken van projecten vindt u in de documentatie.</p>
+                        <c-action-group 
+                            :actions="[
+                                {'type': 'link', 'href': '#', 'label': 'Documentatie bekijken', 'class': 'rvo-link--with-icon'},
+                                {'type': 'link', 'href': '#', 'label': 'Contact opnemen', 'class': 'rvo-link'}
+                            ]" />
+                    </c-layout-flow>
+                </c-card>
+                
+                <c-card title="Project overzicht" outline="true" padding="lg">
+                    <c-layout-flow gap="md">
+                        <p>Na aanmaak kunt u uw project beheren via het project dashboard.</p>
+                        <c-data-list 
+                            :items="[
+                                {'term': 'Status monitoring', 'value': 'Real-time status updates'},
+                                {'term': 'Logs', 'value': 'Centralized logging'},
+                                {'term': 'Metrics', 'value': 'Performance monitoring'},
+                                {'term': 'Backup', 'value': 'Automated backups'}
+                            ]" />
+                    </c-layout-flow>
+                </c-card>
+                
+            </c-grid>
+            
+        </c-layout-flow>
+    </main>
+    
+    {# Footer #}
+    <c-footer maxWidth="lg"
+              :primaryMenu="[
+                  {
+                      'label': 'ROOS Platform',
+                      'items': [
+                          {'content': 'Dashboard', 'link': '/'},
+                          {'content': 'Projecten', 'link': '/projects'},
+                          {'content': 'Clusters', 'link': '/clusters'},
+                          {'content': 'Monitoring', 'link': '/monitoring'}
+                      ]
+                  },
+                  {
+                      'label': 'Ondersteuning',
+                      'items': [
+                          {'content': 'Documentatie', 'link': '/docs'},
+                          {'content': 'API Reference', 'link': '/api'},
+                          {'content': 'Contact', 'link': '/contact'}
+                      ]
+                  }
+              ]"
+              :secondaryMenu="[
+                  {'content': 'Privacy', 'link': '#'},
+                  {'content': '© 2024 RVO Operations Team', 'link': ''}
+              ]" />
+    
+</c-page>

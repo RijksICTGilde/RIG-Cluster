@@ -1,0 +1,20 @@
+# TODO
+
+#  So.. if I would updated the managed roles in the Cluster, would the database create and destroy them, or is this at startup only? If so, we could create users in the cluster, use secrets for passwords and use references in the database to the users?
+#
+#  Edit
+#  Great question! Yes, managed roles are fully dynamic - they are reconciled continuously, not just at startup. This means you can add, remove, or modify users declaratively and CloudNativePG will apply the changes to the running cluster.
+#
+#  How Managed Roles Work
+#  Declarative role management ensures that PostgreSQL instances align with the spec. If a user modifies role attributes directly in the database, the CloudNativePG operator will revert those changes during the next reconciliation cycle
+#  Database Role Management - CloudNativePG
+#  .
+#
+#  Dynamic Lifecycle Management
+#When you update the managed.roles section in your Cluster spec:
+#
+#  Add a new role → CloudNativePG creates it in PostgreSQL
+#Remove a role → CloudNativePG can delete it (with ensure: absent)
+#  Modify role attributes → CloudNativePG updates the existing role
+#  Change passwords → CloudNativePG updates the password
+

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-ssh-known-hosts-cm
+  namespace: rig-system
+  labels:
+    app.kubernetes.io/name: argocd-ssh-known-hosts-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  ssh_known_hosts: |
+    [host.docker.internal]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPFqsuqS2xpfZhw3asVMuZqQfa9RNcv6LcaPnSqMMzuo
+    [host.docker.internal]:2222 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDoTeOhwhJKYN7JCMZ7TpUFrqzqfoqnrxDrzewK5m7OXa/vkES2yuDCCFc0MAPtZzbucoKpdteWwWKfsQt8bc8LqWEolSs5/EAVfmnQWThGiCwEAgO/zScBSu4zDA4pxEzSKB0FCqAmR/38ra0RDE5A93lQ7bHmPMIX4OWfIj5lyha/Hp9O9SJk9vMg1dXiKEQZrhISXIlG+quKRCpF5+mUZvpg5OQgsvKzEKL8x/zmO+HGTizngVYxFxwnYG5ggVUDdrEnSubYD+fzE/Tx8AQsZbvHvgoBDiJ3HHUzx8a1MvOuaMv6REDVyrbXvbr/kle//g7TaQYRmBfxlvfjxDGX0ODAE2oNq/OzG8cMSyX7wFO3tBj6Y2dAWdyRPjEXh1eiNQqfGRA+A064JkgSSbbq93jxDbO96eKge3XnQKEblbHip0d4brVms+QIlAsjhRSF9Sd8sFRoqaWAanKx79TUe90RaEb19JHZERhsEvaoK/P5TOydIDr0ei55FPppulc=

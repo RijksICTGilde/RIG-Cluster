@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-prd-operations
+
+generators:
+  - decrypt-sops.yaml
+
+resources:
+- namespace.yaml
+- argocd-deployment.yaml
+- network-policies/argocd-network-policy.yaml
+- ../../operations-manager/overlays/odcn-production
+- argocd-application-production-infrastructure.yaml
+- argocd-user-applications.yaml
+
+components:
+- ../../components/sops-plugin
+
+patches:
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: replace
+        path: /spec/repo/sidecarContainers/0/image
+        value: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest
+  # TESTING: use the userid assigned by openshift to our CMP instead of 999
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: replace
+        path: /spec/repo/sidecarContainers/0/securityContext/runAsUser
+        value: 1001620000
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/sidecarContainers/0/env
+        value:
+        - name: KUBERNETES_SERVICE_HOST
+          value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl

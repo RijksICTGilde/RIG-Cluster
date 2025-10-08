@@ -1,0 +1,194 @@
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: argocd
+  namespace: rig-system
+spec:
+  extraConfig:
+    timeout.reconciliation: "6m"
+    timeout.hard.reconciliation: "0s"
+    server.repo.server.timeout.seconds: "180"
+    controller.status.processors: "40"
+    controller.operation.processors: "20"
+    controller.repo.server.timeout.seconds: "180"
+    controller.kubectl.parallelism.limit: "15"
+    controller.sharding.algorithm: "round-robin"
+    reposerver.parallelism.limit: "15"
+  server:
+    host: argocd.rig.prd1.gn2.quattro.rijksapps.nl
+    autoscale:
+      enabled: false
+    grpc:
+      ingress:
+        enabled: false
+    ingress:
+      enabled: false
+    resources:
+      limits:
+        cpu: 150m
+        memory: 2048Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+    insecure: true
+    route:
+      annotations:
+        # limit access to within VPN of ODCN
+        haproxy.router.openshift.io/ip_whitelist: 147.181.0.0/16
+      enabled: true
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+    service:
+      type: ''
+  grafana:
+    enabled: false
+    ingress:
+      enabled: false
+    route:
+      enabled: false
+  resourceTrackingMethod: annotation
+  monitoring:
+    enabled: false
+  notifications:
+    enabled: false
+  prometheus:
+    enabled: false
+    ingress:
+      enabled: false
+    route:
+      enabled: false
+  initialSSHKnownHosts: {}
+  applicationSet:
+    resources:
+      limits:
+        cpu: 100m
+        memory: 1Gi
+      requests:
+        cpu: 50m
+        memory: 256Mi
+  rbac:
+    defaultPolicy: 'role:none'
+    policy: |-
+      # Access Control
+      p, role:none, applications, get, */*, deny
+      p, role:none, certificates, get, *, deny
+      p, role:none, clusters, get, *, deny
+      p, role:none, repositories, get, *, deny
+      p, role:none, projects, get, *, deny
+      p, role:none, accounts, get, *, deny
+      p, role:none, gpgkeys, get, *, deny
+      g, system:cluster-admins, role:admin
+      g, rig-prd-admin-group, role:admin
+      g, rig-prd-developer-group, role:admin
+      g, rig-prd-viewer-group, role:readonly
+    scopes: '[groups]'
+  sso:
+    dex:
+      openShiftOAuth: true
+      resources:
+        limits:
+          cpu: 100m
+          memory: 256Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+    provider: dex
+  repo:
+    env:
+      - name: ARGOCD_EXEC_TIMEOUT
+        value: "180"
+      - name: ARGOCD_GIT_ATTEMPTS_COUNT
+        value: "3"
+      - name: ARGOCD_HELM_ALLOW_CONCURRENCY
+        value: "true"
+    resources:
+      limits:
+        cpu: 100m
+        memory: 2048Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+    serviceaccount: argocd-argocd-server
+    sidecarContainers:
+      - name: cmp-server
+        command:
+          - /var/run/argocd/argocd-cmp-server
+        image: rig-cmp-argo-kustomize-sops:latest
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: KUSTOMIZE_PLUGIN_HOME
+            value: /etc/kustomize/plugin
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 999
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+          - mountPath: /var/run/argocd
+            name: var-files
+          - mountPath: /home/argocd/cmp-server/plugins
+            name: plugins
+          - mountPath: /home/argocd/cmp-server/config
+            name: cmp-plugin
+          - mountPath: /tmp
+            name: cmp-tmp
+    volumes:
+      - name: cmp-plugin
+        configMap:
+          name: cmp-plugin
+      - name: cmp-tmp
+        emptyDir: {}
+  resourceHealthChecks:
+    - check: |
+        hs = {}
+        if obj.status ~= nil and obj.status.readyInstances ~= nil then
+            if obj.status.readyInstances == obj.spec.instances then
+                hs.status = "Healthy"
+                hs.message = obj.status.phase
+                return hs
+            end
+            if obj.status.instancesStatus.failed ~= nil then
+                hs.status = "Degraded"
+                hs.message = obj.status.phase
+                return hs
+            end
+        end
+        hs.status = "Progressing"
+        hs.message = obj.status.phase
+        return hs
+      group: postgresql.cnpg.io
+      kind: Cluster
+  ha:
+    enabled: false
+  tls:
+    ca: {}
+  redis:
+    resources:
+      limits:
+        cpu: 100m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+  controller:
+    env:
+      - name: ARGOCD_K8S_CLIENT_QPS
+        value: "150"
+      - name: ARGOCD_K8S_CLIENT_BURST
+        value: "300"
+    processors: {}
+    resources:
+      limits:
+        cpu: 100m
+        memory: 2Gi
+      requests:
+        cpu: 50m
+        memory: 256Mi
+    sharding:
+      enabled: true
+      replicas: 2

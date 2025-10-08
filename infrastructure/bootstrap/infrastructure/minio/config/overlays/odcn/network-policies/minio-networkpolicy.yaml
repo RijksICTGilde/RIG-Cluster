@@ -1,0 +1,61 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio-access
+  namespace: rig-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  
+  ingress:
+    # Allow S3 API access from within the rig-system namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-system
+      ports:
+        - protocol: TCP
+          port: 9000  # MinIO S3 API
+        - protocol: TCP
+          port: 9001  # MinIO Console
+    
+    # Allow S3 API access from all other namespaces
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 9000  # MinIO S3 API
+          
+    # Allow ingress controller access
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 9001
+  
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+          
+    # Allow metrics export
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9091  # Prometheus metrics

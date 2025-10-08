@@ -1,0 +1,201 @@
+name: robbert1
+clusters:
+  - odcn-community-production
+  - odcn-community-staging
+
+# Repository definitions for different environments
+repositories:
+  - name: production
+    url: "https://github.com/company/k8s-production-manifests/applications/robbert1"
+    branch: "main"
+    token: "${secret:production-git-token}"
+  - name: staging
+    url: "https://github.com/company/k8s-staging-manifests/applications/robbert1"
+    branch: "main"
+    token: "${secret:staging-git-token}"
+  - name: my-shared-services
+    url: "https://github.com/company/k8s-my-shared-services/services"
+    branch: "main"
+    token: "${secret:my-shared-services-git-token}"
+
+services:
+  - name: postgres
+    ports:
+      inbound: [5432]
+    schemas:
+      - name: schema1
+        users:
+          - base-name: postgresuser1
+            permissions: ["read", "write", "create"]
+      - name: schema2  # additional schema example
+        users:
+          - base-name: postgresuser2
+            permissions: ["read"]
+
+  - name: minio
+    ports:
+      inbound: [9000, 9001]  # S3 API, console
+    buckets:
+      - name: my-bucket
+        users:
+          - base-name: miniouser1
+            permissions: ["read", "write", "list"]
+          - base-name: readonly-user
+            permissions: ["read", "list"]
+
+components:
+  - name: frontend
+    type: deployment
+    ports:
+      inbound: [8080]
+      outbound: [443, 80]  # for external API calls, CDN, etc.
+    sso-rijk: true
+    uses-services: []  # no direct service dependencies
+    uses-components: [backend]
+
+  - name: backend
+    type: deployment
+    ports:
+      inbound: [8080]
+      outbound: [5432, 443, 9000]  # postgres, external APIs, minio
+    uses-services: [postgres, minio]
+
+# Same file continues with implementations section
+deployments:
+  - name: production
+    cluster: odcn-community-production
+    namespace: robbert1-prod # should this be here? yes..probably
+    repository: production
+    # No shared services - dedicated resources with rig operating in namespace
+    components:
+      - reference: frontend
+        image: some.storage/frontend:v1.2.3
+        ingress: www.myapp.example.com
+        requests:
+          cpu: 1000m
+          memory: 1Gi
+      - reference: backend
+        image: some.storage/backend:v1.2.3
+        ingress: www.myapp.example.com/api
+        requests:
+          cpu: 500m
+          memory: 512Mi
+    services:
+      - reference: postgres
+        requests:
+          cpu: 2000m
+          memory: 4Gi
+          storage: 100Gi
+      - reference: minio
+        requests:
+          cpu: 1000m
+          memory: 2Gi
+          storage: 500Gi
+
+  - name: staging
+    cluster: odcn-community-staging
+    namespace: robbert1-staging
+    repository: staging-gitops
+    my-shared-services: true  # uses project-specific shared services
+    # Uses my-shared-services - no rig operating needed in this namespace
+    deployments:
+      - reference: frontend
+        image: some.storage/frontend:staging-latest
+        ingress: robbert1.staging.company.com
+        requests:
+          cpu: 500m
+          memory: 512Mi
+      - reference: backend
+        image: some.storage/backend:staging-latest
+        ingress: robbert1.staging.company.com/api
+        requests:
+          cpu: 250m
+          memory: 256Mi
+
+  # Feature branch implementations - can be generated dynamically
+  - name: feature-PR-123
+    cluster: odcn-community-staging
+    namespace: robbert1-feature-pr-123
+    repository: staging-gitops
+    template: feature-branch
+    rig-shared-services: true  # uses true shared services available to anyone
+    # Uses rig-shared-services - no rig operating needed in this namespace
+    deployments:
+      - reference: frontend
+        image: some.storage/frontend:feature-123-abc456
+        ingress: robbert1-pr123.staging.company.com
+      - reference: backend
+        image: some.storage/backend:feature-123-abc456
+        ingress: robbert1-pr123.staging.company.com/api
+
+# Shared services configuration - separate section to avoid duplication
+shared-services:
+  staging:
+    cluster: odcn-community-staging
+    namespace: shared-services-staging
+    repository: my-shared-services-repo
+    services:
+      - reference: postgres
+        requests:
+          cpu: 4000m
+          memory: 8Gi
+          storage: 1Ti
+      - reference: minio
+        requests:
+          cpu: 2000m
+          memory: 4Gi
+          storage: 2Ti
+
+# My-shared services configuration - project-specific shared services
+my-shared-services:
+  staging:
+    cluster: odcn-community-staging
+    namespace: robbert1-shared-services-staging
+    repository: my-shared-services-repo
+    # Rig operating runs here to manage services for this project
+    services:
+      - reference: postgres
+        requests:
+          cpu: 4000m
+          memory: 8Gi
+          storage: 1Ti
+      - reference: minio
+        requests:
+          cpu: 2000m
+          memory: 4Gi
+          storage: 2Ti
+
+# Rig-shared services configuration - platform-wide shared services
+cluster-shared-services:
+  staging:
+    cluster: odcn-community-staging
+    namespace: rig-shared-services-staging
+    # Pre-configured platform services - no rig operating needed for consumers
+    # Services are managed centrally by platform team
+    services:
+      - reference: postgres
+        # Platform-managed, no resource requests needed here
+      - reference: minio
+        # Platform-managed, no resource requests needed here
+
+# Simple template definitions (not operators, just YAML patterns)
+templates:
+  feature-branch:
+    cluster: odcn-community-staging
+    namespace: "robbert1-feature-{{FEATURE_NAME}}"
+    repository: staging-gitops
+    rig-shared-services: true  # features use true shared services
+    # Uses rig-shared-services - no rig operating needed in this namespace
+    deployments:
+      - reference: frontend
+        image: "some.storage/frontend:{{FEATURE_TAG}}"
+        ingress: "robbert1-{{FEATURE_NAME}}.staging.company.com"
+        requests:
+          cpu: 250m
+          memory: 256Mi
+      - reference: backend
+        image: "some.storage/backend:{{FEATURE_TAG}}"
+        ingress: "robbert1-{{FEATURE_NAME}}.staging.company.com/api"
+        requests:
+          cpu: 125m
+          memory: 128Mi

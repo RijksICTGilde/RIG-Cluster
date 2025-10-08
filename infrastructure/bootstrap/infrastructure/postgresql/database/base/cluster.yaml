@@ -1,0 +1,60 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: rig-db
+  namespace: rig-system
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: true
+  
+  # Using existing storage class provided by the cluster
+  storage:
+    size: 1Gi
+    storageClass: standard
+  
+  # Resource limits
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  
+  # Bootstrap initial database
+  bootstrap:
+    initdb:
+      database: postgres
+      owner: postgres
+      secret:
+        name: postgres-admin-credentials
+
+  managed:
+    roles:
+      - name: keycloak
+        ensure: present
+        login: true
+        createdb: true
+        passwordSecret:
+          name: keycloak-db-credentials  # This must exist
+
+  # Enable backups if the cluster provides S3-compatible storage
+  # backup:
+  #   barmanObjectStore:
+  #     endpointURL: https://s3-endpoint.example.com
+  #     s3Credentials:
+  #       accessKeyId:
+  #         name: s3-backup-credentials
+  #         key: ACCESS_KEY_ID
+  #       secretAccessKey:
+  #         name: s3-backup-credentials
+  #         key: ACCESS_SECRET_KEY
+  #     destinationPath: s3://rig-backups/rig-db
+  #     wal:
+  #       compression: gzip
+  #       maxParallel: 2
+      
+  # Enable monitoring
+  monitoring:
+    enablePodMonitor: true

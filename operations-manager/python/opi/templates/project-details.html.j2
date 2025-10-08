@@ -1,0 +1,940 @@
+{% extends "base.html.j2" %}
+
+{#
+  Project Details Page - Self Service Portal
+  
+  Comprehensive project details page showing all project information
+  including services, components, deployments, and configuration.
+#}
+
+{% block page_title %}{{ project.display_name }} - Project Details{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+    
+    {# Page Header #}
+    <div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--rvo-space-md);">
+            <div>
+                <c-heading type="h1" textContent="{{ project.display_name }}" />
+                <p class="rvo-text--lg">{{ project.description }}</p>
+                <div style="margin-top: var(--rvo-space-sm);">
+                    <span class="project-badge">{{ project.name }}</span>
+                </div>
+            </div>
+            <div style="display: flex; gap: var(--rvo-space-md);">
+                <c-button 
+                    label="Terug naar overzicht"
+                    kind="secondary"
+                    size="md"
+                    showIcon="before"
+                    icon="terug"
+                    @click="window.location.href='/projects'" />
+                {% if user_role in ["admin", "owner"] %}
+                    <c-button 
+                        label="Project beheren"
+                        kind="primary"
+                        size="md"
+                        showIcon="before"
+                        icon="instellingen" />
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {# Project Overview Cards #}
+    <div class="overview-grid">
+        <c-card outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="overview-icon">
+                    <c-icon icon="groep-3-personen" size="3xl" color="hemelblauw" />
+                </div>
+                <div class="overview-number">{{ project.users|length }}</div>
+                <div class="overview-label">Teamleden</div>
+                <div class="overview-detail">Uw rol: {{ user_role|title }}</div>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="overview-icon">
+                    <c-icon icon="applicatie" size="3xl" color="groen" />
+                </div>
+                <div class="overview-number">{{ project.services|length }}</div>
+                <div class="overview-label">Services</div>
+                <div class="overview-detail">Geactiveerd</div>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="overview-icon">
+                    <c-icon icon="server" size="3xl" color="oranje" />
+                </div>
+                <div class="overview-number">{{ project.deployments|length }}</div>
+                <div class="overview-label">Deployments</div>
+                <div class="overview-detail">{{ project.clusters|join(", ")|title }}</div>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="overview-icon">
+                    <c-icon icon="puzzel" size="3xl" color="donkerblauw" />
+                </div>
+                <div class="overview-number">{{ project.components|length }}</div>
+                <div class="overview-label">Components</div>
+                <div class="overview-detail">Applicatie onderdelen</div>
+            </c-layout-flow>
+        </c-card>
+    </div>
+
+    {# Team Section #}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
+            <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>
+            
+            <c-grid columns="three" gap="md">
+                {% for user in project.users %}
+                <c-card padding="md" outline="true" backgroundColor="grijs-050">
+                    <c-layout-row gap="md" verticalSpacing="center">
+                        <div style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--rvo-color-hemelblauw); color: white; font-weight: 600; font-size: 1.125rem;">
+                            {{ user.email[:2]|upper }}
+                        </div>
+                        <c-layout-flow gap="xs">
+                            <div style="font-weight: 500; color: var(--rvo-color-grijs-900);">{{ user.email }}</div>
+                            <div style="font-size: 0.875rem; color: var(--rvo-color-grijs-600); text-transform: capitalize;">{{ user.role|title }}</div>
+                        </c-layout-flow>
+                    </c-layout-row>
+                </c-card>
+                {% endfor %}
+            </c-grid>
+        </c-layout-flow>
+    </c-card>
+
+    {# Configuration Section #}
+    {% if user_role in ["admin", "owner"] %}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="instellingen" size="xl" color="donkerblauw" />Configuratie & Secrets</c-heading>
+            <p class="rvo-text--subtle">Project configuratie en gevoelige informatie</p>
+            
+            <div class="config-section">
+                {% if project.config %}
+                
+                {# API Key Section #}
+                {% if project.config.get('api-key') %}
+                <div class="config-item">
+                    <div class="config-label">
+                        <c-icon icon="sleutel" size="md" color="rood" />
+                        <strong>API Key</strong>
+                    </div>
+                    <div class="config-value">
+                        <div class="sensitive-field" id="api-key-field">
+                            <span class="sensitive-dots">••••••••••••••••••••••••••••••••</span>
+                            <span class="sensitive-value" style="display: none;">{{ project.config['api-key'] }}</span>
+                            <c-button 
+                                label="Tonen"
+                                kind="tertiary" 
+                                size="sm"
+                                showIcon="before"
+                                icon="oog"
+                                class="toggle-sensitive"
+                                @click="toggleSensitive('api-key-field')" />
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {# Age Public Key #}
+                {% if project.config.get('age-public-key') %}
+                <div class="config-item">
+                    <div class="config-label">
+                        <c-icon icon="beveiligingsscan" size="md" color="groen" />
+                        <strong>Age Public Key</strong>
+                    </div>
+                    <div class="config-value">
+                        <code class="config-code">{{ project.config['age-public-key'] }}</code>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {# Age Private Key #}
+                {% if project.config.get('age-private-key') %}
+                <div class="config-item">
+                    <div class="config-label">
+                        <c-icon icon="beveiligingsscan" size="md" color="rood" />
+                        <strong>Age Private Key</strong>
+                    </div>
+                    <div class="config-value">
+                        <div class="sensitive-field" id="private-key-field">
+                            <span class="sensitive-dots">••••••••••••••••••••••••••••••••</span>
+                            <span class="sensitive-value" style="display: none;"><pre class="config-code">{{ project.config['age-private-key'] }}</pre></span>
+                            <c-button 
+                                label="Tonen"
+                                kind="tertiary" 
+                                size="sm"
+                                showIcon="before"
+                                icon="oog"
+                                class="toggle-sensitive"
+                                @click="toggleSensitive('private-key-field')" />
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% else %}
+                <div class="empty-state">
+                    <c-icon icon="info" size="lg" color="grijs-050" />
+                    <p class="rvo-text--md">Geen configuratie beschikbaar</p>
+                </div>
+                {% endif %}
+            </div>
+        </c-layout-flow>
+    </c-card>
+    {% endif %}
+
+    {# Services Section #}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Services & Integraties</c-heading>
+            <p class="rvo-text--subtle">Geactiveerde services voor dit project</p>
+            
+            {% if project.services %}
+            <div class="services-grid">
+                {% for service in project.services %}
+                <c-card class="service-detail-card" padding="lg" background="color" backgroundColor="wit" outline="true">
+                    <c-layout-flow gap="md">
+                        <div class="service-header">
+                            {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
+                            <c-icon icon="{{ service_def.icon }}" size="xl" color="{{ service_def.color }}"></c-icon>
+                            <div>
+                                <c-heading type="h3" textContent="{{ service_def.name }}" />
+                                <div class="service-scope">{{ service_def.scope|title }} scope</div>
+                            </div>
+                        </div>
+                        <p class="rvo-text--sm">{{ service_def.description }}</p>
+                    </c-layout-flow>
+                </c-card>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <c-icon icon="info" size="lg" color="grijs-050" />
+                <p class="rvo-text--md">Geen services geconfigureerd</p>
+            </div>
+            {% endif %}
+        </c-layout-flow>
+    </c-card>
+
+    {# Deployments Section #}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="server" size="xl" color="oranje" />Deployments</c-heading>
+            <p class="rvo-text--subtle">Applicatie deployments per omgeving</p>
+            
+            {% if project.deployments %}
+            <div class="deployments-section">
+                {% for deployment in project.deployments %}
+                <c-card class="deployment-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
+                    <c-layout-flow gap="md">
+                        <div class="deployment-header">
+                            <div>
+                                <c-heading type="h3" textContent="{{ deployment.name }}" />
+                                <div class="deployment-meta">
+                                    <span class="cluster-badge">{{ deployment.cluster|title }}</span>
+                                    <span class="namespace-badge">{{ deployment.namespace }}</span>
+                                    {% if deployment.get('clone-from') %}
+                                        <span class="clone-badge">Cloned from {{ deployment['clone-from'] }}</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="deployment-status">
+                                <div class="status-badge status-running">
+                                    <c-icon icon="applicatie" size="sm" />
+                                    <span>Running</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {# Components in this deployment #}
+                        {% if deployment.components %}
+                        <div class="deployment-components">
+                            <c-heading type="h4" textContent="Components" />
+                            <div class="component-list">
+                                {% for component in deployment.components %}
+                                <div class="component-item">
+                                    <c-icon icon="puzzel" size="md" color="donkerblauw" />
+                                    <div class="component-details">
+                                        <div class="component-name">{{ component.reference }}</div>
+                                        <div class="component-image">{{ component.image }}</div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        {# Public ingress links for this deployment #}
+                        {% if deployment.ingress_links %}
+                        <c-layout-flow gap="sm">
+                            <c-heading type="h4"><c-icon icon="externe-link" size="md" color="hemelblauw" />Publieke links</c-heading>
+                            <c-layout-row gap="sm">
+                                {% for link in deployment.ingress_links %}
+                                <c-button 
+                                    label="{{ link.component_name }}"
+                                    kind="secondary"
+                                    size="sm"
+                                    showIcon="after"
+                                    icon="externe-link"
+                                    @click="window.open('{{ link.url }}', '_blank')" />
+                                {% endfor %}
+                            </c-layout-row>
+                        </c-layout-flow>
+                        {% endif %}
+                        
+                        {# Deployment Configuration Variables #}
+                        {% if deployment.configuration %}
+                        <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                            <c-heading type="h4" textContent="Configuratie Variabelen" />
+                            <c-layout-flow gap="md">
+                                {% set variables = deployment.configuration.get('variables', {}) %}
+                                {% if variables %}
+                                    {% for key, value in variables.items() %}
+                                    <c-card padding="sm" backgroundColor="wit" outline="true">
+                                        <c-layout-flow gap="xs">
+                                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                                <c-icon icon="sleutel" size="sm" color="grijs-600" />
+                                                <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
+                                            </div>
+                                            <div style="margin-left: var(--rvo-space-lg);">
+                                                <div class="sensitive-field" id="config-{{ deployment.name }}-{{ key|replace('_', '-')|lower }}">
+                                                    <span class="sensitive-dots">••••••••••••••••••••</span>
+                                                    <span class="sensitive-value" style="display: none;">{{ value }}</span>
+                                                    <c-button 
+                                                        label="Tonen"
+                                                        kind="tertiary" 
+                                                        size="sm"
+                                                        showIcon="before"
+                                                        icon="oog"
+                                                        class="toggle-sensitive"
+                                                        @click="toggleSensitive('config-{{ deployment.name }}-{{ key|replace('_', '-')|lower }}')" />
+                                                </div>
+                                            </div>
+                                        </c-layout-flow>
+                                    </c-card>
+                                    {% endfor %}
+                                    
+                                    {% set metadata = deployment.configuration.get('metadata', {}) %}
+                                    {% if metadata.get('updated_on') %}
+                                    <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-sm); border-top: 1px solid var(--rvo-color-grijs-100);">
+                                        <small class="rvo-text--xs" style="display: flex; align-items: center; gap: var(--rvo-space-xs); color: var(--rvo-color-grijs-500);">
+                                            <c-icon icon="info" size="sm" color="grijs-500" />
+                                            Laatste update: {{ metadata.updated_on }}
+                                        </small>
+                                    </div>
+                                    {% endif %}
+                                {% else %}
+                                <div class="empty-state">
+                                    <c-icon icon="info" size="lg" color="grijs-050" />
+                                    <p class="rvo-text--md">Geen configuratie variabelen beschikbaar</p>
+                                </div>
+                                {% endif %}
+                            </c-layout-flow>
+                        </div>
+                        {% endif %}
+                        
+                        {# User Configuration Variables for components in this deployment #}
+                        {% set deployment_components = deployment.components %}
+                        {% if deployment_components %}
+                        {% set has_user_vars = false %}
+                        {% for component in deployment_components %}
+                            {% for project_component in project.components %}
+                                {% if project_component.name == component.reference and project_component.get('user-env-vars') %}
+                                    {% set has_user_vars = true %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endfor %}
+                        
+                        {% if has_user_vars %}
+                        <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                            <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="user" size="md" color="donkerblauw" />Gebruikers configuratie</c-heading>
+                            <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor deze deployment</p>
+                            
+                            <c-layout-flow gap="md">
+                                {% for component in deployment_components %}
+                                {% for project_component in project.components %}
+                                {% if project_component.name == component.reference and project_component.get('user-env-vars') %}
+                                <c-card padding="sm" backgroundColor="grijs-050" outline="true">
+                                    <c-layout-flow gap="md">
+                                        <c-layout-row gap="sm">
+                                            <c-icon icon="puzzel" size="sm" color="donkerblauw" />
+                                            <c-heading type="h5" textContent="Component: {{ component.reference }}" />
+                                        </c-layout-row>
+                                        
+                                        <c-layout-flow gap="sm">
+                                            {% for key, value in project_component['user-env-vars'].items() %}
+                                            <c-card padding="sm" backgroundColor="wit" outline="true">
+                                                <c-layout-flow gap="xs">
+                                                    <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                                        <c-icon icon="sleutel" size="sm" color="grijs-600" />
+                                                        <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
+                                                    </div>
+                                                    <div style="margin-left: var(--rvo-space-lg);">
+                                                        <div class="sensitive-field" id="user-{{ deployment.name }}-{{ component.reference }}-{{ key|replace('_', '-')|lower }}">
+                                                            <span class="sensitive-dots">••••••••••••••••••••</span>
+                                                            <span class="sensitive-value" style="display: none;">{{ value }}</span>
+                                                            <c-button 
+                                                                label="Tonen"
+                                                                kind="tertiary" 
+                                                                size="sm"
+                                                                showIcon="before"
+                                                                icon="oog"
+                                                                class="toggle-sensitive"
+                                                                @click="toggleSensitive('user-{{ deployment.name }}-{{ component.reference }}-{{ key|replace('_', '-')|lower }}')" />
+                                                        </div>
+                                                    </div>
+                                                </c-layout-flow>
+                                            </c-card>
+                                            {% endfor %}
+                                        </c-layout-flow>
+                                    </c-layout-flow>
+                                </c-card>
+                                {% endif %}
+                                {% endfor %}
+                                {% endfor %}
+                            </c-layout-flow>
+                        </div>
+                        {% endif %}
+                        {% endif %}
+                    </c-layout-flow>
+                </c-card>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <c-icon icon="info" size="lg" color="grijs-050" />
+                <p class="rvo-text--md">Geen deployments geconfigureerd</p>
+            </div>
+            {% endif %}
+        </c-layout-flow>
+    </c-card>
+
+
+    {# Components Section #}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
+            <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
+            
+            {% if project.components %}
+            <div class="components-section">
+                {% for component in project.components %}
+                <c-card class="component-card" padding="lg" background="color" backgroundColor="wit" outline="true">
+                    <c-layout-flow gap="md">
+                        <div class="component-header">
+                            <c-icon icon="puzzel" size="lg" color="donkerblauw" />
+                            <div>
+                                <c-heading type="h3" textContent="{{ component.name }}" />
+                                <div class="component-type">{{ component.type|title }}</div>
+                            </div>
+                        </div>
+                        
+                        <div class="component-specs">
+                            {% if component.ports %}
+                            <div class="spec-item">
+                                <strong>Poorten:</strong>
+                                {% if component.ports.inbound %}Inbound: {{ component.ports.inbound|join(", ") }}{% endif %}
+                                {% if component.ports.outbound %}{% if component.ports.inbound %} | {% endif %}Outbound: {{ component.ports.outbound|join(", ") }}{% endif %}
+                            </div>
+                            {% endif %}
+                            
+                            {% if component.resources %}
+                            <div class="spec-item">
+                                <strong>Resources:</strong>
+                                {% if component.resources.cpu %}CPU: {{ component.resources.cpu }}{% endif %}
+                                {% if component.resources.memory %}{% if component.resources.cpu %} | {% endif %}Memory: {{ component.resources.memory }}{% endif %}
+                            </div>
+                            {% endif %}
+                            
+                            {% if component['uses-services'] %}
+                            <div class="spec-item">
+                                <strong>Services:</strong> {{ component['uses-services']|join(", ")|replace("-", " ")|title }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        
+                        {# Public ingress links for this component #}
+                        {% if component.ingress_links %}
+                        <c-layout-flow gap="sm">
+                            <c-heading type="h5"><c-icon icon="externe-link" size="sm" color="hemelblauw" />Publieke links</c-heading>
+                            <c-layout-row gap="sm">
+                                {% for link in component.ingress_links %}
+                                <c-button 
+                                    label="{{ link.deployment_name }} ({{ link.cluster }})"
+                                    kind="secondary"
+                                    size="sm"
+                                    showIcon="after"
+                                    icon="externe-link"
+                                    @click="window.open('{{ link.url }}', '_blank')" />
+                                {% endfor %}
+                            </c-layout-row>
+                        </c-layout-flow>
+                        {% endif %}
+                        
+                        {# User Environment Variables for this component #}
+                        {% if component.get('user-env-vars') %}
+                        <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                            <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="user" size="md" color="donkerblauw" />Gebruiker Environment Variables</c-heading>
+                            <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor dit component</p>
+                            
+                            <c-layout-flow gap="sm">
+                                {% for key, value in component['user-env-vars'].items() %}
+                                <c-card padding="sm" backgroundColor="grijs-050" outline="true">
+                                    <c-layout-flow gap="xs">
+                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                            <c-icon icon="sleutel" size="sm" color="grijs-600" />
+                                            <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
+                                        </div>
+                                        <div style="margin-left: var(--rvo-space-lg);">
+                                            <div class="sensitive-field" id="component-{{ component.name }}-{{ key|replace('_', '-')|lower }}">
+                                                <span class="sensitive-dots">••••••••••••••••••••</span>
+                                                <span class="sensitive-value" style="display: none;">{{ value }}</span>
+                                                <c-button 
+                                                    label="Tonen"
+                                                    kind="tertiary" 
+                                                    size="sm"
+                                                    showIcon="before"
+                                                    icon="oog"
+                                                    class="toggle-sensitive"
+                                                    @click="toggleSensitive('component-{{ component.name }}-{{ key|replace('_', '-')|lower }}')" />
+                                            </div>
+                                        </div>
+                                    </c-layout-flow>
+                                </c-card>
+                                {% endfor %}
+                            </c-layout-flow>
+                        </div>
+                        {% endif %}
+                    </c-layout-flow>
+                </c-card>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <c-icon icon="info" size="lg" color="grijs-050" />
+                <p class="rvo-text--md">Geen componenten geconfigureerd</p>
+            </div>
+            {% endif %}
+        </c-layout-flow>
+    </c-card>
+
+
+    {# Repositories Section #}
+    {% if project.repositories %}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="computercode" size="xl" color="oranje" />Git Repositories</c-heading>
+            <p class="rvo-text--subtle">Gekoppelde code repositories</p>
+            
+            <div class="repositories-section">
+                {% for repo in project.repositories %}
+                <c-card class="repository-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
+                    <c-layout-flow gap="md">
+                        <div class="repo-header">
+                            <c-icon icon="computercode" size="lg" color="oranje" />
+                            <div>
+                                <c-heading type="h3" textContent="{{ repo.name }}" />
+                                <div class="repo-url">{{ repo.url }}</div>
+                            </div>
+                        </div>
+                        
+                        <div class="repo-details">
+                            <div class="repo-item"><strong>Branch:</strong> {{ repo.branch }}</div>
+                            <div class="repo-item"><strong>Path:</strong> {{ repo.path }}</div>
+                            <div class="repo-item"><strong>Username:</strong> {{ repo.username }}</div>
+                        </div>
+                    </c-layout-flow>
+                </c-card>
+                {% endfor %}
+            </div>
+        </c-layout-flow>
+    </c-card>
+    {% endif %}
+
+</c-layout-flow>
+{% endblock %}
+
+{% block additional_styles %}
+<style>
+    /* Project Badge */
+    .project-badge {
+        background: var(--rvo-color-grijs-100);
+        color: var(--rvo-color-grijs-700);
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.875rem;
+        font-family: monospace;
+    }
+    
+    /* Overview Grid */
+    .overview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--rvo-space-lg);
+    }
+    
+    .overview-icon {
+        text-align: center;
+        margin-bottom: var(--rvo-space-xs);
+    }
+    
+    .overview-number {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: var(--rvo-color-hemelblauw);
+        text-align: center;
+    }
+    
+    .overview-label {
+        font-weight: 600;
+        text-align: center;
+        color: var(--rvo-color-grijs-700);
+    }
+    
+    .overview-detail {
+        font-size: 0.875rem;
+        text-align: center;
+        color: var(--rvo-color-grijs-600);
+    }
+    
+    
+    /* Team Grid - Replaced with c-grid component */
+    
+    /* Services Grid */
+    .services-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: var(--rvo-space-lg);
+    }
+    
+    .service-detail-card {
+        min-height: 150px;
+    }
+    
+    .service-header {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
+    }
+    
+    .service-scope {
+        font-size: 0.875rem;
+        color: var(--rvo-color-grijs-600);
+        font-style: italic;
+    }
+    
+    /* Deployments Section */
+    .deployments-section {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-lg);
+    }
+    
+    .deployment-card {
+        border-left: 4px solid var(--rvo-color-oranje);
+    }
+    
+    .deployment-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+    }
+    
+    .deployment-meta {
+        display: flex;
+        gap: var(--rvo-space-sm);
+        margin-top: var(--rvo-space-xs);
+        flex-wrap: wrap;
+    }
+    
+    .cluster-badge {
+        background: var(--rvo-color-hemelblauw-50);
+        color: var(--rvo-color-hemelblauw);
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .namespace-badge {
+        background: var(--rvo-color-groen-50);
+        color: var(--rvo-color-groen);
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .clone-badge {
+        background: var(--rvo-color-paars-50);
+        color: var(--rvo-color-paars);
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .deployment-components {
+        margin-top: var(--rvo-space-md);
+        padding-top: var(--rvo-space-md);
+        border-top: 1px solid var(--rvo-color-grijs-200);
+    }
+    
+    .component-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-sm);
+        margin-top: var(--rvo-space-sm);
+    }
+    
+    .component-item {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
+        padding: var(--rvo-space-sm);
+        background: white;
+        border-radius: 4px;
+    }
+    
+    .component-name {
+        font-weight: 600;
+        color: var(--rvo-color-grijs-900);
+    }
+    
+    .component-image {
+        font-size: 0.875rem;
+        color: var(--rvo-color-grijs-600);
+        font-family: monospace;
+    }
+    
+    
+    /* Components Section */
+    .components-section {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: var(--rvo-space-lg);
+    }
+    
+    .component-card {
+        border-left: 4px solid var(--rvo-color-paars);
+    }
+    
+    .component-header {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
+    }
+    
+    .component-type {
+        font-size: 0.875rem;
+        color: var(--rvo-color-grijs-600);
+        text-transform: capitalize;
+    }
+    
+    .component-specs {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-xs);
+    }
+    
+    .spec-item {
+        font-size: 0.875rem;
+        line-height: 1.5;
+    }
+    
+    /* Status Badges */
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--rvo-space-sm);
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .status-running {
+        background: var(--rvo-color-groen-50);
+        color: var(--rvo-color-groen);
+    }
+    
+    /* Configuration Section */
+    .config-section {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-lg);
+    }
+    
+    .config-item {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-sm);
+        padding: var(--rvo-space-md);
+        border: 1px solid var(--rvo-color-grijs-200);
+        border-radius: 4px;
+        background: var(--rvo-color-grijs-25);
+    }
+    
+    .config-label {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-sm);
+        font-weight: 600;
+        color: var(--rvo-color-grijs-900);
+    }
+    
+    .config-value {
+        margin-left: var(--rvo-space-xl);
+    }
+    
+    .config-code {
+        background: var(--rvo-color-grijs-100);
+        padding: var(--rvo-space-sm);
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.875rem;
+        display: block;
+        word-break: break-all;
+    }
+    
+    /* Sensitive Fields */
+    .sensitive-field {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
+    }
+    
+    .sensitive-dots {
+        font-family: monospace;
+        font-size: 1.25rem;
+        letter-spacing: 2px;
+        color: var(--rvo-color-grijs-600);
+    }
+    
+    .sensitive-value {
+        font-family: monospace;
+        font-size: 0.875rem;
+        background: var(--rvo-color-grijs-100);
+        padding: var(--rvo-space-sm);
+        border-radius: 4px;
+        word-break: break-all;
+        max-width: 100%;
+        overflow-x: auto;
+    }
+    
+    /* Repositories Section */
+    .repositories-section {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-lg);
+    }
+    
+    .repository-card {
+        border-left: 4px solid var(--rvo-color-oranje);
+    }
+    
+    .repo-header {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
+    }
+    
+    .repo-url {
+        font-family: monospace;
+        font-size: 0.875rem;
+        color: var(--rvo-color-grijs-600);
+        word-break: break-all;
+    }
+    
+    .repo-details {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--rvo-space-sm);
+        margin-top: var(--rvo-space-md);
+        padding-top: var(--rvo-space-md);
+        border-top: 1px solid var(--rvo-color-grijs-200);
+    }
+    
+    .repo-item {
+        font-size: 0.875rem;
+    }
+    
+    /* Empty States */
+    .empty-state {
+        text-align: center;
+        padding: var(--rvo-space-xl);
+        color: var(--rvo-color-grijs-600);
+    }
+    
+    /* Responsive Design */
+    @media (max-width: 768px) {
+        .overview-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        
+        /* .team-grid responsive styles handled by c-grid component */
+        
+        .services-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .components-section {
+            grid-template-columns: 1fr;
+        }
+        
+        .deployment-header {
+            flex-direction: column;
+            gap: var(--rvo-space-md);
+        }
+        
+        .deployment-meta {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .repo-details {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<script>
+    /**
+     * Toggle visibility of sensitive information
+     */
+    function toggleSensitive(fieldId) {
+        const field = document.getElementById(fieldId);
+        const dots = field.querySelector('.sensitive-dots');
+        const value = field.querySelector('.sensitive-value');
+        const button = field.querySelector('.toggle-sensitive');
+        
+        if (dots.style.display === 'none') {
+            // Hide sensitive value
+            dots.style.display = 'inline';
+            value.style.display = 'none';
+            button.textContent = 'Tonen';
+            button.querySelector('c-icon').setAttribute('icon', 'oog');
+        } else {
+            // Show sensitive value
+            dots.style.display = 'none';
+            value.style.display = 'block';
+            button.textContent = 'Verbergen';
+            button.querySelector('c-icon').setAttribute('icon', 'oog-dicht');
+        }
+    }
+
+</script>
+{% endblock %}

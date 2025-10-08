@@ -1,0 +1,650 @@
+{% extends "base.html.j2" %}
+
+{#
+  Projects Overview - Self Service Portal
+  
+  Table overview van alle projecten met status, team, services en acties.
+  Geïntegreerd met het Self Service Portal design systeem.
+#}
+
+{% block page_title %}Projecten - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+    
+    {# Page Header #}
+    <div>
+        <c-heading type="h1" textContent="Projecten Overzicht" />
+        <p class="rvo-text--lg">
+            Overzicht van alle actieve projecten in het platform met hun status, team en geactiveerde services.
+        </p>
+    </div>
+
+    {# Action Bar #}
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; gap: var(--rvo-space-md); align-items: center;">
+            <c-button 
+                label="Nieuw Project"
+                kind="primary"
+                size="md"
+                showIcon="before"
+                icon="plus"
+                @click="window.location.href='/projects/new'" />
+            <c-button 
+                label="Vernieuwen"
+                kind="tertiary"
+                size="md"
+                showIcon="before"
+                icon="refresh"
+                @click="location.reload()" />
+        </div>
+        
+        <div style="display: flex; gap: var(--rvo-space-sm); align-items: center;">
+            <span class="rvo-text--sm rvo-text--subtle">Totaal: <strong>{{ projects|length }} project{% if projects|length != 1 %}en{% endif %}</strong></span>
+        </div>
+    </div>
+
+    {# Projects Table #}
+    <c-card outline="true" padding="none" backgroundColor="wit">
+        <div class="table-container">
+            <table class="projects-table">
+                <thead>
+                    <tr>
+                        <th class="col-project">Project</th>
+                        <th class="col-status">Status</th>
+                        <th class="col-environment">Omgeving</th>
+                        <th class="col-team">Team</th>
+                        <th class="col-services">Services</th>
+                        <th class="col-created">Aangemaakt</th>
+                        <th class="col-actions">Acties</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if projects %}
+                        {% for project in projects %}
+                        <tr class="project-row">
+                            <td class="col-project">
+                                <div class="project-info">
+                                    <div class="project-name">{{ project.display_name or project.name }}</div>
+                                    <div class="project-description">{{ project.description or "Geen beschrijving beschikbaar" }}</div>
+                                </div>
+                            </td>
+                            <td class="col-status">
+                                <div class="status-badge status-running">
+                                    <c-icon icon="applicatie" size="sm" />
+                                    <span>Running</span>
+                                </div>
+                            </td>
+                            <td class="col-environment">
+                                {% if project.clusters %}
+                                    {% set cluster = project.clusters[0] %}
+                                    {% if cluster == 'production' %}
+                                        <span class="environment-badge env-production">Production</span>
+                                    {% elif cluster == 'staging' %}
+                                        <span class="environment-badge env-staging">Staging</span>
+                                    {% else %}
+                                        <span class="environment-badge env-development">{{ cluster|title }}</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="environment-badge env-development">Unknown</span>
+                                {% endif %}
+                            </td>
+                            <td class="col-team">
+                                <div class="team-info">
+                                    <div class="team-count">{{ project.users|length }} lid{% if project.users|length != 1 %}en{% endif %}</div>
+                                    <div class="team-avatars">
+                                        {% for user in project.users[:3] %}
+                                            <span class="avatar">{{ user.email[:2]|upper }}</span>
+                                        {% endfor %}
+                                        {% if project.users|length > 3 %}
+                                            <span class="avatar">+{{ project.users|length - 3 }}</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="col-services">
+                                <div class="services-list">
+                                    {% for service in project.services[:4] %}
+                                        <span class="service-tag">{{ service|replace('-', ' ')|title }}</span>
+                                    {% endfor %}
+                                    {% if project.services|length > 4 %}
+                                        <span class="service-tag">+{{ project.services|length - 4 }}</span>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td class="col-created">
+                                <div class="date-info">
+                                    <div class="date">Recent</div>
+                                    <div class="time">-</div>
+                                </div>
+                            </td>
+                            <td class="col-actions">
+                                <div class="actions">
+                                    <c-button 
+                                        label="Details" 
+                                        kind="tertiary" 
+                                        size="sm"
+                                        @click="window.location.href='/projects/details/{{ project.name }}'" />
+                                    {% if project.user_role in ["admin", "owner"] %}
+                                        <c-button 
+                                            label="Verwijderen"
+                                            kind="warning"
+                                            size="sm"
+                                            showIcon="before"
+                                            icon="verwijderen"
+                                            @click="showDeleteConfirmation('{{ project.name }}', '{{ project.display_name or project.name }}')" />
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr class="project-row">
+                            <td colspan="7" style="text-align: center; padding: var(--rvo-space-xl);">
+                                <div style="color: var(--rvo-color-grijs-600);">
+                                    <c-icon icon="info" size="lg" style="margin-bottom: var(--rvo-space-sm);" />
+                                    <div>Geen projecten gevonden waar u toegang toe heeft.</div>
+                                    <div style="margin-top: var(--rvo-space-sm);">
+                                        <c-button label="Nieuw Project Maken" kind="primary" size="sm" @click="window.location.href='/projects/new'" />
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </c-card>
+
+    {# Summary Cards #}
+    {% if projects %}
+    <div class="summary-cards">
+        <c-card class="summary-card" outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="summary-number">{{ projects|length }}</div>
+                <div class="summary-label">Uw projecten</div>
+                <div class="summary-change">Waartoe u toegang heeft</div>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card class="summary-card" outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="summary-number">{{ (projects|map(attribute='users')|map('length')|sum) or 0 }}</div>
+                <div class="summary-label">Teamleden totaal</div>
+                <div class="summary-change">In al uw projecten</div>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card class="summary-card" outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                {% set all_services = projects|map(attribute='services')|list %}
+                {% set unique_services = all_services|sum(start=[])|unique|list %}
+                <div class="summary-number">{{ (projects|map(attribute='services')|map('length')|sum) or 0 }}</div>
+                <div class="summary-label">Services actief</div>
+                <div class="summary-change">Across alle projecten</div>
+            </c-layout-flow>
+        </c-card>
+        
+        <c-card class="summary-card" outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="sm">
+                <div class="summary-number">{{ user.role|default('User')|title }}</div>
+                <div class="summary-label">Uw rol</div>
+                <div class="summary-change">{{ user.email }}</div>
+            </c-layout-flow>
+        </c-card>
+    </div>
+    {% endif %}
+
+    {# Delete Confirmation Template #}
+    <template id="deleteConfirmationTemplate">
+        <div class="delete-overlay">
+            <div class="overlay-backdrop"></div>
+            <div class="overlay-content">
+                <c-card padding="lg" backgroundColor="wit">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3" textContent="Weet je zeker dat je het project '__PROJECT_NAME__' wilt verwijderen?" />
+                        
+                        <c-layout-flow gap="sm" row="true">
+                            <c-button 
+                                label="Annuleren"
+                                kind="secondary"
+                                size="md"
+                                @click="hideDeleteConfirmation()" />
+                            <c-button 
+                                label="Verwijderen"
+                                kind="warning"
+                                size="md"
+                                id="confirmDeleteButton"
+                                @click="confirmDeletion()" />
+                        </c-layout-flow>
+                    </c-layout-flow>
+                </c-card>
+            </div>
+        </div>
+    </template>
+
+    {# Delete Confirmation Container #}
+    <div id="deleteOverlay" style="display: none;"></div>
+
+    {# Delete Progress Overlay #}
+    <div id="deleteProgressOverlay" class="delete-overlay" style="display: none;">
+        <div class="overlay-backdrop"></div>
+        <div class="overlay-content">
+            <c-card padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3" textContent="Project wordt verwijderd..." />
+                    <p class="rvo-text--md">Verwijderen van project: <span id="deleteProgressProjectName"></span></p>
+                    <p class="rvo-text--md">Dit kan enkele minuten duren.</p>
+                </c-layout-flow>
+            </c-card>
+        </div>
+    </div>
+
+</c-layout-flow>
+{% endblock %}
+
+{% block additional_styles %}
+<style>
+    /* Table Styles */
+    .table-container {
+        overflow-x: auto;
+    }
+    
+    .projects-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+    }
+    
+    .projects-table thead th {
+        background: var(--rvo-color-grijs-50);
+        padding: var(--rvo-space-md);
+        text-align: left;
+        font-weight: 600;
+        border-bottom: 2px solid var(--rvo-color-grijs-200);
+        color: var(--rvo-color-grijs-800);
+    }
+    
+    .projects-table tbody td {
+        padding: var(--rvo-space-md);
+        border-bottom: 1px solid var(--rvo-color-grijs-200);
+        vertical-align: top;
+    }
+    
+    .project-row:hover {
+        background: var(--rvo-color-grijs-25);
+    }
+    
+    /* Column Widths */
+    .col-project { width: 25{{ '%' }}; }
+    .col-status { width: 12{{ '%' }}; }
+    .col-environment { width: 10{{ '%' }}; }
+    .col-team { width: 12{{ '%' }}; }
+    .col-services { width: 20{{ '%' }}; }
+    .col-created { width: 11{{ '%' }}; }
+    .col-actions { width: 10{{ '%' }}; }
+    
+    /* Project Info */
+    .project-info .project-name {
+        font-weight: 600;
+        color: var(--rvo-color-grijs-900);
+        margin-bottom: var(--rvo-space-xs);
+    }
+    
+    .project-info .project-description {
+        color: var(--rvo-color-grijs-600);
+        font-size: 0.8125rem;
+        line-height: 1.4;
+    }
+    
+    /* Status Badges */
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--rvo-space-sm);
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .status-running {
+        background: var(--rvo-color-groen-50);
+        color: var(--rvo-color-groen);
+    }
+    
+    .status-deploying {
+        background: var(--rvo-color-oranje-50);
+        color: var(--rvo-color-oranje);
+    }
+    
+    .status-error {
+        background: var(--rvo-color-rood-50);
+        color: var(--rvo-color-rood);
+    }
+    
+    .status-stopped {
+        background: var(--rvo-color-grijs-100);
+        color: var(--rvo-color-grijs-700);
+    }
+    
+    /* Environment Badges */
+    .environment-badge {
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .env-production {
+        background: var(--rvo-color-rood-50);
+        color: var(--rvo-color-rood);
+    }
+    
+    .env-staging {
+        background: var(--rvo-color-oranje-50);
+        color: var(--rvo-color-oranje);
+    }
+    
+    .env-development {
+        background: var(--rvo-color-hemelblauw-50);
+        color: var(--rvo-color-hemelblauw);
+    }
+    
+    /* Team Info */
+    .team-info .team-count {
+        font-size: 0.75rem;
+        color: var(--rvo-color-grijs-600);
+        margin-bottom: var(--rvo-space-xs);
+    }
+    
+    .team-avatars {
+        display: flex;
+        gap: var(--rvo-space-xs);
+    }
+    
+    .avatar {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 50{{ '%' }};
+        background: var(--rvo-color-hemelblauw);
+        color: wit;
+        font-size: 0.625rem;
+        font-weight: 600;
+    }
+    
+    /* Services */
+    .services-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--rvo-space-xs);
+    }
+    
+    .service-tag {
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        background: var(--rvo-color-grijs-100);
+        color: var(--rvo-color-grijs-700);
+        border-radius: 4px;
+        font-size: 0.75rem;
+    }
+    
+    /* Date Info */
+    .date-info .date {
+        font-weight: 500;
+        color: var(--rvo-color-grijs-900);
+    }
+    
+    .date-info .time {
+        font-size: 0.75rem;
+        color: var(--rvo-color-grijs-600);
+    }
+    
+    /* Actions */
+    .actions {
+        display: flex;
+        gap: var(--rvo-space-xs);
+    }
+    
+    /* Summary Cards */
+    .summary-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--rvo-space-lg);
+        margin-top: var(--rvo-space-xl);
+    }
+    
+    .summary-card {
+        text-align: center;
+    }
+    
+    .summary-number {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--rvo-color-hemelblauw);
+    }
+    
+    .summary-label {
+        font-weight: 500;
+        color: var(--rvo-color-grijs-700);
+    }
+    
+    .summary-change {
+        font-size: 0.875rem;
+    }
+    
+    .summary-change.positive {
+        color: var(--rvo-color-groen);
+    }
+    
+    .summary-change.negative {
+        color: var(--rvo-color-rood);
+    }
+    
+    /* Minimal overlay positioning only */
+    .delete-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .overlay-backdrop {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+    }
+    
+    .overlay-content {
+        position: relative;
+        z-index: 10001;
+        max-width: 400px;
+        width: 90%;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+        .summary-cards {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        
+        .actions {
+            flex-direction: column;
+        }
+        
+        .services-list {
+            flex-direction: column;
+        }
+        
+        .overlay-content {
+            width: 95%;
+            margin: var(--rvo-space-md);
+        }
+    }
+</style>
+
+<script>
+    // Global variables to track current deletion
+    let currentProjectName = '';
+    let currentProjectDisplayName = '';
+    
+    /**
+     * Show the delete confirmation overlay
+     */
+    function showDeleteConfirmation(projectName, displayName) {
+        currentProjectName = projectName;
+        currentProjectDisplayName = displayName;
+        
+        // Get the template and replace the project name and display name
+        const template = document.getElementById('deleteConfirmationTemplate');
+        let templateContent = template.innerHTML;
+        templateContent = templateContent.replace(/__PROJECT_NAME__/g, displayName);
+        
+        // Insert the content into the overlay container
+        const overlay = document.getElementById('deleteOverlay');
+        overlay.innerHTML = templateContent;
+        
+        // Store project info as data attributes on the overlay for the confirm function
+        overlay.setAttribute('data-project-name', projectName);
+        overlay.setAttribute('data-project-display-name', displayName);
+        overlay.style.display = 'flex';
+        
+        // Add backdrop click handler
+        const backdrop = overlay.querySelector('.overlay-backdrop');
+        if (backdrop) {
+            backdrop.addEventListener('click', hideDeleteConfirmation);
+        }
+        
+        // Add button click handlers
+        const cancelButton = overlay.querySelector('#cancelButton');
+        const confirmButton = overlay.querySelector('#confirmButton');
+        if (cancelButton) {
+            cancelButton.addEventListener('click', hideDeleteConfirmation);
+        }
+        if (confirmButton) {
+            confirmButton.addEventListener('click', confirmDeletion);
+        }
+        
+        document.body.style.overflow = 'hidden'; // Prevent background scrolling
+    }
+    
+    /**
+     * Hide the delete confirmation overlay
+     */
+    function hideDeleteConfirmation() {
+        const overlay = document.getElementById('deleteOverlay');
+        overlay.style.display = 'none';
+        overlay.innerHTML = ''; // Clear the content
+        document.body.style.overflow = 'auto'; // Re-enable scrolling
+        currentProjectName = '';
+        currentProjectDisplayName = '';
+    }
+    
+    /**
+     * Show the delete progress overlay
+     */
+    function showDeleteProgress() {
+        // Hide confirmation overlay
+        document.getElementById('deleteOverlay').style.display = 'none';
+        
+        // Update project name in progress dialog
+        document.getElementById('deleteProgressProjectName').textContent = currentProjectDisplayName;
+        
+        // Show progress overlay
+        document.getElementById('deleteProgressOverlay').style.display = 'flex';
+    }
+    
+    /**
+     * Hide the delete progress overlay
+     */
+    function hideDeleteProgress() {
+        document.getElementById('deleteProgressOverlay').style.display = 'none';
+        document.body.style.overflow = 'auto'; // Re-enable scrolling
+    }
+    
+    /**
+     * Confirm and execute the project deletion
+     */
+    async function confirmDeletion() {
+        // Get project info from the overlay data attributes
+        const overlay = document.getElementById('deleteOverlay');
+        const projectName = overlay.getAttribute('data-project-name');
+        const displayName = overlay.getAttribute('data-project-display-name');
+        
+        if (!projectName) {
+            console.error('No project name found for deletion');
+            return;
+        }
+        
+        // Store the project info for progress display
+        currentProjectName = projectName;
+        currentProjectDisplayName = displayName;
+        
+        // Hide the confirmation overlay and show progress overlay
+        hideDeleteConfirmation();
+        showDeleteProgress();
+        
+        try {
+            // Make the deletion request
+            const response = await fetch(`/projects/delete/${encodeURIComponent(projectName)}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                // Success - show success message and refresh
+                console.log('Project deleted successfully:', result.message);
+                
+                // Optional: Show a success message before refreshing
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+                
+            } else {
+                // Error occurred
+                console.error('Project deletion failed:', result);
+                hideDeleteProgress();
+                
+                // Show error message
+                alert(`Fout bij verwijderen van project: ${result.error || result.message || 'Onbekende fout'}`);
+            }
+            
+        } catch (error) {
+            console.error('Network error during project deletion:', error);
+            hideDeleteProgress();
+            
+            // Show network error message
+            alert('Netwerkfout bij verwijderen van project. Probeer het opnieuw.');
+        }
+    }
+    
+    // Close overlay when clicking outside or pressing Escape
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            hideDeleteConfirmation();
+            hideDeleteProgress();
+        }
+    });
+    
+    // Prevent closing progress overlay by clicking backdrop
+    document.getElementById('deleteProgressOverlay').addEventListener('click', function(event) {
+        event.stopPropagation();
+    });
+</script>
+{% endblock %}

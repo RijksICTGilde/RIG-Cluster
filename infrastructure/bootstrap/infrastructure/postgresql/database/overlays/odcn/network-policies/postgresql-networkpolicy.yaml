@@ -1,0 +1,52 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-access
+  namespace: rig-system
+spec:
+  podSelector:
+    matchLabels:
+      # Match PostgreSQL cluster pods
+      cnpg.io/cluster: rig-db
+  
+  ingress:
+    # Allow PostgreSQL access from within the rig-system namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-system
+      ports:
+        - protocol: TCP
+          port: 5432
+    
+    # Allow PostgreSQL access from all other namespaces
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+  
+  egress:
+    # Allow all outbound traffic (needed for backups, WAL shipping, etc.)
+    - {}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-monitoring
+  namespace: rig-system
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: rig-db
+  
+  ingress:
+    # Allow metrics scraping from monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9187  # PostgreSQL exporter port

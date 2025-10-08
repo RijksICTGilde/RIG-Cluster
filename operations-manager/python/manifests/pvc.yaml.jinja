@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+spec:
+  accessModes:
+  {% for mode in access_modes %}
+    - {{ mode }}
+  {% endfor %}
+  storageClassName: {{ storage_class_name }}
+  resources:
+    requests:
+      storage: {{ size }}
+  {% if source_pvc_name %}
+  dataSource:
+    kind: PersistentVolumeClaim
+    name: {{ source_pvc_name }}
+  {% endif %}
