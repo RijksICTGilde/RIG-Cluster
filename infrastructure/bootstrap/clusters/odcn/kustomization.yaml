@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../infrastructure/secrets/config/overlays/odcn
+  - ../../infrastructure/postgresql/database/overlays/odcn
+#  - ../../infrastructure/vault/controller/overlays/odcn
+#  - ../../infrastructure/vault/config/overlays/odcn
+  - ../../infrastructure/keycloak/controller/overlays/odcn
+  - ../../infrastructure/keycloak/config/overlays/odcn
+#  - ../../infrastructure/pgadmin/controller/overlays/odcn
+#  - ../../infrastructure/pgadmin/config/overlays/odcn
+#  - ../../infrastructure/minio/controller/overlays/odcn
+#  - ../../infrastructure/minio/config/overlays/odcn

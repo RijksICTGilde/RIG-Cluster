@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ name }}
+  annotations:
+    haproxy.router.openshift.io/ip_whitelist: {{ ip_whitelist | default("0.0.0.0") }}
+spec:
+  rules:
+    - host: {{ hostname }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ service_name | default(name) }}
+                port:
+                  number: {{ service_port | default(80) }}
+{% if enable_tls %}
+  tls:
+    - {}
+{% endif %}

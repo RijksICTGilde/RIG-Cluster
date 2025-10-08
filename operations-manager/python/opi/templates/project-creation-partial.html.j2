@@ -1,0 +1,90 @@
+<c-page title="Project Gedeeltelijk Aangemaakt" lang="nl" bodyClass="rvo-theme rvo-responsive">
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header
+            text="Zelfservice voor Applicatie Deployment"
+            subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+            link="/"/>
+
+        <c-layout-flow gap="xl" size="lg">
+            {# MenuBar #}
+            <c-menubar
+                size="md"
+                :useIcons="true"
+                iconPlacement="before"
+                maxWidth="lg"
+                :items="menu_items"/>
+
+            <c-layout-flow gap="2xl" size="lg">
+                <main>
+                    <c-layout-flow gap="xl">
+                        
+                        {# Warning Message #}
+                        <c-alert
+                            kind="warning"
+                            heading="Project gedeeltelijk aangemaakt"
+                            messages="Het projectbestand is aangemaakt, maar de verwerking is niet volledig succesvol voltooid."/>
+
+                        <c-content>
+                            <c-heading type="h1" textContent="Project {{ project_name }} - Gedeeltelijk voltooid"/>
+                            
+                            <c-layout-flow gap="md">
+                                <p class="rvo-paragraph rvo-paragraph--lg">
+                                    Uw project <strong>{{ project_name }}</strong> is gedeeltelijk verwerkt. Het projectbestand is succesvol aangemaakt, maar er zijn problemen opgetreden tijdens de uitrol.
+                                </p>
+                                
+                                <c-layout-flow gap="sm">
+                                    <p class="rvo-paragraph">
+                                        <strong>Status details:</strong>
+                                    </p>
+                                    <ul class="rvo-ul">
+                                        <li>Projectbestand: {{ file_path }} ✅</li>
+                                        <li>Verwerkingstijd: {{ elapsed_time }} seconden</li>
+                                        <li>Foutmelding: {{ error_message }}</li>
+                                    </ul>
+                                </c-layout-flow>
+
+                                <c-alert
+                                    kind="info"
+                                    heading="Wat nu?"
+                                    messages="Neem contact op met de beheerders of probeer het project opnieuw uit te rollen via de API of dashboard."/>
+                                    
+                                <c-layout-flow gap="md">
+                                    <c-action-group
+                                        :actions="[
+                                            {
+                                                'type': 'link',
+                                                'kind': 'primary',
+                                                'size': 'md',
+                                                'label': 'Ga naar Dashboard',
+                                                'showIcon': 'after',
+                                                'icon': 'pijl-naar-rechts',
+                                                'url': '/dashboard'
+                                            },
+                                            {
+                                                'type': 'link',
+                                                'kind': 'secondary',
+                                                'size': 'md', 
+                                                'label': 'Projectoverzicht',
+                                                'showIcon': 'after',
+                                                'icon': 'pijl-naar-rechts',
+                                                'url': '/projects'
+                                            },
+                                            {
+                                                'type': 'link',
+                                                'kind': 'tertiary',
+                                                'size': 'md',
+                                                'label': 'Probeer Opnieuw',
+                                                'url': '/projects/new'
+                                            }
+                                        ]"/>
+                                </c-layout-flow>
+                            </c-layout-flow>
+                        </c-content>
+                        
+                    </c-layout-flow>
+                </main>
+            </c-layout-flow>
+        </c-layout-flow>
+    </div>
+</c-page>

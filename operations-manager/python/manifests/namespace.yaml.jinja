@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ namespace }}
+  labels:
+    created-by: operations-manager
+  annotations:
+    # NOTE: we need manifests per cluster
+    # https://docs.rijksapps.nl/egress-internet-traffic/
+    egress.projectcalico.org/egressGatewayPolicy: "internet"

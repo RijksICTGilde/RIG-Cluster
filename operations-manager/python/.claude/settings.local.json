@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(kubectl get:*)",
+      "Bash(grep:*)",
+      "Bash(python functional_tests/test_argocd_application_creation.py)",
+      "Bash(python:*)",
+      "Bash(find:*)"
+    ],
+    "deny": []
+  }
+}

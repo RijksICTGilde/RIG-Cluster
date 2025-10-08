@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-manager
+spec:
+  template:
+    spec:
+      containers:
+      - name: operations-manager
+        image: ghcr.io/minbzk/base-images/operations-manager:latest
+        env:
+        - name: KUBERNETES_SERVICE_HOST
+          value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/config
+          readOnly: true
+      volumes:
+      - name: config-volume
+        configMap:
+          name: operations-manager-config

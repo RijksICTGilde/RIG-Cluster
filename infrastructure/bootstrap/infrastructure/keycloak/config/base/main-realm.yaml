@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: main-realm
+  namespace: rig-system
+data:
+  realm.json: |
+    {
+      "realm": "main",
+      "enabled": true,
+      "displayName": "Main Realm",
+      "sslRequired": "external",
+      "registrationAllowed": false,
+      "clients": [
+        {
+          "clientId": "argocd",
+          "name": "ArgoCD",
+          "enabled": true,
+          "clientAuthenticatorType": "client-secret",
+          "redirectUris": ["https://argocd.example.com/auth/callback"],
+          "webOrigins": ["https://argocd.example.com"],
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "standardFlowEnabled": true,
+          "implicitFlowEnabled": false,
+          "directAccessGrantsEnabled": true
+        }
+      ]
+    }

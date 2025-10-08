@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-manager
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: operations-manager
+        imagePullPolicy: Never
+        env:
+        - name: TMPDIR
+          value: "/tmp"
+        - name: TEMP
+          value: "/tmp"
+        - name: TMP
+          value: "/tmp"
+        - name: PYTHONTMPDIR
+          value: "/tmp"
+        - name: ENVIRONMENT
+          value: "local"
+        - name: LOCAL_DEVELOPMENT
+          value: "true"
+        volumeMounts:
+        - name: kube-api-access
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        - name: tmp
+          mountPath: /var/tmp
+        - name: config-volume
+          mountPath: /etc/config
+          readOnly: true
+        resources:
+          limits:
+            cpu: "4"
+            memory: 512Mi
+          requests:
+            cpu: "100m"
+            memory: 256Mi
+      volumes:
+      - name: kube-api-access
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt
+          - downwardAPI:
+              items:
+              - path: namespace
+                fieldRef:
+                  fieldPath: metadata.namespace
+      - name: tmp
+        emptyDir: 
+          sizeLimit: 2Gi
+      - name: config-volume
+        configMap:
+          name: operations-manager-config
+      serviceAccountName: namespace-manager

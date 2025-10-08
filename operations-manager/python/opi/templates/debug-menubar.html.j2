@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="utf-8">
+    <title>Debug Menubar</title>
+</head>
+<body>
+    <h1>Debug Menubar Data Processing</h1>
+    
+    <!-- Test with simple inline data -->
+    <h2>Test 1: Simple inline data</h2>
+    <c-menubar :items="[{'label': 'Home', 'link': '/'}]" />
+    
+    <!-- Test with template variable -->
+    <h2>Test 2: Template variable</h2>
+    <c-menubar :items="simple_menu" />
+    
+    <!-- Test current complex structure -->
+    <h2>Test 3: Current complex structure</h2>
+    <c-menubar 
+        size="md"
+        :useIcons="true"
+        iconPlacement="before"
+        maxWidth="md"
+        :items="[
+            {
+                'label': 'Naam app/website',
+                'link': '#',
+                'active': true
+            },
+            {
+                'label': 'Menu item',
+                'link': '#'
+            }
+        ]" />
+
+    <!-- Debug: Show what gets passed to menubar component -->
+    <h2>Debug Info</h2>
+    <p>Simple menu variable: {{ simple_menu | tojson }}</p>
+</body>
+</html>

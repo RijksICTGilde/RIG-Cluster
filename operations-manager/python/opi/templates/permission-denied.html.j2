@@ -1,0 +1,58 @@
+{% extends "base.html.j2" %}
+
+{#
+  Dashboard - Self Service Portal
+  
+  Overzicht van alle projecten, deployments en resource metrics
+  met real-time monitoring en status updates.
+#}
+
+{% block page_title %}Dashboard - Self Service Portal{% endblock %}
+
+{% block content %}
+
+<c-layout-flow gap="sm">
+
+    <c-heading type="h1"
+               textContent="Geen Toegang tot het Self Service Portal"/>
+
+    <c-heading type="h2" textContent="Wat betekent dit?"/>
+
+    <p>Je bent succesvol ingelogd via Single Sign-On (SSO), maar je e-mailadres staat niet op de lijst van
+        geautoriseerde gebruikers voor dit platform.</p>
+
+    <c-heading type="h3" textContent="Hoe krijg ik toegang?"/>
+
+    <c-ul bulletType="icon" bulletIcon="option-1">
+        <c-li>Neem contact op met je team lead of de platformbeheerder</c-li>
+        <c-li>Vraag om toegang tot het Self Service Portal</c-li>
+        <c-li>Zorg ervoor dat je e-mailadres&nbsp;<strong>{{ user.email if user else 'onbekend' }}</strong>&nbsp;wordt
+            toegevoegd aan de toegangslijst
+        </c-li>
+    </c-ul>
+
+    {% if user and user.organization %}
+        <c-heading type="h3" textContent="Je Organisatie Informatie"/>
+        <c-ul>
+            <c-li><strong>Organisatie:</strong> {{ user.organization.name }}</c-li>
+            {% if user.organization.number %}
+                <c-li><strong>Organisatie Nummer:</strong> {{ user.organization.number }}</c-li>
+            {% endif %}
+            {% if user.organization.role %}
+                <c-li><strong>Rol:</strong> {{ user.organization.role }}</c-li>
+            {% endif %}
+        </c-ul>
+    {% endif %}
+
+    {# Action Buttons #}
+    <c-layout-row gap="md">
+        <c-action-group>
+            <c-link
+                href="mailto:robbert.uittenbroek@rijksoverheid.nl"
+                showIcon="before"
+                icon="info"
+                content="Contact Opnemen"/>
+        </c-action-group>
+    </c-layout-row>
+</c-layout-flow>
+{% endblock %}

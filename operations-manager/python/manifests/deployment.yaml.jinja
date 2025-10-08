@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app: "{{ name }}"
+    project: "{{ project.name }}"
+    component: application
+spec:
+  strategy:
+    type: {{ pod_replacement_mode }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "{{ name }}"
+      component: application
+  template:
+    metadata:
+      labels:
+        app: "{{ name }}"
+        project: "{{ project.name }}"
+        component: application
+        network-policy: allow-db-access
+      annotations:
+        config-hash: "{{ config_hash }}"  # Triggers deployment reload when secrets/env vars change
+    spec:
+      # Pod-level security context (OpenShift compatible)
+      securityContext:
+        {% if cluster == 'local' %}
+        # For local/Kind clusters, specify numeric UID since no SCC assignment
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        {% else %}
+        # For OpenShift, let SCCs assign user/group IDs automatically
+        runAsNonRoot: true
+        {% endif %}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: "{{ imageURL }}"
+          ports:
+            - containerPort: {{ application_port }}
+              name: http
+          # Container-level security context (OpenShift compatible)
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          {% if env_vars %}
+          env:
+          {% for env_name, env_value in env_vars.items() %}
+            - name: {{ env_name }}
+              value: "{{ env_value }}"
+          {% endfor %}
+          {% endif %}
+          {% if env_from_secrets %}
+          envFrom:
+          {% for secret_name in env_from_secrets %}
+            - secretRef:
+                name: {{ secret_name }}
+          {% endfor %}
+          {% endif %}
+          {% if storage_configs %}
+          volumeMounts:
+          {% for storage in storage_configs %}
+            - name: {{ storage.name }}
+              mountPath: {{ storage['mount-path'] }}
+          {% endfor %}
+          {% endif %}
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          startupProbe:
+            httpGet:
+              path: /
+              port: {{ application_port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12  # 5 + (12 × 5) = 65 seconds max startup time
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ application_port }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ application_port }}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+      {% if storage_configs %}
+      volumes:
+      {% for storage in storage_configs %}
+        {% if storage.type == 'persistent' %}
+        - name: {{ storage.name }}
+          persistentVolumeClaim:
+            claimName: {{ name }}-{{ storage.name }}-pvc
+        {% elif storage.type == 'ephemeral' %}
+        - name: {{ storage.name }}
+          emptyDir:
+            sizeLimit: {{ storage.size }}
+        {% endif %}
+      {% endfor %}
+      {% endif %}

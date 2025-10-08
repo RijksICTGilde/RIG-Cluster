@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# namespace: rig-system # NOTE: we can not set the namespace here, this breaks the nginx deploy
+
+generators:
+- decrypt-sops.yaml
+
+# Environment-specific configuration
+resources:
+- namespace.yaml
+#   NOTE: we apply our own ingress here instead of using the haven solution, this one seems simpeler for now
+- https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/deploy/static/provider/kind/deploy.yaml # see https://mya.sh/blog/2020/10/21/local-ingress-domains-kind/
+- argo-local-test-git-repo.yaml
+- argo-known-hosts.yaml
+- argocd-deployment.yaml
+- argocd-admin-secret.yaml
+- argocd-application-local-infrastructure.yaml
+- argocd-application-user-applications.yaml
+- ../../operations-manager/overlays/local
+
+components:
+- ../../components/sops-plugin
+
+patches:
+- target:
+    kind: ArgoCD
+    name: argocd
+  patch: |-
+    - op: replace
+      path: /spec/repo/sidecarContainers/0/imagePullPolicy
+      value: Never

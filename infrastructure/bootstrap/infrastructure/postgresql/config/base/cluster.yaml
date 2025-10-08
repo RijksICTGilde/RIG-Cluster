@@ -1,0 +1,32 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgresql
+  namespace: rig-system
+spec:
+  instances: 3
+  primaryUpdateStrategy: unsupervised
+  
+  storage:
+    size: 10Gi
+    storageClass: standard
+  
+  bootstrap:
+    initdb:
+      database: postgres
+      owner: postgres
+      
+  backup:
+    barmanObjectStore:
+      endpointURL: https://minio.example.com
+      s3Credentials:
+        accessKeyId:
+          name: postgresql-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: postgresql-backup-creds
+          key: ACCESS_SECRET_KEY
+      destinationPath: s3://postgresql-backups
+      wal:
+        compression: gzip
+        maxParallel: 2

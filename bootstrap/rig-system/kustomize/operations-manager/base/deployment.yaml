@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-manager
+  namespace: rig-system
+  labels:
+    app: operations-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: operations-manager
+  template:
+    metadata:
+      labels:
+        app: operations-manager
+    spec:
+      serviceAccountName: namespace-manager
+      containers:
+      - name: operations-manager
+        image: operations-manager:latest
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          seccompProfile:
+            type: RuntimeDefault
+        ports:
+        - containerPort: 8000
+          name: http
+        resources:
+          limits:
+            cpu: "250m"
+            memory: 512Mi
+          requests:
+            cpu: "100m"
+            memory: 256Mi
+        volumeMounts:
+        - name: kube-api-access
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        - name: tmp
+          mountPath: /var/tmp
+        env:
+        - name: TMPDIR
+          value: "/tmp"
+        - name: ENVIRONMENT
+          value: "production"
+        - name: KUBERNETES_SERVICE_HOST
+          value: "kubernetes.default.svc"
+        - name: KUBERNETES_SERVICE_PORT
+          value: "443"
+        - name: SOPS_AGE_KEY_CONTENT
+          valueFrom:
+            secretKeyRef:
+              name: sops-age-key
+              key: key
+        envFrom:
+        - secretRef:
+            name: operations-manager-env-secrets
+        - secretRef:
+            name: operations-manager-keycloak
+            optional: true  # Optional to avoid bootstrap issues on first deployment
+      volumes:
+      - name: kube-api-access
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt
+          - downwardAPI:
+              items:
+              - path: namespace
+                fieldRef:
+                  fieldPath: metadata.namespace
+      - name: tmp
+        emptyDir: {}

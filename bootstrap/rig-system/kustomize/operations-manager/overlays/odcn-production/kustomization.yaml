@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-prd-operations
+
+generators:
+  - decrypt-sops.yaml
+
+resources:
+  - ../../base
+  - ingress.yaml
+  - configmap.yaml
+  - network-policy.yaml
+
+patches:
+  - path: patches/deployment.yaml
+    target:
+      kind: Deployment
+      name: operations-manager

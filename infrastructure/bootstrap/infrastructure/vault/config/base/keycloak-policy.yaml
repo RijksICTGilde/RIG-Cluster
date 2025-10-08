@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-policy
+  namespace: rig-system
+data:
+  policy.hcl: |
+    path "secret/data/keycloak/*" {
+      capabilities = ["read"]
+    }

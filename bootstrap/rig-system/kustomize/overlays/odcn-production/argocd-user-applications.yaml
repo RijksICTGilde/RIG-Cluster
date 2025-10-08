@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: user-applications
+  namespace: rig-system
+#  annotations:
+#    argocd.argoproj.io/sync-wave: "2"  # Deploy after infrastructure
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/RijksICTGilde/argo-applications.git
+      path: odcn-production
+      targetRevision: main
+      plugin:
+        name: kustomize-sops-v1.0
+        env:
+          - name: SOPS_KEY_SECRET
+            value: "sops-age-key"
+          - name: KUSTOMIZE_FOLDERS
+            value: "subfolders"  # or "current" or "all"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: "rig-prd-operations"
+  syncPolicy:
+    automated:
+      allowEmpty: true
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: -1                    # Number of retry attempts
+      backoff:
+        duration: "30s"            # Initial retry delay
+        factor: 1                  # Don't increase delay
+        maxDuration: "30s"         # Maximum retry delay

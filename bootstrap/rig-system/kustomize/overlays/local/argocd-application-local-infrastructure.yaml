@@ -1,0 +1,26 @@
+# Application - this tells ArgoCD what to deploy and how
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-infrastructure
+  namespace: rig-system
+spec:
+  project: default
+  source:
+    repoURL: git://host.docker.internal:9090/
+    path: infrastructure/bootstrap/clusters/local
+    targetRevision: HEAD
+    kustomize:
+    # Optional: specify kustomization file if not in root of path
+    # namePrefix: "local-"
+    # commonLabels:
+    #   environment: local
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-system  # Or specify target namespace for your infrastructure
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

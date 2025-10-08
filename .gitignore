@@ -1,0 +1,20 @@
+/.idea/
+/CLAUDE.md
+/.claude/settings.local.json
+/security/key.txt
+/operations-manager/python/log*
+/operations-manager/python/.env.local
+/operations-manager/python/.env.secrets
+/operations-manager/python/.env.*.secrets
+/.env-taskfile-current
+
+# Local symlink to jinja-roos-components (for Docker builds)
+/jinja-roos-components
+/operations-manager/python/jinja-roos-components
+
+# Generated secret overview files (contains plain text passwords)
+secrets-overview-*.txt
+secrets-overview-*.yaml
+/output.yaml
+/operations-manager/python/.env.my-machine
+/keycloak-migration/custom-mapper/target/

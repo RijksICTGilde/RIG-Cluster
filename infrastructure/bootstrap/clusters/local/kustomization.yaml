@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../infrastructure/secrets/templates
+  - ../../infrastructure/postgresql/database/overlays/local
+#  - ../../infrastructure/vault/controller/overlays/local
+#  - ../../infrastructure/vault/config/overlays/local
+  - ../../infrastructure/keycloak/controller/overlays/local
+  - ../../infrastructure/keycloak/config/overlays/local
+  - ../../infrastructure/minio/controller/overlays/local
+#  - ../../infrastructure/pgadmin/controller/overlays/local
+#  - ../../infrastructure/pgadmin/config/overlays/local
+#  - ../../infrastructure/minio/controller/overlays/local
+#  - ../../infrastructure/minio/config/overlays/local

@@ -1,0 +1,40 @@
+<c-page>
+    <c-header
+        text="Voorbeeld Jinja Components in ROOS"
+        subtitle="Omdat het kan..."
+        link="/"/>
+    <c-menubar
+        size="md"
+        :useIcons="true"
+        iconPlacement="before"
+        maxWidth="lg"
+        :items="menu_items"/>
+    <c-layout-flow gap="sm">
+        <c-heading type="h1">Dit is een heading</c-heading>
+        <p>
+            Het paragraph component mist nog.
+        </p>
+        <c-grid columns="two" gap="lg">
+            <c-card outline="true" padding="md">
+                <c-heading type="h3">
+                    <c-icon icon="database" size="lg" color="oranje"/>
+                    The Configuration Gap
+                </c-heading>
+                <p class="rvo-text--sm">
+                    We can request access to a database, have accounts created for a queue system,
+                    but we still need to configure everything. We may need to create the setup fully,
+                    from database to accounts, or we have to do partial steps.
+                </p>
+            </c-card>
+            <c-card outline="true" padding="md" backgroundColor="grijs-100">
+                <c-heading type="h3">
+                    <c-icon icon="sleutel" size="lg" color="rood"/>
+                    Dit is nog een card
+                </c-heading>
+                <p class="rvo-text--sm">
+                    Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+                </p>
+            </c-card>
+        </c-grid>
+    </c-layout-flow>
+</c-page>

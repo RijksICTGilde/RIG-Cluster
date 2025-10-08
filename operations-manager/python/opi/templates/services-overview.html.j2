@@ -1,0 +1,72 @@
+{% extends "base.html.j2" %}
+
+{% block content %}
+    <div class="rvo-max-width-layout rvo-max-width-layout--lg">
+        <c-layout-flow gap="xl">
+            
+            {# Page Header #}
+            <c-heading type="h1" textContent="Beschikbare Services" />
+            
+            <p>Wanneer je een service selecteert voor je project, worden alle onderstaande omgevingsvariabelen automatisch beschikbaar gesteld aan het component.</p>
+            
+            {# Services Grid #}
+            <c-grid columns="two" gap="lg">
+                {% for service_info in services %}
+                    <c-card outline="true" padding="lg">
+                        <c-layout-flow gap="md">
+                            
+                            {# Service Header #}
+                            <c-heading type="h3">
+                                <c-layout-row gap="md">
+                                    <c-icon icon="{{ service_info.definition.icon }}" 
+                                           size="3xl" 
+                                           color="{{ service_info.definition.color }}" />
+                                    <div>
+                                        <span>{{ service_info.definition.name }}</span>
+                                        <p class="rvo-text--sm rvo-text--subtle">
+                                            {{ service_info.definition.description }}
+                                        </p>
+                                    </div>
+                                </c-layout-row>
+                            </c-heading>
+                            
+                            {# Environment Variables Section #}
+                            {% if service_info.variables %}
+                                <div class="variables-section">
+                                    <c-heading type="h4" textContent="Omgevingsvariabelen" />
+                                    
+                                    <c-layout-flow gap="sm">
+                                        {% for variable in service_info.variables %}
+                                            <div class="variable-item">
+                                                <c-layout-flow gap="xs">
+                                                    <div class="variable-header">
+                                                        <code>{{ variable.name }}</code>
+                                                    </div>
+                                                    
+                                                    {% if variable.aliases %}
+                                                        <div class="variable-aliases">
+                                                            <span class="rvo-text--xs rvo-text--subtle">Aliassen: </span>
+                                                            {% for alias in variable.aliases %}
+                                                                <code class="rvo-text--xs">{{ alias }}</code>{% if not loop.last %}, {% endif %}
+                                                            {% endfor %}
+                                                        </div>
+                                                    {% endif %}
+                                                    
+                                                    <p class="rvo-text--xs rvo-text--subtle">
+                                                        {{ variable.description }}
+                                                    </p>
+                                                </c-layout-flow>
+                                            </div>
+                                        {% endfor %}
+                                    </c-layout-flow>
+                                </div>
+                            {% endif %}
+                            
+                        </c-layout-flow>
+                    </c-card>
+                {% endfor %}
+            </c-grid>
+            
+        </c-layout-flow>
+    </div>
+{% endblock %}

@@ -1,0 +1,429 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+
+<html lang="nl">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>{{ page_title_value }}</title>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+        <link href="/static/roos/dist/roos.css" rel="stylesheet"/>
+<link href="/static/roos/dist/@nl-rvo/assets/fonts/index.css" rel="stylesheet"/>
+<link href="/static/roos/dist/@nl-rvo/assets/icons/index.css" rel="stylesheet"/>
+<link href="/static/roos/dist/@nl-rvo/assets/images/index.css" rel="stylesheet"/>
+<link href="/static/roos/dist/@nl-rvo/design-tokens/index.css" rel="stylesheet"/>
+<link href="/static/roos/dist/@nl-rvo/component-library-css/index.css" rel="stylesheet"/>
+<link href="/static/roos/dist/@nl-rvo/css-button/index.css" rel="stylesheet"/>
+    
+    
+    
+    
+</head>
+<body class="rvo-theme rvo-theme rvo-responsive" data-roos-page="true">
+    
+    
+        <div class="rvo-demo-page">
+        
+        JINJA2_PLACEHOLDER_bajalzpd
+JINJA2_PLACEHOLDER_cwkemwri
+        
+        
+<style>
+    /* Diagram styling */
+    .diagram-container {
+        width: 100%;
+        text-align: center;
+        padding: var(--rvo-space-xl);
+        min-height: 500px;
+        overflow-x: auto;
+    }
+    
+    .diagram-container svg {
+        max-width: 100%;
+        height: auto;
+        min-height: 400px;
+    }
+
+    /* Component cards styling */
+    .component-card, .result-card, .future-card {
+        transition: all 0.3s ease;
+        cursor: default;
+    }
+
+    .component-card:hover, .result-card:hover, .future-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+    }
+
+    .component-card.featured {
+        border: 2px solid var(--rvo-color-hemelblauw);
+    }
+
+    .connector-card {
+        text-align: center;
+        transition: all 0.2s ease;
+    }
+
+    .connector-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Workflow steps styling */
+    .workflow-steps {
+        margin-top: var(--rvo-space-xl);
+    }
+
+    .workflow-step {
+        padding: var(--rvo-space-lg);
+        border-left: 3px solid var(--rvo-color-grijs-300);
+        position: relative;
+    }
+
+    .workflow-step:hover {
+        border-left-color: var(--rvo-color-hemelblauw);
+        background-color: var(--rvo-color-hemelblauw-50);
+        border-radius: 0 8px 8px 0;
+        transition: all 0.3s ease;
+    }
+
+    .step-number {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .step-circle {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: var(--rvo-color-hemelblauw);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 18px;
+    }
+
+    /* Future cards get a subtle animation */
+    .future-card {
+        position: relative;
+        overflow: hidden;
+    }
+
+    .future-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+        transition: left 0.8s;
+    }
+
+    .future-card:hover::before {
+        left: 100%;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .diagram-container {
+            padding: var(--rvo-space-md);
+        }
+        
+        .workflow-step {
+            padding: var(--rvo-space-md);
+        }
+        
+        .step-circle {
+            width: 40px;
+            height: 40px;
+            font-size: 16px;
+        }
+    }
+</style>
+
+        
+        
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+    // Initialize Mermaid
+    mermaid.initialize({ 
+        theme: 'neutral',
+        flowchart: {
+            curve: 'basis',
+            nodeSpacing: 80,
+            rankSpacing: 100,
+            padding: 20
+        },
+        c4: {
+            theme: 'neutral',
+            wrap: true,
+            width: 200,
+            height: 150,
+            boxMargin: 20,
+            useMaxWidth: true
+        }
+    });
+
+    // System Context Diagram (C4 Level 1)
+    const contextDiagram = `
+        graph TB
+            %% Users (above RIG Cluster)
+            DEV[👨‍💻 Developer<br/>Creates and deploys projects]
+            OPS[🛠️ Platform Team<br/>Manages infrastructure]  
+            USER[👤 End User<br/>Uses deployed applications]
+            
+            %% Central System
+            RIG[🎯 RIG Cluster<br/>Self-Service Kubernetes Platform<br/>ODC-Noord]
+            
+            %% External Systems (below RIG Cluster)
+            RIJKSSO[🔐 Rijksoverheid SSO<br/>Central Identity Provider]
+            GIT[📁 Git Repository<br/>Source Code & Manifests]
+            REGISTRY[📦 Container Registry<br/>Docker Images]
+            MONITOR[📊 Monitoring Systems<br/>Logs & Metrics]
+            
+            %% User interactions (top to center)
+            DEV --> |"Request new projects<br/>Deploy applications"| RIG
+            OPS --> |"Configure & monitor<br/>platform health"| RIG  
+            USER --> |"Access deployed<br/>web applications"| RIG
+            
+            %% External system interactions (center to bottom)
+            RIG --> |"Authenticate users<br/>via SSO"| RIJKSSO
+            RIG --> |"Store manifests<br/>GitOps workflow"| GIT
+            RIG --> |"Pull container<br/>images"| REGISTRY
+            RIG --> |"Export metrics<br/>& logs"| MONITOR
+            
+            %% Styling
+            classDef userStyle fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+            classDef systemStyle fill:#e3f2fd,stroke:#1565c0,stroke-width:3px
+            classDef externalStyle fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+            
+            class DEV,OPS,USER userStyle
+            class RIG systemStyle
+            class RIJKSSO,GIT,REGISTRY,MONITOR externalStyle
+    `;
+
+    // Container Diagram (C4 Level 2)
+    const containerDiagram = `
+        graph TB
+            %% External users/systems (top)
+            DEV[👨‍💻 Developer<br/>Creates projects]
+            
+            %% RIG Cluster Platform boundary
+            subgraph RIG ["🎯 RIG Cluster Platform"]
+                %% Control layer (top of platform)
+                OPS[🎭 Operations Manager<br/>FastAPI - Project Orchestration]
+                
+                %% Runtime layer (middle of platform)
+                K8S[☸️ Kubernetes Cluster<br/>Container Runtime & Orchestration]
+                ARGO[🔄 ArgoCD<br/>GitOps Continuous Deployment]
+                
+                %% Services layer (bottom of platform)
+                KEYCLOAK[🔐 Keycloak<br/>Identity & Access Management]
+                POSTGRES[🗄️ PostgreSQL<br/>Application Databases]
+                MINIO[📦 MinIO<br/>S3-Compatible Object Storage]
+            end
+            
+            %% External systems (bottom)
+            GIT[📁 Git Repository<br/>Manifests & Config]
+            RIJKSSO[🏛️ Rijksoverheid SSO<br/>Central Identity]
+            
+            %% User to platform
+            DEV --> |"Create & manage<br/>projects via API"| OPS
+            
+            %% Operations Manager orchestrates everything
+            OPS --> |"Deploy applications<br/>manage namespaces"| K8S
+            OPS --> |"Create GitOps<br/>applications"| ARGO
+            OPS --> |"Provision SSO<br/>clients & roles"| KEYCLOAK
+            OPS --> |"Create schemas<br/>& users"| POSTGRES  
+            OPS --> |"Setup buckets<br/>& access keys"| MINIO
+            OPS --> |"Commit generated<br/>manifests"| GIT
+            
+            %% Runtime interactions
+            ARGO --> |"Watch & sync<br/>manifest changes"| GIT
+            ARGO --> |"Apply manifests<br/>to cluster"| K8S
+            KEYCLOAK --> |"Federate authentication<br/>government SSO"| RIJKSSO
+            
+            %% Styling
+            classDef userStyle fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+            classDef controlStyle fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+            classDef runtimeStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+            classDef serviceStyle fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+            classDef externalStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+            
+            class DEV userStyle
+            class OPS controlStyle
+            class K8S,ARGO runtimeStyle
+            class KEYCLOAK,POSTGRES,MINIO serviceStyle
+            class GIT,RIJKSSO externalStyle
+    `;
+
+    // Hexagonal Architecture for Operations Manager
+    const hexagonalDiagram = `
+        graph TB
+            subgraph core ["🏛️ Operations Manager Core"]
+                direction TB
+                API[FastAPI<br/>Web Interface]
+                CORE[Project Manager<br/>Business Logic]
+                HANDLERS[Request Handlers<br/>Orchestration]
+            end
+            
+            subgraph connectors ["🔌 Connectors"]
+                direction TB
+                GIT[Git Connector<br/>Repositories]
+                K8S[Kubectl Connector<br/>Kubernetes API]
+                DB[Database Connector<br/>PostgreSQL]
+                KC[Keycloak Connector<br/>Identity]
+                MINIO[MinIO Connector<br/>Storage]
+                ARGO[ArgoCD Connector<br/>GitOps]
+            end
+            
+            subgraph external ["🌐 External Systems"]
+                direction TB
+                GITREPO[(Git Repo)]
+                CLUSTER[K8s Cluster]
+                POSTGRES[(PostgreSQL)]
+                KEYCLOAK[Keycloak]
+                STORAGE[(MinIO)]
+                ARGOCD[ArgoCD]
+            end
+            
+            API --> HANDLERS
+            HANDLERS --> CORE
+            
+            CORE --> GIT
+            CORE --> K8S
+            CORE --> DB
+            CORE --> KC
+            CORE --> MINIO
+            CORE --> ARGO
+            
+            GIT --> GITREPO
+            K8S --> CLUSTER
+            DB --> POSTGRES
+            KC --> KEYCLOAK
+            MINIO --> STORAGE
+            ARGO --> ARGOCD
+            
+            classDef coreStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+            classDef connectorStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+            classDef externalStyle fill:#fff8e1,stroke:#f57c00,stroke-width:2px
+            
+            class API,CORE,HANDLERS coreStyle
+            class GIT,K8S,DB,KC,MINIO,ARGO connectorStyle
+            class GITREPO,CLUSTER,POSTGRES,KEYCLOAK,STORAGE,ARGOCD externalStyle
+    `;
+
+    // Project Creation Workflow
+    const workflowDiagram = `
+        graph TD
+            start([Developer Submits Project Request]) --> validate{Validate Input}
+            validate -->|Valid| create_ns[Create Kubernetes Namespace]
+            validate -->|Invalid| error1[Show Validation Errors]
+            
+            create_ns --> create_db[Provision Database Schema & User]
+            create_db --> create_storage[Create MinIO Bucket & Access Keys]
+            create_storage --> create_sso[Setup Keycloak Client & Roles]
+            create_sso --> generate_manifests[Generate Kubernetes Manifests]
+            
+            generate_manifests --> encrypt_secrets[Encrypt Secrets with AGE]
+            encrypt_secrets --> commit_git[Commit to Git Repository]
+            commit_git --> create_argo[Create ArgoCD Application]
+            
+            create_argo --> sync_check{ArgoCD Sync Status}
+            sync_check -->|Success| deployed[Application Deployed ✅]
+            sync_check -->|Failed| debug[Review ArgoCD Logs]
+            debug --> manual_fix[Manual Intervention]
+            manual_fix --> sync_check
+            
+            deployed --> notify[Send Success Notification]
+            notify --> provide_access[Provide API Keys & Documentation]
+            provide_access --> complete([Project Ready! 🚀])
+            
+            classDef process fill:#e8f5e8
+            classDef decision fill:#fff4e6
+            classDef success fill:#e8f5e8
+            classDef error fill:#ffebee
+            
+            class create_ns,create_db,create_storage,create_sso,generate_manifests,encrypt_secrets,commit_git,create_argo,deployed,notify,provide_access process
+            class validate,sync_check decision
+            class complete success
+            class error1,debug,manual_fix error
+    `;
+
+    // Render diagrams when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        mermaid.render('context-graph', contextDiagram).then(({svg}) => {
+            document.getElementById('context-diagram').innerHTML = svg;
+        });
+        
+        mermaid.render('container-graph', containerDiagram).then(({svg}) => {
+            document.getElementById('container-diagram').innerHTML = svg;
+        });
+        
+        mermaid.render('hexagonal-graph', hexagonalDiagram).then(({svg}) => {
+            document.getElementById('hexagonal-diagram').innerHTML = svg;
+        });
+        
+        mermaid.render('workflow-graph', workflowDiagram).then(({svg}) => {
+            document.getElementById('workflow-diagram').innerHTML = svg;
+        });
+    });
+</script>
+
+    </div>
+    
+    
+    
+    
+        <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>
+    
+    
+    
+    
+        
+            <script src="/static/roos/dist/roos.js"></script>
+<script src="/static/roos/dist/@nl-rvo/design-tokens/index.mjs" type="module"></script>
+        
+    
+    
+    
+    
+    
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.roos && window.roos.init) {
+                window.roos.init();
+            }
+        });
+    </script>
+</body>
+</html>

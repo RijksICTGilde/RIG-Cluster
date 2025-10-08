@@ -1,0 +1,1992 @@
+{% extends "base.html.j2" %}
+
+{% block page_title %}Architecture Overview - RIG Cluster Platform{% endblock %}
+
+{% block content %}
+<div class="rvo-layout-column rvo-layout-gap--3xl">
+    
+    {# Hero Section #}
+    <section class="rvo-hero rvo-hero--lg rvo-hero--with-image" data-roos-component="hero" data-roos-size="lg">
+        <div class="rvo-hero__image-container">
+            <img src="/static/cloud.jpg" alt="Cloud architecture and modern development" class="rvo-hero__image" />
+        </div>
+        <div class="rvo-hero__content">
+            <h1 class="utrecht-heading-1 rvo-hero__title">Built for Developers, By Developers</h1>
+            <p class="rvo-hero__subtitle rvo-text--lg">The platform that makes deployment effortless</p>
+            <div class="rvo-hero__text">
+                <p class="rvo-text--lg">Here's how we built a platform where the complexity is hidden, but the power remains accessible.</p>
+            </div>
+        </div>
+    </section>
+
+    {# The Problem: Fragmented Developer Experience #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="Pieces of the Puzzle"/>
+                <p class="rvo-text--lg">
+                    There are many (cloud) providers that offer a (kubernetes) cluster or virtual machines to deploy applications. 
+                    Also larger companies would have platform teams, to provide all the tools needed for a CI/CD setup.
+                </p>
+            </div>
+
+            <p class="rvo-text--md">
+                We have version control, we have a central image registry (including packages), they provide a database 
+                you can setup or have access to, mostly, all pieces of the puzzle for application deployment is provided 
+                some way or another. <strong>But often, there is a gap between the tools provided and actually getting 
+                your application up and running in production, and the key missing feature often is provisioning, 
+                or even, auto provisioning.</strong>
+            </p>
+
+            <div class="rvo-layout-grid rvo-layout-gap--md" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+                
+                <c-card padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="database" size="lg" color="oranje"/>
+                            The Configuration Gap
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            We can request access to a database, have accounts created for a queue system, 
+                            but we still need to configure everything. We may need to create the setup fully, 
+                            from database to accounts, or we have to do partial steps.
+                        </p>
+                        <p class="rvo-text--sm">
+                            Also, connecting with an SSO may not always be available. Larger companies may 
+                            have a stack to go, but when this is not the case, <strong>we keep solving 
+                            the same problem</strong>.
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="server" size="lg" color="hemelblauw"/>
+                            The Missing Piece
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            A solution, that if we have built an application, we can just click what 
+                            we need, a database, SSO Rijk, and we want to deploy it to the internet... 
+                            <strong>and it is just there</strong>.
+                        </p>
+                        <p class="rvo-text--sm">
+                            The key is <strong>auto-provisioning</strong> - removing the manual configuration 
+                            steps that slow down deployment and create friction in the development process.
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <c-card padding="xl" background="color" backgroundColor="hemelblauw-150" :outline="true">
+                <c-layout-flow gap="lg">
+                    <div style="text-align: center;">
+                        <c-heading type="h3" textContent="'Één Loket' Solution"/>
+                        <p class="rvo-text--lg" style="margin-top: var(--rvo-space-md);">
+                            <strong>What if we would have just a single place to manage our application deployment?</strong>
+                        </p>
+                    </div>
+                    
+                    <p class="rvo-text--md">
+                        We have built a POC/MVP to show how this could work. Add some user management, RBAC, 
+                        internal billing, or not, <strong>'Overheids Solution As A Service'</strong>, 
+                        and we're just ready to go.
+                    </p>
+                    
+                    <p class="rvo-text--md">
+                        DevOps Experience maximized to as easy it ought to be. 
+                        Not reinventing the wheel, but putting all the wheels together to build solutions to propel us forward.
+                    </p>
+
+                    <div class="rvo-layout-grid rvo-layout-gap--sm" 
+                         style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-top: var(--rvo-space-lg);">
+
+                        <div style="text-align: center; padding: var(--rvo-space-md);">
+                            <c-icon icon="applicatie" size="xl" color="groen" style="margin-bottom: var(--rvo-space-sm);"/>
+                            <p class="rvo-text--sm"><strong>Application Info</strong><br/>Provide your details</p>
+                        </div>
+                        
+                        <div style="text-align: center; padding: var(--rvo-space-md);">
+                            <c-icon icon="database" size="xl" color="groen" style="margin-bottom: var(--rvo-space-sm);"/>
+                            <p class="rvo-text--sm"><strong>Database</strong><br/>One click setup</p>
+                        </div>
+                        
+                        <div style="text-align: center; padding: var(--rvo-space-md);">
+                            <c-icon icon="sleutel" size="xl" color="groen" style="margin-bottom: var(--rvo-space-sm);"/>
+                            <p class="rvo-text--sm"><strong>SSO Rijk</strong><br/>Instant integration</p>
+                        </div>
+                        
+                        <div style="text-align: center; padding: var(--rvo-space-md);">
+                            <c-icon icon="informatie-op-internet" size="xl" color="groen" style="margin-bottom: var(--rvo-space-sm);"/>
+                            <p class="rvo-text--sm"><strong>Deploy to Internet</strong><br/>Automatic routing</p>
+                        </div>
+                        
+                    </div>
+                </c-layout-flow>
+            </c-card>
+
+            <c-card padding="lg" background="color" backgroundColor="oranje-150" :outline="true">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3">
+                        <c-icon icon="waarschuwing" size="lg" color="oranje"/>
+                        Out of Scope
+                    </c-heading>
+                    <p class="rvo-text--md">
+                        <strong>Out of scope here is the version control and image registry</strong> - we used GitHub 
+                        for our projects, though anything should work.
+                    </p>
+                    <p class="rvo-text--md">
+                        Our solution builds on an existing or provided deployment platform and CI/CD solutions. 
+                        We're not replacing these foundational tools, but rather filling the gap between having 
+                        them and actually using them effectively.
+                    </p>
+                    <p class="rvo-text--sm" style="font-style: italic;">
+                        We focus on the provisioning and configuration layer that sits on top of existing infrastructure.
+                    </p>
+                </c-layout-flow>
+            </c-card>
+
+            <c-card padding="lg" background="color" backgroundColor="groen-150" :outline="true">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3">
+                        <c-icon icon="vinkje" size="lg" color="groen"/>
+                        A Pragmatic Approach
+                    </c-heading>
+                    <p class="rvo-text--md">
+                        <strong>Maybe this is not the solution for everything.</strong> Maybe it already exists somewhere. 
+                        But maybe, just maybe, we can tailor a solution to what we really need.
+                    </p>
+                    <p class="rvo-text--md">
+                        And if someone else can do it better? <strong>Awesome, let's use that instead!</strong>
+                    </p>
+                    <p class="rvo-text--sm" style="font-style: italic;">
+                        The goal isn't to build everything ourselves - it's to ensure developers have the seamless experience 
+                        they deserve, whether we build it, buy it, or adopt it. The best solution wins.
+                    </p>
+                </c-layout-flow>
+            </c-card>
+        </c-layout-flow>
+    </div>
+
+    {# Bootstrap Architecture #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="Bootstrap: Building on Solid Foundations"/>
+                <p class="rvo-text--lg">
+                    RIG Cluster doesn't start from scratch. We build upon existing Kubernetes platforms like 
+                    <strong>Haven</strong> or <strong>ODC Noord OpenShift</strong> to provide a solid foundation,
+                    then add the components needed for self-service project deployment.
+                </p>
+            </div>
+
+            <c-card padding="xl" background="color" backgroundColor="wit" :outline="true">
+                <div id="bootstrap-diagram" class="diagram-container">
+                    <!-- Bootstrap architecture diagram will be rendered here -->
+                </div>
+            </c-card>
+
+            <div class="rvo-layout-grid rvo-layout-gap--md" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+                
+                <c-card class="bootstrap-card" padding="lg" background="color" backgroundColor="hemelblauw-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="server" size="xl" color="donkerblauw"/>
+                            Existing Platform
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            <strong>Haven Implementation</strong> or <strong>ODC Noord OpenShift</strong> provides
+                            the foundational Kubernetes cluster with basic networking, storage, and compute resources.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Container runtime and orchestration',
+                            'Network policies and ingress',
+                            'Storage classes and persistent volumes',
+                            'Basic RBAC and security policies'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="bootstrap-card" padding="lg" background="color" backgroundColor="groen-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="applicatie" size="xl" color="groen"/>
+                            ArgoCD
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            <strong>GitOps Engine</strong> - Continuously monitors Git repositories and automatically 
+                            deploys changes to the Kubernetes cluster.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Automated deployment from Git',
+                            'Application lifecycle management',
+                            'Health monitoring and sync status',
+                            'Multi-environment support'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="bootstrap-card" padding="lg" background="color" backgroundColor="oranje-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="sleutel" size="xl" color="oranje"/>
+                            Keycloak
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            <strong>Identity & Access Management</strong> - Provides SSO integration with 
+                            Rijksoverheid and manages authentication for all applications.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Rijksoverheid SSO integration',
+                            'Client and user management',
+                            'Role-based access control',
+                            'API authentication tokens'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="bootstrap-card" padding="lg" background="color" backgroundColor="lichtblauw-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="database" size="xl" color="hemelblauw"/>
+                            Shared Database
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            <strong>PostgreSQL Cluster</strong> - High-availability database service where 
+                            each project gets its own schema and dedicated user.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Automated schema provisioning',
+                            'Per-project database users',
+                            'Connection string management',
+                            'Backup and recovery'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="bootstrap-card" padding="lg" background="color" backgroundColor="donkerblauw-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="map" size="xl" color="donkerblauw"/>
+                            Shared MinIO
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            <strong>S3-Compatible Storage</strong> - Object storage service providing 
+                            isolated buckets and access credentials for each project.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'S3-compatible API',
+                            'Per-project bucket isolation',
+                            'Access key management',
+                            'Storage policies and quotas'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="bootstrap-card" padding="lg" background="color" backgroundColor="lichtblauw-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="sleutel" size="xl" color="donkerblauw"/>
+                            Backup and Restore
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            <strong>Data Protection</strong> - Automated backup and restore capabilities for 
+                            databases and persistent storage when deployments require it.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Database backup automation',
+                            'Persistent storage snapshots', 
+                            'Point-in-time recovery',
+                            'Disaster recovery workflows'
+                        ]" />
+                        <div class="rvo-alert rvo-alert--warning rvo-alert--compact">
+                            <c-icon icon="waarschuwing" size="sm"/>
+                            <div>
+                                <strong>Planning Phase:</strong> This component is currently in design and will be 
+                                implemented to provide robust data protection for production deployments.
+                            </div>
+                        </div>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="bootstrap-card featured" padding="lg" background="color" backgroundColor="rood-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="informatie-op-internet" size="xl" color="rood"/>
+                            Operations Manager
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            <strong>The Orchestrator</strong> - FastAPI service that connects to all platform 
+                            components and provides the self-service portal for project creation.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Self-service web interface',
+                            'Multi-system orchestration',
+                            'Project lifecycle management',
+                            'Template-based deployments'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <div class="rvo-alert rvo-alert--info">
+                <c-icon icon="info" size="md"/>
+                <div class="rvo-alert__content">
+                    <p><strong>Bootstrap Creates Two Key Projects:</strong></p>
+                    <c-ul bulletType="icon" bulletIcon="option-1">
+                        <c-li><strong>local-infrastructure</strong> - Manages the platform services themselves (ArgoCD, Keycloak, PostgreSQL, MinIO, Operations Manager)</c-li>
+                        <c-li><strong>user-applications</strong> - Contains all user-created projects and their configurations</c-li>
+                    </c-ul>
+                </div>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# Less is More Philosophy #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="Less is More: Smart Resource Sharing"/>
+                <p class="rvo-text--lg">
+                    <strong>Efficiency through sharing.</strong> Instead of creating separate database servers, 
+                    storage systems, and identity providers for every project, we share resources intelligently. 
+                    This reduces costs, simplifies maintenance, and improves security.
+                </p>
+            </div>
+
+            <c-grid columns="four" gap="lg">
+                
+                <c-card padding="lg" background="color" backgroundColor="wit" :outline="true" style="text-align: center;">
+                    <c-layout-flow gap="md">
+                        <img src="/static/LSS_S_MR-1_resized.jpg" alt="Less is More - Smart Resource Sharing Visualization"/>
+                        <p class="rvo-text--xs" style="font-style: italic; color: var(--rvo-color-grijs-700);">
+                            Smart resource sharing: efficiency through intelligent design
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+                
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="groen-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="database" size="xl" color="groen"/>
+                            Shared by Default
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            <strong>One PostgreSQL cluster</strong> serves all projects with isolated schemas. 
+                            <strong>One MinIO instance</strong> provides buckets for everyone. 
+                            <strong>One Keycloak</strong> handles authentication for all applications.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Lower operational overhead',
+                            'Centralized backup and monitoring',
+                            'Consistent security policies',
+                            'Reduced resource consumption'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="hemelblauw-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="informatie-op-internet" size="xl" color="hemelblauw"/>
+                            Per-Project When Needed
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            Some projects have special requirements: <strong>dedicated databases</strong> for performance, 
+                            <strong>isolated storage</strong> for compliance, or <strong>custom authentication</strong> for integration needs.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Performance-critical workloads',
+                            'Strict compliance requirements',
+                            'Legacy system integration',
+                            'Development vs production isolation'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="oranje-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h3">
+                            <c-icon icon="applicatie" size="xl" color="oranje"/>
+                            Per-Deployment Flexibility
+                        </c-heading>
+                        <p class="rvo-text--sm">
+                            Maximum flexibility: <strong>development environments</strong> can share everything, 
+                            <strong>production environments</strong> get dedicated resources, 
+                            and <strong>testing environments</strong> can use lightweight alternatives.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Environment-specific scaling',
+                            'Cost optimization by environment',
+                            'Risk isolation for production',
+                            'Fast provisioning for testing'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+            </c-grid>
+
+            <div class="rvo-alert rvo-alert--success">
+                <c-icon icon="vinkje" size="md"/>
+                <div class="rvo-alert__content">
+                    <p><strong>The Result:</strong> A 50-project platform runs on the same infrastructure 
+                    that would traditionally require 150+ separate services. Less complexity, lower costs, 
+                    easier maintenance, and faster deployments.</p>
+                </div>
+            </div>
+
+            <div class="resource-sharing-comparison">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3" textContent="Resource Sharing in Practice"/>
+                    <div class="rvo-layout-grid rvo-layout-gap--md" 
+                         style="grid-template-columns: 1fr 1fr;">
+                        
+                        <c-card padding="md" background="color" backgroundColor="rood-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="waarschuwing" size="md" color="rood"/>
+                                    <strong>Traditional Approach</strong>
+                                </div>
+                                <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                                    '50 projects × 3 services = 150 instances',
+                                    '150 databases to backup and monitor',
+                                    '150 security configurations to maintain',
+                                    'Massive resource waste and complexity'
+                                ]" />
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card padding="md" background="color" backgroundColor="groen-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="vinkje" size="md" color="groen"/>
+                                    <strong>RIG Cluster Approach</strong>
+                                </div>
+                                <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                                    '50 projects sharing 3 service clusters',
+                                    '3 database systems with 50 schemas',
+                                    'Centralized security and monitoring',
+                                    'Efficient scaling and cost optimization'
+                                ]" />
+                            </c-layout-flow>
+                        </c-card>
+                    </div>
+                </c-layout-flow>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# Feature Branches & Application Variants #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="Feature Branches: Clone, Don't Recreate"/>
+                <p class="rvo-text--lg">
+                    <strong>Development at scale.</strong> When working on feature branches, new environments, 
+                    or testing scenarios, you don't start from scratch. The platform intelligently clones 
+                    existing data and storage while maintaining complete isolation.
+                </p>
+            </div>
+
+            <c-card padding="xl" background="color" backgroundColor="wit" :outline="true">
+                <div id="variants-diagram" class="diagram-container">
+                    <!-- Application variants diagram will be rendered here -->
+                </div>
+            </c-card>
+
+            <div class="rvo-layout-grid rvo-layout-gap--lg" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
+                
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="hemelblauw-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="database" size="xl" color="hemelblauw"/>
+                            <c-heading type="h3" textContent="Smart Database Cloning"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Clone from Production</strong> - Create feature branch databases with real data. 
+                            <strong>Clone from Staging</strong> - Use curated test datasets. 
+                            <strong>Clone from Another Feature</strong> - Build on previous work.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Full schema + data replication',
+                            'Automatic anonymization options', 
+                            'Size-optimized partial clones',
+                            'Independent schema evolution'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="groen-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="map" size="xl" color="groen"/>
+                            <c-heading type="h3" textContent="Storage Cloning"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>MinIO Bucket Cloning</strong> - Copy files, images, and documents from parent environments. 
+                            Maintains folder structure and permissions while creating completely isolated storage.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'S3-compatible bucket duplication',
+                            'Selective file copying patterns',
+                            'Independent access credentials', 
+                            'Automatic cleanup on branch merge'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="oranje-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="informatie-op-internet" size="xl" color="oranje"/>
+                            <c-heading type="h3" textContent="Environment Isolation"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Complete Separation</strong> - Each variant has its own resources.
+                            No cross-contamination, no shared state,
+                            no accidental data mixing.
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <div class="rvo-alert rvo-alert--info">
+                <c-icon icon="info" size="md"/>
+                <div class="rvo-alert__content">
+                    <p><strong>Development Workflow:</strong> Create feature branch → Platform detects variant → 
+                    Clones selected data sources → Provisions isolated environment → Deploy and test independently.</p>
+                </div>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# Project Life Cycle Management #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="Project Life Cycle Management"/>
+                <p class="rvo-text--lg">
+                    <strong>From creation to cleanup.</strong> The platform doesn't just create resources - it manages 
+                    their entire lifecycle. Projects are born, they evolve, and when they're no longer needed, 
+                    everything is automatically cleaned up without leaving traces behind.
+                </p>
+            </div>
+
+            <div class="rvo-layout-grid rvo-layout-gap--lg" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+                
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="groen-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="pijl-naar-rechts" size="xl" color="groen"/>
+                            <c-heading type="h3" textContent="Automated Creation"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Zero-touch provisioning</strong> - Request a project, and all required resources 
+                            spring into existence: namespaces, databases, storage, authentication, networking, 
+                            and monitoring. Everything connected and configured automatically.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Kubernetes namespace creation',
+                            'Database schema & user provisioning',
+                            'S3 bucket & access key generation',
+                            'Keycloak client & role configuration',
+                            'Network policies & ingress setup'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="rood-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="waarschuwing" size="xl" color="rood"/>
+                            <c-heading type="h3" textContent="Complete Cleanup"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Leave no trace behind</strong> - When a project ends, everything goes away. 
+                            Databases are dropped, storage is deleted, authentication clients are removed, 
+                            and resources are freed up. Complete cleanup, zero manual intervention.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Kubernetes resource deletion',
+                            'Database schema & user removal',
+                            'S3 bucket & data purging',
+                            'Keycloak client deregistration',
+                            'Network policy cleanup'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <div class="rvo-alert rvo-alert--success">
+                <c-icon icon="vinkje" size="md"/>
+                <div class="rvo-alert__content">
+                    <p><strong>The Result:</strong> Complete resource lifecycle automation. 
+                    Projects can be created and destroyed safely without manual cleanup, orphaned resources, 
+                    or security risks. Infrastructure-as-Code meets Infrastructure-as-a-Service.</p>
+                </div>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# Harness the Power, Hide the Complexity #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="Harness the Power, Hide the Complexity"/>
+                <p class="rvo-text--lg">
+                    <strong>One dashboard to rule them all.</strong> Instead of requiring deep knowledge of Kubernetes, 
+                    ArgoCD, Prometheus, Grafana, and dozens of other tools, we extract the most useful information 
+                    into a single, intuitive dashboard. There's one place to see the status of everything.
+                </p>
+            </div>
+
+            <div class="rvo-layout-grid rvo-layout-gap--lg" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
+                
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="hemelblauw-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="informatie-op-internet" size="xl" color="hemelblauw"/>
+                            <c-heading type="h3" textContent="Unified Dashboard"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Single pane of glass</strong> - See everything that matters in one place. 
+                            Project health, deployment status, resource usage, errors, and performance metrics. 
+                            No need to jump between multiple tools and interfaces.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Project status overview',
+                            'Deployment health indicators',
+                            'Resource usage metrics',
+                            'Recent activity timeline',
+                            'Error alerts and warnings'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="groen-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="zoek" size="xl" color="groen"/>
+                            <c-heading type="h3" textContent="Smart Information Extraction"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>From complex to simple</strong> - Behind the scenes, the platform monitors 
+                            dozens of metrics from Kubernetes, ArgoCD, databases, and monitoring tools. 
+                            You see only what you need to know, when you need to know it.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Kubernetes pod health summaries',
+                            'ArgoCD sync status simplified',
+                            'Database performance insights',
+                            'Storage usage trends',
+                            'Security status indicators'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="oranje-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="grafiek" size="xl" color="oranje"/>
+                            <c-heading type="h3" textContent="Intelligent Insights"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Actionable intelligence</strong> - The dashboard doesn't just show data, 
+                            it provides context and recommendations. Know what's wrong, why it's wrong, 
+                            and what you can do about it.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Contextual error explanations',
+                            'Performance optimization hints',
+                            'Capacity planning suggestions',
+                            'Security best practice alerts',
+                            'Troubleshooting guidance'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <div class="complexity-comparison">
+                <c-layout-flow gap="lg">
+                    <c-heading type="h3" textContent="From Many Tools to One View"/>
+                    
+                    <div class="rvo-layout-grid rvo-layout-gap--md" 
+                         style="grid-template-columns: 1fr 1fr;">
+                        
+                        <c-card padding="md" background="color" backgroundColor="rood-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="waarschuwing" size="md" color="rood"/>
+                                    <strong>Traditional Approach</strong>
+                                </div>
+                                <p class="rvo-text--xs">
+                                    Check Kubernetes dashboard for pod status. Switch to ArgoCD for deployment sync. 
+                                    Open Grafana for metrics. Check Prometheus for alerts. Look at database admin panel. 
+                                    Juggle between 5+ different tools to understand one application.
+                                </p>
+                                <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                                    'Multiple logins and interfaces',
+                                    'Context switching overhead',
+                                    'Tool-specific knowledge required',
+                                    'Information scattered everywhere',
+                                    'Complex troubleshooting process'
+                                ]" />
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card padding="md" background="color" backgroundColor="groen-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="vinkje" size="md" color="groen"/>
+                                    <strong>RIG Cluster Approach</strong>
+                                </div>
+                                <p class="rvo-text--xs">
+                                    Open one dashboard. See complete application health at a glance. 
+                                    Get intelligent insights and recommendations. Click through for details 
+                                    only when needed. Everything in context, everything connected.
+                                </p>
+                                <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                                    'Single sign-on, one interface',
+                                    'All information in context',
+                                    'No specialized tool knowledge needed',
+                                    'Intelligent data correlation',
+                                    'Guided troubleshooting workflow'
+                                ]" />
+                            </c-layout-flow>
+                        </c-card>
+                    </div>
+                </c-layout-flow>
+            </div>
+
+            <div class="tool-abstraction">
+                <c-layout-flow gap="md">
+                    <c-heading type="h3" textContent="Tools We Abstract Away"/>
+                    
+                    <div class="rvo-layout-grid rvo-layout-gap--sm" 
+                         style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                        
+                        <c-card class="scenario-card" padding="sm" background="color" backgroundColor="grijs-200" :outline="true">
+                            <c-layout-flow gap="xs">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
+                                    <c-icon icon="server" size="sm" color="hemelblauw"/>
+                                    <strong class="rvo-text--xs">Kubernetes</strong>
+                                </div>
+                                <p class="rvo-text--2xs">Pod status, resource usage, networking</p>
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card class="scenario-card" padding="sm" background="color" backgroundColor="grijs-200" :outline="true">
+                            <c-layout-flow gap="xs">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
+                                    <c-icon icon="applicatie" size="sm" color="groen"/>
+                                    <strong class="rvo-text--xs">ArgoCD</strong>
+                                </div>
+                                <p class="rvo-text--2xs">Deployment sync, GitOps status</p>
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card class="scenario-card" padding="sm" background="color" backgroundColor="grijs-200" :outline="true">
+                            <c-layout-flow gap="xs">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
+                                    <c-icon icon="grafiek" size="sm" color="rood"/>
+                                    <strong class="rvo-text--xs">Prometheus</strong>
+                                </div>
+                                <p class="rvo-text--2xs">Metrics collection, alerting rules</p>
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card class="scenario-card" padding="sm" background="color" backgroundColor="grijs-200" :outline="true">
+                            <c-layout-flow gap="xs">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
+                                    <c-icon icon="grafiek" size="sm" color="oranje"/>
+                                    <strong class="rvo-text--xs">Grafana</strong>
+                                </div>
+                                <p class="rvo-text--2xs">Dashboards, visualization</p>
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card class="scenario-card" padding="sm" background="color" backgroundColor="grijs-200" :outline="true">
+                            <c-layout-flow gap="xs">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
+                                    <c-icon icon="database" size="sm" color="groen"/>
+                                    <strong class="rvo-text--xs">PostgreSQL</strong>
+                                </div>
+                                <p class="rvo-text--2xs">Database performance, connections</p>
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card class="scenario-card" padding="sm" background="color" backgroundColor="grijs-200" :outline="true">
+                            <c-layout-flow gap="xs">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
+                                    <c-icon icon="sleutel" size="sm" color="oranje"/>
+                                    <strong class="rvo-text--xs">Keycloak</strong>
+                                </div>
+                                <p class="rvo-text--2xs">Authentication, user sessions</p>
+                            </c-layout-flow>
+                        </c-card>
+                    </div>
+                </c-layout-flow>
+            </div>
+
+            <div class="rvo-alert rvo-alert--info">
+                <c-icon icon="info" size="md"/>
+                <div class="rvo-alert__content">
+                    <p><strong>The Power Remains:</strong> All underlying tools continue to work as before. 
+                    Advanced users can still access them directly. But for daily operations, everything you need 
+                    is available through the unified interface.</p>
+                </div>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# RIG Operations Manager UI and API #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="RIG Operations Manager UI and API"/>
+                <p class="rvo-text--lg">
+                    <strong>The central control hub.</strong> This is where users interact with the platform - 
+                    a clean, friendly web interface for project management combined with a powerful API 
+                    for automation and CI/CD integration. Everything you need, accessible both ways.
+                </p>
+            </div>
+
+            <div class="rvo-layout-grid rvo-layout-gap--lg" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
+                
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="hemelblauw-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="informatie-op-internet" size="xl" color="hemelblauw"/>
+                            <c-heading type="h3" textContent="User-Friendly Web Interface"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Self-service portal</strong> - Create projects, deploy applications, 
+                            and monitor status through an intuitive web interface. No command-line expertise required. 
+                            Point, click, deploy.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Project creation wizard',
+                            'Application deployment forms',
+                            'Real-time status monitoring',
+                            'Resource usage dashboards',
+                            'User management interface'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="groen-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="applicatie" size="xl" color="groen"/>
+                            <c-heading type="h3" textContent="Comprehensive REST API"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Automation-ready</strong> - Complete API coverage for all platform operations. 
+                            Perfect for CI/CD pipelines, infrastructure automation, and custom integrations. 
+                            Every UI action has an API equivalent.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Project lifecycle management',
+                            'Deployment image updates',
+                            'Configuration management',
+                            'User and permission control',
+                            'Status monitoring and metrics'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="philosophy-card" padding="lg" background="color" backgroundColor="oranje-150" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="sleutel" size="xl" color="oranje"/>
+                            <c-heading type="h3" textContent="Secure API Access"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            <strong>Token-based authentication</strong> - Secure API access with fine-grained permissions. 
+                            Different tokens for different purposes. Full audit logging for compliance and security.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'API token management',
+                            'Role-based permissions',
+                            'Request rate limiting',
+                            'Comprehensive audit logs',
+                            'IP address restrictions'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <div class="api-use-cases">
+                <c-layout-flow gap="lg">
+                    <c-heading type="h3" textContent="Common API Use Cases"/>
+                    
+                    <div class="rvo-layout-grid rvo-layout-gap--md" 
+                         style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+                        
+                        <c-card class="scenario-card" padding="md" background="color" backgroundColor="groen-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="pijl-naar-rechts" size="md" color="groen"/>
+                                    <strong>CI/CD Pipeline Integration</strong>
+                                </div>
+                                <p class="rvo-text--xs">
+                                    Automatically update container images when new builds complete. 
+                                    Your CI pipeline pushes to registry, then calls the API to update 
+                                    the deployment with the new image tag.
+                                </p>
+                                <div style="background: rgba(0,0,0,0.05); padding: var(--rvo-space-xs); border-radius: 4px; margin-top: var(--rvo-space-xs);">
+                                    <code class="rvo-text--2xs">POST /api/projects/myapp/deployments/update-image</code>
+                                </div>
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card class="scenario-card" padding="md" background="color" backgroundColor="hemelblauw-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="applicatie" size="md" color="hemelblauw"/>
+                                    <strong>Feature Branch Lifecycle</strong>
+                                </div>
+                                <p class="rvo-text--xs">
+                                    Create environments when PRs are opened, update them when commits are pushed, 
+                                    and clean everything up when PRs are closed. Complete automation with webhook integration.
+                                </p>
+                                <div style="background: rgba(0,0,0,0.05); padding: var(--rvo-space-xs); border-radius: 4px; margin-top: var(--rvo-space-xs);">
+                                    <code class="rvo-text--2xs">DELETE /api/projects/myapp-feature-123</code>
+                                </div>
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card class="scenario-card" padding="md" background="color" backgroundColor="oranje-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="grafiek" size="md" color="oranje"/>
+                                    <strong>Configuration Management</strong>
+                                </div>
+                                <p class="rvo-text--xs">
+                                    Update application settings, environment variables, or new docker images
+                                    programmatically.
+                                </p>
+                                <div style="background: rgba(0,0,0,0.05); padding: var(--rvo-space-xs); border-radius: 4px; margin-top: var(--rvo-space-xs);">
+                                    <code class="rvo-text--2xs">PUT /api/projects/myapp/config</code>
+                                </div>
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card class="scenario-card" padding="md" background="color" backgroundColor="rood-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="waarschuwing" size="md" color="rood"/>
+                                    <strong>Cleanup</strong>
+                                </div>
+                                <p class="rvo-text--xs">
+                                    Remove your project or deployment when done.
+                                </p>
+                                <div style="background: rgba(0,0,0,0.05); padding: var(--rvo-space-xs); border-radius: 4px; margin-top: var(--rvo-space-xs);">
+                                    <code class="rvo-text--2xs">DELETE /api/projects/hello-world</code>
+                                </div>
+                                <div style="background: rgba(0,0,0,0.05); padding: var(--rvo-space-xs); border-radius: 4px; margin-top: var(--rvo-space-xs);">
+                                    <code class="rvo-text--2xs">DELETE /api/projects/hello-world/deployments/feature-1</code>
+                                </div>
+                            </c-layout-flow>
+                        </c-card>
+                    </div>
+                </c-layout-flow>
+            </div>
+
+            <div class="ui-api-comparison">
+                <c-layout-flow gap="lg">
+                    <c-heading type="h3" textContent="Two Interfaces, Same Power"/>
+                    
+                    <div class="rvo-layout-grid rvo-layout-gap--md" 
+                         style="grid-template-columns: 1fr 1fr;">
+                        
+                        <c-card padding="md" background="color" backgroundColor="hemelblauw-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="informatie-op-internet" size="md" color="hemelblauw"/>
+                                    <strong>Web Interface</strong>
+                                </div>
+                                <p class="rvo-text--xs">Perfect for interactive use, exploration, and one-off tasks</p>
+                                <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                                    'Visual project creation wizard',
+                                    'Real-time monitoring dashboards',
+                                    'Interactive troubleshooting guides',
+                                    'User-friendly error messages',
+                                    'Guided configuration workflows'
+                                ]" />
+                            </c-layout-flow>
+                        </c-card>
+
+                        <c-card padding="md" background="color" backgroundColor="groen-150" :outline="true">
+                            <c-layout-flow gap="sm">
+                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                    <c-icon icon="applicatie" size="md" color="groen"/>
+                                    <strong>REST API</strong>
+                                </div>
+                                <p class="rvo-text--xs">Perfect for automation, CI/CD integration, and programmatic control</p>
+                                <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                                    'Scriptable operations',
+                                    'CI/CD pipeline integration',
+                                    'Batch operations and scheduling',
+                                    'Custom tooling and extensions',
+                                    'Infrastructure as Code workflows'
+                                ]" />
+                            </c-layout-flow>
+                        </c-card>
+                    </div>
+                </c-layout-flow>
+            </div>
+
+            <div class="rvo-alert rvo-alert--success">
+                <c-icon icon="vinkje" size="md"/>
+                <div class="rvo-alert__content">
+                    <p><strong>The Best of Both Worlds:</strong> Use the web interface for exploration and management, 
+                    use the API for automation and integration. Every feature is available through both interfaces, 
+                    ensuring you're never limited by your preferred interaction method.</p>
+                </div>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# Container Architecture #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="Inside RIG Cluster - The Components"/>
+                <p class="rvo-text--lg">
+                    This shows <strong>what's inside</strong> the RIG Cluster platform. Each component is a separate 
+                    system that handles a specific responsibility, working together to create the complete platform.
+                </p>
+            </div>
+
+            <c-card padding="xl" background="color" backgroundColor="wit" :outline="true">
+                <div id="container-diagram" class="diagram-container">
+                    <!-- Container diagram will be rendered here -->
+                </div>
+            </c-card>
+
+        </c-layout-flow>
+    </div>
+
+    {# Backup and Restore Deep Dive #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="Backup and Restore"/>
+                <p class="rvo-text--lg">
+                    Data protection that works automatically in the background, ensuring your deployments 
+                    can recover from both small hiccups and major disasters.
+                </p>
+            </div>
+
+            <div class="rvo-layout-grid rvo-layout-gap--md" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+                
+                <c-card padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="database" size="lg" color="donkerblauw"/>
+                            <c-heading type="h3" textContent="Database Backups"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            Automated scheduled backups of PostgreSQL databases with configurable retention policies.
+                            Point-in-time recovery capabilities for critical data restoration.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Scheduled automated backups',
+                            'Configurable retention policies',
+                            'Point-in-time recovery',
+                            'Cross-cluster backup storage'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="map" size="lg" color="donkerblauw"/>
+                            <c-heading type="h3" textContent="Storage Snapshots"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            Persistent volume snapshots for application data and user uploads. 
+                            Fast recovery from storage corruption or accidental data deletion.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Persistent volume snapshots',
+                            'Application data protection',
+                            'File-level restoration',
+                            'Incremental backup optimization'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="pijl-naar-rechts" size="lg" color="donkerblauw"/>
+                            <c-heading type="h3" textContent="Restore Workflows"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            Automated restore deployments that can quickly spin up a recovered version 
+                            of your application from any backup point.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'One-click restore deployments',
+                            'Selective data recovery',
+                            'Testing restore integrity',
+                            'Rollback capabilities'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="waarschuwing" size="lg" color="donkerblauw"/>
+                            <c-heading type="h3" textContent="Disaster Recovery"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            Complete disaster recovery scenarios including cluster failures, 
+                            data center outages, and comprehensive system restoration procedures.
+                        </p>
+                        <c-ul bulletType="icon" bulletIcon="option-1" class="rvo-text--xs" :items="[
+                            'Cross-region backup replication',
+                            'Full cluster recovery',
+                            'Recovery time objectives (RTO)',
+                            'Automated failover procedures'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <div class="rvo-alert rvo-alert--info">
+                <c-icon icon="info" size="md"/>
+                <div>
+                    <p><strong>Implementation Roadmap:</strong></p>
+                    <p>
+                        The backup and restore functionality is being designed to integrate seamlessly with the existing 
+                        RIG platform architecture. This will include automated backup scheduling during project creation,
+                        integration with the Operations Manager for restore workflows, and comprehensive monitoring 
+                        and alerting for backup health and success rates.
+                    </p>
+                </div>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# Operations Manager Deep Dive #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="The Operations Manager"/>
+                <p class="rvo-text--lg">
+                    This is where the magic happens. A hub that connects to everything,
+                    understands everyone, and makes the complex simple.
+                </p>
+            </div>
+
+            <c-card padding="xl" background="color" backgroundColor="wit" :outline="true">
+                <div id="hexagonal-diagram" class="diagram-container">
+                    <!-- Hexagonal architecture diagram -->
+                </div>
+            </c-card>
+
+            <div class="rvo-layout-grid rvo-layout-gap--md" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
+                
+                <c-card class="connector-card" padding="md" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="sm">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                            <c-icon icon="informatie-op-internet" size="lg" color="donkerblauw"/>
+                            <strong>Git Connector</strong>
+                        </div>
+                        <p class="rvo-text--xs">Manages repositories, commits manifests, handles SSH authentication</p>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="connector-card" padding="md" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="sm">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                            <c-icon icon="server" size="lg" color="hemelblauw"/>
+                            <strong>Kubernetes Connector</strong>
+                        </div>
+                        <p class="rvo-text--xs">Applies manifests, checks status, manages namespaces and resources</p>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="connector-card" padding="md" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="sm">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                            <c-icon icon="database" size="lg" color="groen"/>
+                            <strong>Database Connector</strong>
+                        </div>
+                        <p class="rvo-text--xs">Creates schemas, provisions users, manages connection strings</p>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="connector-card" padding="md" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="sm">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                            <c-icon icon="map" size="lg" color="rood"/>
+                            <strong>MinIO Connector</strong>
+                        </div>
+                        <p class="rvo-text--xs">Provisions buckets, creates access keys, sets up policies</p>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="connector-card" padding="md" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="sm">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                            <c-icon icon="sleutel" size="lg" color="oranje"/>
+                            <strong>Keycloak Connector</strong>
+                        </div>
+                        <p class="rvo-text--xs">Creates clients, manages roles, configures SSO settings</p>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="connector-card" padding="md" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="sm">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                            <c-icon icon="applicatie" size="lg" color="rood"/>
+                            <strong>ArgoCD Connector</strong>
+                        </div>
+                        <p class="rvo-text--xs">Creates applications, configures sync policies, manages projects</p>
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <div class="rvo-alert rvo-alert--success">
+                <c-icon icon="vinkje" size="md"/>
+                <div class="rvo-alert__content">
+                    <p><strong>Hexagonal Architecture Benefits:</strong> Each connector is independent and testable. 
+                    The core remains clean, and new integrations are just new adapters around the edge.</p>
+                </div>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# Developer Experience - The Journey #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="The Developer Journey"/>
+                <p class="rvo-text--lg">
+                    From idea to running application in minutes, not days. Here's what happens 
+                    when you create a new project.
+                </p>
+            </div>
+
+            <c-card padding="xl" background="color" backgroundColor="wit" :outline="true">
+                <div id="workflow-diagram" class="diagram-container">
+                    <!-- Project creation workflow -->
+                </div>
+            </c-card>
+
+            {# Step-by-step breakdown #}
+            <div class="workflow-steps">
+                <c-layout-flow gap="lg">
+                    
+                    <div class="workflow-step">
+                        <c-layout-row gap="lg" verticalSpacing="xs">
+                            <div class="step-number">
+                                <div class="step-circle">1</div>
+                            </div>
+                            <c-layout-column style="flex: 1;">
+                                <c-heading type="h3" textContent="Describe What You Want"/>
+                                <p class="rvo-text--base">
+                                    Fill out a form. That's it. Tell us about your project, which services you need,
+                                    what docker image to run. The platform figures out the rest.
+                                </p>
+                            </c-layout-column>
+                        </c-layout-row>
+                    </div>
+
+                    <div class="workflow-step">
+                        <c-layout-row gap="lg" verticalSpacing="xs">
+                            <div class="step-number">
+                                <div class="step-circle">2</div>
+                            </div>
+                            <c-layout-column style="flex: 1;">
+                                <c-heading type="h3" textContent="Infrastructure Comes Alive"/>
+                                <p class="rvo-text--base">
+                                    Behind the scenes, the Operations Manager choreographs a beautiful dance:
+                                    namespaces are created, databases provisioned, storage buckets configured,
+                                    and security policies applied.
+                                </p>
+                            </c-layout-column>
+                        </c-layout-row>
+                    </div>
+
+                    <div class="workflow-step">
+                        <c-layout-row gap="lg" verticalSpacing="xs">
+                            <div class="step-number">
+                                <div class="step-circle">3</div>
+                            </div>
+                            <c-layout-column style="flex: 1;">
+                                <c-heading type="h3" textContent="GitOps Takes Over"/>
+                                <p class="rvo-text--base">
+                                    Your project configuration becomes code, stored in Git, encrypted with AGE,
+                                    and monitored by ArgoCD. Changes flow naturally from Git to your running application.
+                                </p>
+                            </c-layout-column>
+                        </c-layout-row>
+                    </div>
+
+                    <div class="workflow-step">
+                        <c-layout-row gap="lg" verticalSpacing="xs">
+                            <div class="step-number">
+                                <div class="step-circle">4</div>
+                            </div>
+                            <c-layout-column style="flex: 1;">
+                                <c-heading type="h3" textContent="Your Application Runs"/>
+                                <p class="rvo-text--base">
+                                    Your container starts up with all the right environment variables,
+                                    connected to all the right services, accessible to all the right people.
+                                    It just works.
+                                </p>
+                            </c-layout-column>
+                        </c-layout-row>
+                    </div>
+                </c-layout-flow>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# What Gets Created - The Results #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="What Actually Gets Created"/>
+                <p class="rvo-text--lg">
+                    When you request a project, here's the complete environment that springs into existence.
+                    Every piece has a purpose, every connection is secure.
+                </p>
+            </div>
+
+            <div class="rvo-layout-grid rvo-layout-gap--lg" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
+                
+                <c-card class="result-card" padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="server" size="xl" color="hemelblauw"/>
+                            <c-heading type="h3" textContent="Kubernetes Resources"/>
+                        </div>
+                        <c-ul bulletType="icon" bulletIcon="option-1" :items="[
+                            'Dedicated namespace with your project name',
+                            'Deployment manifest for your container',
+                            'Service for internal communication',
+                            'Ingress for external access (if requested)',
+                            'ConfigMaps and Secrets for configuration',
+                            'Network policies for security'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="result-card" padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="informatie-op-internet" size="xl" color="donkerblauw"/>
+                            <c-heading type="h3" textContent="Git Repository"/>
+                        </div>
+                        <c-ul bulletType="icon" bulletIcon="option-1" :items="[
+                            'Project configuration file (encrypted)',
+                            'Generated Kubernetes manifests',
+                            'ArgoCD application definition',
+                            'Kustomization for environment overlays',
+                            'SOPS configuration for secret management'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="result-card" padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="sleutel" size="xl" color="oranje"/>
+                            <c-heading type="h3" textContent="Authentication Setup"/>
+                        </div>
+                        <c-ul bulletType="icon" bulletIcon="option-1" :items="[
+                            'Keycloak client for your application',
+                            'SSO integration with Rijksoverheid',
+                            'Role-based access control',
+                            'User management interface',
+                            'API keys for programmatic access'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="result-card" padding="lg" background="color" backgroundColor="wit" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="database" size="xl" color="groen"/>
+                            <c-heading type="h3" textContent="Data Services"/>
+                        </div>
+                        <c-ul bulletType="icon" bulletIcon="option-1" :items="[
+                            'PostgreSQL database schema',
+                            'Database user with appropriate permissions',
+                            'Connection strings as environment variables',
+                            'MinIO bucket for object storage',
+                            'S3-compatible access credentials'
+                        ]" />
+                    </c-layout-flow>
+                </c-card>
+            </div>
+
+            <div class="rvo-alert rvo-alert--info">
+                <c-icon icon="info" size="md"/>
+                <div class="rvo-alert__content">
+                    <p><strong>Zero Configuration Required:</strong> All these resources are connected and configured automatically. 
+                    Your application receives everything it needs through environment variables and mounted secrets.</p>
+                </div>
+            </div>
+        </c-layout-flow>
+    </div>
+
+    {# Future Vision #}
+    <div>
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" textContent="The Road Ahead"/>
+                <p class="rvo-text--lg">
+                    This is just the beginning. The platform grows with your needs,
+                    and new capabilities emerge from the foundation we've built.
+                </p>
+            </div>
+
+            <div class="rvo-layout-grid rvo-layout-gap--lg" 
+                 style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+                
+                <c-card class="future-card" padding="lg" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="grafiek" size="xl" color="groen"/>
+                            <c-heading type="h3" textContent="Observability"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            Prometheus metrics, Grafana dashboards, and intelligent alerting 
+                            will give you insight into every aspect of your applications.
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="future-card" padding="lg" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="zoek" size="xl" color="hemelblauw"/>
+                            <c-heading type="h3" textContent="Advanced Monitoring"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            Application performance monitoring, distributed tracing, 
+                            and intelligent anomaly detection to keep your services healthy.
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card class="future-card" padding="lg" background="color" backgroundColor="grijs-200" :outline="true">
+                    <c-layout-flow gap="md">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
+                            <c-icon icon="pijl-naar-rechts" size="xl" color="rood"/>
+                            <c-heading type="h3" textContent="Feature Deployments"/>
+                        </div>
+                        <p class="rvo-text--sm">
+                            Clone entire environments for feature development, testing, 
+                            and experimentation with a single API call.
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+            </div>
+        </c-layout-flow>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block additional_scripts %}
+{# Include Mermaid.js for diagrams #}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+
+<script>
+    // Initialize Mermaid
+    mermaid.initialize({ 
+        theme: 'neutral',
+        flowchart: {
+            curve: 'basis',
+            nodeSpacing: 80,
+            rankSpacing: 100,
+            padding: 20
+        },
+        c4: {
+            theme: 'neutral',
+            wrap: true,
+            width: 200,
+            height: 150,
+            boxMargin: 20,
+            useMaxWidth: true
+        }
+    });
+
+    // Container Diagram (C4 Level 2)
+    const containerDiagram = `
+        graph TB
+            %% External users/systems (top)
+            DEV[👨‍💻 Developer<br/>Creates projects]
+            
+            %% RIG Cluster Platform boundary
+            subgraph RIG ["🎯 RIG Cluster Platform"]
+                %% Control layer (top of platform)
+                OPS[🎭 Operations Manager<br/>FastAPI - Project Orchestration]
+                
+                %% Runtime layer (middle of platform)
+                K8S[☸️ Kubernetes Cluster<br/>Container Runtime & Orchestration]
+                ARGO[🔄 ArgoCD<br/>GitOps Continuous Deployment]
+                
+                %% Services layer (bottom of platform)
+                KEYCLOAK[🔐 Keycloak<br/>Identity & Access Management]
+                POSTGRES[🗄️ PostgreSQL<br/>Application Databases]
+                MINIO[📦 MinIO<br/>S3-Compatible Object Storage]
+            end
+            
+            %% External systems (bottom)
+            GIT[📁 Git Repository<br/>Manifests & Config]
+            RIJKSSO[🏛️ Rijksoverheid SSO<br/>Central Identity]
+            
+            %% User to platform
+            DEV --> |"Create & manage<br/>projects via API"| OPS
+            
+            %% Operations Manager orchestrates everything
+            OPS --> |"Deploy applications<br/>manage namespaces"| K8S
+            OPS --> |"Create GitOps<br/>applications"| ARGO
+            OPS --> |"Provision SSO<br/>clients & roles"| KEYCLOAK
+            OPS --> |"Create schemas<br/>& users"| POSTGRES  
+            OPS --> |"Setup buckets<br/>& access keys"| MINIO
+            OPS --> |"Commit generated<br/>manifests"| GIT
+            
+            %% Runtime interactions
+            ARGO --> |"Watch & sync<br/>manifest changes"| GIT
+            ARGO --> |"Apply manifests<br/>to cluster"| K8S
+            KEYCLOAK --> |"Federate authentication<br/>government SSO"| RIJKSSO
+            
+            %% Styling
+            classDef userStyle fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+            classDef controlStyle fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+            classDef runtimeStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+            classDef serviceStyle fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+            classDef externalStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+            
+            class DEV userStyle
+            class OPS controlStyle
+            class K8S,ARGO runtimeStyle
+            class KEYCLOAK,POSTGRES,MINIO serviceStyle
+            class GIT,RIJKSSO externalStyle
+    `;
+
+    // Hexagonal Architecture for Operations Manager
+    const hexagonalDiagram = `
+        graph TB
+            subgraph core ["Operations Manager Core"]
+                direction TB
+                API[FastAPI<br/>Web Interface]
+                CORE[Project Manager<br/>Business Logic]
+                HANDLERS[Request Handlers<br/>Orchestration]
+            end
+            
+            subgraph connectors ["Connectors"]
+                direction TB
+                GIT[Git Connector<br/>Repositories]
+                K8S[Kubectl Connector<br/>Kubernetes API]
+                DB[Database Connector<br/>PostgreSQL]
+                KC[Keycloak Connector<br/>Identity]
+                MINIO[MinIO Connector<br/>Storage]
+                ARGO[ArgoCD Connector<br/>GitOps]
+            end
+            
+            subgraph external ["External Systems"]
+                direction TB
+                GITREPO[(Git Repo)]
+                CLUSTER[K8s Cluster]
+                POSTGRES[(PostgreSQL)]
+                KEYCLOAK[Keycloak]
+                STORAGE[(MinIO)]
+                ARGOCD[ArgoCD]
+            end
+            
+            API --> HANDLERS
+            HANDLERS --> CORE
+            
+            CORE --> GIT
+            CORE --> K8S
+            CORE --> DB
+            CORE --> KC
+            CORE --> MINIO
+            CORE --> ARGO
+            
+            GIT --> GITREPO
+            K8S --> CLUSTER
+            DB --> POSTGRES
+            KC --> KEYCLOAK
+            MINIO --> STORAGE
+            ARGO --> ARGOCD
+            
+            classDef coreStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+            classDef connectorStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+            classDef externalStyle fill:#fff8e1,stroke:#f57c00,stroke-width:2px
+            
+            class API,CORE,HANDLERS coreStyle
+            class GIT,K8S,DB,KC,MINIO,ARGO connectorStyle
+            class GITREPO,CLUSTER,POSTGRES,KEYCLOAK,STORAGE,ARGOCD externalStyle
+    `;
+
+    // Bootstrap Architecture Diagram
+    const bootstrapDiagram = `
+        graph TD
+            %% Foundation Layer (Top Block)
+            subgraph foundation ["FOUNDATION LAYER"]
+                style foundation fill:#e8f5e8,stroke:#2e7d32,stroke-width:3px,stroke-dasharray:none
+                HAVEN[☸️ Existing Kubernetes Cluster<br/>Haven Implementation / ODC Noord OpenShift<br/>Basic networking, storage, compute, RBAC]
+            end
+            
+            %% Bootstrap: ArgoCD Layer (Middle Block)
+            subgraph bootstrap ["BOOTSTRAP: ARGOCD"]
+                style bootstrap fill:#e3f2fd,stroke:#1976d2,stroke-width:3px,stroke-dasharray:none
+                ARGO[🔄 ArgoCD<br/>GitOps Engine]
+            end
+            
+            %% ArgoCD Creates Projects Layer (Bottom Block)
+            subgraph projects ["ARGOCD CREATES 2 PROJECTS"]
+                style projects fill:#fff3e0,stroke:#f57c00,stroke-width:3px,stroke-dasharray:none
+                direction TB
+                
+                %% Local Infrastructure Project
+                subgraph local ["local-infrastructure project"]
+                    style local fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,stroke-dasharray:none
+                    direction LR
+                    subgraph services1 [" "]
+                        style services1 fill:transparent,stroke:none
+                        KC[Keycloak<br/>Identity & SSO]  
+                        PG[PostgreSQL<br/>Shared Database]
+                    end
+                    subgraph services2 [" "]
+                        style services2 fill:transparent,stroke:none
+                        MINIO[MinIO<br/>S3 Storage]
+                        OPS[Operations Manager<br/>Orchestrator]
+                    end
+                end
+                
+                %% User Applications Project  
+                subgraph users ["user-applications project"]
+                    style users fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:none
+                    USERPROJ[Contains All User Projects<br/>Deployed Applications]
+                end
+            end
+            
+            %% External Systems (Side Block)
+            subgraph external ["EXTERNAL INTEGRATION"]
+                style external fill:#fce4ec,stroke:#c2185b,stroke-width:3px,stroke-dasharray:none
+                direction TB
+                RIJKSSO[Rijksoverheid SSO]
+                GIT[📂 Git Repository]
+            end
+            
+            %% Main flow (top to bottom)
+            foundation ==> bootstrap
+            bootstrap ==> |"Creates & Manages"| projects
+            
+            %% ArgoCD creates both projects
+            ARGO ==> |"Deploys"| local
+            ARGO ==> |"Deploys"| users
+            
+            %% External integrations (dotted)
+            KC -.- |"Federate Auth"| RIJKSSO
+            ARGO -.- |"Sync from"| GIT
+            OPS -.- |"Commit configs"| GIT
+            
+            %% Styling for nodes
+            classDef foundationNode fill:#c8e6c8,stroke:#2e7d32,stroke-width:2px
+            classDef bootstrapNode fill:#bbdefb,stroke:#1976d2,stroke-width:2px
+            classDef platformNode fill:#d1c4e9,stroke:#7b1fa2,stroke-width:2px
+            classDef projectNode fill:#ffe0b2,stroke:#f57c00,stroke-width:2px
+            classDef userNode fill:#c8e6c8,stroke:#2e7d32,stroke-width:2px
+            classDef externalNode fill:#f8bbd9,stroke:#c2185b,stroke-width:2px
+            
+            class HAVEN foundationNode
+            class ARGO bootstrapNode
+            class KC,PG,MINIO,OPS platformNode
+            class USERPROJ userNode
+            class RIJKSSO,GIT externalNode
+    `;
+
+    // Project Creation Workflow
+    const workflowDiagram = `
+        graph TD
+            start([Developer Submits Project Request]) --> validate{Validate Input}
+            validate -->|Valid| create_ns[Create Kubernetes Namespace]
+            validate -->|Invalid| error1[Show Validation Errors]
+            
+            create_ns --> create_db[Provision Database Schema & User]
+            create_db --> create_storage[Create MinIO Bucket & Access Keys]
+            create_storage --> create_sso[Setup Keycloak Client & Roles]
+            create_sso --> generate_manifests[Generate Kubernetes Manifests]
+            
+            generate_manifests --> encrypt_secrets[Encrypt Secrets with AGE]
+            encrypt_secrets --> commit_git[Commit to Git Repository]
+            commit_git --> create_argo[Create ArgoCD Application]
+            
+            create_argo --> sync_check{ArgoCD Sync Status}
+            sync_check -->|Success| deployed[Application Deployed ✅]
+            sync_check -->|Failed| debug[Review ArgoCD Logs]
+            debug --> manual_fix[Manual Intervention]
+            manual_fix --> sync_check
+            
+            deployed --> notify[Send Success Notification]
+            notify --> provide_access[Provide API Keys & Documentation]
+            provide_access --> complete([Project Ready! 🚀])
+            
+            classDef process fill:#e8f5e8
+            classDef decision fill:#fff4e6
+            classDef success fill:#e8f5e8
+            classDef error fill:#ffebee
+            
+            class create_ns,create_db,create_storage,create_sso,generate_manifests,encrypt_secrets,commit_git,create_argo,deployed,notify,provide_access process
+            class validate,sync_check decision
+            class complete success
+            class error1,debug,manual_fix error
+    `;
+
+    // Application Variants & Feature Branches Diagram (Simple Clone View)
+    const variantsdiagram = `
+        graph LR
+            %% Original Application
+            subgraph original ["🏭 MAIN"]
+                APP1[📱 Main App<br/>v2.0]
+                DB1[(🗄️ Database<br/>Full Data)]
+                STORAGE1[📦 MinIO<br/>Files & Media]
+            end
+            
+            %% Cloned Application  
+            subgraph cloned ["🚀 FEATURE BRANCH"]
+                APP2[📱 Feature App<br/>v2.1-feature]
+                DB2[(🗄️ Database<br/>Cloned Data)]
+                STORAGE2[📦 MinIO<br/>Cloned Files]
+            end
+            
+            %% Clone arrows
+            DB1 -.->|"Clone"| DB2
+            STORAGE1 -.->|"Clone"| STORAGE2
+            APP1 -.->|"Deploy"| APP2
+            
+            %% Styling
+            classDef origStyle fill:#c8e6c8,stroke:#2e7d32,stroke-width:2px
+            classDef cloneStyle fill:#d1c4e9,stroke:#7b1fa2,stroke-width:2px
+            
+            class APP1,DB1,STORAGE1 origStyle
+            class APP2,DB2,STORAGE2 cloneStyle
+    `;
+
+    // Render diagrams when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        mermaid.render('bootstrap-graph', bootstrapDiagram).then(({svg}) => {
+            document.getElementById('bootstrap-diagram').innerHTML = svg;
+        });
+        
+        mermaid.render('variants-graph', variantsdiagram).then(({svg}) => {
+            document.getElementById('variants-diagram').innerHTML = svg;
+        });
+        
+        mermaid.render('container-graph', containerDiagram).then(({svg}) => {
+            document.getElementById('container-diagram').innerHTML = svg;
+        });
+        
+        mermaid.render('hexagonal-graph', hexagonalDiagram).then(({svg}) => {
+            document.getElementById('hexagonal-diagram').innerHTML = svg;
+        });
+        
+        mermaid.render('workflow-graph', workflowDiagram).then(({svg}) => {
+            document.getElementById('workflow-diagram').innerHTML = svg;
+        });
+    });
+</script>
+{% endblock %}
+
+{% block additional_styles %}
+<style>
+    /* Diagram styling */
+    .diagram-container {
+        width: 100%;
+        text-align: center;
+        padding: var(--rvo-space-xl);
+        min-height: 500px;
+        overflow-x: auto;
+    }
+    
+    .diagram-container svg {
+        max-width: 100%;
+        height: auto;
+        min-height: 400px;
+    }
+
+    /* Component cards styling */
+    .component-card, .result-card, .future-card, .bootstrap-card, .philosophy-card, .variant-card, .scenario-card {
+        transition: all 0.3s ease;
+        cursor: default;
+    }
+
+    .component-card:hover, .result-card:hover, .future-card:hover, .bootstrap-card:hover, .philosophy-card:hover, .variant-card:hover, .scenario-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+    }
+
+    /* Bootstrap cards specific styling */
+    .bootstrap-card.featured {
+        border: 2px solid var(--rvo-color-rood);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .bootstrap-card.featured::after {
+        content: '⭐ Core Component';
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: var(--rvo-color-rood);
+        color: white;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 10px;
+        font-weight: bold;
+    }
+
+    .component-card.featured {
+        border: 2px solid var(--rvo-color-hemelblauw);
+    }
+
+    .connector-card {
+        text-align: center;
+        transition: all 0.2s ease;
+    }
+
+    .connector-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Workflow steps styling */
+    .workflow-steps {
+        margin-top: var(--rvo-space-xl);
+    }
+
+    .workflow-step {
+        padding: var(--rvo-space-lg);
+        border-left: 3px solid var(--rvo-color-grijs-300);
+        position: relative;
+    }
+
+    .workflow-step:hover {
+        border-left-color: var(--rvo-color-hemelblauw);
+        background-color: var(--rvo-color-hemelblauw-50);
+        border-radius: 0 8px 8px 0;
+        transition: all 0.3s ease;
+    }
+
+    .step-number {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .step-circle {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: var(--rvo-color-hemelblauw);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 18px;
+    }
+
+    /* Future cards get a subtle animation */
+    .future-card {
+        position: relative;
+        overflow: hidden;
+    }
+
+    .future-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+        transition: left 0.8s;
+    }
+
+    .future-card:hover::before {
+        left: 100%;
+    }
+
+    /* Variant cards styling */
+    .variant-card {
+        position: relative;
+        border-left: 4px solid transparent;
+    }
+
+    .variant-card:hover {
+        border-left-color: var(--rvo-color-hemelblauw);
+        transform: translateY(-6px) translateX(4px);
+    }
+
+    /* Scenario cards styling */
+    .scenario-card {
+        text-align: center;
+        border-radius: 8px;
+        position: relative;
+    }
+
+    .scenario-card:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        transform: translateY(-3px) scale(1.02);
+    }
+
+    .scenario-card code {
+        background: rgba(0, 0, 0, 0.1);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+    }
+
+    /* Variant scenarios section */
+    .variant-scenarios {
+        margin-top: var(--rvo-space-xl);
+        padding: var(--rvo-space-lg);
+        background: rgba(135, 206, 250, 0.05);
+        border-radius: 12px;
+        border: 1px solid var(--rvo-color-hemelblauw-300);
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .diagram-container {
+            padding: var(--rvo-space-md);
+        }
+        
+        .workflow-step {
+            padding: var(--rvo-space-md);
+        }
+        
+        .step-circle {
+            width: 40px;
+            height: 40px;
+            font-size: 16px;
+        }
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,298 @@
+{#
+  Formulier Template - Based on RVO documentation/demopages/templates/Formulier.tsx
+  
+  This template demonstrates comprehensive form field usage with proper RVO styling,
+  validation states, and accessibility features.
+#}
+
+<c-page title="Formulier template - ROOS" lang="nl" bodyClass="rvo-theme rvo-responsive">
+    
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header link="#" />
+        
+        <c-layout-flow gap="xl">
+            {# MenuBar #}
+            <c-menubar 
+                size="md"
+                :useIcons="true"
+                iconPlacement="before"
+                maxWidth="lg"
+                :items="[
+                    {
+                        'label': 'Naam app/website',
+                        'link': '#',
+                        'selected': true,
+                        'active': true
+                    },
+                    {
+                        'label': 'Menu item',
+                        'link': '#'
+                    },
+                    {
+                        'label': 'Menu item met icoon',
+                        'icon': 'user',
+                        'link': '#'
+                    },
+                    {
+                        'label': 'Menu item rechts',
+                        'link': '#',
+                        'align': 'right'
+                    }
+                ]" />
+            
+            <c-layout-flow gap="3xl">
+                <c-layout-flow gap="xl">
+
+                        <div class="rvo-form">
+                            <c-layout-flow gap="sm">
+                                
+                                {# Page header #}
+                                <div>
+                                    <c-link content="Terug" href="#" showIcon="before" icon="terug" :noUnderline="true" />
+                                    <c-heading type="h1" textContent="Formulier template" />
+                                    <p class="rvo-text--lg">
+                                        <span class="rvo-text--bold">Voorbeeld van een paragraaf met grote tekst</span>. 
+                                        Deze paragraaf kan gebruikt worden als introductie voor het formulier. Door wie moet het 
+                                        formulier ingevuld worden en waar moet de klant rekening mee houden.
+                                    </p>
+                                </div>
+                                
+                                {# Main form #}
+                                <form>
+                                    <c-layout-flow>
+                                        <div>
+                                            {# Keyboard inputs section #}
+                                            <c-fieldset legend="Keyboard inputs">
+                                                <c-text-input-field 
+                                                    id="text-basic"
+                                                    name="text-basic"
+                                                    label="Text" />
+                                                
+                                                <c-text-input-field 
+                                                    id="text-helper"
+                                                    name="text-helper"
+                                                    label="Text with helper text"
+                                                    helperText="This is a helper text which can be used for instructions." />
+                                                
+                                                <c-text-input-field 
+                                                    id="text-basic-2"
+                                                    name="text-basic-2"
+                                                    label="Text" />
+                                                
+                                                <c-text-input-field 
+                                                    id="text-error"
+                                                    name="text-error"
+                                                    label="Text with an error"
+                                                    errorText="This is an error"
+                                                    :invalid="true" />
+                                                
+                                                <c-text-input-field 
+                                                    id="text-warning"
+                                                    name="text-warning"
+                                                    label="Text with a warning"
+                                                    warningText="This is a warning" />
+                                                
+                                                <c-text-input-field 
+                                                    id="text-expandable"
+                                                    name="text-expandable"
+                                                    label="Text with expandable helper text"
+                                                    helperText="This is a helper text which can be used for instructions."
+                                                    expandableHelperText="true"
+                                                    expandableHelperTextTitle="Expandable helper text" />
+                                                
+                                                <c-text-input-field 
+                                                    id="text-disabled"
+                                                    name="text-disabled"
+                                                    label="Text disabled"
+                                                    disabled="true" />
+                                                
+                                                <c-text-input-field 
+                                                    id="text-disabled-value"
+                                                    name="text-disabled-value"
+                                                    label="Text disabled with value"
+                                                    disabled="true"
+                                                    value="Value" />
+                                                
+                                                <c-text-input-field 
+                                                    id="number-input"
+                                                    name="number-input"
+                                                    label="Number"
+                                                    type="number" />
+                                                
+                                                <c-textarea-field 
+                                                    id="textarea-basic"
+                                                    name="textarea-basic"
+                                                    label="Textarea" />
+                                            </c-fieldset>
+                                            
+                                            {# Options section #}
+                                            <c-fieldset legend="Options">
+                                                <c-radio-button-field 
+                                                    id="radio-basic"
+                                                    name="radio-buttons"
+                                                    label="Radio buttons"
+                                                    helperText="This is an helper text"
+                                                    :options="[
+                                                        {'id': 'optionA', 'label': 'Option A'},
+                                                        {'id': 'optionB', 'label': 'Option B'},
+                                                        {'id': 'optionC', 'label': 'Option C'},
+                                                        {'id': 'optionD', 'label': 'Option D'}
+                                                    ]" />
+                                                
+                                                <c-radio-button-field 
+                                                    id="radio-error"
+                                                    name="radio-buttons-error"
+                                                    label="Radio buttons invalid"
+                                                    errorText="This is an error"
+                                                    invalid="true"
+                                                    :options="[
+                                                        {'id': 'optionA-error', 'label': 'Option A'},
+                                                        {'id': 'optionB-error', 'label': 'Option B'},
+                                                        {'id': 'optionC-error', 'label': 'Option C'},
+                                                        {'id': 'optionD-error', 'label': 'Option D'}
+                                                    ]" />
+                                                
+                                                <c-radio-button-field 
+                                                    id="radio-warning"
+                                                    name="radio-buttons-warning"
+                                                    label="Radio buttons with warning"
+                                                    warningText="This is a warning"
+                                                    :options="[
+                                                        {'id': 'optionA-warning', 'label': 'Option A'},
+                                                        {'id': 'optionB-warning', 'label': 'Option B'},
+                                                        {'id': 'optionC-warning', 'label': 'Option C'},
+                                                        {'id': 'optionD-warning', 'label': 'Option D'}
+                                                    ]" />
+                                                
+                                                <c-checkbox-field 
+                                                    id="checkbox-basic"
+                                                    name="checkboxes"
+                                                    label="Checkboxes"
+                                                    helperText="This is an helper text"
+                                                    invalid="false"
+                                                    :options="[
+                                                        {'id': 'optionA-cb', 'label': 'Option A'},
+                                                        {'id': 'optionB-cb', 'label': 'Option B'},
+                                                        {'id': 'optionC-cb', 'label': 'Option C'},
+                                                        {'id': 'optionD-cb', 'label': 'Option D'}
+                                                    ]" />
+                                                
+                                                <c-checkbox-field 
+                                                    id="checkbox-error"
+                                                    name="checkboxes-error"
+                                                    label="Checkboxes with error"
+                                                    errorText="This is an error"
+                                                    invalid="true"
+                                                    :options="[
+                                                        {'id': 'optionA-cb-error', 'label': 'Option A'},
+                                                        {'id': 'optionB-cb-error', 'label': 'Option B'},
+                                                        {'id': 'optionC-cb-error', 'label': 'Option C'},
+                                                        {'id': 'optionD-cb-error', 'label': 'Option D'}
+                                                    ]" />
+                                                
+                                                <c-checkbox-field 
+                                                    id="checkbox-warning"
+                                                    name="checkboxes-warning"
+                                                    label="Checkboxes with a warning"
+                                                    warningText="This is a warning"
+                                                    invalid="false"
+                                                    :options="[
+                                                        {'id': 'optionA-cb-warning', 'label': 'Option A'},
+                                                        {'id': 'optionB-cb-warning', 'label': 'Option B'},
+                                                        {'id': 'optionC-cb-warning', 'label': 'Option C'},
+                                                        {'id': 'optionD-cb-warning', 'label': 'Option D'}
+                                                    ]" />
+                                                
+                                                <c-select-field 
+                                                    id="select-basic"
+                                                    name="select-basic"
+                                                    label="Select"
+                                                    :options="[
+                                                        {'value': '1', 'label': 'Option #1'},
+                                                        {'value': '2', 'label': 'Option #2'},
+                                                        {'value': '3', 'label': 'Option #3'}
+                                                    ]" />
+                                            </c-fieldset>
+                                            
+                                            {# Other inputs section #}
+                                            <c-fieldset legend="Other">
+                                                <c-file-input-field 
+                                                    id="file-input"
+                                                    name="file-input"
+                                                    label="File" />
+                                                
+                                                <c-date-input-field 
+                                                    id="date-input"
+                                                    name="date-input"
+                                                    label="Date" />
+                                                
+                                                {# Time input - manual HTML as no component exists yet #}
+                                                <div class="utrecht-form-field rvo-form-field rvo-layout-column rvo-layout-gap--sm">
+                                                    <div class="rvo-form-field__label rvo-layout-column rvo-layout-gap--2xs">
+                                                        <label for="time-input" class="utrecht-form-label rvo-form-field__label-text">
+                                                            Time
+                                                        </label>
+                                                    </div>
+                                                    <input type="time"
+                                                           id="time-input"
+                                                           name="time-input"
+                                                           placeholder=""
+                                                           class="utrecht-textbox utrecht-textbox--html-input utrecht-textbox--sm"
+                                                           value="">
+                                                </div>
+                                            </c-fieldset>
+                                        </div>
+                                        
+                                        {# Action buttons #}
+                                        <c-action-group 
+                                            :actions="[
+                                                {
+                                                    'type': 'button',
+                                                    'kind': 'primary',
+                                                    'size': 'md',
+                                                    'label': 'Primary action',
+                                                    'showIcon': 'no'
+                                                },
+                                                {
+                                                    'type': 'button', 
+                                                    'kind': 'secondary',
+                                                    'size': 'md',
+                                                    'label': 'Secondary action',
+                                                    'showIcon': 'no'
+                                                }
+                                            ]" />
+                                    </c-layout-flow>
+                                </form>
+                            </c-layout-flow>
+                        </div>
+                </c-layout-flow>
+                
+                {# Footer #}
+                <c-footer 
+                    maxWidth="lg"
+                    :primaryMenu="[
+                        {
+                            'label': 'RVO Platform',
+                            'items': [
+                                {'content': 'Home', 'link': '/'},
+                                {'content': 'Formulieren', 'link': '/forms'},
+                                {'content': 'Documenten', 'link': '/docs'}
+                            ]
+                        },
+                        {
+                            'label': 'Ondersteuning',
+                            'items': [
+                                {'content': 'Help', 'link': '/help'},
+                                {'content': 'Contact', 'link': '/contact'}
+                            ]
+                        }
+                    ]"
+                    :secondaryMenu="[
+                        {'content': 'Privacy', 'link': '/privacy'},
+                        {'content': '© 2024 Rijksdienst voor Ondernemend Nederland', 'link': ''}
+                    ]" />
+            </c-layout-flow>
+        </c-layout-flow>
+    </div>
+</c-page>

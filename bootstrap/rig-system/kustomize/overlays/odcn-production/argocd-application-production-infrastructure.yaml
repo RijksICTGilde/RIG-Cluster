@@ -1,0 +1,37 @@
+# Application - this tells ArgoCD what to deploy and how
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: production-infrastructure
+  namespace: rig-system
+#  annotations:
+#    argocd.argoproj.io/sync-wave: "1"  # Deploy before user applications
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/RijksICTGilde/RIG-Cluster.git
+    path: infrastructure/bootstrap/clusters/odcn
+    targetRevision: main
+    plugin:
+      name: kustomize-sops-v1.0
+      env:
+        - name: SOPS_KEY_SECRET
+          value: "sops-age-key"
+        - name: KUSTOMIZE_FOLDERS
+          value: "current"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-prd-operations
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - SyncTimeout=60s
+    retry:
+      limit: 2
+      backoff:
+        duration: "30s"
+        factor: 1
+        maxDuration: "30s"

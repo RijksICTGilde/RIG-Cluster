@@ -1,0 +1,33 @@
+{% extends "base.html.j2" %}
+
+{# Test template to reproduce @click Jinja variable issue #}
+
+{% block page_title %}Test Click Variables{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+    <c-heading type="h1" textContent="Test: @click with Jinja Variables" />
+    
+    {# Test data #}
+    {% set project = {'name': 'test-project', 'display_name': 'Test Project'} %}
+    
+    <h2>The exact button from the issue:</h2>
+    <c-button 
+        label="Verwijderen"
+        kind="warning"
+        size="sm"
+        showIcon="before"
+        icon="verwijderen"
+        @click="showDeleteConfirmation('{{ project.name }}', '{{ project.display_name or project.name }}')" />
+        
+    <p>Expected @click to resolve to: <code>showDeleteConfirmation('test-project', 'Test Project')</code></p>
+    <p>Check browser inspector to see actual @click value</p>
+</c-layout-flow>
+
+<script>
+function showDeleteConfirmation(projectName, displayName) {
+    console.log('showDeleteConfirmation called with:', projectName, displayName);
+    alert(`Called with: ${projectName}, ${displayName}`);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,105 @@
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: argocd
+  namespace: rig-system
+  annotations:
+    policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
+spec:
+  extraConfig:
+    timeout.reconciliation: "6m"
+    timeout.hard.reconciliation: "0s"
+    server.repo.server.timeout.seconds: "180"
+    controller.status.processors: "60"
+    controller.operation.processors: "30"
+    controller.repo.server.timeout.seconds: "180"
+    controller.kubectl.parallelism.limit: "20"
+    controller.sharding.algorithm: "round-robin"
+    reposerver.parallelism.limit: "20"
+  server:
+    logLevel: debug
+    insecure: true
+    host: argo.kind
+    ingress:
+      enabled: true
+      path: /
+      ingressClassName: nginx
+  prometheus:
+    enabled: false
+    ingress:
+      enabled: false
+    route:
+      enabled: false
+  controller:
+    env:
+      - name: ARGOCD_K8S_CLIENT_QPS
+        value: "150"
+      - name: ARGOCD_K8S_CLIENT_BURST
+        value: "300"
+    resources:
+      limits:
+        cpu: 5
+        memory: 2Gi
+      requests:
+        cpu: 1
+        memory: 512Mi
+  applicationSet:
+    resources:
+      limits:
+        cpu: 5
+        memory: 256Mi
+      requests:
+        cpu: 1
+        memory: 128Mi
+  repo:
+    annotations:
+      policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
+    env:
+      - name: ARGOCD_EXEC_TIMEOUT
+        value: "180"
+      - name: ARGOCD_GIT_ATTEMPTS_COUNT
+        value: "3"
+      - name: ARGOCD_HELM_ALLOW_CONCURRENCY
+        value: "true"
+    resources:
+      limits:
+        cpu: 5
+        memory: 2Gi
+      requests:
+        cpu: 1
+        memory: 256Mi
+    serviceaccount: argocd-argocd-server
+    sidecarContainers:
+      - name: cmp-server
+        command:
+          - /var/run/argocd/argocd-cmp-server
+        image: rig-cmp-argo-kustomize-sops:latest
+        imagePullPolicy: Never
+        env:
+          - name: KUSTOMIZE_PLUGIN_HOME
+            value: /etc/kustomize/plugin
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 999
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+          - mountPath: /var/run/argocd
+            name: var-files
+          - mountPath: /home/argocd/cmp-server/plugins
+            name: plugins
+          - mountPath: /home/argocd/cmp-server/config
+            name: cmp-plugin
+          - mountPath: /tmp
+            name: cmp-tmp
+    volumes:
+      - name: cmp-plugin
+        configMap:
+          name: cmp-plugin
+      - name: cmp-tmp
+        emptyDir: {}

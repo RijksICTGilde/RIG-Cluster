@@ -1,0 +1,11 @@
+* Toegang tot een openshift cluster
+* Keycloak credential ?
+* Anne kan gebruikers toevoegen
+* Openshift beheer omgeving
+* Namespaces aanmaken
+* Wie toegang geven, en op welke manier
+* GitOps flow
+* Welke applicaties plaatsen?
+* AMT
+* Algoritmekader?
+* Naming convention voor namespaces
