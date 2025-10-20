@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../../infrastructure/secrets/templates
   - ../../infrastructure/postgresql/database/overlays/local
+  - ../../infrastructure/chisel/controller/base
 #  - ../../infrastructure/vault/controller/overlays/local
 #  - ../../infrastructure/vault/config/overlays/local
   - ../../infrastructure/keycloak/controller/overlays/local

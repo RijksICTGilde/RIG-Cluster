@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: chisel-server
+  namespace: rig-system
+spec:
+  type: ClusterIP
+  selector:
+    app: chisel-server
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
