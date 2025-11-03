@@ -3,3 +3,9 @@ kind: Kustomization
 namespace: rig-system
 resources:
 - ../../base
+
+patches:
+- path: cluster-patch.yaml
+  target:
+    kind: Cluster
+    name: rig-db
