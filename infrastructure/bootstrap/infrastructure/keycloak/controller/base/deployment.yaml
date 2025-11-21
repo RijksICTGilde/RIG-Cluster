@@ -65,7 +65,9 @@ spec:
             - name: KC_HTTP_ENABLED
               value: "true"
             - name: KC_HOSTNAME
-              value: "http://keycloak.kind"
+              value: "keycloak.kind"
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
