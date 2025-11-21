@@ -141,7 +141,7 @@ async def test_deployment3_database_access():
         # Create a project manager to simulate the credential lookup process
         project_manager = ProjectManager()
         database_manager = DatabaseManager(project_manager, postgres_pool)
-        await database_manager._ensure_connection()
+        database_manager._ensure_connection()
 
         try:
             # Try to get credentials like the real deployment would

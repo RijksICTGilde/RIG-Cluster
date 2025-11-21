@@ -52,6 +52,40 @@ class ProjectFileHandler:
         logger.debug("Normalized AGE content format (converted escaped newlines)")
         return normalized
 
+    def _looks_like_env_format(self, text: str) -> bool:
+        """
+        Check if text looks like ENV format (KEY=VALUE lines).
+        Checks only the first 1-2 non-empty, non-comment lines.
+
+        Args:
+            text: Text to check
+
+        Returns:
+            True if text appears to be in ENV format
+        """
+        if not text or not isinstance(text, str):
+            return False
+
+        lines = text.strip().split("\n")
+        checked_lines = 0
+
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            # ENV format: KEY=VALUE where KEY starts with letter/underscore
+            # and contains only letters, numbers, and underscores
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", line):
+                return True
+
+            checked_lines += 1
+            # Only check first 2 actual content lines
+            if checked_lines >= 2:
+                break
+
+        return False
+
     def _decrypt_with_private_key(self, encrypted_value: str, private_key: str | None) -> Any:
         """
         Decrypt an AGE encrypted value using the provided private key and parse as YAML if applicable.
@@ -71,6 +105,12 @@ class ProjectFileHandler:
         normalized_private_key = self._normalize_age_content(private_key)
 
         decrypted_value = decrypt_password_smart_sync(normalized_encrypted_value, normalized_private_key)
+
+        # Check if decrypted content looks like ENV format (KEY=VALUE lines)
+        # If so, return as-is and let validate_and_parse_env_vars handle it
+        if self._looks_like_env_format(decrypted_value):
+            logger.debug("Decrypted content appears to be ENV format, returning as string")
+            return decrypted_value
 
         # Try to parse as YAML in case the decrypted content is a YAML block
         try:
@@ -294,7 +334,9 @@ class ProjectFileHandler:
             private_key: AGE private key for decrypting encrypted values
 
         Returns:
-            The extracted value (decrypted if needed) or default if not found
+            - For array wildcard queries (e.g., [*]): Always returns list of all matched values
+            - For single match queries (e.g., [0] or specific filters): The extracted value
+            - If no matches: default value
         """
         jsonpath_expr = jsonpath_parse(path)
         matches = jsonpath_expr.find(data)
@@ -303,6 +345,22 @@ class ProjectFileHandler:
             logger.debug(f"No matches found for JSONPath: {path}")
             return default
 
+        # If path contains [*], always return a list (even for single match)
+        # This ensures consistent return types for array queries
+        if "[*]" in path:
+            if private_key:
+                return [self._decrypt_with_private_key(match.value, private_key) for match in matches]
+            else:
+                return [match.value for match in matches]
+
+        # If multiple matches (but not explicitly using [*]), return all values as a list
+        if len(matches) > 1:
+            if private_key:
+                return [self._decrypt_with_private_key(match.value, private_key) for match in matches]
+            else:
+                return [match.value for match in matches]
+
+        # Single match - return the value directly
         if private_key:
             return self._decrypt_with_private_key(matches[0].value, private_key)
         else:
@@ -330,6 +388,29 @@ class ProjectFileHandler:
             logger.warning(f"No inbound port found for component '{component_name}', using default {default_port}")
 
         return port
+
+    def extract_component_path(self, project_data: dict[str, Any], component_name: str, default_path: str = "/") -> str:
+        """
+        Extract the publication path from a component definition by name.
+
+        Args:
+            project_data: The parsed project data
+            component_name: Name of the component to find
+            default_path: Default path to return if not found (default: "/")
+
+        Returns:
+            The publication path of the component or default_path if not found
+        """
+        # Use JSONPath with extended parser to find the component by name and extract its path
+        path = f"$.components[?(@.name='{component_name}')].path"
+        component_path = self.extract_value_by_path(project_data, path, default_path)
+
+        if component_path != default_path:
+            logger.info(f"Found path '{component_path}' for component '{component_name}'")
+        else:
+            logger.debug(f"No path found for component '{component_name}', using default '{default_path}'")
+
+        return component_path
 
     def extract_component_storage(self, project_data: dict[str, Any], component_name: str) -> list[dict[str, Any]]:
         """
@@ -454,6 +535,211 @@ class ProjectFileHandler:
 
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
+
+    def get_storage_generation(
+        self, project_data: dict[str, Any], deployment_name: str, component_name: str, storage_name: str
+    ) -> int:
+        """
+        Get the current generation number for a storage in a deployment component.
+
+        Path: deployments[?(@.name=='{deployment_name}')].components[?(@.reference=='{component_name}')].services.persistent-storage.{storage_name}.generation
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            storage_name: Name of the storage (e.g., "data", "temp")
+
+        Returns:
+            Current generation number (0 if not set, for backward compatibility)
+        """
+        path = f"$.deployments[?(@.name=='{deployment_name}')].components[?(@.reference=='{component_name}')].services.persistent-storage.{storage_name}.generation"
+        generation = self.extract_value_by_path(project_data, path, 0)
+
+        logger.debug(f"Storage generation for {deployment_name}/{component_name}/{storage_name}: {generation}")
+        return int(generation) if generation is not None else 0
+
+    def set_storage_generation(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        storage_name: str,
+        generation: int,
+    ) -> dict[str, Any]:
+        """
+        Set the generation number for a storage in a deployment component.
+
+        Creates the nested structure if it doesn't exist:
+        deployments[name].components[reference==component_name].services.persistent-storage.{storage_name}.generation
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            storage_name: Name of the storage (e.g., "data", "temp")
+            generation: Generation number to set
+
+        Returns:
+            Updated project_data dictionary
+        """
+        # Find the deployment in the list
+        deployments = project_data.get("deployments", [])
+        component_found = False
+
+        for deployment in deployments:
+            if deployment.get("name") == deployment_name:
+                # Find the component within the deployment
+                components = deployment.get("components", [])
+                for component in components:
+                    if component.get("reference") == component_name:
+                        component_found = True
+
+                        # Ensure 'services' dict exists
+                        if "services" not in component:
+                            component["services"] = {}
+
+                        # Ensure 'persistent-storage' dict exists
+                        if "persistent-storage" not in component["services"]:
+                            component["services"]["persistent-storage"] = {}
+
+                        # Ensure storage name dict exists
+                        if storage_name not in component["services"]["persistent-storage"]:
+                            component["services"]["persistent-storage"][storage_name] = {}
+
+                        # Set the generation
+                        component["services"]["persistent-storage"][storage_name]["generation"] = generation
+
+                        logger.info(
+                            f"Set storage generation for {deployment_name}/{component_name}/{storage_name} to {generation}"
+                        )
+                        break
+
+                if component_found:
+                    break
+
+        if not component_found:
+            logger.warning(f"Component '{component_name}' in deployment '{deployment_name}' not found in project data")
+
+        return project_data
+
+    def extract_remote_sources(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Extract remote-sources from project data.
+
+        Args:
+            project_data: The parsed project data
+
+        Returns:
+            List of remote source configurations
+        """
+        remote_sources = project_data.get("remote-sources", [])
+        logger.debug(f"Found {len(remote_sources)} remote source(s)")
+        return remote_sources
+
+    def get_remote_source_by_name(self, project_data: dict[str, Any], name: str) -> dict[str, Any] | None:
+        """
+        Get a specific remote source by name.
+
+        Args:
+            project_data: The parsed project data
+            name: Name of the remote source to find
+
+        Returns:
+            Remote source configuration or None if not found
+        """
+        remote_sources = self.extract_remote_sources(project_data)
+        for source in remote_sources:
+            if source.get("name") == name:
+                logger.debug(f"Found remote source: {name}")
+                return source
+
+        logger.warning(f"Remote source '{name}' not found")
+        return None
+
+    def extract_deployment_clone_from_config(
+        self, project_data: dict[str, Any], deployment_name: str
+    ) -> dict[str, Any] | None:
+        """
+        Extract clone-from configuration from a deployment.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment to extract clone config from
+
+        Returns:
+            Clone configuration dict with keys:
+            - type: "deployment" | "remote-source"
+            - reference: deployment name or remote source name
+            - mode: "once" | "always" | "manual"
+            - services: optional list of services to clone
+            Returns None if no clone-from configuration exists
+        """
+        path = f"$.deployments[?(@.name=='{deployment_name}')].clone-from"
+        clone_from_config = self.extract_value_by_path(project_data, path, None)
+
+        if clone_from_config:
+            logger.info(
+                f"Found clone-from config for {deployment_name}: "
+                f"type={clone_from_config.get('type')}, "
+                f"reference={clone_from_config.get('reference')}, "
+                f"mode={clone_from_config.get('mode')}"
+            )
+        else:
+            logger.debug(f"No clone-from configuration for deployment: {deployment_name}")
+
+        return clone_from_config
+
+    def extract_registries(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Extract container registry configurations from project file.
+
+        Args:
+            project_data: The parsed project data
+
+        Returns:
+            List of registry configuration dicts with keys: name, url, username, password
+        """
+        registries_path = "$.registries[*]"
+        registries = self.extract_value_by_path(project_data, registries_path, [])
+
+        if isinstance(registries, list) and registries:
+            logger.info(f"Found {len(registries)} container registr{'y' if len(registries) == 1 else 'ies'}")
+            return registries
+
+        logger.debug("No container registries configured in project file")
+        return []
+
+    def extract_component_registry(
+        self, project_data: dict[str, Any], component_name: str
+    ) -> dict[str, Any] | None:
+        """
+        Extract registry configuration for a component by resolving its registry reference.
+
+        Args:
+            project_data: The parsed project data
+            component_name: Name of the component
+
+        Returns:
+            Registry config dict with keys: name, url, username, password
+            or None if component has no registry configured
+        """
+        # Check if component has registry reference
+        path = f"$.components[?(@.name=='{component_name}')].registry"
+        registry_ref = self.extract_value_by_path(project_data, path, None)
+
+        if not registry_ref:
+            return None
+
+        # Find registry by name in registries list
+        registries = self.extract_registries(project_data)
+        for registry in registries:
+            if registry.get("name") == registry_ref:
+                logger.info(f"Component '{component_name}' uses registry '{registry_ref}'")
+                return registry
+
+        logger.warning(f"Component '{component_name}' references registry '{registry_ref}' which does not exist")
+        return None
 
 
 def create_project_file_handler() -> ProjectFileHandler:

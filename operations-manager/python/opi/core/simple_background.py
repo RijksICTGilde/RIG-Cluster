@@ -286,10 +286,14 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
 
             # Create project manager and process the project
             project_manager = ProjectManager(git_connector_for_project_files=git_connector_for_project_files)
-
-            # Simple deployment - just process the project
-            processing_result = await project_manager.process_project_from_git(project_file_path, task_progress_manager)
-            logger.info(f"Task {task_id}: Project processing completed, result: {processing_result}")
+            try:
+                # Simple deployment - just process the project
+                processing_result = await project_manager.process_project_from_git(
+                    project_file_path, task_progress_manager
+                )
+                logger.info(f"Task {task_id}: Project processing completed, result: {processing_result}")
+            finally:
+                await project_manager.close()
 
             if processing_result:
                 # Set the namespace for monitoring (assuming project name as namespace)

@@ -23,7 +23,7 @@ try:
         first_tag = raw_tags[0]
         pos = result.find(first_tag)
         print(f"\nFirst occurrence at position {pos}:")
-        print(f"Context: ...{result[max(0, pos-50):pos+100]}...")
+        print(f"Context: ...{result[max(0, pos - 50) : pos + 100]}...")
     else:
         print("✅ SUCCESS - All component tags have been processed!")
         print(f"Generated HTML length: {len(result)} characters")

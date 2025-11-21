@@ -88,16 +88,16 @@ def test_gap_size_independence():
     # Show specific evidence
     print("\n📊 EVIDENCE:")
     print(
-        f"- Small gap + small size: {'✅' if any(c['gap']=='xs' and c['size']=='sm' and c['has_correct_gap'] and c['has_correct_size'] for c in test_cases) else '❌'}"
+        f"- Small gap + small size: {'✅' if any(c['gap'] == 'xs' and c['size'] == 'sm' and c['has_correct_gap'] and c['has_correct_size'] for c in test_cases) else '❌'}"
     )
     print(
-        f"- Large gap + small size: {'✅' if any(c['gap']=='xl' and c['size']=='sm' and c['has_correct_gap'] and c['has_correct_size'] for c in test_cases) else '❌'}"
+        f"- Large gap + small size: {'✅' if any(c['gap'] == 'xl' and c['size'] == 'sm' and c['has_correct_gap'] and c['has_correct_size'] for c in test_cases) else '❌'}"
     )
     print(
-        f"- Small gap + large size: {'✅' if any(c['gap']=='xs' and c['size']=='lg' and c['has_correct_gap'] and c['has_correct_size'] for c in test_cases) else '❌'}"
+        f"- Small gap + large size: {'✅' if any(c['gap'] == 'xs' and c['size'] == 'lg' and c['has_correct_gap'] and c['has_correct_size'] for c in test_cases) else '❌'}"
     )
     print(
-        f"- Large gap + large size: {'✅' if any(c['gap']=='xl' and c['size']=='lg' and c['has_correct_gap'] and c['has_correct_size'] for c in test_cases) else '❌'}"
+        f"- Large gap + large size: {'✅' if any(c['gap'] == 'xl' and c['size'] == 'lg' and c['has_correct_gap'] and c['has_correct_size'] for c in test_cases) else '❌'}"
     )
 
 

@@ -1,0 +1,56 @@
+apiVersion: skaffold/v2beta29
+kind: Config
+metadata:
+  name: operations-manager-sync
+
+build:
+  tagPolicy:
+    customTemplate:
+      template: "latest"
+  artifacts:
+  - image: operations-manager
+    context: .
+    docker:
+      dockerfile: operations-manager/Dockerfile
+      buildArgs:
+        BUILDKIT_INLINE_CACHE: "1"
+    sync:
+      manual:
+      - src: 'operations-manager/python/opi/**/*.py'
+        dest: /app/opi
+        strip: 'operations-manager/python/opi/'
+      - src: 'operations-manager/python/opi/templates/**/*'
+        dest: /app/opi/templates
+        strip: 'operations-manager/python/opi/templates/'
+      - src: 'operations-manager/python/manifests/**/*.jinja'
+        dest: /app/manifests
+        strip: 'operations-manager/python/manifests/'
+      - src: 'operations-manager/python/static/**/*'
+        dest: /app/static
+        strip: 'operations-manager/python/static/'
+
+deploy:
+  statusCheckDeadlineSeconds: 0
+  kustomize:
+    flags:
+      apply:
+      - --force-conflicts
+      - --server-side=true
+    buildArgs:
+    - --enable-alpha-plugins
+    - --enable-exec
+    - --load-restrictor=LoadRestrictionsNone
+    paths:
+    - bootstrap/rig-system/kustomize/operations-manager/overlays/local
+
+portForward:
+- resourceType: service
+  resourceName: operations-manager
+  namespace: rig-system
+  port: 8000
+  localPort: 9595
+- resourceType: service
+  resourceName: operations-manager
+  namespace: rig-system
+  port: 5678
+  localPort: 5678

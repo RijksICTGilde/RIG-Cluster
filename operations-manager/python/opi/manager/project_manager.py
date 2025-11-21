@@ -3,9 +3,9 @@ The project manager handles project files. It can read, update, delete, or proce
 Processing means it can create, update, or delete any resources defined in a project file.
 """
 
+import glob
 import logging
 import os
-import shutil
 from typing import Any, TypeVar, cast
 from warnings import deprecated
 
@@ -14,7 +14,8 @@ from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.connectors import create_argo_connector, create_keycloak_connector
+from opi.connectors import create_argo_connector
+from opi.connectors.chisel_connector import ChiselConnector
 from opi.connectors.git import (
     GitConnector,
     create_git_connector_for_argocd,
@@ -25,23 +26,20 @@ from opi.connectors.git import (
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import (
     get_argo_namespace,
-    get_database_server,
     get_ingress_ip_whitelist,
     get_ingress_postfix,
     get_ingress_tls_enabled,
     get_keycloak_discovery_url,
     get_minio_server,
     get_prefixed_namespace,
-    get_storage_access_modes,
-    get_storage_class_name,
 )
 from opi.core.config import settings
 from opi.core.task_manager import TaskProgressManager
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.handlers.sops import SopsHandler
-from opi.services import ServiceAdapter, ServiceType
-from opi.services.project_service import get_project_service
+from opi.services import ServiceAdapter, ServiceType, VariableDefinition
+from opi.services.project_service import ProjectUser, get_project_service
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -50,27 +48,30 @@ from opi.utils.age import (
     get_decoded_project_private_key,
     get_project_public_key,
 )
+from opi.utils.env_vars import detect_circular_references, extract_variable_references, substitute_variables
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     generate_argocd_application_name,
-    generate_argocd_appproject_prefix,
-    generate_deployment_manifest_path,
-    generate_gitops_argocd_application_path,
     generate_ingress_map,
     generate_manifest_name,
+    generate_project_realm_name,
     generate_public_url,
     generate_pvc_name,
+    generate_registry_secret_name,
     generate_storage_name,
     generate_unique_name,
-    get_output_filename_from_template,
 )
-from opi.utils.secrets import BaseSecret, DatabaseSecret, KeycloakSecret, MinIOSecret, UserSecret
+from opi.utils.secrets import BaseSecret, DatabaseSecret, KeycloakSecret, MinIOSecret, RegistrySecret, UserSecret
+from opi.utils.sops import encrypt_to_sops_files
+from opi.utils.yaml_util import (
+    dump_yaml_to_string,
+    find_value_by_jsonpath,
+    load_yaml_from_string,
+)
 
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
-from opi.utils.sops import encrypt_to_sops_files
-from opi.utils.yaml_util import find_value_by_jsonpath, load_yaml_from_path, save_yaml_to_path, update_value_by_jsonpath
 
 logger = logging.getLogger(__name__)
 
@@ -107,19 +108,31 @@ class ProjectManager:
         # Example: {"dev": {"env_vars_web_storage": {"DATA_PATH": "/data"}, "env_vars_api_user": {"API_KEY": "value"}}}
         self._env_vars: dict[str, dict[str, dict[str, Any]]] = {}
 
+        # Private map for storing aliases collected from all components in a deployment
+        # Structure: {deployment_name: {source_type: {service_category: {alias_name: alias_template}}}}
+        # Example: {"dev": {"secret": {"database": {"DATABASE_URL": "$HOST:$PORT"}}, "direct": {"web": {"PREVIEW_URL": "https://$PUBLIC_HOST"}}}}
+        self._deployment_aliases: dict[str, dict[str, dict[str, dict[str, str]]]] = {}
+
         # Service managers for handling service-specific operations
         # Import here to avoid circular dependencies
         # TODO: fix me, we don't want this
-        from opi.core.database_pools import get_database_pool
+        from opi.manager.argo_manager import ArgoManager
+        from opi.manager.clone_manager import CloneManager
         from opi.manager.database_manager import DatabaseManager
+        from opi.manager.delete_project_manager import DeleteProjectManager
         from opi.manager.keycloak_manager import KeycloakManager
         from opi.manager.minio_manager import MinioManager
+        from opi.manager.pvc_manager import PVCManager
 
-        # Get the main database pool and inject it into DatabaseManager
-        main_db_pool = get_database_pool("main")
-        self._database_manager = DatabaseManager(self, main_db_pool)
+        # DatabaseManager will be lazily initialized on first access
+        # This allows us to determine the correct database host based on project services
+        self._database_manager: DatabaseManager | None = None
         self._minio_manager = MinioManager(self)
         self._keycloak_manager = KeycloakManager(self)
+        self._argo_manager = ArgoManager(self)
+        self._clone_manager = CloneManager(self)
+        self._delete_project_manager = DeleteProjectManager(self)
+        self._pvc_manager = PVCManager(self)
 
     async def __aenter__(self) -> "ProjectManager":
         return self
@@ -127,12 +140,119 @@ class ProjectManager:
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         await self.close()
 
+    async def _ensure_database_manager(self) -> "DatabaseManager":
+        """Lazily initialize DatabaseManager with correct database host based on project services."""
+        if self._database_manager is not None:
+            return self._database_manager
+
+        from opi.core.cluster_config import get_database_cluster_service_endpoint, get_infrastructure_namespace
+        from opi.manager.database_manager import DatabaseManager
+        from opi.services import ServiceType
+        from opi.utils.naming import generate_postgres_superuser_secret_name
+
+        project_data = await self.get_contents()
+        project_name = project_data.get("name")
+        project_services = project_data.get("services", [])
+
+        # Check if project uses namespace-specific PostgreSQL
+        uses_namespace_db = any(
+            ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service
+            if isinstance(service, dict)
+            else service == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+            for service in project_services
+        )
+
+        if uses_namespace_db:
+            # Namespace-specific database
+            db_host = get_database_cluster_service_endpoint(settings.CLUSTER_MANAGER, project_name)
+            infrastructure_namespace = get_infrastructure_namespace(settings.CLUSTER_MANAGER, project_name)
+            secret_name = generate_postgres_superuser_secret_name(project_name)
+
+            secret_data = await self._kubectl_connector.get_secret(secret_name, infrastructure_namespace)
+            if not secret_data:
+                raise RuntimeError(
+                    f"Superuser secret '{secret_name}' not found in '{infrastructure_namespace}'. "
+                    f"Infrastructure may not be deployed yet."
+                )
+
+            admin_username = secret_data.get("username")
+            admin_password = secret_data.get("password")
+            logger.info(f"Initializing DatabaseManager with namespace-specific PostgreSQL: {db_host}")
+        else:
+            # Shared database
+            db_host = settings.DATABASE_HOST
+            admin_username = settings.DATABASE_ADMIN_NAME
+            admin_password = settings.DATABASE_ADMIN_PASSWORD
+            logger.info(f"Initializing DatabaseManager with shared PostgreSQL: {db_host}")
+
+        self._database_manager = DatabaseManager(self, db_host=db_host, admin_username=admin_username, admin_password=admin_password)
+        return self._database_manager
+
     async def get_name(self) -> str:
         contents = await self.get_contents()
         return contents["name"]
 
-    async def get_working_dir(self) -> str:
-        return await (await self.get_git_connector_for_project_files()).get_working_dir()
+    async def get_deployments(
+        self, cluster_filter: bool = True, deployment_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Get deployments with optional cluster and name filtering.
+
+        In a Distributed Operations Manager architecture, each operations-manager
+        instance manages resources only for its configured CLUSTER_MANAGER cluster.
+
+        Args:
+            cluster_filter: If True, filter by CLUSTER_MANAGER setting (default: True)
+            deployment_name: If provided, filter to specific deployment
+
+        Returns:
+            List of deployment configurations matching the filters
+        """
+        project_data = await self.get_contents()
+        deployments = project_data.get("deployments", [])
+
+        # Filter by CLUSTER_MANAGER if requested
+        if cluster_filter:
+            deployments = [d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER]
+
+        # Filter by deployment name if provided
+        if deployment_name:
+            deployments = [d for d in deployments if d.get("name") == deployment_name]
+
+        return deployments
+
+    async def get_deployment_by_name(self, deployment_name: str) -> dict[str, Any] | None:
+        """
+        Get a specific deployment by name (respects CLUSTER_MANAGER).
+
+        Args:
+            deployment_name: Name of the deployment to find
+
+        Returns:
+            Deployment configuration or None if not found
+        """
+        deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
+        return deployments[0] if deployments else None
+
+    async def get_repositories(self) -> list[dict[str, Any]]:
+        """
+        Get all repositories defined in project.
+
+        Returns:
+            List of repository configurations
+        """
+        project_data = await self.get_contents()
+        return project_data.get("repositories", [])
+
+    async def get_components(self) -> list[dict[str, Any]]:
+        """
+        Get all components defined in project.
+
+        Returns:
+            List of component configurations
+        """
+        project_data = await self.get_contents()
+        return project_data.get("components", [])
 
     async def get_git_connector_for_project_files(self) -> GitConnector:
         if self.__git_connector_for_project_files is None:
@@ -191,6 +311,89 @@ class ProjectManager:
 
         return cast(T, secret)
 
+    def _get_expected_secrets(
+        self, deployment_name: str, deployment: dict[str, Any], project_data: dict[str, Any]
+    ) -> dict[str, str]:
+        """
+        Determine which secrets should be referenced in deployment based on:
+        - Services used (database, keycloak, minio)
+        - User environment variables from components
+
+        This is used to build the envFrom list in deployment manifests, ensuring
+        all required secrets are referenced even if they're not in the _secrets_to_create map.
+
+        Args:
+            deployment_name: Name of the deployment
+            deployment: Deployment configuration
+            project_data: Full project configuration
+
+        Returns:
+            Dictionary mapping secret_type to secret_name
+            Example: {"database": "deployment1-database", "keycloak": "deployment1-keycloak"}
+        """
+        expected_secrets = {}
+
+        # Check all components in this deployment to determine which services are used
+        components = deployment.get("components", [])
+
+        # Track which services are used across all components
+        uses_postgresql = False
+        uses_minio = False
+        uses_sso = False
+
+        for component in components:
+            component_reference = component.get("reference")
+            if not component_reference:
+                continue
+
+            # Check services used by this component
+
+            component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
+            component_services = [match.value for match in component_query.find(project_data)]
+
+            # Flatten services list
+            all_services = []
+            for services in component_services:
+                if isinstance(services, list):
+                    all_services.extend(services)
+                else:
+                    all_services.append(services)
+
+            # Check for each service type
+            # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
+            if (
+                ServiceType.POSTGRESQL_DATABASE.value in all_services
+                or ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in all_services
+            ):
+                uses_postgresql = True
+
+            if ServiceType.MINIO_STORAGE.value in all_services:
+                uses_minio = True
+
+            if ServiceType.KEYCLOAK.value in all_services:
+                # TODO: fix this, using keycloak only is sso if the configuration is provided for it
+                uses_sso = True
+
+        # Build expected secrets based on services used
+        if uses_postgresql:
+            expected_secrets["database"] = DatabaseSecret.get_secret_name(deployment_name)
+            logger.debug(f"Deployment {deployment_name} expects database secret")
+
+        if uses_minio:
+            expected_secrets["minio"] = MinIOSecret.get_secret_name(deployment_name)
+            logger.debug(f"Deployment {deployment_name} expects MinIO secret")
+
+        if uses_sso:
+            expected_secrets["keycloak"] = KeycloakSecret.get_secret_name(deployment_name)
+            logger.debug(f"Deployment {deployment_name} expects Keycloak secret")
+
+        # Note: User secrets are per-component, not per-deployment
+        # They will be added during component processing
+
+        logger.info(f"Expected secrets for deployment {deployment_name}: {list(expected_secrets.keys())}")
+
+        return expected_secrets
+
     def _register_env_var(
         self, deployment_name: str, component_name: str, service_type: str, env_vars: dict[str, Any]
     ) -> None:
@@ -228,26 +431,284 @@ class ProjectManager:
         filtered_env_vars = {key: value for key, value in all_env_vars.items() if not key.endswith("_user")}
         return filtered_env_vars
 
-    def _get_project_keycloak_config_for_cluster(
-        self, project_data: dict[str, Any], cluster: str
-    ) -> dict[str, Any] | None:
+    def _get_service_category_name(self, service_type: ServiceType) -> str:
+        """
+        Get a consistent category name for a service type.
+
+        This maps service types to their category names used in alias resolution.
+
+        Args:
+            service_type: The service type enum
+
+        Returns:
+            Category name string (e.g., "database", "minio", "keycloak", "web", "storage")
+        """
+        # Map service types to their category names
+        category_map = {
+            ServiceType.POSTGRESQL_DATABASE: "database",
+            ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
+            ServiceType.MINIO_STORAGE: "minio",
+            ServiceType.KEYCLOAK: "keycloak",
+            ServiceType.PUBLISH_ON_WEB: "web",
+            ServiceType.PERSISTENT_STORAGE: "storage",
+            ServiceType.TEMP_STORAGE: "storage",
+        }
+        return category_map.get(service_type, service_type.value)
+
+    def _categorize_alias(self, alias_name: str, alias_template: str) -> tuple[str, str]:
+        """
+        Determine which service and source type an alias belongs to based on the variables it references.
+
+        Args:
+            alias_name: Name of the alias
+            alias_template: Template string with variable references
+
+        Returns:
+            Tuple of (service_category, source_type) where:
+            - service_category: 'database', 'minio', 'keycloak', 'web', 'storage'
+            - source_type: 'secret' or 'direct'
+
+        Raises:
+            ValueError: If alias references variables from multiple services or unknown variables
+
+        Logic:
+            - Dynamically checks all services defined in ServiceAdapter.SERVICE_DEFINITIONS
+            - Categorizes based on which service's variables are referenced
+            - Determines if variables come from secrets or are direct env vars
+            - Ensures all variables in an alias come from the same service
+        """
+        # Extract all referenced variables
+        referenced_vars = extract_variable_references(alias_template)
+
+        if not referenced_vars:
+            raise ValueError(
+                f"Alias '{alias_name}' has no variable references. "
+                f"Aliases must reference at least one service variable."
+            )
+
+        # Build a mapping of variable_name -> (service_type, variable_definition)
+        # by checking all services dynamically
+        var_to_service: dict[str, tuple[ServiceType, VariableDefinition]] = {}
+        all_known_vars = set()
+
+        for service_type in ServiceAdapter.SERVICE_DEFINITIONS.keys():
+            service_def = ServiceAdapter.get_service_definition(service_type)
+            for var_def in service_def.variables:
+                # Add primary variable name
+                var_to_service[var_def.name] = (service_type, var_def)
+                all_known_vars.add(var_def.name)
+                # Add all aliases for this variable
+                for alias in var_def.aliases:
+                    var_to_service[alias] = (service_type, var_def)
+                    all_known_vars.add(alias)
+
+        # Check for unknown variables
+        unknown_vars = [var for var in referenced_vars if var not in all_known_vars]
+        if unknown_vars:
+            known_vars_list = ", ".join(sorted(all_known_vars))
+            raise ValueError(
+                f"Alias '{alias_name}' references unknown variables: {', '.join(unknown_vars)}. "
+                f"Available variables: {known_vars_list}"
+            )
+
+        # Determine which service(s) and source type(s) are referenced
+        services_referenced: dict[str, ServiceType] = {}
+        source_types: set[str] = set()
+
+        for var in referenced_vars:
+            service_type, var_def = var_to_service[var]
+            service_category = self._get_service_category_name(service_type)
+            services_referenced[service_category] = service_type
+            source_types.add(var_def.source)
+
+        # Error if multiple services referenced
+        if len(services_referenced) > 1:
+            raise ValueError(
+                f"Alias '{alias_name}' references variables from multiple services: {', '.join(services_referenced.keys())}. "
+                f"Each alias must reference variables from only one service."
+            )
+
+        # Error if multiple source types referenced (mixing secret and direct variables)
+        if len(source_types) > 1:
+            raise ValueError(
+                f"Alias '{alias_name}' mixes variables from different sources: {', '.join(source_types)}. "
+                f"Each alias must use variables from only one source type (either 'secret' or 'direct')."
+            )
+
+        # Get the single service category and source type
+        service_category = next(iter(services_referenced.keys()))
+        source_type = next(iter(source_types))
+
+        logger.debug(f"Alias '{alias_name}' categorized as service='{service_category}', source='{source_type}'")
+        return service_category, source_type
+
+    async def _collect_deployment_aliases(self, deployment_name: str) -> dict[str, dict[str, dict[str, str]]]:
+        """
+        Scan all components in a deployment and collect aliases, categorized by source type and service.
+
+        Args:
+            deployment_name: Name of the deployment
+
+        Returns:
+            Dictionary mapping source type -> service category -> aliases:
+            {
+                'direct': {
+                    'web': {alias_name: template, ...},
+                    'storage': {alias_name: template, ...}
+                },
+                'secret': {
+                    'database': {alias_name: template, ...},
+                    'minio': {alias_name: template, ...},
+                    'keycloak': {alias_name: template, ...}
+                }
+            }
+
+        Raises:
+            ValueError: If any alias has invalid references (multiple services, unknown variables, etc.)
+        """
+        logger.debug(f"Collecting aliases for deployment: {deployment_name}")
+
+        # Get project data
+        project_data = await self.get_contents()
+
+        # Find the deployment in project data
+        deployments = project_data.get("deployments", [])
+        deployment = next((d for d in deployments if d.get("name") == deployment_name), None)
+
+        if not deployment:
+            logger.warning(f"Deployment '{deployment_name}' not found in project data")
+            return {"direct": {}, "secret": {}}
+
+        # Initialize categorized aliases with two-level structure: source_type -> service_category -> aliases
+        categorized_aliases: dict[str, dict[str, dict[str, str]]] = {
+            "direct": {},
+            "secret": {},
+        }
+
+        # Scan all components
+        components = deployment.get("components", [])
+        for component in components:
+            component_name = component["reference"]
+            component_definition = await self._get_by_json_path(f"$.components[?@.name=='{component_name}']")
+            component_aliases = component_definition.get("aliases", {})
+
+            if not component_aliases:
+                continue
+
+            logger.debug(f"Found {len(component_aliases)} aliases in component '{component_name}'")
+
+            # Categorize each alias
+            for alias_name, alias_template in component_aliases.items():
+                if not isinstance(alias_template, str):
+                    logger.warning(
+                        f"Alias '{alias_name}' in component '{component_name}' has non-string value, skipping"
+                    )
+                    continue
+
+                try:
+                    # Determine which service and source type this alias belongs to
+                    service_category, source_type = self._categorize_alias(alias_name, alias_template)
+                except ValueError as e:
+                    # Add component context to the error
+                    raise ValueError(
+                        f"Error in component '{component_name}', deployment '{deployment_name}': {e}"
+                    ) from e
+
+                # Initialize service category dict if needed
+                if service_category not in categorized_aliases[source_type]:
+                    categorized_aliases[source_type][service_category] = {}
+
+                # Add to categorized collection
+                if alias_name in categorized_aliases[source_type][service_category]:
+                    logger.warning(
+                        f"Duplicate alias '{alias_name}' found in deployment '{deployment_name}', "
+                        f"using definition from component '{component_name}'"
+                    )
+
+                categorized_aliases[source_type][service_category][alias_name] = alias_template
+
+        # Log summary
+        total_aliases = 0
+        summary_parts = []
+        for source_type, service_dict in categorized_aliases.items():
+            for service_category, aliases in service_dict.items():
+                count = len(aliases)
+                if count > 0:
+                    total_aliases += count
+                    summary_parts.append(f"{source_type}.{service_category}: {count}")
+
+        if total_aliases > 0:
+            summary = ", ".join(summary_parts)
+            logger.info(f"Collected {total_aliases} aliases for deployment '{deployment_name}' ({summary})")
+
+        return categorized_aliases
+
+    def _resolve_aliases(self, aliases: dict[str, str], context: dict[str, str]) -> dict[str, str]:
+        """
+        Resolve variable references in aliases using the provided context.
+
+        Args:
+            aliases: Dictionary of alias_name -> template
+            context: Dictionary of variable_name -> value for substitution
+
+        Returns:
+            Dictionary of alias_name -> resolved_value
+
+        Raises:
+            ValueError: If circular references detected or unknown variables referenced
+
+        Security:
+            - Never logs resolved values (may contain sensitive data)
+            - Only logs alias names and template patterns for debugging
+        """
+        if not aliases:
+            return {}
+
+        logger.debug(f"Resolving {len(aliases)} aliases with context containing {len(context)} variables")
+
+        # Detect circular references first
+        try:
+            detect_circular_references(aliases)
+        except ValueError as e:
+            logger.error(f"Circular reference detected in aliases: {e}")
+            raise
+
+        resolved: dict[str, str] = {}
+
+        # Resolve each alias
+        for alias_name, alias_template in aliases.items():
+            try:
+                # Perform substitution (this validates that all referenced vars exist)
+                resolved_value = substitute_variables(alias_template, context)
+                resolved[alias_name] = resolved_value
+
+                # Log without exposing the actual value
+                logger.debug(f"Successfully resolved alias: {alias_name}")
+
+            except ValueError as e:
+                logger.error(f"Failed to resolve alias '{alias_name}': {e}")
+                raise ValueError(f"Failed to resolve alias '{alias_name}': {e}") from e
+
+        logger.info(f"Successfully resolved {len(resolved)} aliases")
+        return resolved
+
+    async def _get_project_keycloak_config_for_cluster(self, cluster: str) -> dict[str, Any] | None:
         """
         Find Keycloak config entry for a specific cluster.
 
         Args:
-            project_data: Project configuration dictionary
             cluster: Name of the cluster
 
         Returns:
             Keycloak config entry with host/realm/username/password or None if not found
         """
-        from opi.utils.naming import generate_project_realm_name
 
+        project_data = await self.get_contents()
         keycloak_list = project_data.get("config", {}).get("keycloak", [])
         if not keycloak_list:
             return None
 
-        project_name = project_data.get("name")
+        project_name = await self.get_name()
         expected_realm = generate_project_realm_name(project_name, cluster)
 
         for entry in keycloak_list:
@@ -266,7 +727,6 @@ class ProjectManager:
         Returns:
             Base Keycloak URL (e.g., "https://keycloak.apps.digilab.network")
         """
-        from opi.core.cluster_config import get_keycloak_discovery_url
 
         discovery_url = get_keycloak_discovery_url(cluster)
 
@@ -279,20 +739,6 @@ class ProjectManager:
             return base_url
 
         return discovery_url
-
-    def _count_deployments_in_cluster(self, project_data: dict[str, Any], cluster: str) -> int:
-        """
-        Count deployments for a specific cluster.
-
-        Args:
-            project_data: Project configuration dictionary
-            cluster: Name of the cluster
-
-        Returns:
-            Number of deployments in the specified cluster
-        """
-        deployments = project_data.get("deployments", [])
-        return sum(1 for d in deployments if d.get("cluster") == cluster)
 
     def _generate_storage_env_vars_from_services(self, storage_configs: list[dict[str, Any]]) -> dict[str, str]:
         """
@@ -355,7 +801,6 @@ class ProjectManager:
         """
         Normalize secret keys to use main keys from VariableDefinition instead of aliases.
         """
-        from opi.services.services import ServiceAdapter
 
         normalized = {}
 
@@ -424,7 +869,6 @@ class ProjectManager:
 
                 if config["variables"]:
                     # Convert to YAML string using yaml_util
-                    from opi.utils.yaml_util import dump_yaml_to_string
 
                     yaml_content = dump_yaml_to_string(config)
 
@@ -472,9 +916,6 @@ class ProjectManager:
 
             if "configuration" in deployment:
                 try:
-                    from opi.utils.age import decrypt_age_content
-                    from opi.utils.yaml_util import load_yaml_from_string
-
                     # Decrypt the configuration
                     decrypted_yaml = await decrypt_age_content(deployment["configuration"], private_key)
 
@@ -541,56 +982,9 @@ class ProjectManager:
 
     # TODO: we may want to process a file anyway
     async def has_deployments_for_current_cluster(self) -> bool:
-        project_data = await self.get_contents()
-        project_name = project_data["name"]
-
-        # Check if deployments exist and have cluster configurations
-        deployments = project_data.get("deployments", [])
-        if not deployments:
-            logger.debug(f"Project '{project_name}' has no deployments, skipping cluster validation")
-            return True
-
-        # Get the configured cluster manager
-        configured_cluster = settings.CLUSTER_MANAGER
-        logger.debug(f"Configured cluster manager: {configured_cluster}")
-
-        # Filter deployments to only include those targeting this cluster
-        matching_deployments = []
-        skipped_deployments = []
-
-        for deployment in deployments:
-            deployment_name = deployment.get("name", "unknown")
-            target_cluster = deployment.get("cluster")
-
-            if target_cluster == configured_cluster:
-                matching_deployments.append(deployment)
-            else:
-                skipped_deployments.append(deployment_name)
-                logger.debug(
-                    f"Project '{project_name}' deployment '{deployment_name}' targets cluster "
-                    f"'{target_cluster}' but CLUSTER_MANAGER is '{configured_cluster}' - skipping"
-                )
-
-        # Update the project data with filtered deployments
-        project_data["deployments"] = matching_deployments
-
-        if skipped_deployments:
-            logger.info(
-                f"Project '{project_name}' has {len(skipped_deployments)} deployment(s) "
-                f"for other clusters: {', '.join(skipped_deployments)}"
-            )
-
-        if not matching_deployments:
-            logger.info(
-                f"Project '{project_name}' has no deployments for cluster '{configured_cluster}' - skipping processing"
-            )
-            return False
-
-        logger.debug(
-            f"Project '{project_name}' cluster validation passed with {len(matching_deployments)} "
-            f"deployment(s) for cluster '{configured_cluster}'"
-        )
-        return True
+        """Check if project has any deployments for the current cluster."""
+        current_cluster_deployments = await self.get_deployments(cluster_filter=True)
+        return bool(current_cluster_deployments)
 
     async def create_project_repository(self, project_data: dict[str, Any]) -> bool:
         """
@@ -602,12 +996,12 @@ class ProjectManager:
         Returns:
             True if the repository was created successfully, False otherwise
         """
-        project_name = project_data.get("name")
+        project_name = await self.get_name()
         logger.debug(f"Creating repository for project: {project_name}")
 
         try:
             # Get the repository URL from the project data
-            repositories = project_data.get("repositories", [])
+            repositories = await self.get_repositories()
             if not repositories:
                 logger.error("No repositories defined in project data")
                 return False
@@ -682,12 +1076,11 @@ class ProjectManager:
         namespace_subtask = None
         if progress_manager:
             namespace_subtask = progress_manager.add_task("Kubernetes namespace(s) aanmaken")
-        # TODO: make classes for the project so we can use structured typing better
-        deployments = cast(list[dict[str, str | list | dict[str, str]]], project_data.get("deployments", []))
 
-        # Filter deployments if specific deployment_name is provided
+        # Get deployments for THIS cluster using helper method
+        deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
+
         if deployment_name:
-            deployments = [d for d in deployments if d.get("name") == deployment_name]
             logger.info(f"Checking namespaces only for deployment: {deployment_name}")
 
         if not deployments:
@@ -696,7 +1089,7 @@ class ProjectManager:
 
         all_successful = True
 
-        for deployment in (d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER):
+        for deployment in deployments:
             namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, cast(str, deployment["namespace"]))
 
             logger.info(
@@ -717,22 +1110,8 @@ class ProjectManager:
                 f"Creating namespace '{namespace}' for deployment '{deployment['name']}' for project '{project_data['name']}':"
             )
 
-            # Create the namespace using the manifest template
-            manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
-
-            # Template variables
-            variables = {"namespace": namespace, "manager": get_argo_namespace(settings.CLUSTER_MANAGER)}
-
-            await self._kubectl_connector.apply_manifest(manifest_path, variables)
-
-            # Apply the argocd.argoproj.io/managed-by label after creating the namespace
-            manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
-            await self._kubectl_connector.apply_label_to_resource(
-                resource_type="namespace",
-                resource_name=namespace,
-                label_key="argocd.argoproj.io/managed-by",
-                label_value=manager_value,
-            )
+            # Create the namespace using shared function
+            await self._create_namespace_with_argocd_label(namespace)
 
             if progress_manager:
                 progress_manager.set_namespace(namespace)
@@ -746,6 +1125,429 @@ class ProjectManager:
 
         return all_successful
 
+    async def _create_namespace_with_argocd_label(self, namespace: str) -> None:
+        """
+        Create a Kubernetes namespace with ArgoCD managed-by label.
+
+        This is the shared implementation used by both deployment namespaces
+        and infrastructure namespaces.
+
+        Args:
+            namespace: Full namespace name (with cluster prefix already applied)
+
+        Raises:
+            RuntimeError: If namespace creation fails
+        """
+        logger.info(f"Creating namespace '{namespace}'")
+
+        # Create the namespace using the manifest template
+        manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
+
+        # Template variables
+        variables = {"namespace": namespace, "manager": get_argo_namespace(settings.CLUSTER_MANAGER)}
+
+        await self._kubectl_connector.apply_manifest(manifest_path, variables)
+
+        # Apply the argocd.argoproj.io/managed-by label after creating the namespace
+        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
+        await self._kubectl_connector.apply_label_to_resource(
+            resource_type="namespace",
+            resource_name=namespace,
+            label_key="argocd.argoproj.io/managed-by",
+            label_value=manager_value,
+        )
+
+        logger.info(f"Successfully created namespace '{namespace}' with ArgoCD managed-by label")
+
+    async def _ensure_sops_secret_in_namespace(self, namespace: str, project_data: dict[str, Any]) -> None:
+        """
+        Ensure SOPS secret exists in the given namespace.
+
+        Creates or updates the SOPS secret as needed. This is the shared implementation
+        used by both deployment namespaces and infrastructure namespaces.
+
+        Args:
+            namespace: Full namespace name (with cluster prefix already applied)
+            project_data: Project configuration containing SOPS keys
+
+        Raises:
+            RuntimeError: If SOPS secret creation fails
+        """
+        project_name = project_data.get("name", "unknown")
+        logger.info(f"Checking SOPS secret for project {project_name} in namespace {namespace}")
+
+        public_key = get_project_public_key(project_data)
+        private_key = await get_decoded_project_private_key(project_data)
+
+        existing_secret = await self._kubectl_connector.get_sops_secret_from_namespace(namespace)
+
+        create_sops_secret = False
+        if existing_secret is None:
+            logger.info(f"SOPS secret not found for project {project_name} in namespace {namespace}")
+            create_sops_secret = True
+        elif public_key not in existing_secret:
+            create_sops_secret = True
+            logger.warning(
+                f"Found existing SOPS secret in namespace {namespace} for project {project_name}. "
+                f"Project has new SOPS keys - the old secret is now obsolete and will be replaced."
+            )
+            try:
+                await self._kubectl_connector.delete_resource("secret", "sops-age-key", namespace)
+                logger.info(f"Deleted old SOPS secret from namespace {namespace}")
+            except Exception as e:
+                logger.warning(f"Failed to delete old SOPS secret (continuing anyway): {e}")
+
+        if create_sops_secret:
+            await self._sops_handler.store_project_sops_key_in_namespace(namespace, private_key, public_key)
+            logger.info(f"Created new SOPS secret for project {project_name} in namespace {namespace}")
+        else:
+            logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
+
+    @staticmethod
+    async def _test_infrastructure_database_connection(username: str, password: str, host: str) -> bool:
+        """
+        Test if infrastructure database credentials are valid by attempting a direct connection.
+
+        This method creates its own connection since it needs to test with the superuser credentials
+        before the infrastructure is fully set up.
+
+        Args:
+            username: Database username to test (typically 'postgres')
+            password: Database password to test
+            host: Database host (namespace-specific service endpoint)
+
+        Returns:
+            True if connection successful, False otherwise
+        """
+        import asyncpg
+
+        try:
+            # Create a direct connection with the superuser credentials to the postgres database
+            conn = await asyncpg.connect(host=host, port=5432, user=username, password=password, database="postgres")
+            await conn.close()
+            logger.debug(f"Infrastructure database connection test successful for {username}@{host}/postgres")
+            return True
+        except Exception as e:
+            logger.debug(f"Infrastructure database connection test failed for user {username}: {e}")
+            return False
+
+    async def _create_infrastructure_namespace(self, project_data: dict[str, Any], cluster_name: str) -> None:
+        """
+        Create infrastructure namespace for namespace-specific PostgreSQL databases.
+
+        This namespace hosts:
+        - CloudNativePG database cluster
+        - Superuser credentials secret
+        - Database-related infrastructure resources
+
+        Following the same pattern as regular deployment namespaces:
+        - Creates namespace with ArgoCD managed-by label
+        - Creates SOPS secret for secret decryption
+
+        Args:
+            project_data: The project configuration data
+            cluster_name: Name of the cluster
+
+        Raises:
+            RuntimeError: If namespace creation fails
+        """
+        from opi.core.cluster_config import get_infrastructure_namespace
+
+        project_name = project_data.get("name")
+        if not project_name:
+            raise ValueError("Project name is required in project_data")
+
+        # Get infrastructure namespace with cluster-specific prefix
+        infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
+
+        logger.info(f"Checking infrastructure namespace '{infrastructure_namespace}' for project '{project_name}'")
+
+        # Track namespace creation with progress manager if available
+        progress_manager = self.get_progress_manager()
+        namespace_subtask = None
+        if progress_manager:
+            namespace_subtask = progress_manager.add_task(
+                f"Creating infrastructure namespace {infrastructure_namespace}"
+            )
+
+        try:
+            # Check if namespace exists, create if needed (using shared function)
+            namespace_exists = await self._kubectl_connector.namespace_exists(infrastructure_namespace)
+            if not namespace_exists:
+                await self._create_namespace_with_argocd_label(infrastructure_namespace)
+            else:
+                logger.info(
+                    f"Infrastructure namespace '{infrastructure_namespace}' already exists for project '{project_name}'"
+                )
+
+            # Create SOPS secret in the infrastructure namespace (using shared function)
+            await self._ensure_sops_secret_in_namespace(infrastructure_namespace, project_data)
+
+            if progress_manager and namespace_subtask:
+                progress_manager.complete_task(namespace_subtask)
+
+        except Exception as e:
+            logger.error(f"Failed to create infrastructure namespace '{infrastructure_namespace}': {e}")
+            if progress_manager and namespace_subtask:
+                progress_manager.fail_task(namespace_subtask, f"Failed to create infrastructure namespace: {e}")
+            raise RuntimeError(f"Cannot create infrastructure namespace '{infrastructure_namespace}': {e}") from e
+
+    async def _create_infrastructure_resources(self, project_data: dict[str, Any], cluster_name: str) -> None:
+        """
+        Create and deploy infrastructure resources for namespace-specific PostgreSQL databases.
+
+        This method orchestrates the complete infrastructure provisioning workflow:
+        1. Generate database superuser credentials secret
+        2. Generate CloudNativePG cluster manifest
+        3. Generate infrastructure kustomization.yaml
+        4. Commit manifests to deployment Git repository
+        5. Create ArgoCD infrastructure application (with sync-wave 0)
+        6. Wait for ArgoCD to report infrastructure as Synced + Healthy
+
+        Args:
+            project_data: The project configuration data
+            cluster_name: Name of the cluster
+
+        Raises:
+            RuntimeError: If infrastructure provisioning fails
+            TimeoutError: If infrastructure doesn't become ready within timeout
+        """
+        from opi.core.cluster_config import get_infrastructure_namespace, get_storage_class_name
+        from opi.generation.manifests import render_template
+        from opi.utils.naming import _sanitize_for_lowercase
+        from opi.utils.passwords import generate_secure_password
+        from opi.utils.sops import encrypt_to_sops_files
+
+        project_name = project_data.get("name")
+        if not project_name:
+            raise ValueError("Project name is required in project_data")
+
+        # Get configuration
+        infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
+        db_manager = await self._ensure_database_manager()
+        database_cluster_config = db_manager._get_database_cluster_config(project_data, cluster_name)
+        storage_class = get_storage_class_name(cluster_name)
+        project_clean = _sanitize_for_lowercase(project_name)
+
+        logger.info(f"Creating infrastructure resources for project '{project_name}' in cluster '{cluster_name}'")
+
+        # Track infrastructure creation with progress manager
+        progress_manager = self.get_progress_manager()
+        infra_task = None
+        if progress_manager:
+            infra_task = progress_manager.add_task("Creating infrastructure resources (database cluster)")
+
+        try:
+            # STEP 1: Check for existing superuser credentials and validate them
+            from opi.core.cluster_config import get_database_cluster_service_endpoint
+            from opi.utils.naming import generate_postgres_superuser_secret_name
+
+            superuser_secret_name = generate_postgres_superuser_secret_name(project_name)
+            existing_secret = await self._kubectl_connector.get_secret(superuser_secret_name, infrastructure_namespace)
+
+            if existing_secret:
+                logger.info(
+                    f"Found existing superuser secret for project '{project_name}', validating credentials"
+                )
+                superuser_username = existing_secret.get("username", "postgres")
+                superuser_password = existing_secret.get("password")
+
+                if not superuser_password:
+                    raise RuntimeError(
+                        f"Superuser secret '{superuser_secret_name}' exists but has no password. "
+                        f"Manual intervention required to fix or delete the secret."
+                    )
+
+                # Test the credentials against the PostgreSQL cluster
+                db_host = get_database_cluster_service_endpoint(cluster_name, project_name)
+                credentials_valid = await self._test_infrastructure_database_connection(
+                    username=superuser_username,
+                    password=superuser_password,
+                    host=db_host,
+                )
+
+                if not credentials_valid:
+                    raise RuntimeError(
+                        f"Superuser credentials for project '{project_name}' are invalid. "
+                        f"The password in secret '{superuser_secret_name}' does not match the PostgreSQL cluster. "
+                        f"This usually happens when the secret was regenerated after the cluster was created. "
+                        f"Manual intervention required: either restore the correct password in the secret, "
+                        f"or delete both the secret and the PostgreSQL cluster to recreate from scratch."
+                    )
+
+                logger.info(f"Existing superuser credentials validated successfully for project '{project_name}'")
+            else:
+                # No existing secret - generate new credentials for first-time creation
+                logger.info(f"No existing superuser secret found, generating new credentials for project '{project_name}'")
+                superuser_username = "postgres"
+                superuser_password = generate_secure_password(
+                    min_uppercase=3, min_lowercase=3, min_digits=3, total_length=32
+                )
+
+            # STEP 2: Create secret manifest with validated or new credentials
+            secret_manifest = render_template(
+                "generic-secret.yaml.to-sops.jinja",
+                {
+                    "name": superuser_secret_name,
+                    "namespace": infrastructure_namespace,
+                    "secret_type": "postgres-credentials",
+                    "secret_k8s_type": "kubernetes.io/basic-auth",
+                    "secret_pairs": {"username": superuser_username, "password": superuser_password},
+                },
+            )
+
+            # STEP 2: Generate PostgreSQL cluster manifest
+            logger.info(f"Generating PostgreSQL cluster manifest for project '{project_name}'")
+            # TODO: Add registry support for PostgreSQL infrastructure if needed
+            cluster_manifest = render_template(
+                "postgresql-cluster.yaml.jinja",
+                {
+                    "project_name": project_clean,
+                    "infrastructure_namespace": infrastructure_namespace,
+                    "database_config": database_cluster_config["database_config"],
+                    "storage_class": storage_class,
+                    "imagePullSecretsMap": {},  # Empty map for now, can be extended for private registries
+                },
+            )
+
+            # STEP 3: Write infrastructure resource manifests to deployment Git repository
+            logger.info(f"Committing infrastructure manifests to deployment repo for project '{project_name}'")
+
+            # Get project's main repository (infrastructure uses same repo as deployments)
+            repositories = project_data.get("repositories", [])
+            if not repositories:
+                raise ValueError("No repositories defined in project data")
+            main_repo = repositories[0]
+
+            # Create repo config for infrastructure (treated as a special deployment)
+            infra_repo_config = {
+                "name": "infrastructure",
+                "url": main_repo.get("url", ""),
+                "username": main_repo.get("username"),
+                "password": main_repo.get("password"),
+                "branch": main_repo.get("branch", "main"),
+                "path": main_repo.get("path", ""),
+            }
+
+            # Get git connector for deployment repo
+            deployment_git_connector = await self.get_git_connector_for_deployment("infrastructure", infra_repo_config)
+            deployment_working_dir = await deployment_git_connector.get_working_dir()
+
+            # Create infrastructure resources directory in deployment repo
+            # Path: {cluster}/{project_name}/infrastructure/
+            # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
+            repo_path = infra_repo_config.get("path", "")
+            if repo_path:
+                infra_resources_dir = os.path.join(
+                    deployment_working_dir, repo_path, cluster_name, project_name, "infrastructure"
+                )
+            else:
+                infra_resources_dir = os.path.join(deployment_working_dir, cluster_name, project_name, "infrastructure")
+            os.makedirs(infra_resources_dir, exist_ok=True)
+
+            # Write manifests - secret as .to-sops.yaml for encryption
+            secret_path = os.path.join(infra_resources_dir, f"{project_clean}-postgres-superuser-secret.to-sops.yaml")
+            cluster_path = os.path.join(infra_resources_dir, f"{project_clean}-db-cluster.yaml")
+
+            with open(secret_path, "w") as f:
+                f.write(secret_manifest)
+            with open(cluster_path, "w") as f:
+                f.write(cluster_manifest)
+
+            # STEP 4: SOPS encrypt the secret using project's SOPS key
+            logger.info(f"Encrypting secret with SOPS for project '{project_name}'")
+            project_public_key = get_project_public_key(project_data)
+            if not project_public_key:
+                raise RuntimeError(f"Project '{project_name}' does not have a SOPS public key configured")
+            encrypt_to_sops_files(infra_resources_dir, project_public_key)
+
+            # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
+            logger.info(f"Generating infrastructure kustomization for project '{project_name}'")
+            kustomization_success = self._manifest_generator.create_kustomization_files(
+                output_dir=infra_resources_dir,
+                namespace=infrastructure_namespace,
+            )
+            if not kustomization_success:
+                raise RuntimeError(f"Failed to create kustomization files for project '{project_name}'")
+
+            # Commit and push infrastructure resources to deployment repo
+            await deployment_git_connector.commit_and_push(
+                f"Add infrastructure resources for {project_name} in {cluster_name} cluster"
+            )
+
+            logger.info(
+                f"Successfully committed infrastructure manifests to deployment repo for project '{project_name}'"
+            )
+
+            # STEP 6: Create ArgoCD Application, repo secret, and AppProject in ArgoCD applications repo
+            # This folder is detected by App-of-Apps pattern and creates the ArgoCD Application
+            logger.info(
+                f"Creating ArgoCD application resources for infrastructure in {cluster_name}/{project_name}-infrastructure"
+            )
+
+            success = await self._argo_manager.create_infrastructure_application(
+                project_data=project_data, database_config=database_cluster_config, cluster_name=cluster_name
+            )
+
+            if not success:
+                raise RuntimeError(f"Failed to create ArgoCD infrastructure application for project '{project_name}'")
+
+            logger.info(f"Successfully created ArgoCD infrastructure application for project '{project_name}'")
+
+            # STEP 7: Refresh ArgoCD user-applications to detect new infrastructure folder
+            logger.info(
+                f"Refreshing ArgoCD user-applications to create infrastructure application for '{project_name}'"
+            )
+            from opi.connectors.argo import ArgoConnector
+
+            argo_connector = ArgoConnector(
+                server_host=settings.ARGOCD_HOST,
+                server_port=settings.ARGOCD_PORT,
+                username=settings.ARGOCD_USERNAME,
+                password=settings.ARGOCD_PASSWORD,
+                use_tls=settings.ARGOCD_USE_TLS,
+                verify_ssl=settings.ARGOCD_VERIFY_SSL,
+            )
+
+            if not await argo_connector.login():
+                raise RuntimeError("Failed to login to ArgoCD")
+
+            # Refresh user-applications app to pick up the new {project_name}-infrastructure folder
+            if not await argo_connector.refresh_application("user-applications"):
+                raise RuntimeError("Failed to refresh ArgoCD user-applications")
+
+            logger.info("ArgoCD user-applications refreshed, infrastructure application should be created")
+
+            # STEP 8: Wait for infrastructure to be ready
+            logger.info(
+                f"Waiting for infrastructure to be ready for project '{project_name}' (this may take a few minutes)..."
+            )
+
+            if progress_manager and infra_task:
+                progress_manager.update_task(infra_task, "Waiting for database cluster to be ready")
+
+            await self._argo_manager.wait_for_infrastructure_ready(
+                project_name=project_name,
+                cluster_name=cluster_name,
+                timeout=600,  # 10 minutes timeout
+            )
+
+            logger.info(f"Infrastructure is ready for project '{project_name}'")
+
+            if progress_manager and infra_task:
+                progress_manager.complete_task(infra_task)
+
+        except (TimeoutError, RuntimeError) as e:
+            logger.error(f"Failed to create infrastructure resources for project '{project_name}': {e}")
+            if progress_manager and infra_task:
+                progress_manager.fail_task(infra_task, f"Infrastructure provisioning failed: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error creating infrastructure resources for project '{project_name}': {e}")
+            if progress_manager and infra_task:
+                progress_manager.fail_task(infra_task, f"Unexpected error: {e}")
+            raise RuntimeError(f"Cannot create infrastructure resources for project '{project_name}': {e}") from e
+
     async def check_and_create_sops_secrets_in_namespaces(self, deployment_name: str | None = None) -> None:
         """
         Creates SOPS secrets in the specified namespaces. If no SOPS information is in the project file,
@@ -757,482 +1559,23 @@ class ProjectManager:
         contents = await self.get_contents()
         project_name = contents.get("name")
 
-        deployments = contents.get("deployments", [])
+        # Get deployments for THIS cluster using helper method
+        deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
 
-        # Filter deployments if specific deployment_name is provided
         if deployment_name:
-            deployments = [d for d in deployments if d.get("name") == deployment_name]
             logger.info(f"Creating SOPS secrets only for deployment: {deployment_name}")
 
         if not deployments:
             logger.warning("No deployments found in project: {project_name}")
             return
 
-        public_key = get_project_public_key(contents)
-        private_key = await get_decoded_project_private_key(contents)
-        # age_keys_created = False
-
-        # Try to get project SOPS keys upfront (prioritizing reuse over generation)
-        # TODO: we may only need to run this code (once) if a namespace does not have a sops secret
-        #  so this should become a separate function
-        # if not public_key and not encoded_private_key:
-        #     logger.info(f"Project {project_name} has no SOPS information in project data, so we create a new sops pair")
-        #     private_key, encoded_private_key, public_key = await generate_and_encrypt_sops_key_pair()
-        #     contents["config"]["age-public-key"] = public_key
-        #     contents["config"]["age-private-key"] = LiteralScalarString(encoded_private_key)
-        #     age_keys_created = True
-        #     # TODO: we should only call the save and commit and push at the end of project processing, but for now we call it here
-        #     await self.save_project_data()
-        #     await (await self.get_git_connector_for_project_files()).commit_and_push("Added sops keys to project data")
-        # else:
-        #     logger.info(f"Project {project_name} contains SOPS information in project data")
-        #     private_key = await decrypt_age_content(encoded_private_key, cast(str, settings.SOPS_AGE_PRIVATE_KEY))
-
-        # TODO: rethink logic for checking the cluster_manager all the time
-        for deployment in (d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER):
+        for deployment in deployments:
             cluster_name = deployment["cluster"]
             base_namespace = deployment["namespace"]
             namespace = get_prefixed_namespace(cluster_name, base_namespace)
-            logger.info(f"Checking SOPS secret for project {project_name} in namespace {namespace}")
 
-            existing_secret = await self._kubectl_connector.get_sops_secret_from_namespace(namespace)
-
-            create_sops_secret = False
-            if existing_secret is None:
-                logger.info(f"SOPS secret not found for project {project_name} in namespace {namespace}")
-                create_sops_secret = True
-            elif existing_secret is not None and public_key not in existing_secret:
-                create_sops_secret = True
-                logger.warning(
-                    f"Found existing SOPS secret in namespace {namespace} for project {project_name}. "
-                    f"Project has new SOPS keys - the old secret is now obsolete and will be replaced. "
-                    f"Existing database/MinIO/Keycloak credentials will be preserved from their respective secrets."
-                )
-                # Delete the old SOPS secret first to ensure clean replacement
-                try:
-                    await self._kubectl_connector.delete_resource("secret", "sops-age-key", namespace)
-                    logger.info(f"Deleted old SOPS secret from namespace {namespace}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete old SOPS secret (continuing anyway): {e}")
-
-            if create_sops_secret:
-                await self._sops_handler.store_project_sops_key_in_namespace(namespace, private_key, public_key)
-                logger.info(f"Created new SOPS secret for project {project_name} in namespace {namespace}")
-            else:
-                logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
-
-    async def _create_argocd_application(self, deployment_name: str | None = None) -> bool:
-        project_data = await self.get_contents()
-        project_name = project_data["name"]
-        logger.debug(f"Creating ArgoCD application for project: {project_name}")
-
-        git_connector_for_argocd = await self.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
-
-        try:
-            # Create an ArgoCD application for each deployment
-            deployments = project_data.get("deployments", [])
-
-            # Filter deployments if specific deployment_name is provided
-            if deployment_name:
-                deployments = [d for d in deployments if d.get("name") == deployment_name]
-                logger.info(f"Creating ArgoCD application only for deployment: {deployment_name}")
-
-            if not deployments:
-                logger.error("No deployments defined in project data")
-                return False
-
-            all_succeeded = True
-
-            for deployment in deployments:
-                cluster_name = deployment.get("cluster")
-                base_namespace = deployment.get("namespace")
-                namespace = get_prefixed_namespace(cluster_name, base_namespace)
-
-                # Get repository information
-                repo_name = deployment.get("repository")
-                repo_info = next((r for r in project_data.get("repositories", []) if r.get("name") == repo_name), None)
-
-                if not repo_info:
-                    logger.error(f"Repository not found: {repo_name}")
-                    all_succeeded = False
-                    continue
-
-                # ArgoCD application name
-                app_name = generate_argocd_application_name(project_name, deployment["name"])
-
-                # Combine repository path, cluster name, project name, and deployment name
-                cluster_name = deployment.get("cluster", "local")
-                repo_path = repo_info.get("path", "")
-                if repo_path:
-                    deployment_path = f"{repo_path}/{cluster_name}/{project_name}/{deployment['name']}"
-                else:
-                    deployment_path = f"{cluster_name}/{project_name}/{deployment['name']}"
-
-                # Create ArgoCD application manifest content
-                argocd_app_content = self._generate_argocd_app_manifest(
-                    name=app_name,
-                    namespace=get_argo_namespace(cluster_name),
-                    argo_project=generate_argocd_appproject_prefix(project_name, base_namespace),
-                    repo_url=repo_info.get("url"),
-                    target_revision=repo_info.get("branch", "main"),
-                    repo_path=deployment_path,
-                    destination_namespace=namespace,
-                    project_label=project_name,
-                )
-
-                # Write the ArgoCD application manifest to the checked out repository
-                template_filename = "argocd-application.yaml.jinja"
-                output_filename = get_output_filename_from_template(template_filename, app_name)
-
-                # Create cluster/project subdirectory structure
-                cluster_name = deployment.get("cluster")
-                project_dir = os.path.join(str(working_dir), str(cluster_name), str(project_name))
-                os.makedirs(project_dir, exist_ok=True)
-
-                app_file_path = os.path.join(project_dir, output_filename)
-
-                with open(app_file_path, "w") as f:
-                    f.write(argocd_app_content)
-
-                logger.info(f"Successfully created ArgoCD application file: {app_file_path}")
-
-            return all_succeeded
-        except Exception as e:
-            logger.exception(f"Error creating ArgoCD application: {e}")
-            return False
-
-    async def _create_argocd_repositories(self) -> None:
-        """
-        Create ArgoCD repository manifests for the project in the provided git repository.
-        This creates ArgoCD repository manifest files for each repository defined in the project.
-        Repository files are created with SOPS encryption using .to-sops.yaml naming convention.
-        """
-        project_data = await self.get_contents()
-        project_name = project_data.get("name")
-
-        git_connector_for_argocd = await self.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
-
-        logger.info(f"Creating ArgoCD repositories for project: {project_name} ===")
-
-        # Get all repositories from the project data
-        repositories = project_data.get("repositories", [])
-        if not repositories:
-            logger.error("No repositories defined in project data")
-            return
-
-        # Get all clusters used by deployments to determine folder structure
-        deployments = project_data.get("deployments", [])
-        clusters_used = set()
-        for deployment in deployments:
-            cluster_name = deployment["cluster"]
-            clusters_used.add(cluster_name)
-
-        cluster_name = next(iter(clusters_used))
-        project_dir = os.path.join(str(working_dir), str(cluster_name), str(project_name))
-        logger.info(f"Creating cluster/project directory: {project_dir}")
-        os.makedirs(project_dir, exist_ok=True)
-
-        # Prepare manifest configurations for batch creation
-        manifest_configs = []
-        for repository in repositories:
-            repo_name = repository.get("name")
-            repo_url = repository.get("url")
-
-            logger.info(f"  Processing repository: {repo_name} ({repo_url})")
-
-            if not repo_name or not repo_url:
-                logger.error(f"  Repository missing name or URL: {repository}")
-                continue
-
-            # Create unique name combining project and repository name
-            unique_repo_name = f"{project_name}-{repo_name}"
-            logger.info(f"  Unique repository name: {unique_repo_name}")
-
-            # Prepare variables for the manifest template
-            variables = await self._prepare_argocd_repository_variables(
-                name=unique_repo_name,
-                namespace=get_argo_namespace(cluster_name),
-                repository=repository,
-                repo_type="git",
-            )
-
-            # Determine template path based on authentication method
-            repository_url = repository.get("url", "")
-            is_https = repository_url.startswith("https://")
-            template_filename = "argo-repository-https.yaml.jinja" if is_https else "argo-repository.yaml.jinja"
-            template_path = os.path.join(settings.MANIFESTS_PATH, template_filename)
-            output_filename = get_output_filename_from_template(template_filename, unique_repo_name)
-
-            manifest_config = {
-                "template_path": template_path,
-                "values": variables,
-                "output_filename": output_filename,
-                "use_sops": True,
-            }
-
-            manifest_configs.append(manifest_config)
-            logger.info(f"  Added repository manifest config for {unique_repo_name} (SOPS: True)")
-
-        # Use manifest generator to create all repository manifests with SOPS encryption
-        logger.info(f"Creating {len(manifest_configs)} ArgoCD repository manifests with SOPS encryption")
-        created_files = []
-
-        for config in manifest_configs:
-            manifest_path = self._manifest_generator.create_manifest_file(
-                template_path=config["template_path"],
-                values=config["values"],
-                output_dir=project_dir,
-                output_filename=config["output_filename"],
-                use_sops=config["use_sops"],
-            )
-            created_files.append(manifest_path)
-            logger.info(f"Successfully created repository manifest: {os.path.basename(manifest_path)}")
-
-        encrypt_to_sops_files(project_dir, cast(str, settings.SOPS_AGE_PUBLIC_KEY))
-
-    async def _create_argocd_app_project(self) -> None:
-        project_data = await self.get_contents()
-        project_name = project_data["name"]
-        logger.debug(f"Creating ArgoCD AppProject for project: {project_name}")
-
-        # Get deployments and group by cluster
-        deployments = project_data.get("deployments", [])
-        if not deployments:
-            logger.error("No deployments defined in project data")
-
-        # Group deployments by cluster to create AppProject per cluster
-        clusters_namespaces = {}
-        for deployment in deployments:
-            cluster_name = deployment.get("cluster")
-            base_namespace = deployment.get("namespace")
-            if cluster_name not in clusters_namespaces:
-                clusters_namespaces[cluster_name] = set()
-            clusters_namespaces[cluster_name].add(base_namespace)
-
-        git_connector_for_argocd = await self.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
-
-        # Create AppProject for each cluster and each namespace within that cluster
-        for cluster_name, base_namespaces in clusters_namespaces.items():
-            # Create one AppProject per namespace within this cluster
-            for base_destination_namespace in base_namespaces:
-                # Generate consistent project-namespace name for AppProject
-                appproject_name = generate_argocd_appproject_prefix(project_name, base_destination_namespace)
-
-                # Create ArgoCD AppProject manifest content
-                appproject_content = self._generate_argocd_appproject_manifest(
-                    name=appproject_name,
-                    namespace=get_argo_namespace(cluster_name),
-                    destination_namespace=get_prefixed_namespace(cluster_name, base_destination_namespace),
-                    project_label=project_name,
-                )
-
-                # Write the AppProject manifest to the checked out repository
-                template_filename = "argocd-appproject.yaml.jinja"
-                output_filename = get_output_filename_from_template(template_filename, appproject_name)
-
-                # Create cluster/project subdirectory structure
-                project_dir = os.path.join(working_dir, cluster_name, project_name)
-                os.makedirs(project_dir, exist_ok=True)
-
-                # TODO: this does not feel like the right place to do this
-                appproject_file_path = os.path.join(project_dir, output_filename)
-                with open(appproject_file_path, "w") as f:
-                    f.write(appproject_content)
-
-                logger.info(
-                    f"Successfully created ArgoCD AppProject file for cluster {cluster_name}, namespace {base_destination_namespace}: {appproject_file_path}"
-                )
-            return None
-        return None
-
-    def _generate_argocd_app_manifest(
-        self, name, namespace, argo_project, repo_url, target_revision, repo_path, destination_namespace, project_label
-    ):
-        """
-        Generate an ArgoCD application manifest using the template file.
-
-        Args:
-            name: Application name
-            namespace: ArgoCD namespace
-            argo_project: ArgoCD project
-            repo_url: Git repository URL
-            target_revision: Git branch or tag
-            repo_path: Path in the Git repository
-            destination_namespace: Target namespace
-            project_label: Project label
-
-        Returns:
-            String containing the YAML manifest
-        """
-        # Path to the ArgoCD application manifest template
-        manifest_path = os.path.join(settings.MANIFESTS_PATH, "argocd-application.yaml.jinja")
-
-        # Prepare variables for template
-        variables = {
-            "name": name,
-            "namespace": namespace,
-            "argo_project": argo_project,
-            "repoURL": repo_url,
-            "targetRevision": target_revision,
-            "repoPath": repo_path,
-            "labels": {"project": project_label},
-            "destination": {"namespace": destination_namespace},
-        }
-
-        # Read the manifest template
-        try:
-            with open(manifest_path) as f:
-                manifest_template = f.read()
-
-            # Process the template with the variables
-            processed_manifest = self._manifest_generator.template_manifest(manifest_template, variables)
-            return processed_manifest
-        except Exception as e:
-            logger.exception(f"Error generating ArgoCD application manifest: {e}")
-            raise
-
-    def _generate_argocd_appproject_manifest(self, name, namespace, destination_namespace, project_label):
-        """
-        Generate an ArgoCD AppProject manifest using the template file.
-
-        Args:
-            name: AppProject name
-            namespace: ArgoCD namespace
-            destination_namespace: Target namespace pattern (e.g., "project-*")
-            project_label: Project label
-
-        Returns:
-            String containing the YAML manifest
-        """
-        # Path to the ArgoCD AppProject manifest template
-        manifest_path = os.path.join(settings.MANIFESTS_PATH, "argocd-appproject.yaml.jinja")
-
-        # Prepare variables for template
-        variables = {
-            "name": name,
-            "namespace": namespace,
-            "labels": {"project": project_label},
-            "destination": {"namespace": destination_namespace, "server": "https://kubernetes.default.svc"},
-        }
-
-        # Read the manifest template
-        try:
-            with open(manifest_path) as f:
-                manifest_template = f.read()
-
-            # Process the template with the variables
-            processed_manifest = self._manifest_generator.template_manifest(manifest_template, variables)
-            return processed_manifest
-        except Exception as e:
-            logger.exception(f"Error generating ArgoCD AppProject manifest: {e}")
-            raise
-
-    async def _generate_argocd_repository_manifest(self, name, namespace, repository, repo_type):
-        """
-        Generate an ArgoCD repository manifest using the template file.
-        Supports both SSH and HTTPS authentication methods.
-
-        Args:
-            name: Repository name
-            namespace: ArgoCD namespace
-            repository: Repository configuration dictionary
-            repo_type: Repository type (e.g., "git")
-
-        Returns:
-            String containing the YAML manifest
-        """
-        repository_url = repository.get("url", "")
-        username = repository.get("username")
-        password = repository.get("password")
-
-        # GitConnector handles URL cleaning internally
-        clean_url = repository_url
-
-        # Determine authentication method
-        is_https = clean_url.startswith("https://")
-
-        # Decrypt password if encrypted
-        decrypted_password = None
-        if password:
-            decrypted_password = await decrypt_password_smart(password, settings.SOPS_AGE_PRIVATE_KEY)
-
-        # Prepare variables for template
-        variables = {
-            "name": name,
-            "namespace": namespace,
-            "type": repo_type,
-            "repository_url": clean_url,
-            "is_https": is_https,
-            "username": username or "",
-            "password": decrypted_password or "",
-        }
-
-        # Choose template based on authentication method
-        if is_https:
-            # Use HTTPS template for all HTTPS repositories
-            manifest_path = os.path.join(settings.MANIFESTS_PATH, "argo-repository-https.yaml.jinja")
-            with open(manifest_path) as f:
-                manifest_template = f.read()
-            logger.info(
-                f"Using HTTPS template for repository {name} (credentials: {'YES' if username and decrypted_password else 'NO'})"
-            )
-        else:
-            # Use SSH template for SSH and git:// repositories
-            manifest_path = os.path.join(settings.MANIFESTS_PATH, "argo-repository.yaml.jinja")
-            with open(manifest_path) as f:
-                manifest_template = f.read()
-            logger.info(f"Using SSH template for repository {name}")
-
-        # Read the manifest template
-        try:
-            # Process the template with the variables
-            processed_manifest = self._manifest_generator.template_manifest(manifest_template, variables)
-            return processed_manifest
-        except Exception as e:
-            logger.exception(f"Error generating ArgoCD repository manifest: {e}")
-            raise
-
-    async def _prepare_argocd_repository_variables(self, name, namespace, repository, repo_type):
-        """
-        Prepare variables for ArgoCD repository manifest templates.
-
-        Args:
-            name: Repository name
-            namespace: ArgoCD namespace
-            repository: Repository configuration dictionary
-            repo_type: Repository type (e.g., "git")
-
-        Returns:
-            Dictionary containing variables for template substitution
-        """
-        repository_url = repository.get("url", "")
-        username = repository.get("username")
-        password = repository.get("password")
-
-        # GitConnector handles URL cleaning internally
-        clean_url = repository_url
-
-        # Determine authentication method
-        is_https = clean_url.startswith("https://")
-
-        # Decrypt password if encrypted
-        decrypted_password = None
-        if password:
-            decrypted_password = await decrypt_password_smart(password, settings.SOPS_AGE_PRIVATE_KEY)
-
-        # Prepare variables for template
-        return {
-            "name": name,
-            "namespace": namespace,
-            "type": repo_type,
-            "repository_url": clean_url,
-            "is_https": is_https,
-            "username": username or "",
-            "password": decrypted_password or "",
-        }
+            # Use shared function for SOPS secret creation
+            await self._ensure_sops_secret_in_namespace(namespace, contents)
 
     def _analyze_deployment_changes(self, changes: dict[str, Any], current_yaml: dict[str, Any]) -> dict[str, Any]:
         """
@@ -1296,21 +1639,24 @@ class ProjectManager:
         relative_project_file_path: str,
         task_progress_manager: "TaskProgressManager | None" = None,
         deployment_name: str | None = None,
+        force_clone: bool = False,
     ) -> bool:
         """
         Process a project file from the Git repository.
 
         The process follows these steps:
         0. Fetch the project file from the Git repository
-        1. Create a Git repository for infrastructure manifests
-        2. Add a secret file to the repository and commit/push it
-        3. Create a namespace in the Kubernetes cluster
-        4. Create an ArgoCD application and push it to the ArgoCD config repository
+        1. Execute clones if configured (BEFORE deployment)
+        2. Create a Git repository for infrastructure manifests
+        3. Add a secret file to the repository and commit/push it
+        4. Create a namespace in the Kubernetes cluster
+        5. Create an ArgoCD application and push it to the ArgoCD config repository
 
         Args:
             relative_project_file_path: Path to the project file within the Git repository
             task_progress_manager: Optional progress manager for tracking operation status
             deployment_name: Optional deployment name to process only specific deployment
+            force_clone: Force clone even if target resources exist (runtime parameter)
 
         Returns:
             True if all operations were successful, False otherwise
@@ -1362,12 +1708,41 @@ class ProjectManager:
                 f"Changed: {len(deployment_changes['changed'])}, Deleted: {len(deployment_changes['deleted'])}"
             )
 
+            # Step 1.9: Execute clones BEFORE deployment processing (if deployment_name specified)
+            if deployment_name:
+                logger.info(f"Step 1.9: Executing clones for deployment: {deployment_name}")
+                clone_result = await self._clone_manager.execute_deployment_clones(
+                    project_data=current_yaml, deployment_name=deployment_name, force=force_clone
+                )
+
+                if clone_result.get("success") is False:
+                    error_msg = f"Clone failed for {deployment_name}: {clone_result.get('error', 'Unknown error')}"
+                    logger.error(error_msg)
+                    critical_failures.append(error_msg)
+                    # Don't proceed with deployment if clone failed
+                    return False
+                elif clone_result.get("skipped"):
+                    logger.info(f"Clone skipped for {deployment_name}: {clone_result.get('reason')}")
+                else:
+                    logger.info(f"Clone completed successfully for {deployment_name}")
+
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")
 
             # For now, still process the entire project but with change context available
             # TODO: In future iterations, we can use the changes to process only what's needed
-            await self.process_project(deployment_name)
+            process_success = await self.process_project(deployment_name)
+            if not process_success:
+                critical_failures.append("Project processing failed - check logs for details")
+
+            # Check for critical failures before triggering ArgoCD sync
+            # Don't sync if there were failures during processing
+            if critical_failures:
+                logger.error(f"Project processing completed with {len(critical_failures)} critical failures:")
+                for failure in critical_failures:
+                    logger.error(f"  - {failure}")
+                logger.warning("Skipping ArgoCD sync due to critical failures")
+                return False
 
             logger.info(
                 "Triggering ArgoCD sync for user-applications and project applications after project processing"
@@ -1377,9 +1752,8 @@ class ProjectManager:
             # Refresh user-applications first (contains project definitions)
             await argo_connector.refresh_application("user-applications")
 
-            project_data = await self.get_contents()
-            project_name = project_data.get("name")
-            deployments = project_data.get("deployments", [])
+            project_name = await self.get_name()
+            deployments = await self.get_deployments(cluster_filter=True)
 
             if deployments and project_name:
                 logger.info(f"Syncing {len(deployments)} project applications for {project_name}")
@@ -1402,12 +1776,7 @@ class ProjectManager:
                             logger.warning(f"Error syncing application {app_name}: {e}")
                             # Don't fail the entire refresh if one app sync fails
 
-            # Check for critical failures
-            if critical_failures:
-                logger.error(f"Project processing completed with {len(critical_failures)} critical failures:")
-                for failure in critical_failures:
-                    logger.error(f"  - {failure}")
-                return False
+            # All steps completed successfully
             return True
         except Exception as e:
             logger.exception(f"Error processing project from Git: {e}")
@@ -1429,85 +1798,6 @@ class ProjectManager:
         logger.debug("Extracting added changes (all items marked as added)")
         return project_data  # For now, treat everything as "added"
 
-    def _get_project_repositories(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
-        """
-        Get list of repositories from project data.
-
-        Args:
-            project_data: The parsed project data
-
-        Returns:
-            List of repository configurations
-        """
-        repositories = project_data.get("repositories", [])
-        logger.debug(f"Found {len(repositories)} repositories in project")
-        return repositories
-
-    async def _get_missing_repositories(self, repositories: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """
-        Get list of repositories that don't exist yet.
-
-        Args:
-            repositories: List of repository configurations
-
-        Returns:
-            List of repositories that need to be created
-        """
-        missing_repos = []
-        for repo in repositories:
-            repo_url = repo.get("url", "")
-            # Skip GitHub repositories as they're external
-            if "github.com" in repo_url:
-                logger.debug(f"Skipping external repository: {repo_url}")
-                continue
-
-            # For local git server repositories, assume they need to be created
-            # TODO: Add actual existence check when git server API is available
-            missing_repos.append(repo)
-            logger.debug(f"Repository marked as missing: {repo.get('name', 'unknown')}")
-
-        logger.info(f"Found {len(missing_repos)} missing repositories")
-        return missing_repos
-
-    async def _create_repositories(
-        self, missing_repositories: list[dict[str, Any]], project_data: dict[str, Any]
-    ) -> bool:
-        """
-        Create missing repositories.
-
-        Args:
-            missing_repositories: List of repositories that need to be created
-            project_data: The parsed project data for context
-
-        Returns:
-            True if all repositories were created successfully, False otherwise
-        """
-        if not missing_repositories:
-            logger.debug("No repositories to create")
-            return True
-
-        logger.info(f"Creating {len(missing_repositories)} repositories")
-        return await self.create_project_repository(project_data)
-
-    async def create_argocd_resources(self, deployment_name: str | None = None) -> None:
-        """
-        Create all ArgoCD resources for this project.
-
-        Args:
-            deployment_name: Optional deployment name to create resources only for specific deployment
-        """
-        project_data = await self.get_contents()
-        project_name = project_data["name"]
-        logger.info(f"Creating ArgoCD resources for {project_name}")
-
-        await self._create_argocd_repositories()
-        await self._create_argocd_app_project()
-        await self._create_argocd_application(deployment_name)
-        await self._create_argocd_kustomization_file()
-        await (await self.get_git_connector_for_argocd()).commit_and_push(
-            f"Added ArgoCD resources for project {project_name}"
-        )
-
     async def _process_application_manifests(self, deployment_name: str | None = None) -> None:
         """
         Process application manifests for all project repositories.
@@ -1517,17 +1807,16 @@ class ProjectManager:
 
         Returns: None
         """
-        project_data = await self.get_contents()
-        project_name = project_data.get("name")
+        project_name = await self.get_name()
         logger.info(f"Processing application manifests for {project_name}")
 
-        repositories = project_data.get("repositories", [])
+        repositories = await self.get_repositories()
         if not repositories:
             logger.warning("No repositories defined in project data")
             return
 
-        # Group deployments by repository
-        deployments = project_data.get("deployments", [])
+        # Group deployments by repository (only for current cluster)
+        deployments = await self.get_deployments(cluster_filter=True)
 
         # Filter deployments if specific deployment_name is provided
         if deployment_name:
@@ -1549,7 +1838,7 @@ class ProjectManager:
             if not repo_info:
                 raise Exception(f"Repository configuration not found: {repo_name}")
 
-            await self._process_repository_manifests(repo_info, repo_deployments, project_data)
+            await self._process_repository_manifests(repo_info, repo_deployments)
 
         logger.info(f"Successfully processed all application manifests for {project_name}")
 
@@ -1557,7 +1846,6 @@ class ProjectManager:
         self,
         repo_config: dict[str, Any],
         deployments: list[dict[str, Any]],
-        project_data: dict[str, Any],
     ) -> None:
         """
         Process manifests for a specific repository.
@@ -1565,17 +1853,19 @@ class ProjectManager:
         Args:
             repo_config: Repository configuration
             deployments: List of deployments for this repository
-            project_data: The parsed project data
 
         Returns:
-            True if manifests were processed successfully, False otherwise
+            None
         """
+        project_data = await self.get_contents()
+        project_name = project_data.get("name")
+
         project_repo_connector = await self.get_git_connector_for_deployment(repo_config["name"], repo_config)
-        # TODO: rethink if all deployments should be handled or only the current cluster
-        for deployment in (d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER):
-            await self._process_deployment_manifests(deployment, project_data, project_repo_connector)
+        # Deployments are already filtered for current cluster by caller
+        for deployment in deployments:
+            await self._process_deployment_manifests(deployment, project_repo_connector)
             await project_repo_connector.commit_changes(
-                f"Add kubernetes manifests for project {project_data['name']} for {deployment['name']}"
+                f"Add kubernetes manifests for project {project_name} for {deployment['name']}"
             )
 
         await project_repo_connector.push_changes()
@@ -1595,7 +1885,6 @@ class ProjectManager:
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
-        project_data: dict[str, Any],
         git_connector: GitConnector,
     ) -> None:
         """
@@ -1603,13 +1892,13 @@ class ProjectManager:
 
         Args:
             deployment: Deployment configuration
-            project_data: The parsed project data
             git_connector: GitConnector for the repository
 
         Returns:
-            True if deployment manifests were processed successfully, False otherwise
+            None
         """
-        project_name = project_data.get("name")
+        project_data = await self.get_contents()
+        project_name = await self.get_name()
         deployment_name = deployment.get("name")
         cluster_name = deployment["cluster"]
 
@@ -1623,7 +1912,11 @@ class ProjectManager:
 
         logger.info(f"Processing deployment: {deployment_name} at path: {deployment_path}")
 
-        await self.create_application_manifests(deployment, project_data, git_connector, deployment_path)
+        # Pre-scan: Collect all aliases from components before creating any manifests
+        # This allows deployment-level secrets to include aliases from all components
+        self._deployment_aliases[deployment_name] = await self._collect_deployment_aliases(deployment_name)
+
+        await self.create_application_manifests(deployment, git_connector, deployment_path)
 
         # Note: SSO and user secrets are already created in create_application_manifests above
 
@@ -1647,7 +1940,6 @@ class ProjectManager:
         logger.info(f"SOPS encryption target path: {target_path}")
 
         # List .to-sops.yaml files before encryption for debugging
-        import glob
 
         to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
         to_sops_files = glob.glob(to_sops_pattern)
@@ -1673,25 +1965,28 @@ class ProjectManager:
         if self._database_manager:
             await self._database_manager.close()
 
-    async def process_project(self, deployment_name: str | None = None) -> None:
+    async def process_project(self, deployment_name: str | None = None) -> bool:
         """
         Process the project file and create all required resources.
 
         Args:
             deployment_name: Optional deployment name to process only specific deployment
+
+        Returns:
+            True if all operations succeeded, False if any operation failed
         """
         logger.info(f"Processing project file: {self._project_file_relative_path}")
 
         try:
             project_data = await self.get_contents()
-            project_name = project_data.get("name")
+            project_name = await self.get_name()
             logger.info(
                 f"Processing project: {project_name} and deployment {deployment_name if deployment_name else 'all'}"
             )
 
             if not await self.has_deployments_for_current_cluster():
                 logger.info(f"Project '{project_name}' cluster validation failed - skipping processing")
-                return
+                return False
 
             # # 1.5. Create configuration handler to collect deployment info
             # config_handler = create_configuration_handler(project_name, self.project_data)
@@ -1713,10 +2008,31 @@ class ProjectManager:
             if progress_manager:
                 creation_task = progress_manager.add_task("Project creation")
 
-            # Create namespaces first (always first task)
-            await self.check_and_create_namespaces(deployment_name)
+            # TODO: consider checking if a deployment needs to be done for this cluster instead of checking per method call
 
+            # Create namespaces first (always first task)
+            # TODO: move methods to a kubernetes manager?
+            await self.check_and_create_namespaces(deployment_name)
             await self.check_and_create_sops_secrets_in_namespaces(deployment_name)
+
+            # TWO-STAGED WORKFLOW: Check if project uses namespace-specific PostgreSQL
+            # If yes, provision infrastructure first before application resources
+            db_manager = await self._ensure_database_manager()
+            if db_manager._project_uses_namespace_postgresql(project_data):
+                logger.info(
+                    f"Project '{project_name}' uses namespace-specific PostgreSQL - provisioning infrastructure first"
+                )
+
+                # STAGE 1: Infrastructure Provisioning
+                # Create infrastructure namespace
+                await self._create_infrastructure_namespace(project_data, settings.CLUSTER_MANAGER)
+
+                # Create infrastructure resources (database cluster) and wait for ready
+                await self._create_infrastructure_resources(project_data, settings.CLUSTER_MANAGER)
+
+                logger.info(
+                    f"Infrastructure provisioning complete for project '{project_name}' - proceeding with applications"
+                )
 
             # Create service resources using service managers
             deployments = project_data.get("deployments", [])
@@ -1728,7 +2044,7 @@ class ProjectManager:
 
             for deployment in deployments:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
-                    await self._database_manager.create_resources_for_deployment(project_data, deployment)
+                    await db_manager.create_resources_for_deployment(project_data, deployment)
                     await self._minio_manager.create_resources_for_deployment(project_data, deployment)
                     await self._keycloak_manager.create_resources_for_deployment(project_data, deployment)
 
@@ -1743,12 +2059,13 @@ class ProjectManager:
             # TODO: this may need to be done earlier.. or at another place
             await (await self.get_git_connector_for_project_files()).commit_and_push(f"Adding project {project_name}")
 
-            await self.create_argocd_resources(deployment_name)
+            await self._argo_manager.create_argocd_resources(deployment_name)
 
             # Register the project with decrypted configuration data
             api_key = await self.get_api_key()
             project_name = await self.get_name()
             project_service = get_project_service()
+            # TODO: find out why this is needed.. ?
             filename = (
                 os.path.basename(self._project_file_relative_path)
                 if self._project_file_relative_path
@@ -1762,8 +2079,6 @@ class ProjectManager:
             users_data = project_data_with_configs.get("users", [])
             users = []
             if users_data and isinstance(users_data, list):
-                from opi.services.project_service import ProjectUser
-
                 for user_data in users_data:
                     if isinstance(user_data, dict) and "email" in user_data and "role" in user_data:
                         users.append(ProjectUser(email=user_data["email"], role=user_data["role"]))
@@ -1778,8 +2093,11 @@ class ProjectManager:
 
             if progress_manager and creation_task:
                 self.get_progress_manager().complete_task(creation_task)
+
+            return True
         except Exception as e:
-            logger.exception(f"Error: {e}")
+            logger.exception(f"Error processing project: {e}")
+            return False
         finally:
             pass
             # TODO: we may need to close it here, but the project manager is still used in a flow which should change
@@ -1788,7 +2106,6 @@ class ProjectManager:
     async def create_application_manifests(
         self,
         deployment: dict[str, Any],
-        project_data: dict[str, Any],
         git_connector: GitConnector,
         target_dir: str | None = None,
     ) -> list[str]:
@@ -1798,17 +2115,16 @@ class ProjectManager:
 
         Args:
             deployment: current deployment
-            project_data: Dictionary containing project configuration
             git_connector: The git connector with an already cloned repository
             target_dir: Optional subdirectory within the git repository
 
         Returns:
             List of created manifest filenames, empty list if failed
         """
-
+        project_data = await self.get_contents()
         working_dir = await git_connector.get_working_dir()
 
-        project_name = project_data.get("name")
+        project_name = await self.get_name()
         logger.info(f"Creating application manifests for project: {project_name}")
 
         created_files = []
@@ -1824,6 +2140,79 @@ class ProjectManager:
         if not components:
             logger.warning(f"No components found in deployment {deployment_name}, skipping")
             return []
+
+        # Collect registry configurations for all components in this deployment
+        registry_configs_map: dict[str, dict[str, Any]] = {}  # registry_name -> registry_config
+        image_to_registry_map: dict[str, str] = {}  # image_url -> registry_name
+
+        for component in components:
+            component_reference = component.get("reference")
+            image_url = component.get("image")
+
+            if not component_reference or not image_url:
+                continue
+
+            # Check if component has a registry configured at deployment level
+            # Registry reference is specified in deployments[].components[].registry
+            registry_ref = component.get("registry")
+
+            if registry_ref:
+                # Find registry by name in registries list
+                registries = self._project_file_handler.extract_registries(project_data)
+                registry_config = None
+
+                for registry in registries:
+                    if registry.get("name") == registry_ref:
+                        registry_config = registry
+                        logger.info(f"Deployment component '{component_reference}' uses registry '{registry_ref}'")
+                        break
+
+                if not registry_config:
+                    logger.warning(
+                        f"Deployment component '{component_reference}' references registry '{registry_ref}' which does not exist"
+                    )
+                    continue
+
+                registry_name = registry_config.get("name")
+                if registry_name:
+                    # Store unique registry configs
+                    if registry_name not in registry_configs_map:
+                        registry_configs_map[registry_name] = registry_config
+
+                    # Map this image to its registry
+                    image_to_registry_map[image_url] = registry_name
+
+        # Create registry secrets and build imagePullSecretsMap
+        image_pull_secrets_map: dict[str, str] = {}  # image_url -> secret_name
+
+        for registry_name, registry_config in registry_configs_map.items():
+            registry_url = registry_config.get("url", "")
+            username = registry_config.get("username", "")
+            password_encrypted = registry_config.get("password", "")
+
+            # Decrypt password (should be AGE-encrypted)
+            private_key = await get_decoded_project_private_key(project_data)
+            password = await decrypt_password_smart(password_encrypted, private_key)
+
+            # Generate secret name using naming utility
+            secret_name = generate_registry_secret_name(deployment_name, registry_name)
+
+            # Create RegistrySecret instance
+            registry_secret = RegistrySecret(
+                registry_url=registry_url, username=username, password=password
+            )
+
+            # Add to secrets to be created (using generic secret template with dockerconfigjson type)
+            self._add_secret_to_create(deployment_name, registry_name, registry_secret)
+
+            logger.info(
+                f"Created registry secret '{secret_name}' for registry '{registry_name}' ({registry_url})"
+            )
+
+            # Map all images using this registry to the secret name
+            for image_url, img_registry_name in image_to_registry_map.items():
+                if img_registry_name == registry_name:
+                    image_pull_secrets_map[image_url] = secret_name
 
         # Process each component within the deployment
         for component in components:
@@ -1849,6 +2238,15 @@ class ProjectManager:
                 project_data, component_reference, default_port=80
             )
 
+            # Extract the publication path from the component definition
+            component_path = self._project_file_handler.extract_component_path(
+                project_data, component_reference, default_path="/"
+            )
+
+            # Extract imagePullPolicy from deployment-level component configuration (not component definition)
+            # This allows overriding the pull policy per deployment
+            image_pull_policy = component.get("imagePullPolicy", "Always")
+
             # Extract storage configuration from component
             storage_configs = self._project_file_handler.extract_component_storage(project_data, component_reference)
 
@@ -1871,6 +2269,10 @@ class ProjectManager:
                 # Deployment-level env-vars override component-level user-env-vars
                 user_env_vars.update(deployment_env_vars)
 
+            # Create unique name combining deployment name and component name using centralized utility
+            # Project name is not included since resources are deployed within project-specific namespaces
+            unique_name = generate_unique_name(deployment_name, component_name)
+
             # Add unique names to storage configs for templating
             processed_storage_configs = []
             for i, storage in enumerate(storage_configs):
@@ -1879,11 +2281,18 @@ class ProjectManager:
                 mount_path = storage.get("mount-path", f"/storage-{i}")
                 storage_name = generate_storage_name(mount_path, i)
                 storage_copy["name"] = storage_name
-                processed_storage_configs.append(storage_copy)
 
-            # Create unique name combining deployment name and component name using centralized utility
-            # Project name is not included since resources are deployed within project-specific namespaces
-            unique_name = generate_unique_name(deployment_name, component_name)
+                # For persistent storage, add the versioned PVC name
+                if storage.get("type") == "persistent":
+                    # Get generation for this storage from project data
+                    generation = self._project_file_handler.get_storage_generation(
+                        project_data, deployment_name, component_name, storage_name
+                    )
+                    # Generate versioned PVC name
+                    pvc_name = generate_pvc_name(unique_name, storage_name, generation)
+                    storage_copy["pvc_name"] = pvc_name
+
+                processed_storage_configs.append(storage_copy)
 
             # Generate ingress map based on cluster configuration and optional subdomain using centralized utility
             ingress_postfix = get_ingress_postfix(cluster)
@@ -1921,6 +2330,22 @@ class ProjectManager:
                     env_vars.update(web_env_vars)
                     self._register_env_var(deployment_name, component_name, "web", web_env_vars)
 
+            # Resolve and add direct aliases (aliases that reference direct env vars)
+            # These are resolved per-component using the env_vars available to this component
+            direct_aliases = self._deployment_aliases.get(deployment_name, {}).get("direct", {})
+            for service_category, service_aliases in direct_aliases.items():
+                if service_aliases:
+                    logger.debug(
+                        f"Resolving {len(service_aliases)} direct {service_category} aliases for component {component_name}"
+                    )
+                    # Resolve aliases using current env_vars as context
+                    resolved_direct_aliases = self._resolve_aliases(service_aliases, env_vars)
+                    # Add resolved aliases to env_vars
+                    env_vars.update(resolved_direct_aliases)
+                    logger.info(
+                        f"Added {len(resolved_direct_aliases)} resolved direct {service_category} aliases to component {component_name}"
+                    )
+
             # Register user environment variables
             # NOTE: User env vars go into a secret and are referenced via envFrom, not as direct env vars
             if user_env_vars:
@@ -1931,51 +2356,11 @@ class ProjectManager:
             #     logger.debug(f"Config DEBUG: Adding component {component_name} with namespace: {namespace}")
             #     config_handler.add_component(component_name, "component", namespace)
 
-            # Process SSO-Rijk option if present
-            env_from_secrets = []
-            sso_config = None
-            if await self._should_process_sso_rijk(project_data, component_reference):
-                logger.info(f"Processing SSO-Rijk for component: {component_name}")
-                ingress_hosts_for_sso = list(ingress_map.values())
-                logger.info(f"Sending ingress_hosts to SSO setup: {ingress_hosts_for_sso}")
-                # Using secrets map to store and link secret information
-                sso_config = await self._setup_sso_rijk_integration(
-                    project_name, component_name, deployment_name, namespace, hostname, ingress_hosts_for_sso
-                )
-
-                # Add Keycloak secret to envFrom list when SSO is enabled
-                # NOTE: Keycloak secret is per-deployment, not per-component
-                if sso_config:
-                    keycloak_secret_name = KeycloakSecret.get_secret_name(deployment_name)
-                    env_from_secrets.append(keycloak_secret_name)
-                    logger.debug(f"Keycloak secret added to envFrom: {keycloak_secret_name}")
-
-            # Process user environment variables if present
-            if user_env_vars:
-                logger.info(
-                    f"Processing {len(user_env_vars)} user environment variables for component: {component_name}"
-                )
-
-                user_secret_name = UserSecret.get_secret_name(unique_name)
-                env_from_secrets.append(user_secret_name)
-                logger.debug(f"User secret added to envFrom: {user_secret_name}")
-
-            # Check if this component uses PostgreSQL service and add database secret
+            # Determine which services this component uses (check once, use multiple times)
             component_uses_postgresql = False
-            if component_reference:
-                component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
-                component_services = [match.value for match in component_query.find(project_data)]
-                # Flatten the services list (in case it's nested)
-                all_services = []
-                for services in component_services:
-                    if isinstance(services, list):
-                        all_services.extend(services)
-                    else:
-                        all_services.append(services)
-                component_uses_postgresql = ServiceType.POSTGRESQL_DATABASE.value in all_services
-
-            # Check if this component uses MinIO service and add object storage secret
             component_uses_minio = False
+            component_uses_sso = False
+
             if component_reference:
                 component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
                 component_services = [match.value for match in component_query.find(project_data)]
@@ -1986,36 +2371,51 @@ class ProjectManager:
                         all_services.extend(services)
                     else:
                         all_services.append(services)
-                component_uses_minio = ServiceType.MINIO_STORAGE.value in all_services
 
-            # Add database secret to envFrom list when PostgreSQL is used
-            # Use deployment-level naming for database secrets (shared between components)
+                # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
+                component_uses_postgresql = (
+                    ServiceType.POSTGRESQL_DATABASE.value in all_services
+                    or ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in all_services
+                )
+                component_uses_minio = ServiceType.MINIO_STORAGE.value in all_services
+                component_uses_sso = ServiceType.KEYCLOAK.value in all_services
+
+            # Build envFrom secrets list based on services used and user env vars
+            # This list determines which secrets are referenced in the deployment manifest
+            # Note: Secret FILES are only generated if the secret is in _secrets_to_create map
+            env_from_secrets = []
+
+            # Add deployment-level secrets based on services used
             if component_uses_postgresql:
                 database_secret_name = DatabaseSecret.get_secret_name(deployment_name)
                 env_from_secrets.append(database_secret_name)
                 logger.debug(f"Database secret added to envFrom: {database_secret_name}")
 
-            # Add MinIO secret to envFrom list when object storage is used
-            # Use deployment-level naming for MinIO secrets (shared between components)
             if component_uses_minio:
                 minio_secret_name = MinIOSecret.get_secret_name(deployment_name)
                 env_from_secrets.append(minio_secret_name)
                 logger.debug(f"MinIO secret added to envFrom: {minio_secret_name}")
 
+            if component_uses_sso:
+                keycloak_secret_name = KeycloakSecret.get_secret_name(deployment_name)
+                env_from_secrets.append(keycloak_secret_name)
+                logger.debug(f"Keycloak secret added to envFrom: {keycloak_secret_name}")
+
+            # Add component-level user secret if user env vars exist
+            if user_env_vars:
+                logger.info(
+                    f"Processing {len(user_env_vars)} user environment variables for component: {component_name}"
+                )
+                user_secret_name = UserSecret.get_secret_name(unique_name)
+                env_from_secrets.append(user_secret_name)
+                logger.debug(f"User secret added to envFrom: {user_secret_name}")
+
+            # NOTE: SSO integration is now handled at deployment level by keycloak_manager
+            # in create_resources_for_deployment(), not per-component here
+
             pod_replacement_mode = (
                 "Recreate" if any(item.get("type") == "persistent" for item in storage_configs) else "RollingUpdate"
             )
-
-            # Prepare secret_pairs for config hash from all secrets in secrets map
-            secret_pairs = {}
-            deployment_secrets = self._secrets_to_create.get(deployment_name, {})
-            for secret_type, secret_data in deployment_secrets.items():
-                if isinstance(secret_data, dict):
-                    for key, value in secret_data.items():
-                        secret_pairs[f"{secret_type}_{key}"] = value
-
-            # Generate configuration hash for deployment reload trigger (includes all secret data)
-            config_hash = self._generate_config_hash(env_vars, env_from_secrets, user_env_vars, secret_pairs)
 
             # Prepare variables for templating
             variables = {
@@ -2026,16 +2426,18 @@ class ProjectManager:
                 "cluster": cluster,  # Add cluster information for template conditionals
                 "pod_replacement_mode": pod_replacement_mode,
                 "imageURL": image_url,
+                "imagePullPolicy": image_pull_policy,  # Image pull policy (Always, IfNotPresent, Never)
                 "application_port": application_port,
                 "service_port": application_port,  # Use same port for service by default
+                "path": component_path,  # Publication path for ingress routing
                 "storage_configs": processed_storage_configs,
                 "env_vars": env_vars,
                 "env_from_secrets": env_from_secrets,  # List of secrets for envFrom
-                "secret_pairs": secret_pairs,  # Pass OIDC values through secret_pairs
-                "config_hash": config_hash,  # Hash for triggering deployment reload on config changes
                 # Cluster-specific ingress configuration
                 "enable_tls": get_ingress_tls_enabled(cluster),
                 "ip_whitelist": get_ingress_ip_whitelist(cluster),
+                # Registry authentication
+                "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
             }
 
             logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")
@@ -2151,50 +2553,25 @@ class ProjectManager:
                     created_files.append(f"{unique_manifest_name}.yaml")
                     logger.info(f"Successfully created {manifest_file} manifest: {manifest_file_path}")
 
-            # Create PVC manifests for persistent storage
+            # Create PVC manifests for persistent storage using PVCManager
             persistent_storage = self._project_file_handler.get_persistent_storage(processed_storage_configs)
 
             if persistent_storage:
                 logger.info(f"Creating {len(persistent_storage)} PVC manifests for component: {component_name}")
 
-                # Get cluster storage configuration
-                storage_class_name = get_storage_class_name(cluster)
-                access_modes = get_storage_access_modes(cluster)
-
-                pvc_template_path = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "pvc.yaml.jinja")
-
-                for storage in persistent_storage:
-                    # Prepare PVC variables using centralized naming utility
-                    pvc_variables = {
-                        "name": generate_pvc_name(unique_name, storage["name"]),
-                        "namespace": namespace,
-                        "size": storage.get("size", "10Gi"),
-                        "storage_class_name": storage_class_name,
-                        "access_modes": access_modes,
-                    }
-
-                    # Handle clone-from logic for PVC
-                    clone_from = deployment.get("clone-from")
-                    if clone_from:
-                        # Generate source PVC name using the same naming convention
-                        source_unique_name = generate_unique_name(clone_from, component_name)
-                        source_pvc_name = generate_pvc_name(source_unique_name, storage["name"])
-                        pvc_variables["source_pvc_name"] = source_pvc_name
-                        logger.info(f"PVC {pvc_variables['name']} will be cloned from {source_pvc_name}")
-
-                    # Create PVC manifest using centralized naming utility
-                    pvc_manifest_name = generate_manifest_name(component_name, f"{storage['name']}-pvc")
-
-                    pvc_manifest_path = self._manifest_generator.create_manifest_file(
-                        template_path=pvc_template_path,
-                        values=pvc_variables,
-                        output_dir=full_output_dir,
-                        output_filename=pvc_manifest_name,
-                        use_sops=False,
-                    )
-
-                    created_files.append(f"{pvc_manifest_name}.yaml")
-                    logger.info(f"Successfully created PVC manifest: {pvc_manifest_path}")
+                # Delegate PVC creation to PVCManager which handles generation and cleanup
+                created_pvc_files = await self._pvc_manager.create_pvc_manifests_for_component(
+                    project_data=project_data,
+                    deployment=deployment,
+                    component_name=component_name,
+                    unique_name=unique_name,
+                    persistent_storage=persistent_storage,
+                    namespace=namespace,
+                    cluster=cluster,
+                    full_output_dir=full_output_dir,
+                    manifest_generator=self._manifest_generator,
+                )
+                created_files.extend(created_pvc_files)
 
             # Create separate secret manifests for SSO and user secrets
             secret_template_path = os.path.join(
@@ -2210,13 +2587,26 @@ class ProjectManager:
                 # Use the existing Keycloak secret instance directly (no need to recreate)
                 keycloak_secret = keycloak_credentials
 
+                # Get base Keycloak secret data
+                keycloak_secret_data = keycloak_secret.to_k8s_secret_data()
+
+                # Add resolved Keycloak aliases from all components
+                keycloak_aliases = (
+                    self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("keycloak", {})
+                )
+                if keycloak_aliases:
+                    logger.debug(f"Resolving {len(keycloak_aliases)} keycloak aliases for deployment {deployment_name}")
+                    resolved_aliases = self._resolve_aliases(keycloak_aliases, keycloak_secret_data)
+                    keycloak_secret_data.update(resolved_aliases)
+                    logger.info(f"Added {len(resolved_aliases)} resolved keycloak aliases to deployment secret")
+
                 # Only include fields needed for the generic-secret template
                 # NOTE: Keycloak secret is per-deployment, not per-component
                 sso_secret_vars = {
                     "name": KeycloakSecret.get_secret_name(deployment_name),
                     "namespace": namespace,
                     "secret_type": "keycloak",  # For proper labeling
-                    "secret_pairs": keycloak_secret.to_k8s_secret_data(),
+                    "secret_pairs": keycloak_secret_data,  # Now includes base + aliases
                 }
 
                 # Create SSO secret with keycloak naming convention (deployment-level)
@@ -2270,6 +2660,40 @@ class ProjectManager:
                 logger.info(f"User secret will be SOPS encrypted: {sops_filename}")
                 logger.info(f"Successfully created user secret manifest: {user_secret_path}")
 
+            # Create registry secrets for private container registries (deployment-level, created once)
+            if component == components[0]:  # Only create registry secrets once per deployment
+                for registry_name in registry_configs_map:
+                    registry_secret = self._get_secret_from_map(deployment_name, registry_name, RegistrySecret)
+                    if registry_secret:
+                        logger.debug(f"Creating registry secret for registry '{registry_name}'")
+
+                        # Registry secrets use kubernetes.io/dockerconfigjson type
+                        registry_secret_vars = {
+                            "name": generate_registry_secret_name(deployment_name, registry_name),
+                            "namespace": namespace,
+                            "secret_type": "registry",
+                            "secret_k8s_type": "kubernetes.io/dockerconfigjson",
+                            "secret_pairs": registry_secret.to_k8s_secret_data(),  # Contains .dockerconfigjson
+                        }
+
+                        # Create registry secret manifest
+                        registry_manifest_name = generate_manifest_name(deployment_name, f"{registry_name}-registry-secret")
+                        use_sops_for_registry = True  # Always use SOPS encryption for registry credentials
+
+                        registry_secret_path = self._manifest_generator.create_manifest_file(
+                            template_path=secret_template_path,
+                            values=registry_secret_vars,
+                            output_dir=full_output_dir,
+                            output_filename=registry_manifest_name,
+                            use_sops=use_sops_for_registry,
+                        )
+
+                        # All secrets are SOPS encrypted for security
+                        sops_filename = f"{registry_manifest_name}.to-sops.yaml"
+                        created_files.append(sops_filename)
+                        logger.info(f"Registry secret will be SOPS encrypted: {sops_filename}")
+                        logger.info(f"Successfully created registry secret manifest: {registry_secret_path}")
+
             # Create database secret if component uses PostgreSQL service
             if component_uses_postgresql:
                 db_credentials = self._get_secret_from_map(deployment_name, "database", DatabaseSecret)
@@ -2277,12 +2701,10 @@ class ProjectManager:
                 if db_credentials:
                     logger.debug(f"Creating database secret for {component_name} with PostgreSQL credentials")
 
-                    # Get cluster-specific database server hostname
-                    database_server_host = get_database_server(cluster)
-
-                    # Create typed Database secret with cluster-specific host
+                    # Use the host from db_credentials - database_manager already determined
+                    # the correct host (namespace-specific or shared) based on service type
                     database_secret = DatabaseSecret(
-                        host=database_server_host,  # Use cluster-specific host
+                        host=db_credentials.host,  # Already set by database_manager
                         port=db_credentials.port,
                         username=db_credentials.username,
                         password=db_credentials.password,
@@ -2293,12 +2715,27 @@ class ProjectManager:
                     # Store the updated secret instance for configuration tracking
                     self._add_secret_to_create(deployment_name, "database", database_secret)
 
-                    # Create database secret vars with all required environment variables
+                    # Get base database secret data
+                    database_secret_data = database_secret.to_k8s_secret_data()
+
+                    # Add resolved database aliases from all components
+                    database_aliases = (
+                        self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("database", {})
+                    )
+                    if database_aliases:
+                        logger.debug(
+                            f"Resolving {len(database_aliases)} database aliases for deployment {deployment_name}"
+                        )
+                        resolved_aliases = self._resolve_aliases(database_aliases, database_secret_data)
+                        database_secret_data.update(resolved_aliases)
+                        logger.info(f"Added {len(resolved_aliases)} resolved database aliases to deployment secret")
+
+                    # Create database secret vars with all required environment variables + aliases
                     # Use deployment-level naming for the secret name
                     database_secret_vars = {
                         "name": DatabaseSecret.get_secret_name(deployment_name),
                         "namespace": namespace,
-                        "secret_pairs": database_secret.to_k8s_secret_data(),
+                        "secret_pairs": database_secret_data,  # Now includes base + aliases
                     }
 
                     # Create database secret with deployment-level naming (not component-level)
@@ -2342,12 +2779,23 @@ class ProjectManager:
                         region=minio_credentials.region,
                     )
 
-                    # Create MinIO secret vars with all required environment variables
+                    # Get base MinIO secret data
+                    minio_secret_data = minio_secret.to_k8s_secret_data()
+
+                    # Add resolved MinIO aliases from all components
+                    minio_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("minio", {})
+                    if minio_aliases:
+                        logger.debug(f"Resolving {len(minio_aliases)} minio aliases for deployment {deployment_name}")
+                        resolved_aliases = self._resolve_aliases(minio_aliases, minio_secret_data)
+                        minio_secret_data.update(resolved_aliases)
+                        logger.info(f"Added {len(resolved_aliases)} resolved minio aliases to deployment secret")
+
+                    # Create MinIO secret vars with all required environment variables + aliases
                     # Use deployment-level naming for the secret name
                     minio_secret_vars = {
                         "name": MinIOSecret.get_secret_name(deployment_name),
                         "namespace": namespace,
-                        "secret_pairs": minio_secret.to_k8s_secret_data(),
+                        "secret_pairs": minio_secret_data,  # Now includes base + aliases
                     }
 
                     # Create MinIO secret with deployment-level naming (not component-level)
@@ -2422,38 +2870,6 @@ class ProjectManager:
 
         return result
 
-    async def _create_argocd_kustomization_file(self) -> None:
-        """
-        Create a kustomization.yaml file for ArgoCD project folders.
-        This method lists all YAML files in the project folder and creates a kustomization.yaml
-        that includes all ArgoCD manifests (applications, repositories, appprojects).
-        Uses the new manifest generator with YAML templates.
-        """
-
-        git_connector_for_argocd = await self.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
-
-        project_data = await self.get_contents()
-        project_name = project_data.get("name")
-
-        deployments = project_data.get("deployments", [])
-        clusters_used = set()
-        for deployment in deployments:
-            cluster_name = deployment.get("cluster", "local")
-            clusters_used.add(cluster_name)
-
-        for cluster_name in clusters_used:
-            project_dir = os.path.join(str(working_dir), str(cluster_name), str(project_name))
-
-            self._manifest_generator.create_kustomization_files(
-                output_dir=project_dir,
-                namespace=get_argo_namespace(cluster_name),  # Use ArgoCD namespace for the cluster
-            )
-
-            logger.info(
-                f"Successfully created ArgoCD kustomization.yaml for project {project_name} for cluster {cluster_name}"
-            )
-
     async def get_contents(self) -> dict[str, Any]:
         """
         Convenience method to get the contents of the project file.
@@ -2498,2458 +2914,6 @@ class ProjectManager:
         logger.debug(f"Successfully decrypted API key for project: {project_name}")
         return decrypted_api_key
 
-    async def _should_process_sso_rijk(self, project_data: dict[str, Any], component_reference: str) -> bool:
-        """
-        Check if a component has the sso-rijk option enabled.
-
-        Args:
-            project_data: The project configuration data
-            component_reference: The component reference name
-
-        Returns:
-            True if sso-rijk should be processed, False otherwise
-        """
-        try:
-            components = project_data.get("components", [])
-            for component in components:
-                if component.get("name") == component_reference:
-                    # Check uses-services array for SSO
-                    uses_services = component.get("uses-services", [])
-                    component_services = ServiceAdapter.parse_services_from_strings(uses_services)
-                    has_sso_service = ServiceType.SSO_RIJK in component_services
-
-                    if has_sso_service:
-                        logger.debug(f"Component {component_reference} has sso-rijk enabled")
-                        return True
-                    break
-
-            logger.debug(f"Component {component_reference} does not have sso-rijk enabled")
-            return False
-
-        except Exception as e:
-            logger.exception(f"Error checking sso-rijk option for component {component_reference}: {e}")
-            return False
-
-    async def _get_keycloak_credentials_from_config(
-        self, project_data: dict[str, Any], deployment_name: str, project_name: str
-    ) -> dict[str, Any] | None:
-        """
-        Retrieve existing Keycloak credentials from project config.
-
-        NOTE: This is for backwards compatibility only. In the new architecture,
-        deployment client credentials are stored in K8s secrets, NOT in project config.
-        The config.keycloak field is now a list containing project admin credentials only.
-
-        Args:
-            project_data: The project configuration data
-            deployment_name: Name of the deployment
-            project_name: Name of the project (used for logging/validation)
-
-        Returns:
-            None (deployment credentials are no longer stored in config)
-        """
-        # Deployment credentials are stored in K8s secrets, not in project config
-        # This method is kept for backwards compatibility but always returns None
-        logger.debug(f"Deployment credentials for '{deployment_name}' are stored in K8s secrets, not in project config")
-        return None
-
-    async def _store_keycloak_credentials_in_config(
-        self, client_info: dict[str, Any], encrypted_client_secret: str
-    ) -> None:
-        """
-        Store Keycloak credentials in the project config.
-
-        NOTE: This method is deprecated and no longer used. In the new architecture,
-        deployment client credentials are stored in K8s secrets only.
-        The config.keycloak field is now a list containing project admin credentials only.
-
-        Args:
-            client_info: Client information from Keycloak
-            encrypted_client_secret: AGE-encrypted client secret
-        """
-        # Deployment credentials are stored in K8s secrets, not in project config
-        # This method is kept for backwards compatibility but does nothing
-        logger.debug("Deployment credentials are stored in K8s secrets, not storing in project config")
-
-    async def _setup_project_keycloak_realm(self, project_name: str, cluster: str, keycloak_url: str) -> dict[str, Any]:
-        """
-        Set up project-level Keycloak infrastructure for a cluster.
-
-        This creates the project realm, admin user, and federation with RIG Platform.
-
-        Steps:
-        1. Generate admin username/password
-        2. Encrypt password with project's AGE public key
-        3. Create project realm in master Keycloak
-        4. Create project admin user in master realm
-        5. Assign realm-admin role to admin for project realm
-        6. Create project client in RIG Platform realm
-        7. Add RIG Platform as IDP in project realm
-        8. Configure SSO-only authentication
-        9. Store config in project.yaml
-        10. Save project file
-
-        Args:
-            project_name: Name of the project
-            cluster: Name of the cluster
-            keycloak_url: Base URL of the Keycloak server
-
-        Returns:
-            Dictionary with host, realm, username, password (encrypted)
-        """
-        from ruamel.yaml.scalarstring import LiteralScalarString
-
-        from opi.connectors.keycloak import create_keycloak_connector
-        from opi.utils.age import encrypt_age_content, get_project_public_key
-        from opi.utils.naming import (
-            generate_project_admin_username,
-            generate_project_platform_client_id,
-            generate_project_realm_name,
-        )
-        from opi.utils.passwords import generate_secure_password
-
-        logger.info(f"Setting up project Keycloak realm for {project_name} in cluster {cluster}")
-
-        # Generate names
-        admin_username = generate_project_admin_username(project_name, cluster)
-        realm_name = generate_project_realm_name(project_name, cluster)
-        platform_client_id = generate_project_platform_client_id(project_name, cluster)
-
-        # Generate and encrypt password
-        admin_password = generate_secure_password()
-        project_data = await self.get_contents()
-        project_public_key = get_project_public_key(project_data)
-
-        if not project_public_key:
-            raise Exception(f"Project public key not found for {project_name}")
-
-        encrypted_password = await encrypt_age_content(admin_password, project_public_key)
-        encrypted_password_str = LiteralScalarString(encrypted_password)
-
-        # Create Keycloak connector
-        keycloak = await create_keycloak_connector(
-            keycloak_url=keycloak_url,
-            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
-            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
-        )
-
-        # IDEMPOTENT: 1. Create project realm (already idempotent - handles 409)
-        await keycloak.create_realm(realm_name=realm_name, display_name=f"{project_name} ({cluster})")
-        logger.info(f"Ensured realm {realm_name} exists")
-
-        # IDEMPOTENT: 2. Create admin user in master realm (already idempotent - handles 409)
-        user_info = await keycloak.create_user(
-            realm_name="master", username=admin_username, password=admin_password, enabled=True
-        )
-        logger.info(f"Ensured admin user {admin_username} exists in master realm")
-
-        # IDEMPOTENT: 3. Assign realm management roles (idempotent - assigns all available roles)
-        await keycloak.assign_realm_management_role(
-            realm_name="master", user_id=user_info["id"], target_realm=realm_name
-        )
-        logger.info(f"Ensured realm management roles assigned to {admin_username} for {realm_name}")
-
-        # IDEMPOTENT: 4. Create project client in RIG Platform realm (already idempotent - handles 409)
-        redirect_uri = f"{keycloak_url}/realms/{realm_name}/broker/rig-platform-oidc/endpoint"
-
-        platform_client_info = await keycloak.create_federation_client(
-            client_id=platform_client_id,
-            redirect_uris=[redirect_uri],
-            realm_name=settings.KEYCLOAK_DEFAULT_REALM,
-        )
-        logger.info(f"Ensured platform client {platform_client_id} exists in RIG Platform realm")
-
-        # IDEMPOTENT: 5. Add RIG Platform as IDP in project realm (already idempotent - handles 409)
-        platform_discovery_url = (
-            f"{keycloak_url}/realms/{settings.KEYCLOAK_DEFAULT_REALM}/.well-known/openid-configuration"
-        )
-
-        await keycloak.add_identity_provider(
-            realm_name=realm_name,
-            provider_alias="rig-platform-oidc",
-            display_name="RIG Platform",
-            client_id=platform_client_info["client_id"],
-            client_secret=platform_client_info["client_secret"],
-            discovery_url=platform_discovery_url,
-        )
-        logger.info(f"Ensured RIG Platform IDP exists in realm {realm_name}")
-
-        # IDEMPOTENT: 5b. Ensure IDP mappers exist
-        await keycloak.ensure_standard_oidc_mappers(realm_name, "rig-platform-oidc")
-        logger.info(f"Ensured IDP mappers for RIG Platform in realm {realm_name}")
-
-        # IDEMPOTENT: 6. Configure SSO-only authentication flow (should be idempotent)
-        await keycloak.configure_sso_redirect_flow(realm_name, "rig-platform-oidc")
-        logger.info(f"Ensured SSO-only authentication configured for realm {realm_name}")
-
-        # IDEMPOTENT: 7. Create custom_attributes_passthrough client scope (idempotent)
-        await keycloak.create_custom_client_scope(
-            realm_name=realm_name, scope_name="custom_attributes_passthrough"
-        )
-        logger.info(f"Ensured custom_attributes_passthrough client scope exists in realm {realm_name}")
-
-        # IDEMPOTENT: 8. Store in project config (don't duplicate)
-        if "config" not in project_data:
-            project_data["config"] = {}
-        if "keycloak" not in project_data["config"]:
-            project_data["config"]["keycloak"] = []
-
-        # Check if this realm config already exists
-        existing_config = None
-        for idx, kc_entry in enumerate(project_data["config"]["keycloak"]):
-            if kc_entry.get("realm") == realm_name:
-                existing_config = idx
-                break
-
-        config_entry = {
-            "host": keycloak_url,
-            "realm": realm_name,
-            "username": admin_username,
-            "password": encrypted_password_str,
-        }
-
-        if existing_config is not None:
-            # Update existing entry
-            project_data["config"]["keycloak"][existing_config] = config_entry
-            logger.info(f"Updated existing Keycloak config for realm {realm_name}")
-        else:
-            # Add new entry
-            project_data["config"]["keycloak"].append(config_entry)
-            logger.info(f"Added new Keycloak config for realm {realm_name}")
-
-        await self.save_project_data()
-        logger.info(f"Stored Keycloak config in project file for cluster {cluster}")
-
-        return {
-            "host": keycloak_url,
-            "realm": realm_name,
-            "username": admin_username,
-            "password": encrypted_password,
-        }
-
-    async def _cleanup_project_keycloak_realm(
-        self, project_name: str, cluster: str, kc_config: dict[str, Any], deletion_results: dict[str, Any]
-    ) -> None:
-        """
-        Clean up project-level Keycloak resources for a cluster.
-
-        Called when the last deployment in a cluster is deleted.
-
-        Steps:
-        1. Delete project realm
-        2. Delete project admin user from master realm
-        3. Delete platform client from RIG Platform realm
-        4. Remove keycloak config entry from project.yaml
-
-        Args:
-            project_name: Name of the project
-            cluster: Name of the cluster
-            kc_config: Keycloak config entry with host/realm/username/password
-            deletion_results: Results dictionary to append deletion operations to
-        """
-        from opi.connectors.keycloak import create_keycloak_connector
-        from opi.utils.naming import generate_project_platform_client_id
-
-        realm_name = kc_config["realm"]
-        admin_username = kc_config["username"]
-        keycloak_host = kc_config["host"]
-
-        platform_client_id = generate_project_platform_client_id(project_name, cluster)
-
-        logger.info(f"Cleaning up project Keycloak realm {realm_name} for cluster {cluster}")
-
-        try:
-            keycloak = await create_keycloak_connector(
-                keycloak_url=keycloak_host,
-                admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
-                admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
-            )
-
-            # 1. Delete project realm
-            try:
-                await keycloak.delete_realm(realm_name)
-                logger.info(f"Deleted project realm {realm_name}")
-                deletion_results["operations"].append(
-                    {"type": "keycloak_realm_deletion", "target": realm_name, "status": "success"}
-                )
-            except Exception as e:
-                logger.error(f"Failed to delete realm {realm_name}: {e}")
-                deletion_results["errors"].append(f"Realm deletion: {e}")
-
-            # 2. Delete project admin from master realm
-            try:
-                await keycloak.delete_user_by_username("master", admin_username)
-                logger.info(f"Deleted project admin {admin_username}")
-                deletion_results["operations"].append(
-                    {"type": "keycloak_user_deletion", "target": admin_username, "status": "success"}
-                )
-            except Exception as e:
-                logger.error(f"Failed to delete user {admin_username}: {e}")
-                deletion_results["errors"].append(f"User deletion: {e}")
-
-            # 3. Delete platform client from RIG Platform realm
-            try:
-                await keycloak.delete_deployment_client(
-                    deployment_name=platform_client_id,
-                    project_name="",
-                    realm_name=settings.KEYCLOAK_DEFAULT_REALM,
-                )
-                logger.info(f"Deleted platform client {platform_client_id}")
-                deletion_results["operations"].append(
-                    {"type": "keycloak_platform_client_deletion", "target": platform_client_id, "status": "success"}
-                )
-            except Exception as e:
-                logger.error(f"Failed to delete platform client: {e}")
-                deletion_results["errors"].append(f"Platform client deletion: {e}")
-
-            # 4. Remove keycloak config entry from project.yaml
-            try:
-                project_data = await self.get_contents()
-                keycloak_list = project_data.get("config", {}).get("keycloak", [])
-
-                # Remove entry matching this realm
-                updated_list = [kc for kc in keycloak_list if kc.get("realm") != realm_name]
-
-                if updated_list != keycloak_list:
-                    project_data["config"]["keycloak"] = updated_list
-                    await self.save_project_data()
-                    logger.info(f"Removed keycloak config for realm {realm_name} from project.yaml")
-                    deletion_results["operations"].append(
-                        {
-                            "type": "project_config_update",
-                            "target": f"config.keycloak[{realm_name}]",
-                            "status": "success",
-                        }
-                    )
-            except Exception as e:
-                logger.error(f"Failed to update project config: {e}")
-                deletion_results["errors"].append(f"Config update: {e}")
-
-        except Exception as e:
-            logger.exception(f"Error during realm cleanup: {e}")
-            deletion_results["errors"].append(f"Realm cleanup: {e}")
-
-    async def _setup_sso_rijk_integration(
-        self,
-        project_name: str,
-        component_name: str,
-        deployment_name: str,
-        namespace: str,
-        hostname: str,
-        ingress_hosts: list[str],
-    ) -> dict[str, Any] | None:
-        """
-        Set up SSO-Rijk integration by adding a client to the project realm.
-
-        This method now uses project-specific realms instead of the shared realm.
-        It will create the project realm infrastructure if it doesn't exist yet.
-
-        Args:
-            project_name: Name of the project
-            component_name: Name of the component
-            deployment_name: Name of the deployment
-            namespace: Kubernetes namespace
-            hostname: Pre-calculated hostname for the deployment (primary)
-            ingress_hosts: List of all ingress hostnames for this deployment
-
-        Returns:
-            SSO configuration dictionary or None if setup failed
-        """
-        try:
-            # Get project data to find deployment cluster
-            project_data = await self.get_contents()
-
-            # Find deployment to get cluster
-            deployments = project_data.get("deployments", [])
-            deployment_config = None
-            for d in deployments:
-                if d.get("name") == deployment_name:
-                    deployment_config = d
-                    break
-
-            if not deployment_config:
-                raise Exception(f"Deployment {deployment_name} not found in project")
-
-            cluster = deployment_config.get("cluster")
-            if not cluster:
-                raise Exception(f"Cluster not specified for deployment {deployment_name}")
-
-            # Idempotent realm setup: Execute each step independently
-            keycloak_url = self._get_keycloak_url_for_cluster(cluster)
-            kc_config = self._get_project_keycloak_config_for_cluster(project_data, cluster)
-
-            from opi.connectors.keycloak import create_keycloak_connector
-            from opi.utils.naming import (
-                generate_project_admin_username,
-                generate_project_platform_client_id,
-                generate_project_realm_name,
-            )
-
-            # Generate names
-            admin_username = generate_project_admin_username(project_name, cluster)
-            realm_name = generate_project_realm_name(project_name, cluster)
-            platform_client_id = generate_project_platform_client_id(project_name, cluster)
-
-            keycloak = await create_keycloak_connector(
-                keycloak_url=keycloak_url,
-                admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
-                admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
-            )
-
-            # STEP 1: Ensure project realm exists
-            if await keycloak.realm_exists(realm_name):
-                logger.info(f"Project realm {realm_name} already exists")
-            else:
-                logger.info(f"Creating project realm {realm_name}")
-                await keycloak.create_realm(realm_name=realm_name, display_name=f"{project_name} ({cluster})")
-
-            # STEP 2: Ensure project admin user exists
-            admin_user = await keycloak.get_user_by_username("master", admin_username)
-            if not admin_user:
-                logger.info(f"Creating project admin user {admin_username}")
-                from opi.utils.passwords import generate_secure_password
-
-                admin_password = generate_secure_password()
-                admin_user = await keycloak.create_user(
-                    realm_name="master", username=admin_username, password=admin_password, enabled=True
-                )
-            else:
-                logger.info(f"Project admin user {admin_username} already exists")
-
-            # STEP 3: Ensure admin has realm management roles
-            await keycloak.assign_realm_management_role(
-                realm_name="master", user_id=admin_user["id"], target_realm=realm_name
-            )
-            logger.info(f"Ensured realm management roles for {admin_username}")
-
-            # STEP 4: Ensure federation client exists in RIG Platform realm
-            redirect_uri = f"{keycloak_url}/realms/{realm_name}/broker/rig-platform-oidc/endpoint"
-            platform_client_info = await keycloak.create_federation_client(
-                client_id=platform_client_id,
-                redirect_uris=[redirect_uri],
-                realm_name=settings.KEYCLOAK_DEFAULT_REALM,
-            )
-            logger.info(f"Ensured federation client {platform_client_id} exists in RIG Platform realm")
-
-            # STEP 5: Ensure RIG Platform IDP exists in project realm
-            platform_discovery_url = (
-                f"{keycloak_url}/realms/{settings.KEYCLOAK_DEFAULT_REALM}/.well-known/openid-configuration"
-            )
-            await keycloak.add_identity_provider(
-                realm_name=realm_name,
-                provider_alias="rig-platform-oidc",
-                display_name="RIG Platform",
-                client_id=platform_client_info["client_id"],
-                client_secret=platform_client_info["client_secret"],
-                discovery_url=platform_discovery_url,
-            )
-            logger.info(f"Ensured RIG Platform IDP exists in project realm {realm_name}")
-
-            # STEP 5b: Ensure IDP mappers exist
-            await keycloak.ensure_standard_oidc_mappers(realm_name, "rig-platform-oidc")
-            logger.info(f"Ensured IDP mappers for RIG Platform in project realm {realm_name}")
-
-            # STEP 6: Configure SSO-only authentication flow
-            await keycloak.configure_sso_redirect_flow(realm_name, "rig-platform-oidc")
-            logger.info(f"Ensured SSO-only authentication flow in realm {realm_name}")
-
-            # STEP 7: Ensure custom client scope exists
-            scopes = await keycloak.get_client_scopes(realm_name)
-            scope_exists = any(scope.get("name") == "custom_attributes_passthrough" for scope in scopes)
-            if not scope_exists:
-                logger.info(f"Creating custom_attributes_passthrough scope in realm {realm_name}")
-                await keycloak.create_custom_client_scope(
-                    realm_name=realm_name, scope_name="custom_attributes_passthrough"
-                )
-            else:
-                logger.info(f"Custom client scope already exists in realm {realm_name}")
-
-            # STEP 8: Ensure config is stored in project file
-            if not kc_config:
-                logger.info(f"Storing project realm config for cluster {cluster}")
-                from ruamel.yaml.scalarstring import LiteralScalarString
-
-                from opi.utils.age import encrypt_age_content, get_project_public_key
-                from opi.utils.passwords import generate_secure_password
-
-                admin_password = generate_secure_password()
-                project_public_key = get_project_public_key(project_data)
-                encrypted_password = await encrypt_age_content(admin_password, project_public_key)
-
-                if "config" not in project_data:
-                    project_data["config"] = {}
-                if "keycloak" not in project_data["config"]:
-                    project_data["config"]["keycloak"] = []
-
-                project_data["config"]["keycloak"].append(
-                    {
-                        "host": keycloak_url,
-                        "realm": realm_name,
-                        "username": admin_username,
-                        "password": LiteralScalarString(encrypted_password),
-                    }
-                )
-                await self.save_project_data()
-                kc_config = self._get_project_keycloak_config_for_cluster(project_data, cluster)
-            else:
-                logger.info(f"Project realm config already exists for cluster {cluster}")
-
-            keycloak_host = kc_config["host"]
-            logger.info(f"Using project realm {realm_name} for deployment {deployment_name}")
-
-            # Check if we have existing Keycloak credentials in secrets map
-            existing_keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
-
-            if existing_keycloak_secret:
-                # Use existing credentials
-                logger.info(f"Using existing Keycloak credentials for {component_name}")
-
-                sso_config = {
-                    "realm": {"name": realm_name},
-                    "oidc": {
-                        "client_id": existing_keycloak_secret.client_id,
-                        "client_secret": existing_keycloak_secret.client_secret,
-                        "discovery_url": existing_keycloak_secret.discovery_url,
-                    },
-                }
-                return sso_config
-
-            # No existing credentials found, create new Keycloak client
-            logger.info(f"No existing Keycloak credentials found, creating new client for {component_name}")
-
-            # Create Keycloak connector using project's Keycloak host
-            keycloak_connector = await create_keycloak_connector(
-                keycloak_url=keycloak_host,
-                admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
-                admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
-            )
-
-            # Use provided ingress hosts for Keycloak client configuration
-            logger.info(f"Keycloak client will be configured with ingress hosts: {ingress_hosts}")
-
-            # Create deployment client in the PROJECT REALM (not shared realm)
-            client_info = await keycloak_connector.create_deployment_client(
-                deployment_name=deployment_name,
-                project_name=project_name,
-                ingress_hosts=ingress_hosts,
-                realm_name=realm_name,
-            )
-
-            # Encrypt the client secret using project's SOPS public key
-            # Use project's AGE public key for encryption (not private key!)
-            project_public_key = get_project_public_key(project_data)
-            if project_public_key:
-                encrypted_secret = await encrypt_age_content(client_info["client_secret"], project_public_key)
-                encrypted_client_secret = LiteralScalarString(encrypted_secret)
-                logger.info(
-                    f"Successfully encrypted client secret for {client_info['client_id']} using project public key"
-                )
-            else:
-                raise Exception(f"Project public key not found in project config for {project_name}")
-
-            # Generate cluster-specific discovery URL for pods
-            cluster_keycloak_discovery_url = get_keycloak_discovery_url(settings.CLUSTER_MANAGER)
-            realm_name = client_info["realm"]
-            cluster_discovery_url = (
-                f"{cluster_keycloak_discovery_url}/realms/{realm_name}/.well-known/openid-configuration"
-            )
-
-            # Update client_info with cluster-specific discovery URL before storing
-            client_info["discovery_url"] = cluster_discovery_url
-
-            # Store credentials in private secrets map instead of project config
-            keycloak_secret = KeycloakSecret(
-                client_id=client_info["client_id"],
-                client_secret=client_info["client_secret"],
-                discovery_url=cluster_discovery_url,
-            )
-            self._add_secret_to_create(deployment_name, "keycloak", keycloak_secret)
-
-            # Transform the response to match the expected sso_config format
-            sso_config = {
-                "realm": {"name": realm_name},
-                "oidc": {
-                    "client_id": client_info["client_id"],
-                    "client_secret": client_info["client_secret"],
-                    "encrypted_client_secret": encrypted_client_secret,
-                    "discovery_url": cluster_discovery_url,  # Use cluster-specific URL for pods
-                },
-            }
-
-            logger.info(f"SSO client created in shared realm for {component_name}")
-            return sso_config
-
-        except Exception as e:
-            logger.exception(f"Failed to setup SSO-Rijk integration for {component_name}: {e}")
-            return None
-
-    def _generate_config_hash(
-        self,
-        env_vars: dict[str, Any],
-        env_from_secrets: list[str],
-        user_env_vars: dict[str, Any],
-        secret_pairs: dict[str, Any],
-    ) -> str:
-        """
-        Generate a hash of configuration data that should trigger deployment reload when changed.
-
-        This includes:
-        - Direct environment variables
-        - List of secrets referenced via envFrom
-        - User environment variables
-        - Secret values from secret_pairs (actual secret content)
-
-        Args:
-            env_vars: Direct environment variables
-            env_from_secrets: List of secret names used in envFrom
-            user_env_vars: User-defined environment variables
-            secret_pairs: Secret key-value pairs with actual secret content
-
-        Returns:
-            SHA256 hash of the configuration data
-        """
-        import hashlib
-        import json
-
-        # Create a stable representation of all configuration data
-        config_data = {
-            "env_vars": sorted(env_vars.items()) if env_vars else [],
-            "env_from_secrets": sorted(env_from_secrets) if env_from_secrets else [],
-            "user_env_vars": sorted(user_env_vars.items()) if user_env_vars else [],
-            "secret_pairs": sorted(secret_pairs.items()) if secret_pairs else [],
-        }
-
-        # Convert to JSON string with sorted keys for consistent hashing
-        config_json = json.dumps(config_data, sort_keys=True, separators=(",", ":"))
-
-        # Generate SHA256 hash
-        config_hash = hashlib.sha256(config_json.encode("utf-8")).hexdigest()[:16]  # Use first 16 chars
-
-        logger.debug(
-            f"Generated config hash: {config_hash} from {len(config_json)} chars of config data (including secret values)"
-        )
-        return config_hash
-
-    async def delete_deployment_resources(self, project_name: str, deployment_name: str) -> dict[str, Any]:
-        """
-        Delete resources for a specific deployment.
-
-        Steps:
-        1. Get deployment config to find cluster
-        2. Get project keycloak config for cluster
-        3. Delete deployment client from project realm
-        4. Check if this is the last deployment in cluster
-        5. If yes, delete project realm/admin/platform-client
-        6. Delete GitOps manifests folder
-        7. Delete Kubernetes namespace
-
-        Args:
-            project_name: Name of the project
-            deployment_name: Name of the deployment to delete
-
-        Returns:
-            Dictionary containing deletion results and status
-        """
-        from opi.connectors.keycloak import create_keycloak_connector
-
-        deletion_results = {
-            "deployment": deployment_name,
-            "operations": [],
-            "success": True,
-            "errors": [],
-        }
-
-        logger.info(f"Starting deletion of deployment {deployment_name} from project {project_name}")
-
-        try:
-            # Get project data
-            project_data = await self.get_contents()
-
-            # Find deployment config
-            deployments = project_data.get("deployments", [])
-            deployment_config = None
-            for d in deployments:
-                if d.get("name") == deployment_name:
-                    deployment_config = d
-                    break
-
-            if not deployment_config:
-                logger.warning(f"Deployment {deployment_name} not found in project {project_name}")
-                deletion_results["errors"].append(f"Deployment {deployment_name} not found")
-                return deletion_results
-
-            cluster = deployment_config.get("cluster")
-
-            # Get keycloak config for cluster
-            kc_config = self._get_project_keycloak_config_for_cluster(project_data, cluster)
-
-            if kc_config:
-                realm_name = kc_config["realm"]
-                keycloak_host = kc_config["host"]
-
-                # Delete deployment client from project realm
-                try:
-                    logger.info(f"Deleting Keycloak client for deployment {deployment_name} from realm {realm_name}")
-
-                    keycloak = await create_keycloak_connector(
-                        keycloak_url=keycloak_host,
-                        admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
-                        admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
-                    )
-
-                    delete_success = await keycloak.delete_deployment_client(
-                        deployment_name=deployment_name, project_name=project_name, realm_name=realm_name
-                    )
-
-                    if delete_success:
-                        logger.info(f"Successfully deleted Keycloak client for deployment {deployment_name}")
-                        deletion_results["operations"].append(
-                            {
-                                "type": "keycloak_client_deletion",
-                                "target": f"{project_name}-{deployment_name}",
-                                "realm": realm_name,
-                                "status": "success",
-                            }
-                        )
-                    else:
-                        logger.warning(f"Keycloak client for deployment {deployment_name} was not found")
-                        deletion_results["operations"].append(
-                            {
-                                "type": "keycloak_client_deletion",
-                                "target": f"{project_name}-{deployment_name}",
-                                "realm": realm_name,
-                                "status": "not_found",
-                            }
-                        )
-
-                except Exception as e:
-                    logger.error(f"Failed to delete Keycloak client: {e}")
-                    deletion_results["errors"].append(f"Keycloak client deletion: {e}")
-
-                # Check if this is the last deployment in this cluster
-                remaining_deployments = self._count_deployments_in_cluster(project_data, cluster)
-
-                if remaining_deployments == 1:  # This deployment is the last one
-                    logger.info(f"Last deployment in cluster {cluster}, cleaning up project realm")
-
-                    await self._cleanup_project_keycloak_realm(
-                        project_name=project_name,
-                        cluster=cluster,
-                        kc_config=kc_config,
-                        deletion_results=deletion_results,
-                    )
-
-            logger.info(f"Completed deletion of deployment {deployment_name}")
-
-        except Exception as e:
-            logger.exception(f"Error deleting deployment {deployment_name}: {e}")
-            deletion_results["success"] = False
-            deletion_results["errors"].append(str(e))
-
-        return deletion_results
-
-    async def delete_project_resources(self, project_name: str) -> dict[str, Any]:
-        """
-        Delete all resources associated with a project.
-
-        This function orchestrates the deletion of:
-        1. Project YAML file from Git projects repository
-        2. ArgoCD GitOps folders for all deployments/clusters
-        3. Kubernetes namespaces for all deployments
-
-        Args:
-            project_name: Name of the project to delete
-
-        Returns:
-            Dictionary containing deletion results and status
-
-        Raises:
-            HTTPException: If critical operations fail
-        """
-
-        deletion_results = {"project": project_name, "operations": [], "success": True, "errors": []}
-
-        git_connector = None
-        gitops_connector = None
-
-        try:
-            # Step 1: Read project configuration to understand what needs to be deleted
-            git_connector = GitConnector(
-                repo_url=settings.GIT_PROJECTS_SERVER_URL,
-                username=settings.GIT_PROJECTS_SERVER_USERNAME,
-                password=settings.GIT_PROJECTS_SERVER_PASSWORD,
-                branch=settings.GIT_PROJECTS_SERVER_BRANCH,
-                repo_path=settings.GIT_PROJECTS_SERVER_REPO_PATH,
-                project_name=project_name,  # Add project context for better error reporting
-            )
-
-            project_file_path = f"projects/{project_name}.yaml"
-            project_content = await git_connector.read_file_content(project_file_path)
-            if not project_content:
-                raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-
-            # Parse project to get deployments, clusters, and repositories
-            yaml = YAML()
-            project_data = yaml.load(project_content)
-            deployments = project_data.get("deployments", [])
-            repositories = project_data.get("repositories", [])
-
-            # Step 2: Delete manifest repository folders (from repositories configured in project.yaml)
-            logger.info(
-                f"Starting manifest repository deletion for project {project_name} with {len(repositories)} repositories"
-            )
-
-            # Group deployments by repository to avoid duplicate deletions
-            deployments_by_repo = {}
-            for deployment in deployments:
-                repo_name = deployment.get("repository")
-                cluster = deployment.get("cluster")
-                if repo_name and cluster:
-                    if repo_name not in deployments_by_repo:
-                        deployments_by_repo[repo_name] = set()
-                    deployments_by_repo[repo_name].add(cluster)
-
-            # Delete from each manifest repository
-            for repository in repositories:
-                repo_name = repository.get("name")
-                if repo_name not in deployments_by_repo:
-                    logger.info(f"Repository {repo_name} not used in any deployments, skipping")
-                    continue
-
-                logger.info(f"Deleting from manifest repository: {repo_name}")
-
-                try:
-                    # Create git connector for this repository
-                    repo_config = {
-                        "url": repository.get("url"),
-                        "branch": repository.get("branch", "main"),
-                        "path": repository.get("path", "."),
-                        "username": repository.get("username"),
-                        "password": repository.get("password"),
-                        "ssh_key_path": repository.get("ssh_key_path"),
-                    }
-
-                    manifest_connector = await self.get_git_connector_for_deployment(repo_name, repo_config)
-
-                    # Delete cluster/project folders for each cluster that uses this repository
-                    for cluster in deployments_by_repo[repo_name]:
-                        # Manifest folder structure: {cluster}/{project_name}/
-                        manifest_folder_path = f"{cluster}/{project_name}"
-                        logger.info(f"Attempting to delete manifest folder: {manifest_folder_path}")
-
-                        await manifest_connector.ensure_repo_cloned()
-                        folder_full_path = os.path.join(manifest_connector.__working_dir, manifest_folder_path)
-                        folder_exists = os.path.exists(folder_full_path)
-                        logger.info(f"Manifest folder exists at {folder_full_path}: {folder_exists}")
-
-                        if folder_exists:
-                            # Delete directory using filesystem operations
-                            shutil.rmtree(folder_full_path)
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "manifest_folder_deletion",
-                                    "target": manifest_folder_path,
-                                    "repository": repo_name,
-                                    "cluster": cluster,
-                                    "status": "success",
-                                }
-                            )
-                            logger.info(f"Successfully deleted manifest folder: {manifest_folder_path}")
-                        else:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "manifest_folder_deletion",
-                                    "target": manifest_folder_path,
-                                    "repository": repo_name,
-                                    "cluster": cluster,
-                                    "status": "not_found",
-                                }
-                            )
-
-                    # Commit changes to manifest repository
-                    commit_message = f"Delete project '{project_name}' - removed manifest folders"
-                    commit_result = await manifest_connector.commit_and_push_changes(commit_message)
-                    if commit_result:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "manifest_repo_commit",
-                                "repository": repo_name,
-                                "status": "success",
-                                "message": commit_message,
-                            }
-                        )
-                        logger.info(f"Successfully committed manifest deletions to {repo_name}")
-                    else:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "manifest_repo_commit",
-                                "repository": repo_name,
-                                "status": "failed",
-                                "error": "Failed to commit manifest changes",
-                            }
-                        )
-                        deletion_results["errors"].append(f"Failed to commit manifest changes to {repo_name}")
-
-                    # Clean up manifest connector
-                    await manifest_connector.close()
-
-                except Exception as e:
-                    deletion_results["operations"].append(
-                        {"type": "manifest_repo_deletion", "repository": repo_name, "status": "error", "error": str(e)}
-                    )
-                    deletion_results["errors"].append(f"Error deleting from manifest repository {repo_name}: {e}")
-                    logger.exception(f"Error deleting from manifest repository {repo_name}: {e}")
-
-            # Step 3: Delete GitOps repository folders (this will trigger ArgoCD app deletion via GitOps)
-            logger.info(
-                f"Starting GitOps folder deletion for project {project_name} with {len(deployments)} deployments"
-            )
-
-            try:
-                # Create GitOps connector using the existing method
-                # TODO: FIX ME DELETE IS BROKEN
-                gitops_connector = await self.get_git_connector_for_deployment()
-                logger.info(f"Successfully created GitOps connector for {project_name}")
-            except Exception as e:
-                logger.exception(f"Failed to create GitOps connector for {project_name}: {e}")
-                deletion_results["errors"].append(f"Failed to create GitOps connector: {e}")
-                # Continue with other deletion steps
-                gitops_connector = None
-
-            if gitops_connector:
-                for deployment in deployments:
-                    deployment_name = deployment.get("name")
-                    cluster = deployment.get("cluster")
-
-                    try:
-                        # GitOps folder structure: clusters/{cluster}/{project}/{deployment}
-                        gitops_folder_path = f"clusters/{cluster}/{project_name}/{deployment_name}"
-                        logger.info(f"Attempting to delete GitOps folder: {gitops_folder_path}")
-
-                        # Check if the folder exists and delete it using atomic git operations
-                        await gitops_connector.ensure_repo_cloned()
-                        folder_full_path = os.path.join(gitops_connector.working_dir, gitops_folder_path)
-                        folder_exists = os.path.exists(folder_full_path)
-                        logger.info(f"GitOps folder exists at {folder_full_path}: {folder_exists}")
-                        if folder_exists:
-                            # Use atomic operation: delete folder and stage deletion
-                            await gitops_connector.delete_folder(gitops_folder_path)
-                            delete_result = True
-                            if delete_result:
-                                deletion_results["operations"].append(
-                                    {
-                                        "type": "gitops_folder_deletion",
-                                        "target": gitops_folder_path,
-                                        "cluster": cluster,
-                                        "deployment": deployment_name,
-                                        "status": "success",
-                                    }
-                                )
-                                logger.info(f"Successfully deleted GitOps folder: {gitops_folder_path}")
-                            else:
-                                deletion_results["operations"].append(
-                                    {
-                                        "type": "gitops_folder_deletion",
-                                        "target": gitops_folder_path,
-                                        "cluster": cluster,
-                                        "deployment": deployment_name,
-                                        "status": "failed",
-                                        "error": "Git delete operation failed",
-                                    }
-                                )
-                                deletion_results["errors"].append(
-                                    f"Failed to delete GitOps folder {gitops_folder_path}"
-                                )
-                        else:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "gitops_folder_deletion",
-                                    "target": gitops_folder_path,
-                                    "cluster": cluster,
-                                    "deployment": deployment_name,
-                                    "status": "not_found",
-                                }
-                            )
-
-                    except Exception as e:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "gitops_folder_deletion",
-                                "target": f"clusters/{cluster}/{project_name}/{deployment_name}",
-                                "cluster": cluster,
-                                "deployment": deployment_name,
-                                "status": "error",
-                                "error": str(e),
-                            }
-                        )
-                        deletion_results["errors"].append(f"Error deleting GitOps folder for {deployment_name}: {e}")
-                        logger.exception(f"Error deleting GitOps folder for {deployment_name}: {e}")
-
-            # Step 3.5: Delete Keycloak clients and realms
-            logger.info(f"Starting Keycloak cleanup for project {project_name} with {len(deployments)} deployments")
-
-            # Group deployments by cluster to handle realm cleanup per cluster
-            deployments_by_cluster = {}
-            for deployment in deployments:
-                cluster = deployment.get("cluster")
-                if cluster:
-                    if cluster not in deployments_by_cluster:
-                        deployments_by_cluster[cluster] = []
-                    deployments_by_cluster[cluster].append(deployment)
-
-            # Delete clients per cluster and cleanup realms
-            for cluster, cluster_deployments in deployments_by_cluster.items():
-                try:
-                    # Get keycloak config for this cluster
-                    kc_config = self._get_project_keycloak_config_for_cluster(project_data, cluster)
-
-                    if kc_config:
-                        realm_name = kc_config["realm"]
-                        keycloak_host = kc_config["host"]
-
-                        logger.info(
-                            f"Cleaning up {len(cluster_deployments)} deployment clients from realm {realm_name}"
-                        )
-
-                        keycloak = await create_keycloak_connector(
-                            keycloak_url=keycloak_host,
-                            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
-                            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
-                        )
-
-                        # Delete deployment clients from project realm
-                        for deployment in cluster_deployments:
-                            deployment_name = deployment.get("name")
-
-                            try:
-                                logger.info(
-                                    f"Deleting Keycloak client for deployment {deployment_name} from realm {realm_name}"
-                                )
-
-                                delete_success = await keycloak.delete_deployment_client(
-                                    deployment_name=deployment_name, project_name=project_name, realm_name=realm_name
-                                )
-
-                                if delete_success:
-                                    deletion_results["operations"].append(
-                                        {
-                                            "type": "keycloak_client_deletion",
-                                            "target": f"{project_name}-{deployment_name}",
-                                            "realm": realm_name,
-                                            "deployment": deployment_name,
-                                            "status": "success",
-                                        }
-                                    )
-                                    logger.info(
-                                        f"Successfully deleted Keycloak client for deployment {deployment_name}"
-                                    )
-                                else:
-                                    deletion_results["operations"].append(
-                                        {
-                                            "type": "keycloak_client_deletion",
-                                            "target": f"{project_name}-{deployment_name}",
-                                            "realm": realm_name,
-                                            "deployment": deployment_name,
-                                            "status": "not_found",
-                                        }
-                                    )
-
-                            except Exception as e:
-                                deletion_results["errors"].append(
-                                    f"Error deleting Keycloak client for {deployment_name}: {e}"
-                                )
-                                logger.exception(f"Error deleting Keycloak client for {deployment_name}: {e}")
-
-                        # After deleting all clients in this cluster, cleanup the realm
-                        logger.info(f"Cleaning up project realm {realm_name} for cluster {cluster}")
-                        await self._cleanup_project_keycloak_realm(
-                            project_name=project_name,
-                            cluster=cluster,
-                            kc_config=kc_config,
-                            deletion_results=deletion_results,
-                        )
-
-                    else:
-                        # No realm config - might be old deployment using default realm
-                        logger.info(
-                            f"No project realm found for cluster {cluster}, trying default realm for backwards compatibility"
-                        )
-
-                        keycloak = await create_keycloak_connector()
-
-                        for deployment in cluster_deployments:
-                            deployment_name = deployment.get("name")
-
-                            try:
-                                delete_success = await keycloak.delete_deployment_client(
-                                    deployment_name=deployment_name,
-                                    project_name=project_name,
-                                    realm_name=settings.KEYCLOAK_DEFAULT_REALM,
-                                )
-
-                                if delete_success:
-                                    deletion_results["operations"].append(
-                                        {
-                                            "type": "keycloak_client_deletion",
-                                            "target": f"{project_name}-{deployment_name}",
-                                            "deployment": deployment_name,
-                                            "status": "success",
-                                        }
-                                    )
-
-                            except Exception as e:
-                                logger.warning(f"Failed to delete legacy client for {deployment_name}: {e}")
-
-                except Exception as e:
-                    logger.error(f"Error during Keycloak cleanup for cluster {cluster}: {e}")
-                    deletion_results["errors"].append(f"Keycloak cleanup for cluster {cluster}: {e}")
-
-            # Step 4: Delete project YAML file from projects repository
-            try:
-                # Delete file using filesystem operations
-                await git_connector.ensure_repo_cloned()
-                file_full_path = os.path.join(await git_connector.get_working_dir(), project_file_path)
-                if os.path.exists(file_full_path):
-                    os.remove(file_full_path)
-                    delete_result = True
-                else:
-                    delete_result = False
-                if delete_result:
-                    deletion_results["operations"].append(
-                        {"type": "project_file_deletion", "target": project_file_path, "status": "success"}
-                    )
-                    logger.info(f"Successfully deleted project file: {project_file_path}")
-                else:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "project_file_deletion",
-                            "target": project_file_path,
-                            "status": "failed",
-                            "error": "Git delete operation failed",
-                        }
-                    )
-                    deletion_results["errors"].append(f"Failed to delete project file {project_file_path}")
-
-            except Exception as e:
-                deletion_results["operations"].append(
-                    {"type": "project_file_deletion", "target": project_file_path, "status": "error", "error": str(e)}
-                )
-                deletion_results["errors"].append(f"Error deleting project file: {e}")
-                logger.exception(f"Error deleting project file: {e}")
-
-            # Step 5: Commit changes to GitOps repository
-            successful_gitops_deletions = [
-                op
-                for op in deletion_results["operations"]
-                if op["type"] == "gitops_folder_deletion" and op["status"] == "success"
-            ]
-            logger.info(f"Found {len(successful_gitops_deletions)} successful GitOps folder deletions")
-
-            if successful_gitops_deletions:
-                try:
-                    commit_message = f"Delete project '{project_name}' - removed GitOps resources"
-                    # Use atomic operation: commit and push all staged deletions
-                    await gitops_connector.commit_and_push(commit_message)
-
-                    deletion_results["operations"].append(
-                        {"type": "gitops_commit", "status": "success", "message": commit_message}
-                    )
-
-                    # Refresh user-applications to make ArgoCD aware of the deleted resources
-                    try:
-                        argo_connector = create_argo_connector()
-                        refresh_success = await argo_connector.refresh_application("user-applications")
-                        if refresh_success:
-                            deletion_results["operations"].append(
-                                {"type": "argocd_refresh", "target": "user-applications", "status": "success"}
-                            )
-                            logger.info("Successfully refreshed user-applications after GitOps deletion")
-                        else:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "argocd_refresh",
-                                    "target": "user-applications",
-                                    "status": "failed",
-                                    "error": "Failed to refresh user-applications",
-                                }
-                            )
-                            logger.warning("Failed to refresh user-applications - continuing anyway")
-                    except Exception as refresh_error:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "argocd_refresh",
-                                "target": "user-applications",
-                                "status": "error",
-                                "error": str(refresh_error),
-                            }
-                        )
-                        logger.warning(f"Error refreshing user-applications: {refresh_error} - continuing anyway")
-
-                        # Step 5.5: Wait for ArgoCD applications to be deleted (triggered by GitOps manifest removal)
-                        # This should happen regardless of refresh success/failure
-                        try:
-                            for deployment in deployments:
-                                deployment_name = deployment.get("name")
-                                cluster = deployment.get("cluster")
-                                app_name = generate_argocd_application_name(project_name, deployment_name)
-
-                                try:
-                                    # Check if application exists and wait for it to be deleted
-                                    app_exists = await argo_connector.application_exists(app_name)
-                                    if app_exists:
-                                        logger.info(
-                                            f"Waiting for ArgoCD application {app_name} to be deleted via GitOps"
-                                        )
-                                        deletion_complete = await argo_connector.wait_for_application_deletion(
-                                            app_name, max_retries=5
-                                        )
-
-                                        if deletion_complete:
-                                            deletion_results["operations"].append(
-                                                {
-                                                    "type": "argocd_app_gitops_deletion",
-                                                    "target": app_name,
-                                                    "cluster": cluster,
-                                                    "deployment": deployment_name,
-                                                    "status": "success",
-                                                }
-                                            )
-                                            logger.info(
-                                                f"ArgoCD application {app_name} successfully deleted via GitOps"
-                                            )
-                                        else:
-                                            deletion_results["operations"].append(
-                                                {
-                                                    "type": "argocd_app_gitops_deletion",
-                                                    "target": app_name,
-                                                    "cluster": cluster,
-                                                    "deployment": deployment_name,
-                                                    "status": "timeout",
-                                                    "error": "Application deletion via GitOps timed out after 5 retries",
-                                                }
-                                            )
-                                            logger.warning(
-                                                f"ArgoCD application {app_name} deletion timed out - continuing anyway"
-                                            )
-                                    else:
-                                        deletion_results["operations"].append(
-                                            {
-                                                "type": "argocd_app_gitops_deletion",
-                                                "target": app_name,
-                                                "cluster": cluster,
-                                                "deployment": deployment_name,
-                                                "status": "not_found",
-                                            }
-                                        )
-                                        logger.info(
-                                            f"ArgoCD application {app_name} was not found (already deleted or never existed)"
-                                        )
-                                except Exception as e:
-                                    deletion_results["operations"].append(
-                                        {
-                                            "type": "argocd_app_gitops_deletion",
-                                            "target": app_name,
-                                            "cluster": cluster,
-                                            "deployment": deployment_name,
-                                            "status": "error",
-                                            "error": str(e),
-                                        }
-                                    )
-                                    logger.exception(f"Error monitoring ArgoCD application deletion: {e}")
-                        except Exception as argo_error:
-                            deletion_results["errors"].append(
-                                f"Error creating ArgoCD connector for monitoring: {argo_error}"
-                            )
-                            logger.exception(f"Error creating ArgoCD connector for monitoring: {argo_error}")
-                    else:
-                        deletion_results["operations"].append(
-                            {"type": "gitops_commit", "status": "failed", "error": "Failed to commit GitOps changes"}
-                        )
-                        deletion_results["errors"].append("Failed to commit GitOps changes")
-                except Exception as e:
-                    deletion_results["operations"].append({"type": "gitops_commit", "status": "error", "error": str(e)})
-                    deletion_results["errors"].append(f"Error committing GitOps changes: {e}")
-
-            # Step 6: Commit changes to projects repository
-            try:
-                commit_message = f"Delete project '{project_name}'"
-                commit_result = await git_connector.commit_and_push_changes(commit_message)
-                if commit_result:
-                    deletion_results["operations"].append(
-                        {"type": "project_commit", "status": "success", "message": commit_message}
-                    )
-                else:
-                    deletion_results["operations"].append(
-                        {"type": "project_commit", "status": "failed", "error": "Failed to commit project changes"}
-                    )
-                    deletion_results["errors"].append("Failed to commit project changes")
-            except Exception as e:
-                deletion_results["operations"].append({"type": "project_commit", "status": "error", "error": str(e)})
-                deletion_results["errors"].append(f"Error committing project changes: {e}")
-
-            # Step 7: Delete Kubernetes namespaces LAST (after ArgoCD applications are removed to avoid finalizer issues)
-            for deployment in deployments:
-                deployment_name = deployment.get("name")
-                cluster = deployment.get("cluster")
-                base_namespace = deployment.get("namespace", project_name)
-                namespace = get_prefixed_namespace(cluster, base_namespace)
-
-                try:
-                    # Delete namespace if it exists
-                    namespace_exists = await self._kubectl_connector.namespace_exists(namespace)
-                    if namespace_exists:
-                        # Use kubectl command to delete namespace
-                        _, _, returncode = await self._kubectl_connector._run_kubectl_command(
-                            ["delete", "namespace", namespace, "--ignore-not-found=true"]
-                        )
-                        delete_result = returncode == 0
-                        if delete_result:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "namespace_deletion",
-                                    "target": namespace,
-                                    "cluster": cluster,
-                                    "deployment": deployment_name,
-                                    "status": "success",
-                                }
-                            )
-                            logger.info(f"Successfully deleted namespace: {namespace}")
-                        else:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "namespace_deletion",
-                                    "target": namespace,
-                                    "cluster": cluster,
-                                    "deployment": deployment_name,
-                                    "status": "failed",
-                                    "error": "Kubectl delete operation failed",
-                                }
-                            )
-                            deletion_results["errors"].append(f"Failed to delete namespace {namespace}")
-                    else:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "namespace_deletion",
-                                "target": namespace,
-                                "cluster": cluster,
-                                "deployment": deployment_name,
-                                "status": "not_found",
-                            }
-                        )
-
-                except Exception as e:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "namespace_deletion",
-                            "target": namespace,
-                            "cluster": cluster,
-                            "deployment": deployment_name,
-                            "status": "error",
-                            "error": str(e),
-                        }
-                    )
-                    deletion_results["errors"].append(f"Error deleting namespace {namespace}: {e}")
-                    logger.exception(f"Error deleting namespace {namespace}: {e}")
-
-            # Determine overall success
-            deletion_results["success"] = len(deletion_results["errors"]) == 0
-
-            return deletion_results
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Critical error during project deletion for {project_name}: {e}")
-            raise HTTPException(status_code=500, detail=f"Critical error during project deletion: {e!s}")
-        finally:
-            # Clean up GitConnectors
-            if git_connector:
-                try:
-                    await git_connector.close()
-                except Exception as e:
-                    logger.exception(f"Error closing git connector: {e}")
-            if gitops_connector:
-                try:
-                    await gitops_connector.close()
-                except Exception as e:
-                    logger.exception(f"Error closing gitops connector: {e}")
-
-    async def delete_project_with_deployment_cleanup(self, project_name: str) -> dict[str, Any]:
-        """
-        Delete a project by first deleting all deployments on the current cluster.
-
-        This method implements the deployment-aware deletion logic:
-        1. Delete all deployments on the current cluster using the deployment delete method
-        2. Validate that no deployments remain on other clusters
-        3. Only delete the project file itself if no deployments are left anywhere
-
-        Args:
-            project_name: Name of the project to delete
-
-        Returns:
-            Dictionary containing deletion results and status
-
-        Raises:
-            HTTPException: If critical operations fail or deployments exist on other clusters
-        """
-        deletion_results = {
-            "project": project_name,
-            "operations": [],
-            "success": True,
-            "errors": [],
-            "deployment_deletions": {},
-            "remaining_deployments": [],
-        }
-
-        # TODO: maybe this should be done differently!!!
-        self._project_file_relative_path = f"projects/{project_name}.yaml"
-
-        try:
-            # Step 1: Read project configuration to understand what deployments exist
-            # Use get_contents() method to read project data
-            project_data = await self.get_contents()
-            deployments = project_data.get("deployments", [])
-
-            # Step 2: Separate deployments by cluster
-            current_cluster = settings.CLUSTER_MANAGER
-            current_cluster_deployments = []
-            other_cluster_deployments = []
-
-            for deployment in deployments:
-                deployment_cluster = deployment.get("cluster")
-                if deployment_cluster == current_cluster:
-                    current_cluster_deployments.append(deployment)
-                else:
-                    other_cluster_deployments.append(deployment)
-
-            logger.info(
-                f"Project {project_name} has {len(current_cluster_deployments)} deployments on current cluster '{current_cluster}' "
-                f"and {len(other_cluster_deployments)} deployments on other clusters"
-            )
-
-            # Step 3: Check if there are deployments on other clusters
-            if other_cluster_deployments:
-                other_clusters = {dep.get("cluster") for dep in other_cluster_deployments}
-                deletion_results["remaining_deployments"] = [
-                    {"name": dep.get("name"), "cluster": dep.get("cluster")} for dep in other_cluster_deployments
-                ]
-                deletion_results["success"] = False
-                deletion_results["errors"].append(
-                    f"Cannot delete project '{project_name}' because it has deployments on other clusters: {', '.join(other_clusters)}. "
-                    f"Please delete those deployments first or switch to the appropriate cluster manager."
-                )
-
-                deletion_results["operations"].append(
-                    {
-                        "type": "project_deletion_validation",
-                        "status": "blocked",
-                        "reason": "deployments_on_other_clusters",
-                        "other_clusters": list(other_clusters),
-                        "remaining_deployments": deletion_results["remaining_deployments"],
-                    }
-                )
-
-                logger.warning(
-                    f"Project deletion blocked - {project_name} has deployments on other clusters: {other_clusters}"
-                )
-                return deletion_results
-
-            # Step 4: Delete all deployments on the current cluster
-            for deployment in current_cluster_deployments:
-                deployment_name = deployment.get("name")
-                logger.info(f"Deleting deployment {deployment_name} from project {project_name}")
-
-                try:
-                    deployment_deletion_result = await self.delete_deployment(project_name, deployment_name)
-                    deletion_results["deployment_deletions"][deployment_name] = deployment_deletion_result
-                    deletion_results["operations"].extend(deployment_deletion_result["operations"])
-
-                    if deployment_deletion_result["success"]:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "deployment_deletion",
-                                "deployment": deployment_name,
-                                "cluster": current_cluster,
-                                "status": "success",
-                            }
-                        )
-                        logger.info(f"Successfully deleted deployment {deployment_name}")
-                    else:
-                        deletion_results["errors"].extend(deployment_deletion_result["errors"])
-                        deletion_results["operations"].append(
-                            {
-                                "type": "deployment_deletion",
-                                "deployment": deployment_name,
-                                "cluster": current_cluster,
-                                "status": "failed",
-                                "errors": deployment_deletion_result["errors"],
-                            }
-                        )
-                        deletion_results["success"] = False
-                        logger.error(
-                            f"Failed to delete deployment {deployment_name}: {deployment_deletion_result['errors']}"
-                        )
-
-                except Exception as e:
-                    error_msg = f"Error deleting deployment {deployment_name}: {e}"
-                    deletion_results["errors"].append(error_msg)
-                    deletion_results["operations"].append(
-                        {
-                            "type": "deployment_deletion",
-                            "deployment": deployment_name,
-                            "cluster": current_cluster,
-                            "status": "error",
-                            "error": str(e),
-                        }
-                    )
-                    deletion_results["success"] = False
-                    logger.exception(error_msg)
-
-            # Step 5: Only delete the project file if all deployment deletions succeeded
-            if deletion_results["success"] and len(current_cluster_deployments) > 0:
-                logger.info(f"All deployments deleted successfully, now deleting project file for {project_name}")
-
-                commit_message = f"Delete project '{project_name}' - removed project file after deployment cleanup"
-                delete_result = await self._delete_project_file(project_name, commit_message)
-
-                deletion_results["operations"].extend(delete_result["operations"])
-                deletion_results["errors"].extend(delete_result["errors"])
-                if not delete_result["success"]:
-                    deletion_results["success"] = False
-
-            elif len(current_cluster_deployments) == 0:
-                # No deployments on current cluster, but we still need to check if project should be deleted
-                logger.info(f"No deployments found on current cluster '{current_cluster}' for project {project_name}")
-                deletion_results["operations"].append(
-                    {
-                        "type": "project_status_check",
-                        "status": "no_deployments_on_current_cluster",
-                        "message": f"Project has no deployments on current cluster '{current_cluster}'",
-                    }
-                )
-
-                # Since we already checked other clusters above and would have returned if any existed,
-                # we can safely delete the project file
-                commit_message = f"Delete project '{project_name}' - no deployments remaining"
-                delete_result = await self._delete_project_file(project_name, commit_message)
-
-                deletion_results["operations"].extend(delete_result["operations"])
-                deletion_results["errors"].extend(delete_result["errors"])
-                if not delete_result["success"]:
-                    deletion_results["success"] = False
-
-            # Final step: Remove project from in-memory database if deletion was successful
-            if deletion_results["success"]:
-                try:
-                    project_service = get_project_service()
-                    removed = project_service.remove_project(project_name)
-                    if removed:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "in_memory_cleanup",
-                                "target": f"project '{project_name}'",
-                                "status": "success",
-                                "message": "Removed project from in-memory database",
-                            }
-                        )
-                        logger.info(f"Successfully removed project '{project_name}' from in-memory database")
-                    else:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "in_memory_cleanup",
-                                "target": f"project '{project_name}'",
-                                "status": "not_found",
-                                "message": "Project not found in in-memory database",
-                            }
-                        )
-                        logger.info(f"Project '{project_name}' was not found in in-memory database")
-                except Exception as e:
-                    error_msg = f"Error removing project from in-memory database: {e}"
-                    deletion_results["errors"].append(error_msg)
-                    deletion_results["operations"].append(
-                        {"type": "in_memory_cleanup", "status": "error", "error": str(e)}
-                    )
-                    # Don't mark overall deletion as failed since this is a cleanup step
-                    logger.warning(error_msg)
-
-            return deletion_results
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            deletion_results["success"] = False
-            deletion_results["errors"].append(f"Unexpected error during project deletion: {e}")
-            logger.exception(f"Unexpected error during project deletion for {project_name}: {e}")
-            return deletion_results
-
-    async def _delete_project_file(self, project_name: str, commit_message: str) -> dict[str, Any]:
-        """
-        Delete the project file from the git repository.
-
-        Args:
-            project_name: Name of the project to delete
-            commit_message: Commit message for the deletion
-
-        Returns:
-            Dictionary containing operation result
-        """
-        result = {"success": True, "operations": [], "errors": []}
-
-        try:
-            git_connector = await self.get_git_connector_for_project_files()
-            project_file_path = f"projects/{project_name}.yaml"
-
-            await git_connector.ensure_repo_cloned()
-            project_file_exists = await git_connector.file_exists(project_file_path)
-
-            if project_file_exists:
-                await git_connector.delete_file(project_file_path)
-                commit_result = await git_connector.commit_and_push_changes(commit_message)
-
-                if commit_result:
-                    result["operations"].append(
-                        {
-                            "type": "project_file_deletion",
-                            "target": project_file_path,
-                            "status": "success",
-                            "message": commit_message,
-                        }
-                    )
-                    logger.info(f"Successfully deleted project file: {project_file_path}")
-                else:
-                    result["operations"].append(
-                        {
-                            "type": "project_file_commit",
-                            "status": "failed",
-                            "error": "Failed to commit project file deletion",
-                        }
-                    )
-                    result["errors"].append("Failed to commit project file deletion")
-                    result["success"] = False
-            else:
-                result["operations"].append(
-                    {"type": "project_file_deletion", "target": project_file_path, "status": "not_found"}
-                )
-                logger.info(f"Project file {project_file_path} not found (may have been already deleted)")
-
-        except Exception as e:
-            error_msg = f"Error deleting project file: {e}"
-            result["errors"].append(error_msg)
-            result["operations"].append({"type": "project_file_deletion", "status": "error", "error": str(e)})
-            result["success"] = False
-            logger.exception(error_msg)
-
-        return result
-
-    async def delete_deployment(self, project_name: str, deployment_name: str) -> dict[str, Any]:
-        """
-        Delete all resources associated with a specific deployment.
-
-        This function orchestrates the deletion of:
-        1. Service resources (Keycloak clients, database resources, MinIO resources)
-        2. Application manifests from git repositories
-        3. ArgoCD applications
-        4. Kubernetes namespace (last, after ArgoCD cleanup)
-
-        Args:
-            project_name: Name of the project
-            deployment_name: Name of the deployment to delete
-
-        Returns:
-            Dictionary containing deletion results and status
-
-        Raises:
-            HTTPException: If critical operations fail
-        """
-
-        deletion_results = {
-            "project": project_name,
-            "deployment": deployment_name,
-            "operations": [],
-            "success": True,
-            "errors": [],
-            "service_results": {},
-        }
-
-        # TODO: maybe this should be done differently
-        self._project_file_relative_path = f"projects/{project_name}.yaml"
-
-        try:
-            # Step 1: Read project configuration to understand what needs to be deleted
-            git_connector = await self.get_git_connector_for_project_files()
-            await git_connector.ensure_repo_cloned()
-
-            project_data = await self.get_contents()
-
-            # Find the specific deployment
-            deployment = None
-            for dep in project_data.get("deployments", []):
-                if dep.get("name") == deployment_name:
-                    deployment = dep
-                    break
-
-            if not deployment:
-                raise HTTPException(
-                    status_code=404, detail=f"Deployment '{deployment_name}' not found in project '{project_name}'"
-                )
-
-            logger.info(f"Starting deployment deletion for {project_name}/{deployment_name}")
-
-            # Step 2: Delete service resources (bottom-up approach)
-            logger.info(f"Deleting service resources for {project_name}/{deployment_name}")
-
-            # Delete Keycloak resources
-            keycloak_results = await self._keycloak_manager.delete_resources_for_deployment(project_data, deployment)
-            deletion_results["service_results"]["keycloak"] = keycloak_results
-            deletion_results["operations"].extend(keycloak_results["operations"])
-            if keycloak_results["errors"]:
-                deletion_results["errors"].extend(keycloak_results["errors"])
-
-            # Delete database resources
-            database_results = await self._database_manager.delete_resources_for_deployment(project_data, deployment)
-            deletion_results["service_results"]["database"] = database_results
-            deletion_results["operations"].extend(database_results["operations"])
-            if database_results["errors"]:
-                deletion_results["errors"].extend(database_results["errors"])
-
-            # Delete MinIO resources
-            minio_results = await self._minio_manager.delete_resources_for_deployment(project_data, deployment)
-            deletion_results["service_results"]["minio"] = minio_results
-            deletion_results["operations"].extend(minio_results["operations"])
-            if minio_results["errors"]:
-                deletion_results["errors"].extend(minio_results["errors"])
-
-            # Step 3: Delete deployment folders from git repositories
-            logger.info(f"Deleting deployment manifests for {project_name}/{deployment_name}")
-
-            repository_name = deployment.get("repository")
-            cluster = deployment.get("cluster")
-
-            if repository_name and cluster:
-                try:
-                    # Find repository configuration
-                    repositories = project_data.get("repositories", [])
-                    repo_config = None
-                    for repo in repositories:
-                        if repo.get("name") == repository_name:
-                            repo_config = repo
-                            break
-
-                    if repo_config:
-                        manifest_connector = await self.get_git_connector_for_deployment(repository_name, repo_config)
-
-                        # Delete entire deployment folder using naming utility
-                        repo_path = repo_config.get("path", "")
-                        deployment_folder_path = generate_deployment_manifest_path(
-                            cluster, project_name, deployment_name, repo_path
-                        )
-                        logger.info(f"Attempting to delete deployment folder: {deployment_folder_path}")
-
-                        await manifest_connector.ensure_repo_cloned()
-                        folder_full_path = os.path.join(
-                            await manifest_connector.get_working_dir(), deployment_folder_path
-                        )
-                        folder_exists = os.path.exists(folder_full_path)
-
-                        if folder_exists:
-                            # Delete entire deployment directory
-                            shutil.rmtree(folder_full_path)
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "deployment_folder_deletion",
-                                    "target": deployment_folder_path,
-                                    "repository": repository_name,
-                                    "cluster": cluster,
-                                    "status": "success",
-                                }
-                            )
-                            logger.info(f"Successfully deleted deployment folder: {deployment_folder_path}")
-
-                            # Commit changes to manifest repository
-                            commit_message = f"Delete deployment '{deployment_name}' from project '{project_name}'"
-                            commit_result = await manifest_connector.commit_and_push_changes(commit_message)
-                            if commit_result:
-                                deletion_results["operations"].append(
-                                    {
-                                        "type": "manifest_repo_commit",
-                                        "repository": repository_name,
-                                        "status": "success",
-                                        "message": commit_message,
-                                    }
-                                )
-                                logger.info(f"Successfully committed deployment deletion to {repository_name}")
-                            else:
-                                deletion_results["errors"].append(
-                                    f"Failed to commit deployment changes to {repository_name}"
-                                )
-                        else:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "deployment_folder_deletion",
-                                    "target": deployment_folder_path,
-                                    "repository": repository_name,
-                                    "cluster": cluster,
-                                    "status": "not_found",
-                                }
-                            )
-                            logger.info(f"Deployment folder not found: {deployment_folder_path}")
-
-                except Exception as e:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "deployment_folder_deletion",
-                            "repository": repository_name,
-                            "status": "error",
-                            "error": str(e),
-                        }
-                    )
-                    deletion_results["errors"].append(f"Error deleting deployment folder from {repository_name}: {e}")
-                    logger.exception(f"Error deleting deployment folder: {e}")
-
-            # Step 4: Delete ArgoCD application file from GitOps
-            logger.info(f"Deleting ArgoCD application file for {project_name}/{deployment_name}")
-
-            try:
-                gitops_connector = await self.get_git_connector_for_argocd()
-
-                argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
-                logger.info(f"Attempting to delete ArgoCD application file: {argocd_app_file_path}")
-
-                await gitops_connector.ensure_repo_cloned()
-                file_full_path = os.path.join(await gitops_connector.get_working_dir(), argocd_app_file_path)
-                file_exists = os.path.exists(file_full_path)
-
-                if file_exists:
-                    os.remove(file_full_path)
-                    deletion_results["operations"].append(
-                        {
-                            "type": "argocd_application_file_deletion",
-                            "target": argocd_app_file_path,
-                            "cluster": cluster,
-                            "deployment": deployment_name,
-                            "status": "success",
-                        }
-                    )
-                    logger.info(f"Successfully deleted ArgoCD application file: {argocd_app_file_path}")
-                else:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "argocd_application_file_deletion",
-                            "target": argocd_app_file_path,
-                            "cluster": cluster,
-                            "deployment": deployment_name,
-                            "status": "not_found",
-                        }
-                    )
-
-                # Rebuild kustomization file (always, regardless of whether file existed)
-                logger.info(f"Rebuilding kustomization.yaml for project {project_name} in cluster {cluster}")
-                working_dir = await gitops_connector.get_working_dir()
-                project_dir = os.path.join(working_dir, cluster, project_name)
-
-                kustomization_success = self._manifest_generator.create_kustomization_files(
-                    output_dir=project_dir,
-                    namespace=get_argo_namespace(cluster),
-                )
-
-                if kustomization_success:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "kustomization_rebuild",
-                            "target": project_dir,
-                            "cluster": cluster,
-                            "status": "success",
-                        }
-                    )
-                    logger.info(f"Successfully rebuilt kustomization.yaml for project {project_name}")
-                else:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "kustomization_rebuild",
-                            "target": project_dir,
-                            "cluster": cluster,
-                            "status": "failed",
-                        }
-                    )
-                    logger.error(f"Failed to rebuild kustomization.yaml for project {project_name}")
-
-                # Commit changes to GitOps repository
-                commit_message = f"Delete ArgoCD application for deployment '{deployment_name}' from project '{project_name}' and rebuild kustomization"
-                await gitops_connector.commit_and_push(commit_message)
-                deletion_results["operations"].append(
-                    {"type": "gitops_commit", "status": "success", "message": commit_message}
-                )
-
-            except Exception as e:
-                argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
-                deletion_results["operations"].append(
-                    {
-                        "type": "argocd_application_file_deletion",
-                        "target": argocd_app_file_path,
-                        "cluster": cluster,
-                        "deployment": deployment_name,
-                        "status": "error",
-                        "error": str(e),
-                    }
-                )
-                deletion_results["errors"].append(f"Error deleting ArgoCD application file: {e}")
-                logger.exception(f"Error deleting ArgoCD application file: {e}")
-
-            # Step 4.1: Delete ArgoCD AppProject file (only if no other deployments use the same namespace)
-            current_base_namespace = deployment.get("namespace")
-            namespace_used_by_others = any(
-                other_dep.get("name") != deployment_name
-                and other_dep.get("cluster") == cluster
-                and other_dep.get("namespace") == current_base_namespace
-                for other_dep in project_data.get("deployments", [])
-            )
-
-            if not namespace_used_by_others:
-                # Delete AppProject file
-                appproject_name = generate_argocd_appproject_prefix(project_name, current_base_namespace)
-                appproject_filename = get_output_filename_from_template("argocd-appproject.yaml.jinja", appproject_name)
-                appproject_file_path = os.path.join(
-                    await gitops_connector.get_working_dir(), cluster, project_name, appproject_filename
-                )
-                if os.path.exists(appproject_file_path):
-                    os.remove(appproject_file_path)
-                    logger.info(f"Deleted AppProject file: {appproject_filename}")
-
-            # Step 4.2: Delete Repository Secret files (only if no other deployments use the same repository)
-            current_repo = deployment.get("repository")
-            if current_repo:
-                repo_used_by_others = any(
-                    other_dep.get("name") != deployment_name and other_dep.get("repository") == current_repo
-                    for other_dep in project_data.get("deployments", [])
-                )
-
-                if not repo_used_by_others:
-                    # Delete repository secret files
-                    unique_repo_name = f"{project_name}-{current_repo}"
-                    for template in ["argo-repository-https.yaml.jinja", "argo-repository.yaml.jinja"]:
-                        filename = get_output_filename_from_template(template, unique_repo_name)
-                        file_path = os.path.join(
-                            await gitops_connector.get_working_dir(), cluster, project_name, filename
-                        )
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                            logger.info(f"Deleted repository file: {filename}")
-
-            # Step 4.5: Refresh user-applications to make ArgoCD aware of the deleted resources
-            try:
-                argo_connector = create_argo_connector()
-                refresh_success = await argo_connector.refresh_application("user-applications")
-                if refresh_success:
-                    deletion_results["operations"].append(
-                        {"type": "argocd_refresh", "target": "user-applications", "status": "success"}
-                    )
-                    logger.info("Successfully refreshed user-applications after GitOps deletion")
-                else:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "argocd_refresh",
-                            "target": "user-applications",
-                            "status": "failed",
-                            "error": "Failed to refresh user-applications",
-                        }
-                    )
-                    logger.warning("Failed to refresh user-applications - continuing anyway")
-            except Exception as refresh_error:
-                deletion_results["operations"].append(
-                    {
-                        "type": "argocd_refresh",
-                        "target": "user-applications",
-                        "status": "error",
-                        "error": str(refresh_error),
-                    }
-                )
-                logger.warning(f"Error refreshing user-applications: {refresh_error} - continuing anyway")
-
-            # Step 5: Wait for ArgoCD application deletion (triggered by GitOps manifest removal)
-            try:
-                from opi.utils.naming import generate_argocd_application_name
-
-                app_name = generate_argocd_application_name(project_name, deployment_name)
-
-                app_exists = await argo_connector.application_exists(app_name)
-                if app_exists:
-                    logger.info(f"Waiting for ArgoCD application {app_name} to be deleted via GitOps")
-                    deletion_complete = await argo_connector.wait_for_application_deletion(app_name, max_retries=20)
-
-                    if deletion_complete:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "argocd_app_gitops_deletion",
-                                "target": app_name,
-                                "cluster": cluster,
-                                "deployment": deployment_name,
-                                "status": "success",
-                            }
-                        )
-                        logger.info(f"ArgoCD application {app_name} successfully deleted via GitOps")
-                    else:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "argocd_app_gitops_deletion",
-                                "target": app_name,
-                                "cluster": cluster,
-                                "deployment": deployment_name,
-                                "status": "timeout",
-                                "error": "Application deletion via GitOps timed out after 5 retries",
-                            }
-                        )
-                        logger.warning(f"ArgoCD application {app_name} deletion timed out - continuing anyway")
-                else:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "argocd_app_gitops_deletion",
-                            "target": app_name,
-                            "cluster": cluster,
-                            "deployment": deployment_name,
-                            "status": "not_found",
-                        }
-                    )
-                    logger.info(f"ArgoCD application {app_name} was not found (already deleted or never existed)")
-
-            except Exception as e:
-                deletion_results["operations"].append(
-                    {
-                        "type": "argocd_app_gitops_deletion",
-                        "target": generate_argocd_application_name(project_name, deployment_name),
-                        "cluster": cluster,
-                        "deployment": deployment_name,
-                        "status": "error",
-                        "error": str(e),
-                    }
-                )
-                logger.exception(f"Error monitoring ArgoCD application deletion: {e}")
-
-            # Step 6: Delete Kubernetes namespace (only if no other deployments use the same namespace)
-            try:
-                base_namespace = deployment.get("namespace", project_name)
-                namespace = get_prefixed_namespace(cluster, base_namespace)
-
-                # Check if any other deployment uses the same namespace
-                namespace_used_by_others = any(
-                    other_dep.get("name") != deployment_name
-                    and other_dep.get("cluster") == cluster
-                    and other_dep.get("namespace") == base_namespace
-                    for other_dep in project_data.get("deployments", [])
-                )
-
-                if not namespace_used_by_others:
-                    logger.info(f"Deleting Kubernetes namespace: {namespace}")
-                    namespace_deleted = await self._kubectl_connector.delete_namespace(namespace)
-
-                    if namespace_deleted:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "namespace_deletion",
-                                "target": namespace,
-                                "cluster": cluster,
-                                "deployment": deployment_name,
-                                "status": "success",
-                            }
-                        )
-                        logger.info(f"Successfully deleted namespace: {namespace}")
-                    else:
-                        deletion_results["operations"].append(
-                            {
-                                "type": "namespace_deletion",
-                                "target": namespace,
-                                "cluster": cluster,
-                                "deployment": deployment_name,
-                                "status": "not_found",
-                            }
-                        )
-                        logger.info(f"Namespace {namespace} was not found (already deleted)")
-                else:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "namespace_deletion",
-                            "target": namespace,
-                            "cluster": cluster,
-                            "deployment": deployment_name,
-                            "status": "skipped",
-                            "reason": "Namespace still used by other deployments",
-                        }
-                    )
-                    logger.info(f"Skipping namespace deletion - namespace {namespace} still used by other deployments")
-
-            except Exception as e:
-                deletion_results["operations"].append(
-                    {
-                        "type": "namespace_deletion",
-                        "target": namespace,
-                        "cluster": cluster,
-                        "deployment": deployment_name,
-                        "status": "error",
-                        "error": str(e),
-                    }
-                )
-                deletion_results["errors"].append(f"Error deleting namespace {namespace}: {e}")
-                logger.exception(f"Error deleting namespace {namespace}: {e}")
-
-            # Step 7: Remove deployment from project file
-            try:
-                logger.info(f"Removing deployment '{deployment_name}' from project file for project '{project_name}'")
-
-                # Get current project data
-                current_project_data = await self.get_contents()
-
-                # Remove the deployment by matching name
-                updated_deployments = [
-                    dep for dep in current_project_data.get("deployments", []) if dep.get("name") != deployment_name
-                ]
-                current_project_data["deployments"] = updated_deployments
-
-                # Save the updated project data (cached data is already modified)
-                await self.save_project_data()
-
-                # Commit and push the changes
-                git_connector = await self.get_git_connector_for_project_files()
-                await git_connector.commit_and_push(
-                    f"Delete deployment '{deployment_name}' from project {project_name}"
-                )
-
-                deletion_results["operations"].append(
-                    {
-                        "type": "project_file_update",
-                        "target": f"deployment '{deployment_name}'",
-                        "action": "removed_from_project_file",
-                        "status": "success",
-                    }
-                )
-                logger.info(
-                    f"Successfully removed deployment '{deployment_name}' from project file and committed changes"
-                )
-
-            except Exception as e:
-                deletion_results["operations"].append(
-                    {
-                        "type": "project_file_update",
-                        "target": f"deployment '{deployment_name}'",
-                        "action": "removed_from_project_file",
-                        "status": "error",
-                        "error": str(e),
-                    }
-                )
-                deletion_results["errors"].append(f"Error removing deployment from project file: {e}")
-                logger.exception(f"Error removing deployment '{deployment_name}' from project file: {e}")
-
-            # Update success status based on errors
-            deletion_results["success"] = len(deletion_results["errors"]) == 0
-
-            logger.info(
-                f"Deployment deletion completed for {project_name}/{deployment_name} - Success: {deletion_results['success']}"
-            )
-            return deletion_results
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            deletion_results["success"] = False
-            deletion_results["errors"].append(f"Critical error during deployment deletion: {e}")
-            logger.exception(f"Critical error during deployment deletion for {project_name}/{deployment_name}: {e}")
-            raise HTTPException(status_code=500, detail=f"Critical error during deployment deletion: {e!s}")
-        finally:
-            await self.close()
-
-    async def update_image(self, deployment_name: str, component_name: str, new_image_url: str) -> dict[str, Any]:
-        """
-        Validate, update component image, commit changes, and trigger project processing.
-
-        Args:
-            project_name: Name of the project
-            component_name: Name of the component to update
-            deployment_name: Name of the deployment to update
-            new_image_url: New image URL to set
-
-        Returns:
-            Dictionary containing update results and status
-
-        Raises:
-            HTTPException: If validation fails or update fails
-        """
-
-        try:
-            # Construct JSON path to the target image field
-            json_path = (
-                f"deployments[?(@.name=='{deployment_name}')].components[?(@.reference=='{component_name}')].image"
-            )
-
-            # Get current image value using JSON path
-            current_image = await self.find_value_by_jsonpath(json_path)
-            if current_image is None:
-                raise HTTPException(
-                    status_code=404, detail=f"Component '{component_name}' in deployment '{deployment_name}' not found"
-                )
-
-            # Check if image is actually changing
-            if current_image == new_image_url:
-                return {
-                    "status": "no_change",
-                    "message": f"Image is already set to '{new_image_url}'",
-                    "current_image": current_image,
-                    "new_image": new_image_url,
-                }
-
-            # Actually perform the update using the fast image update method
-            update_success = await self.update_component_image_fast(component_name, deployment_name, new_image_url)
-
-            if not update_success:
-                raise HTTPException(status_code=500, detail=f"Failed to update image for component '{component_name}'")
-
-            return {
-                "status": "updated",
-                "message": f"Successfully updated '{current_image}' to '{new_image_url}' and triggered deployment refresh",
-                "current_image": current_image,
-                "new_image": new_image_url,
-                "json_path": json_path,
-                "actions_performed": {
-                    "yaml_updated": True,
-                    "git_committed": True,
-                    "deployment_manifest_updated": True,
-                    "argocd_refreshed": True,
-                },
-            }
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Error updating image for {project_name}: {e}")
-            raise HTTPException(status_code=500, detail=f"Error updating image: {e!s}")
-
-    async def update_component_image(
-        self, project_name: str, component_name: str, deployment_name: str, new_image_url: str
-    ) -> bool:
-        """
-        Update a component's image in a project and trigger processing.
-
-        Args:
-            project_name: Name of the project
-            component_name: Name of the component to update
-            deployment_name: Name of the deployment to update
-            new_image_url: New image URL to set
-
-        Returns:
-            True if update was successful, False otherwise
-        """
-        try:
-            # Construct JSON path to the target image field
-            json_path = (
-                f"deployments[?(@.name=='{deployment_name}')].components[?(@.reference=='{component_name}')].image"
-            )
-
-            # Update the project file
-            commit_message = f"Update {component_name} image to {new_image_url} in deployment {deployment_name}"
-            update_success = await self.update_project_field_by_path(
-                project_name, json_path, new_image_url, commit_message
-            )
-            await self.save_project_data()
-            await (await self.get_git_connector_for_project_files()).commit_and_push(
-                f"Updated image for project {project_name} to {new_image_url}"
-            )
-
-            if not update_success:
-                logger.error(f"Failed to update project file for {project_name}")
-                return False
-
-            # Trigger project processing to regenerate manifests and sync
-            # Use the process_project_from_git method instead to handle Git operations properly
-            project_file_path = f"projects/{project_name}.yaml"
-            process_success = await self.process_project_from_git(project_file_path)
-
-            if process_success:
-                logger.info(f"Successfully updated and processed image change for {project_name}")
-                return True
-            else:
-                logger.error(f"Failed to process project changes for {project_name}")
-                return False
-
-        except Exception as e:
-            logger.exception(f"Error updating component image for {project_name}: {e}")
-            return False
-
-    async def update_component_image_fast(self, component_name: str, deployment_name: str, new_image_url: str) -> bool:
-        """
-        Fast update of a component's image in a project - only updates image URL in existing deployment manifest.
-
-        This is an optimized version that:
-        1. Updates the project file with new image URL
-        2. Finds and updates the image URL in the existing deployment manifest file
-        3. Commits and pushes the specific manifest change
-        4. Refreshes only the relevant ArgoCD application
-
-        Args:
-            project_name: Name of the project
-            component_name: Name of the component to update
-            deployment_name: Name of the deployment to update
-            new_image_url: New image URL to set
-
-        Returns:
-            True if update was successful, False otherwise
-        """
-        try:
-            # Step 1: Update the project file with new image URL
-            json_path = (
-                f"deployments[?(@.name=='{deployment_name}')].components[?(@.reference=='{component_name}')].image"
-            )
-
-            project_name = await self.get_name()
-
-            commit_message = f"Update {component_name} image to {new_image_url} in deployment {deployment_name}"
-            update_success = await self.update_project_field_by_path(
-                project_name, json_path, new_image_url, commit_message
-            )
-
-            await self.save_project_data()
-            await (await self.get_git_connector_for_project_files()).commit_and_push(
-                f"Updated image for project {project_name} to {new_image_url}"
-            )
-
-            if not update_success:
-                logger.error(f"Failed to update project file for {project_name}")
-                return False
-
-            # Step 2: Get project data and validate deployment exists
-            project_data = await self.get_contents()
-
-            # Find the specific deployment for current cluster using JSONPath
-            target_deployment = find_value_by_jsonpath(
-                project_data, f"$.deployments[?(@.name=='{deployment_name}' & @.cluster=='{settings.CLUSTER_MANAGER}')]"
-            )
-
-            if not target_deployment:
-                logger.error(f"Deployment '{deployment_name}' not found or not for current cluster")
-                return False
-
-            # Step 3: Get repository configuration for this deployment
-            repository_name = target_deployment.get("repository")
-            if not repository_name:
-                logger.error(f"No repository specified for deployment '{deployment_name}'")
-                return False
-
-            repo_config = find_value_by_jsonpath(project_data, f"$.repositories[?(@.name=='{repository_name}')]")
-
-            if not repo_config:
-                logger.error(f"Repository configuration not found: {repository_name}")
-                return False
-
-            # Step 4: Update the image URL in the existing deployment manifest
-            logger.info(
-                f"Updating image URL in deployment manifest for {project_name}/{deployment_name}/{component_name}"
-            )
-
-            # Get git connector for the repository
-            git_connector = await self.get_git_connector_for_deployment(repository_name, repo_config)
-            await git_connector.ensure_repo_cloned()
-
-            # Generate deployment path using naming utility
-            cluster = target_deployment.get("cluster")
-            repo_path = repo_config.get("path", "")
-            deployment_path = generate_deployment_manifest_path(cluster, project_name, deployment_name, repo_path)
-
-            # Update the deployment manifest with new image URL
-            manifest_updated = await self._update_deployment_manifest_image(
-                git_connector, deployment_path, component_name, new_image_url
-            )
-
-            if not manifest_updated:
-                logger.error("Failed to update deployment manifest image URL")
-                return False
-
-            # Step 5: Commit and push only the deployment manifest change
-            manifest_commit_message = f"Update deployment manifest image for {component_name}"
-            commit_success = await git_connector.commit_and_push_changes(manifest_commit_message)
-
-            if not commit_success:
-                logger.error("Failed to commit deployment manifest changes")
-                return False
-
-            # Step 6: Refresh only the relevant ArgoCD application
-            argo_connector = create_argo_connector()
-            app_name = generate_argocd_application_name(project_name, deployment_name)
-
-            if await argo_connector.application_exists(app_name):
-                logger.info(f"Refreshing ArgoCD application: {app_name}")
-                refresh_result = await argo_connector.refresh_application(app_name)
-                if refresh_result:
-                    logger.info(f"Successfully refreshed application: {app_name}")
-                else:
-                    logger.warning(f"Failed to refresh application: {app_name}")
-                    # Don't fail the entire operation if refresh fails
-            else:
-                logger.warning(f"ArgoCD application {app_name} does not exist, skipping refresh")
-
-            logger.info(f"Fast image update completed for {project_name}/{deployment_name}/{component_name}")
-            return True
-
-        except Exception as e:
-            logger.exception(f"Error in fast image update for {project_name}: {e}")
-            return False
-
-    async def _update_deployment_manifest_image(
-        self, git_connector: GitConnector, deployment_path: str, component_name: str, new_image_url: str
-    ) -> bool:
-        """
-        Update the image URL in an existing deployment manifest file using YAML parsing.
-
-        This method finds the deployment manifest file and updates the image URL
-        without recreating the entire manifest, preserving all secrets and configuration.
-
-        Args:
-            git_connector: Git connector for the repository
-            deployment_path: Path to the deployment directory
-            component_name: Component name (used to identify the correct deployment file)
-            new_image_url: New image URL to set
-
-        Returns:
-            True if update was successful, False otherwise
-        """
-        try:
-            working_dir = await git_connector.get_working_dir()
-            full_deployment_path = os.path.join(working_dir, deployment_path)
-
-            # Use the naming utility to get the correct deployment filename
-            deployment_filename = f"{generate_manifest_name(component_name, 'deployment')}.yaml"
-            deployment_file_path = os.path.join(full_deployment_path, deployment_filename)
-
-            if not os.path.exists(deployment_file_path):
-                logger.error(f"Deployment manifest not found: {deployment_file_path}")
-                return False
-
-            # Load the existing deployment manifest
-            deployment_data = load_yaml_from_path(deployment_file_path)
-            if not deployment_data:
-                logger.error(f"Failed to load deployment manifest: {deployment_file_path}")
-                return False
-
-            # Update the image URL using JSONPath
-            json_path = "$.spec.template.spec.containers[0].image"
-            old_image = find_value_by_jsonpath(deployment_data, json_path, "")
-
-            update_success = update_value_by_jsonpath(deployment_data, json_path, new_image_url)
-            if not update_success:
-                logger.error(f"Failed to update image URL in deployment manifest: {deployment_file_path}")
-                return False
-
-            logger.info(f"Updated image from '{old_image}' to '{new_image_url}' in {deployment_filename}")
-
-            # Save the updated deployment manifest
-            save_success = save_yaml_to_path(deployment_file_path, deployment_data)
-
-            if not save_success:
-                logger.error("Failed to save updated deployment manifest")
-                return False
-
-            logger.info(f"Successfully updated image URL in deployment manifest: {deployment_file_path}")
-            return True
-
-        except Exception as e:
-            logger.exception(f"Error updating deployment manifest image: {e}")
-            return False
-
     async def add_deployment(
         self,
         deployment_name: str,
@@ -4971,10 +2935,10 @@ class ProjectManager:
         try:
             # Get current project data
             project_data = await self.get_contents()
-            project_name = project_data.get("name")
+            project_name = await self.get_name()
 
             # Check if deployment already exists
-            existing_deployments = project_data.get("deployments", [])
+            existing_deployments = await self.get_deployments(cluster_filter=False)
             for existing_deployment in existing_deployments:
                 if existing_deployment.get("name") == deployment_name:
                     error_msg = f"Deployment '{deployment_name}' already exists in project '{project_name}'"
@@ -5068,6 +3032,161 @@ class ProjectManager:
             error_msg = f"Error adding deployment '{deployment_name}': {e}"
             logger.exception(error_msg)
             return {"success": False, "error": error_msg, "error_type": "internal_error"}
+
+    async def update_image_and_regenerate(
+        self,
+        deployment_name: str,
+        component_name: str,
+        new_image_url: str,
+        service_actions: dict[str, dict[str, dict[str, dict[str, str]]]] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update component image and optionally perform service-specific actions.
+
+        IMPORTANT: This method processes the entire deployment through process_project()
+        to ensure all resources (databases, keycloak, secrets, ArgoCD) are created/updated,
+        not just manifests.
+
+        Args:
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            new_image_url: New container image URL
+            service_actions: Dict with service-specific actions
+                            Example: {
+                                "persistent-storage": {
+                                    "reference": {
+                                        "data": {"action": "recreate"},
+                                        "logs": {"action": "recreate"}
+                                    }
+                                }
+                            }
+
+        Returns:
+            Result dict with status, updates, and actions performed
+
+        Raises:
+            Exception: If deployment/component not found or any operation fails
+        """
+
+        project_name = await self.get_name()
+        logger.info(f"Updating image for {project_name}/{deployment_name}/{component_name} to {new_image_url}")
+
+        # 1. Load project data
+        project_data = await self.get_contents()
+
+        # 2. Find deployment (raise ValueError if not found)
+        deployment = await self.get_deployment_by_name(deployment_name)
+        if not deployment:
+            raise ValueError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+
+        # 3. Find component in deployment
+        component_found = False
+        old_image = None
+        for comp in deployment.get("components", []):
+            if comp.get("reference") == component_name:
+                component_found = True
+                old_image = comp.get("image")
+                comp["image"] = new_image_url
+                break
+
+        if not component_found:
+            raise ValueError(
+                f"Component '{component_name}' not found in deployment '{deployment_name}' of project '{project_name}'"
+            )
+
+        logger.info(f"Updated image: {old_image} -> {new_image_url}")
+
+        # 4. Process service actions (e.g., increment PVC generations for persistent-storage)
+        generation_changes = {}
+        if service_actions:
+            # Handle persistent-storage service actions
+            persistent_storage_actions = service_actions.get("persistent-storage", {})
+            storage_refs = persistent_storage_actions.get("reference", {})
+
+            for storage_name, storage_config in storage_refs.items():
+                action = storage_config.get("action")
+
+                if action == "recreate":
+                    # Get current generation
+                    current_gen = self._project_file_handler.get_storage_generation(
+                        project_data, deployment_name, component_name, storage_name
+                    )
+                    new_gen = current_gen + 1
+
+                    # Set new generation
+                    self._project_file_handler.set_storage_generation(
+                        project_data, deployment_name, component_name, storage_name, new_gen
+                    )
+
+                    generation_changes[storage_name] = {"old": current_gen, "new": new_gen}
+                    logger.info(
+                        f"Incremented generation for {component_name}/{storage_name}: {current_gen} -> {new_gen}"
+                    )
+
+        # 5. Save project YAML
+        await self.save_project_data()
+        logger.info("Saved updated project data")
+
+        # 6. Commit project YAML changes
+        git_connector = await self.get_git_connector_for_project_files()
+        commit_msg = f"Update {component_name} image to {new_image_url}"
+        if generation_changes:
+            storage_list = ", ".join(generation_changes.keys())
+            commit_msg += f" and recreate PVCs: {storage_list}"
+        await git_connector.commit_and_push(commit_msg)
+        logger.info("Committed project YAML changes")
+
+        # 7. CRITICAL: Process entire project for this deployment
+        # This ensures all resources are created/updated (not just manifests)
+        # - Namespaces, SOPS secrets
+        # - Database, MinIO, Keycloak resources
+        # - Application manifests (including new PVC generations)
+        # - ArgoCD resources
+        logger.info(f"Processing deployment {deployment_name} to apply all changes")
+        process_success = await self.process_project(deployment_name)
+
+        if not process_success:
+            raise Exception(f"Failed to process deployment {deployment_name}")
+
+        # 8. Trigger ArgoCD sync
+        logger.info("Triggering ArgoCD sync for updated deployment")
+        argo_connector = create_argo_connector()
+
+        # Refresh user-applications (contains project definitions)
+        await argo_connector.refresh_application("user-applications")
+
+        # Refresh the specific deployment application
+        app_name = generate_argocd_application_name(project_name, deployment_name)
+        if await argo_connector.application_exists(app_name):
+            logger.info(f"Refreshing ArgoCD application: {app_name}")
+            await argo_connector.refresh_application(app_name)
+
+        # 9. Build and return result
+        actions_performed = ["image_update"]
+        if generation_changes:
+            actions_performed.append("pvc_recreation")
+        actions_performed.extend(
+            [
+                "namespace_check",
+                "secrets_update",
+                "service_resources_update",
+                "manifest_regeneration",
+                "argocd_sync",
+            ]
+        )
+
+        result = {
+            "status": "success",
+            "message": f"Successfully updated {component_name} in {deployment_name}",
+            "updates": {
+                "image": {"old": old_image, "new": new_image_url},
+                "storage_generations": generation_changes,
+            },
+            "actions_performed": actions_performed,
+        }
+
+        logger.info(f"Image update completed successfully: {result}")
+        return result
 
     def _validate_component_references(
         self, project_data: dict, components: list, context: str = "deployment"
@@ -5253,24 +3372,16 @@ class ProjectManager:
             if not project_data:
                 raise HTTPException(status_code=404, detail=f"Project {project_name} not found")
 
-            # Find target deployment
-            target_deployment = None
-            for deployment in project_data.get("deployments", []):
-                if deployment.get("name") == target_deployment_name:
-                    target_deployment = deployment
-                    break
+            # Find target deployment using helper method
+            target_deployment = await self.get_deployment_by_name(target_deployment_name)
 
             if not target_deployment:
                 raise HTTPException(status_code=404, detail=f"Target deployment {target_deployment_name} not found")
 
-            # Verify source deployment exists
-            source_deployment_exists = False
-            for deployment in project_data.get("deployments", []):
-                if deployment.get("name") == source_deployment_name:
-                    source_deployment_exists = True
-                    break
+            # Verify source deployment exists using helper method
+            source_deployment = await self.get_deployment_by_name(source_deployment_name)
 
-            if not source_deployment_exists:
+            if not source_deployment:
                 raise HTTPException(status_code=404, detail=f"Source deployment {source_deployment_name} not found")
 
             # Clone database resources if target deployment uses PostgreSQL
@@ -5367,6 +3478,224 @@ class ProjectManager:
         except Exception as e:
             logger.exception(f"Error validating project API key for {project_name}: {e}")
             raise HTTPException(status_code=500, detail=f"Error validating project API key: {e!s}") from e
+
+    # Manual external cloning methods (for direct API operations)
+    async def clone_database_from_external_with_tunnel(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_database: str,
+        source_schema: str,
+        source_username: str,
+        source_password: str,
+        tunnel_server_url: str,
+        tunnel_username: str,
+        tunnel_password: str,
+        tunnel_remote_host: str,
+        tunnel_remote_port: int = 5432,
+        force_clone: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Clone a database from a remote source via Chisel tunnel.
+
+        This method is for manual API operations, not project-file-based cloning.
+        """
+
+        logger.info(
+            f"Manual database clone via tunnel: {project_name}/{deployment_name} "
+            f"<- {tunnel_remote_host}:{tunnel_remote_port} (via {tunnel_server_url})"
+        )
+
+        connector = ChiselConnector(
+            server_url=tunnel_server_url,
+            username=tunnel_username,
+            password=tunnel_password,
+        )
+
+        try:
+            _ = connector.start_tunnel(
+                remote_host=tunnel_remote_host,
+                remote_port=tunnel_remote_port,
+            )
+
+            endpoint = connector.get_local_endpoint()
+            logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']}")
+
+            db_manager = await self._ensure_database_manager()
+            result = await db_manager.clone_database_from_external_source(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_host=endpoint["host"],
+                source_port=endpoint["port"],
+                source_username=source_username,
+                source_password=source_password,
+                source_database=source_database,
+                source_schema=source_schema,
+                force_clone=force_clone,
+            )
+
+            result["tunnel"] = {
+                "used": True,
+                "server": tunnel_server_url,
+                "local_endpoint": f"{endpoint['host']}:{endpoint['port']}",
+                "remote_endpoint": f"{tunnel_remote_host}:{tunnel_remote_port}",
+            }
+
+            return result
+
+        finally:
+            connector.stop_tunnel()
+            logger.info("Tunnel cleaned up")
+
+    async def clone_database_from_external_direct(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_host: str,
+        source_port: int,
+        source_database: str,
+        source_schema: str,
+        source_username: str,
+        source_password: str,
+        force_clone: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Clone a database from a directly accessible source (no tunnel).
+
+        This method is for manual API operations, not project-file-based cloning.
+        """
+        logger.info(f"Manual direct database clone: {project_name}/{deployment_name} <- {source_host}:{source_port}")
+
+        db_manager = await self._ensure_database_manager()
+        result = await db_manager.clone_database_from_external_source(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=source_host,
+            source_port=source_port,
+            source_username=source_username,
+            source_password=source_password,
+            source_database=source_database,
+            source_schema=source_schema,
+            force_clone=force_clone,
+        )
+
+        result["tunnel"] = {"used": False}
+        return result
+
+    async def clone_minio_bucket_from_external_with_tunnel(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_bucket: str,
+        source_access_key: str,
+        source_secret_key: str,
+        tunnel_server_url: str,
+        tunnel_username: str,
+        tunnel_password: str,
+        tunnel_remote_host: str,
+        tunnel_remote_port: int = 9000,
+        source_secure: bool = False,
+        force_clone: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Clone a MinIO bucket from a remote source via Chisel tunnel.
+
+        This method is for manual API operations, not project-file-based cloning.
+        """
+        logger.info(
+            f"Manual MinIO clone via tunnel: {project_name}/{deployment_name} "
+            f"<- {tunnel_remote_host}:{tunnel_remote_port}/{source_bucket} (via {tunnel_server_url})"
+        )
+
+        connector = ChiselConnector(
+            server_url=tunnel_server_url,
+            username=tunnel_username,
+            password=tunnel_password,
+        )
+
+        try:
+            _ = connector.start_tunnel(
+                remote_host=tunnel_remote_host,
+                remote_port=tunnel_remote_port,
+            )
+
+            endpoint = connector.get_local_endpoint()
+            logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']}")
+
+            result = await self._minio_manager.clone_bucket_from_external_source(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_host=endpoint["host"],
+                source_port=endpoint["port"],
+                source_access_key=source_access_key,
+                source_secret_key=source_secret_key,
+                source_bucket=source_bucket,
+                source_secure=source_secure,
+                force_clone=force_clone,
+            )
+
+            result["tunnel"] = {
+                "used": True,
+                "server": tunnel_server_url,
+                "local_endpoint": f"{endpoint['host']}:{endpoint['port']}",
+                "remote_endpoint": f"{tunnel_remote_host}:{tunnel_remote_port}",
+            }
+
+            return result
+
+        finally:
+            connector.stop_tunnel()
+            logger.info("Tunnel cleaned up")
+
+    async def clone_minio_bucket_from_external_direct(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_host: str,
+        source_port: int,
+        source_bucket: str,
+        source_access_key: str,
+        source_secret_key: str,
+        source_secure: bool = False,
+        force_clone: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Clone a MinIO bucket from a directly accessible source (no tunnel).
+
+        This method is for manual API operations, not project-file-based cloning.
+        """
+        logger.info(
+            f"Manual direct MinIO clone: {project_name}/{deployment_name} "
+            f"<- {source_host}:{source_port}/{source_bucket}"
+        )
+
+        result = await self._minio_manager.clone_bucket_from_external_source(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=source_host,
+            source_port=source_port,
+            source_access_key=source_access_key,
+            source_secret_key=source_secret_key,
+            source_bucket=source_bucket,
+            source_secure=source_secure,
+            force_clone=force_clone,
+        )
+
+        result["tunnel"] = {"used": False}
+        return result
+
+    # Delegation methods for project deletion - delegated to DeleteProjectManager
+    async def delete_deployment(self, project_name: str, deployment_name: str) -> dict[str, Any]:
+        """Delete all resources associated with a specific deployment."""
+        return await self._delete_project_manager.delete_deployment(project_name, deployment_name)
+
+    async def delete_project(self, project_name: str) -> dict[str, Any]:
+        """Delete a project by first deleting all deployments on the current cluster."""
+        return await self._delete_project_manager.delete_project(project_name)
+
+    async def delete_deployment_resources(self, project_name: str, deployment_name: str) -> dict[str, Any]:
+        """Delete resources for a specific deployment."""
+        return await self._delete_project_manager.delete_deployment_resources(project_name, deployment_name)
 
 
 def create_project_manager() -> ProjectManager:

@@ -905,39 +905,40 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
             logger.error(f"Task {task_id}: Failed to initialize project manager: {e}")
             raise
 
-        update_progress(task_id, 60, "Processing project deployment...")
-        logger.info(f"Task {task_id}: Starting project deployment processing")
-
-        # This is the long-running part - project processing with live progress (task already started automatically)
         try:
+            update_progress(task_id, 60, "Processing project deployment...")
+            logger.info(f"Task {task_id}: Starting project deployment processing")
+
+            # This is the long-running part - project processing with live progress (task already started automatically)
             processing_result = await project_manager.process_project_from_git(project_file_path, progress_manager)
             logger.info(f"Task {task_id}: Project processing completed, result: {processing_result}")
             progress_manager.complete_task(subtask_deploy)
-
-            # ArgoCD monitoring (task already started automatically)
-            update_progress(task_id, 75, "ArgoCD synchronisatie monitoren...")
-
-            # Wait for ArgoCD to sync and start deployments
-            await monitor_argocd_deployment(task_id, project_data.project_name, progress_manager)
-            progress_manager.complete_task(subtask_monitor)
-
-            # Verification (task already started automatically)
-            update_progress(task_id, 85, "Verifying deployment status...")
-
-            # Start background monitoring for logs and events
-            await start_task_monitoring(task_id)
-
-            # Wait a bit for initial deployment
-            import asyncio
-
-            await asyncio.sleep(10)
-
-            progress_manager.complete_task(subtask_verify)
-
         except Exception as e:
             logger.error(f"Task {task_id}: Project processing failed: {e}")
             progress_manager.fail_task(subtask_deploy, str(e))
             raise
+        finally:
+            await project_manager.close()
+
+        # ArgoCD monitoring (task already started automatically)
+        update_progress(task_id, 75, "ArgoCD synchronisatie monitoren...")
+
+        # Wait for ArgoCD to sync and start deployments
+        await monitor_argocd_deployment(task_id, project_data.project_name, progress_manager)
+        progress_manager.complete_task(subtask_monitor)
+
+        # Verification (task already started automatically)
+        update_progress(task_id, 85, "Verifying deployment status...")
+
+        # Start background monitoring for logs and events
+        await start_task_monitoring(task_id)
+
+        # Wait a bit for initial deployment
+        import asyncio
+
+        await asyncio.sleep(10)
+
+        progress_manager.complete_task(subtask_verify)
 
         elapsed_time = time.time() - start_time
 

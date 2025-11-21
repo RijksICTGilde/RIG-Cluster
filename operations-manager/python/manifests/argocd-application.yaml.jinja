@@ -34,8 +34,9 @@ spec:
       - CreateNamespace=false
       - PrunePropagationPolicy=foreground
       - Replace=true
-      - PruneLast=false
+      - PruneLast=true
       - Delete=true
+      - SkipDryRunOnMissingResource=true
     retry:
       limit: 2
       backoff:

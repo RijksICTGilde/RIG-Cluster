@@ -103,6 +103,11 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
         project_description = str(form_data.get("project-description", "")).strip()
         cluster = str(form_data.get("cluster", "")).strip()
 
+        # Extract web address configuration
+        domain_mode = str(form_data.get("domain-mode", "component-specific")).strip()
+        subdomain = str(form_data.get("subdomain", "")).strip() or None
+        deployment_name = str(form_data.get("deployment-name", "main")).strip() or "main"
+
         if not display_name or not cluster:
             raise HTTPException(status_code=400, detail="Project name and cluster are required")
 
@@ -136,9 +141,11 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
             comp_type = str(form_data.get(comp_type_key, "deployment")).strip()
             comp_port = form_data.get(f"components[{component_index}][port]")
             comp_image = str(form_data.get(f"components[{component_index}][image]", "")).strip()
+            comp_path = str(form_data.get(f"components[{component_index}][path]", "/")).strip() or "/"
             comp_cpu = str(form_data.get(f"components[{component_index}][cpu_limit]", "")).strip()
             comp_memory = str(form_data.get(f"components[{component_index}][memory_limit]", "")).strip()
             comp_env_vars = str(form_data.get(f"components[{component_index}][env_vars]", "")).strip()
+            comp_aliases = str(form_data.get(f"components[{component_index}][aliases]", "")).strip()
             comp_services = form_data.getlist(f"components[{component_index}][services][]")
 
             # Parse port as integer
@@ -151,13 +158,34 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
                 type=comp_type,
                 port=port,
                 image=comp_image or "nginx:latest",
+                path=comp_path,
                 cpu_limit=comp_cpu or None,
                 memory_limit=comp_memory or None,
                 env_vars=comp_env_vars or None,
+                aliases=comp_aliases or None,
                 services=comp_services or None,
             )
             components.append(component)
             component_index += 1
+
+        # Validate paths when using shared domains
+        if domain_mode in ["deployment-name", "custom"] and components:
+            component_paths = [comp.path for comp in components]
+            # Check for duplicate paths
+            seen_paths = set()
+            duplicate_paths = []
+            for path in component_paths:
+                if path in seen_paths:
+                    duplicate_paths.append(path)
+                seen_paths.add(path)
+
+            if duplicate_paths:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"When using shared domains (domain mode: {domain_mode}), all component paths must be unique. "
+                    f"Duplicate paths found: {', '.join(duplicate_paths)}. "
+                    f"Please assign different paths to each component (e.g., /, /api, /admin).",
+                )
 
         # Create the request object
         project_data = SelfServiceProjectRequest(
@@ -165,6 +193,9 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
             display_name=display_name,
             project_description=project_description or None,
             cluster=cluster,
+            deployment_name=deployment_name,
+            domain_mode=domain_mode,
+            subdomain=subdomain,
             user_email=user_emails or None,
             user_role=user_roles or None,
             services=services or None,
@@ -482,7 +513,7 @@ async def delete_project_web(request: Request, project_name: str):
         logger.info(f"Starting project deletion for '{project_name}' by {user_email} (role: {user_role})")
 
         # Perform the deletion using the deployment-aware deletion logic
-        deletion_results = await project_manager.delete_project_with_deployment_cleanup(project_name)
+        deletion_results = await project_manager.delete_project(project_name)
 
         # Determine response status and message based on deletion results
         if deletion_results["success"]:
@@ -642,7 +673,8 @@ async def project_details(request: Request, project_name: str):
 
         templates = get_templates()
         user = get_current_user(request)
-        user_email = user.get("email", "").lower()
+        # TODO: this logic has to be centralized
+        user_email = "robbert.uittenbroek@rijksoverheid.nl" # user.get("email", "").lower()
 
         # Get project service to validate access
         project_service = get_project_service()
@@ -687,13 +719,15 @@ async def project_details(request: Request, project_name: str):
         # Process services to add display information
         services_with_info = []
         project_services = project_data.get("services", [])
-        for service_value in project_services:
-            service_enum = ServiceAdapter.get_service_by_value(service_value)
+        # Extract service names from project services (handles both string and dict formats)
+        service_names = ServiceAdapter.extract_service_names_from_project_services(project_services)
+        for service_name in service_names:
+            service_enum = ServiceAdapter.get_service_by_value(service_name)
             if service_enum:
                 services_with_info.append(
                     {
                         "enum": service_enum,
-                        "value": service_value,
+                        "value": service_name,
                     }
                 )
 
@@ -954,7 +988,7 @@ async def projects_overview(request: Request):
 
         templates = get_templates()
         user = get_current_user(request)
-        user_email = user.get("email", "").lower()
+        user_email = "robbert.uittenbroek@rijksoverheid.nl" # user.get("email", "").lower()
 
         # Get project service to filter by user access
         project_service = get_project_service()
@@ -1108,3 +1142,104 @@ async def example_page(request: Request):
                 error_msg += f"\nSource: {lines[line_num].strip()}"
 
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+
+
+@web_router.get("/tools", response_class=HTMLResponse)
+@requires_sso
+async def tools_page(request: Request):
+    """
+    Serve the AGE encryption/decryption tools page.
+
+    Returns:
+        HTML response with AGE tooling interface
+    """
+    try:
+        templates = get_templates()
+        user = get_current_user(request)
+        return templates.TemplateResponse(
+            "tools.html.j2", {"request": request, "title": "AGE Encryption Tools", "menu_items": get_menu_items(user)}
+        )
+
+    except Exception as e:
+        import traceback
+
+        error_details = traceback.format_exc()
+        logger.error(f"Error serving tools page: {e!s}\n{error_details}")
+
+        error_msg = str(e)
+        if hasattr(e, "lineno"):
+            error_msg = f"Line {e.lineno}: {error_msg}"
+
+        if hasattr(e, "source") and hasattr(e, "lineno"):
+            lines = e.source.splitlines()
+            line_num = e.lineno - 1
+            if 0 <= line_num < len(lines):
+                error_msg += f"\nSource: {lines[line_num].strip()}"
+
+        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+
+
+@web_router.post("/tools/encrypt")
+@requires_sso
+async def encrypt_text(request: Request):
+    """
+    Encrypt text using AGE public key.
+
+    Returns:
+        JSON response with encrypted content or error
+    """
+    try:
+        from fastapi.responses import JSONResponse
+
+        from opi.utils.age import encrypt_age_content
+
+        form_data = await request.form()
+        public_key = str(form_data.get("public_key", "")).strip()
+        input_text = str(form_data.get("input_text", "")).strip()
+
+        if not public_key:
+            return JSONResponse(content={"error": "Public key is required"}, status_code=400)
+
+        if not input_text:
+            return JSONResponse(content={"error": "Input text is required"}, status_code=400)
+
+        encrypted_content = await encrypt_age_content(input_text, public_key)
+
+        return JSONResponse(content={"success": True, "result": encrypted_content}, status_code=200)
+
+    except Exception as e:
+        logger.error(f"Error encrypting text: {e!s}")
+        return JSONResponse(content={"error": f"Encryption failed: {e!s}"}, status_code=500)
+
+
+@web_router.post("/tools/decrypt")
+@requires_sso
+async def decrypt_text(request: Request):
+    """
+    Decrypt AGE-encrypted text using private key.
+
+    Returns:
+        JSON response with decrypted content or error
+    """
+    try:
+        from fastapi.responses import JSONResponse
+
+        from opi.utils.age import decrypt_age_content
+
+        form_data = await request.form()
+        private_key = str(form_data.get("private_key", "")).strip()
+        input_text = str(form_data.get("input_text", "")).strip()
+
+        if not private_key:
+            return JSONResponse(content={"error": "Private key is required"}, status_code=400)
+
+        if not input_text:
+            return JSONResponse(content={"error": "Input text is required"}, status_code=400)
+
+        decrypted_content = await decrypt_age_content(input_text, private_key)
+
+        return JSONResponse(content={"success": True, "result": decrypted_content}, status_code=200)
+
+    except Exception as e:
+        logger.error(f"Error decrypting text: {e!s}")
+        return JSONResponse(content={"error": f"Decryption failed: {e!s}"}, status_code=500)

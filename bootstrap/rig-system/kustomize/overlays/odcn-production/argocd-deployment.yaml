@@ -34,7 +34,7 @@ spec:
     route:
       annotations:
         # limit access to within VPN of ODCN
-        haproxy.router.openshift.io/ip_whitelist: 147.181.0.0/16
+        haproxy.router.openshift.io/ip_whitelist: 147.181.15.230
       enabled: true
       tls:
         termination: edge

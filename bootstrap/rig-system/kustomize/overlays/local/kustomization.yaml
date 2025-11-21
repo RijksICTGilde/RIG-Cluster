@@ -10,7 +10,7 @@ generators:
 resources:
 - namespace.yaml
 #   NOTE: we apply our own ingress here instead of using the haven solution, this one seems simpeler for now
-- https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/deploy/static/provider/kind/deploy.yaml # see https://mya.sh/blog/2020/10/21/local-ingress-domains-kind/
+#- https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/deploy/static/provider/kind/deploy.yaml # see https://mya.sh/blog/2020/10/21/local-ingress-domains-kind/
 - argo-local-test-git-repo.yaml
 - argo-known-hosts.yaml
 - argocd-deployment.yaml

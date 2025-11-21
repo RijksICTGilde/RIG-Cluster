@@ -132,6 +132,18 @@ class KeycloakVariables(Enum):
         source="secret",
         secret_key="discovery_url",
     )
+    URL = VariableDefinition(
+        name="OIDC_URL",
+        description="Keycloak basis URL",
+        source="secret",
+        secret_key="base_url",
+    )
+    REALM = VariableDefinition(
+        name="OIDC_REALM",
+        description="Keycloak realm naam",
+        source="secret",
+        secret_key="realm",
+    )
 
 
 class MinIOVariables(Enum):
@@ -199,9 +211,9 @@ class ServiceAdapter:
             scope="component",
             variables=[var.value for var in WebVariables],
         ),
-        ServiceType.SSO_RIJK: ServiceDefinition(
-            name="Single Sign-On Rijk",
-            description="Integreer met de Rijksoverheid SSO voor veilige authenticatie via Keycloak",
+        ServiceType.KEYCLOAK: ServiceDefinition(
+            name="Keycloak Authentication",
+            description="Configureerbare Keycloak authenticatie met ondersteuning voor SSO en lokale gebruikers",
             icon="sleutel",
             color="groen",
             scope="component",
@@ -229,6 +241,15 @@ class ServiceAdapter:
         ServiceType.POSTGRESQL_DATABASE: ServiceDefinition(
             name="PostgreSQL Database",
             description="Database service voor applicaties",
+            icon="database",
+            color="donkerblauw",
+            scope="deployment",
+            secret_class="DatabaseSecret",
+            variables=[var.value for var in DatabaseVariables],
+        ),
+        ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ServiceDefinition(
+            name="Namespace PostgreSQL Database",
+            description="Dedicated PostgreSQL database cluster voor project",
             icon="database",
             color="donkerblauw",
             scope="deployment",
@@ -312,15 +333,78 @@ class ServiceAdapter:
         return storage_configs
 
     @classmethod
-    def parse_services_from_strings(cls, service_strings: list[str]) -> list[ServiceType]:
-        """Parse service strings into ServiceType enums."""
-        services: list[ServiceType] = []
-        for service_str in service_strings:
-            service = cls.get_service_by_value(service_str)
-            if service:
-                services.append(service)
+    def extract_service_names_from_project_services(cls, project_services: list[str | dict]) -> list[str]:
+        """
+        Extract service names from project-level services list.
+
+        Project-level services can be in two formats:
+        - String: "namespace-postgresql-database"
+        - Dict: {"namespace-postgresql-database": {"config": {...}}}
+
+        Args:
+            project_services: List of service strings or dicts from project.yaml
+
+        Returns:
+            List of service name strings
+
+        Raises:
+            ValueError: If service item format is invalid
+        """
+        service_names: list[str] = []
+
+        for service_item in project_services:
+            if isinstance(service_item, str):
+                # Simple string format
+                service_names.append(service_item)
+            elif isinstance(service_item, dict):
+                # Dict format: {"service-name": {"config": {...}}}
+                # Extract the key (service name)
+                if len(service_item) == 0:
+                    raise ValueError(f"Service dict is empty: {service_item}")
+                if len(service_item) > 1:
+                    raise ValueError(f"Service dict should have exactly one key (service name): {service_item}")
+                service_name = next(iter(service_item.keys()))
+                service_names.append(service_name)
             else:
-                logger.warning(f"Skipping unknown service: {service_str}")
+                raise ValueError(f"Invalid service item type {type(service_item)}, must be str or dict: {service_item}")
+
+        return service_names
+
+    @classmethod
+    def parse_services_from_strings(cls, service_names: list[str]) -> list[ServiceType]:
+        """
+        Parse service names into ServiceType enums.
+
+        Components reference services by name only. Service configurations
+        are defined at the project level in the 'services:' section.
+
+        Args:
+            service_names: List of service name strings
+
+        Returns:
+            List of ServiceType enums
+
+        Raises:
+            ValueError: If service name is unknown
+        """
+        services: list[ServiceType] = []
+
+        for service_name in service_names:
+            if not isinstance(service_name, str):
+                raise ValueError(f"Service name must be a string, got {type(service_name)}: {service_name}")
+
+            try:
+                service = cls.get_service_by_value(service_name)
+                services.append(service)
+            except ValueError:
+                # Provide helpful error message for renamed service
+                if service_name == "sso-rijk":
+                    raise ValueError(
+                        "Service 'sso-rijk' has been renamed to 'keycloak'. "
+                        "Please update your project.yaml to use 'keycloak' instead."
+                    ) from None
+                raise ValueError(f"Unknown service: {service_name}") from None
+
         return services
 
     @classmethod

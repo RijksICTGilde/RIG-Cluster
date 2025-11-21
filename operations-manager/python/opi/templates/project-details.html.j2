@@ -104,7 +104,7 @@
                         </div>
                         <c-layout-flow gap="xs">
                             <div style="font-weight: 500; color: var(--rvo-color-grijs-900);">{{ user.email }}</div>
-                            <div style="font-size: 0.875rem; color: var(--rvo-color-grijs-600); text-transform: capitalize;">{{ user.role|title }}</div>
+                            <div style="font-size: 0.875rem; color: var(--rvo-color-grijs-700); text-transform: capitalize;">{{ user.role|title }}</div>
                         </c-layout-flow>
                     </c-layout-row>
                 </c-card>
@@ -312,9 +312,9 @@
                                                 <div class="sensitive-field" id="config-{{ deployment.name }}-{{ key|replace('_', '-')|lower }}">
                                                     <span class="sensitive-dots">••••••••••••••••••••</span>
                                                     <span class="sensitive-value" style="display: none;">{{ value }}</span>
-                                                    <c-button 
+                                                    <c-button
                                                         label="Tonen"
-                                                        kind="tertiary" 
+                                                        kind="tertiary"
                                                         size="sm"
                                                         showIcon="before"
                                                         icon="oog"
@@ -325,7 +325,7 @@
                                         </c-layout-flow>
                                     </c-card>
                                     {% endfor %}
-                                    
+
                                     {% set metadata = deployment.configuration.get('metadata', {}) %}
                                     {% if metadata.get('updated_on') %}
                                     <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-sm); border-top: 1px solid var(--rvo-color-grijs-100);">
@@ -344,7 +344,7 @@
                             </c-layout-flow>
                         </div>
                         {% endif %}
-                        
+
                         {# User Configuration Variables for components in this deployment #}
                         {% set deployment_components = deployment.components %}
                         {% if deployment_components %}
@@ -356,12 +356,12 @@
                                 {% endif %}
                             {% endfor %}
                         {% endfor %}
-                        
+
                         {% if has_user_vars %}
                         <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
                             <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="user" size="md" color="donkerblauw" />Gebruikers configuratie</c-heading>
                             <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor deze deployment</p>
-                            
+
                             <c-layout-flow gap="md">
                                 {% for component in deployment_components %}
                                 {% for project_component in project.components %}
@@ -372,7 +372,7 @@
                                             <c-icon icon="puzzel" size="sm" color="donkerblauw" />
                                             <c-heading type="h5" textContent="Component: {{ component.reference }}" />
                                         </c-layout-row>
-                                        
+
                                         <c-layout-flow gap="sm">
                                             {% for key, value in project_component['user-env-vars'].items() %}
                                             <c-card padding="sm" backgroundColor="wit" outline="true">
@@ -385,9 +385,9 @@
                                                         <div class="sensitive-field" id="user-{{ deployment.name }}-{{ component.reference }}-{{ key|replace('_', '-')|lower }}">
                                                             <span class="sensitive-dots">••••••••••••••••••••</span>
                                                             <span class="sensitive-value" style="display: none;">{{ value }}</span>
-                                                            <c-button 
+                                                            <c-button
                                                                 label="Tonen"
-                                                                kind="tertiary" 
+                                                                kind="tertiary"
                                                                 size="sm"
                                                                 showIcon="before"
                                                                 icon="oog"
@@ -427,7 +427,7 @@
         <c-layout-flow gap="lg">
             <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
             <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
-            
+
             {% if project.components %}
             <div class="components-section">
                 {% for component in project.components %}
@@ -440,7 +440,7 @@
                                 <div class="component-type">{{ component.type|title }}</div>
                             </div>
                         </div>
-                        
+
                         <div class="component-specs">
                             {% if component.ports %}
                             <div class="spec-item">
@@ -449,7 +449,7 @@
                                 {% if component.ports.outbound %}{% if component.ports.inbound %} | {% endif %}Outbound: {{ component.ports.outbound|join(", ") }}{% endif %}
                             </div>
                             {% endif %}
-                            
+
                             {% if component.resources %}
                             <div class="spec-item">
                                 <strong>Resources:</strong>
@@ -457,21 +457,21 @@
                                 {% if component.resources.memory %}{% if component.resources.cpu %} | {% endif %}Memory: {{ component.resources.memory }}{% endif %}
                             </div>
                             {% endif %}
-                            
+
                             {% if component['uses-services'] %}
                             <div class="spec-item">
                                 <strong>Services:</strong> {{ component['uses-services']|join(", ")|replace("-", " ")|title }}
                             </div>
                             {% endif %}
                         </div>
-                        
+
                         {# Public ingress links for this component #}
                         {% if component.ingress_links %}
                         <c-layout-flow gap="sm">
                             <c-heading type="h5"><c-icon icon="externe-link" size="sm" color="hemelblauw" />Publieke links</c-heading>
                             <c-layout-row gap="sm">
                                 {% for link in component.ingress_links %}
-                                <c-button 
+                                <c-button
                                     label="{{ link.deployment_name }} ({{ link.cluster }})"
                                     kind="secondary"
                                     size="sm"
@@ -482,13 +482,13 @@
                             </c-layout-row>
                         </c-layout-flow>
                         {% endif %}
-                        
+
                         {# User Environment Variables for this component #}
-                        {% if component.get('user-env-vars') %}
+                        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping %}
                         <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
                             <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="user" size="md" color="donkerblauw" />Gebruiker Environment Variables</c-heading>
                             <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor dit component</p>
-                            
+
                             <c-layout-flow gap="sm">
                                 {% for key, value in component['user-env-vars'].items() %}
                                 <c-card padding="sm" backgroundColor="grijs-050" outline="true">
@@ -501,9 +501,9 @@
                                             <div class="sensitive-field" id="component-{{ component.name }}-{{ key|replace('_', '-')|lower }}">
                                                 <span class="sensitive-dots">••••••••••••••••••••</span>
                                                 <span class="sensitive-value" style="display: none;">{{ value }}</span>
-                                                <c-button 
+                                                <c-button
                                                     label="Tonen"
-                                                    kind="tertiary" 
+                                                    kind="tertiary"
                                                     size="sm"
                                                     showIcon="before"
                                                     icon="oog"
@@ -537,7 +537,7 @@
         <c-layout-flow gap="lg">
             <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="computercode" size="xl" color="oranje" />Git Repositories</c-heading>
             <p class="rvo-text--subtle">Gekoppelde code repositories</p>
-            
+
             <div class="repositories-section">
                 {% for repo in project.repositories %}
                 <c-card class="repository-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
@@ -549,7 +549,7 @@
                                 <div class="repo-url">{{ repo.url }}</div>
                             </div>
                         </div>
-                        
+
                         <div class="repo-details">
                             <div class="repo-item"><strong>Branch:</strong> {{ repo.branch }}</div>
                             <div class="repo-item"><strong>Path:</strong> {{ repo.path }}</div>
@@ -577,88 +577,88 @@
         font-size: 0.875rem;
         font-family: monospace;
     }
-    
+
     /* Overview Grid */
     .overview-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: var(--rvo-space-lg);
     }
-    
+
     .overview-icon {
         text-align: center;
         margin-bottom: var(--rvo-space-xs);
     }
-    
+
     .overview-number {
         font-size: 2.5rem;
         font-weight: 700;
         color: var(--rvo-color-hemelblauw);
         text-align: center;
     }
-    
+
     .overview-label {
         font-weight: 600;
         text-align: center;
         color: var(--rvo-color-grijs-700);
     }
-    
+
     .overview-detail {
         font-size: 0.875rem;
         text-align: center;
         color: var(--rvo-color-grijs-600);
     }
-    
-    
+
+
     /* Team Grid - Replaced with c-grid component */
-    
+
     /* Services Grid */
     .services-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         gap: var(--rvo-space-lg);
     }
-    
+
     .service-detail-card {
         min-height: 150px;
     }
-    
+
     .service-header {
         display: flex;
         align-items: center;
         gap: var(--rvo-space-md);
     }
-    
+
     .service-scope {
         font-size: 0.875rem;
         color: var(--rvo-color-grijs-600);
         font-style: italic;
     }
-    
+
     /* Deployments Section */
     .deployments-section {
         display: flex;
         flex-direction: column;
         gap: var(--rvo-space-lg);
     }
-    
+
     .deployment-card {
         border-left: 4px solid var(--rvo-color-oranje);
     }
-    
+
     .deployment-header {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
     }
-    
+
     .deployment-meta {
         display: flex;
         gap: var(--rvo-space-sm);
         margin-top: var(--rvo-space-xs);
         flex-wrap: wrap;
     }
-    
+
     .cluster-badge {
         background: var(--rvo-color-hemelblauw-50);
         color: var(--rvo-color-hemelblauw);
@@ -667,7 +667,7 @@
         font-size: 0.75rem;
         font-weight: 600;
     }
-    
+
     .namespace-badge {
         background: var(--rvo-color-groen-50);
         color: var(--rvo-color-groen);
@@ -676,7 +676,7 @@
         font-size: 0.75rem;
         font-weight: 600;
     }
-    
+
     .clone-badge {
         background: var(--rvo-color-paars-50);
         color: var(--rvo-color-paars);
@@ -685,20 +685,20 @@
         font-size: 0.75rem;
         font-weight: 600;
     }
-    
+
     .deployment-components {
         margin-top: var(--rvo-space-md);
         padding-top: var(--rvo-space-md);
         border-top: 1px solid var(--rvo-color-grijs-200);
     }
-    
+
     .component-list {
         display: flex;
         flex-direction: column;
         gap: var(--rvo-space-sm);
         margin-top: var(--rvo-space-sm);
     }
-    
+
     .component-item {
         display: flex;
         align-items: center;
@@ -707,53 +707,53 @@
         background: white;
         border-radius: 4px;
     }
-    
+
     .component-name {
         font-weight: 600;
         color: var(--rvo-color-grijs-900);
     }
-    
+
     .component-image {
         font-size: 0.875rem;
         color: var(--rvo-color-grijs-600);
         font-family: monospace;
     }
-    
-    
+
+
     /* Components Section */
     .components-section {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
         gap: var(--rvo-space-lg);
     }
-    
+
     .component-card {
         border-left: 4px solid var(--rvo-color-paars);
     }
-    
+
     .component-header {
         display: flex;
         align-items: center;
         gap: var(--rvo-space-md);
     }
-    
+
     .component-type {
         font-size: 0.875rem;
         color: var(--rvo-color-grijs-600);
         text-transform: capitalize;
     }
-    
+
     .component-specs {
         display: flex;
         flex-direction: column;
         gap: var(--rvo-space-xs);
     }
-    
+
     .spec-item {
         font-size: 0.875rem;
         line-height: 1.5;
     }
-    
+
     /* Status Badges */
     .status-badge {
         display: inline-flex;
@@ -765,19 +765,19 @@
         font-weight: 600;
         text-transform: uppercase;
     }
-    
+
     .status-running {
         background: var(--rvo-color-groen-50);
         color: var(--rvo-color-groen);
     }
-    
+
     /* Configuration Section */
     .config-section {
         display: flex;
         flex-direction: column;
         gap: var(--rvo-space-lg);
     }
-    
+
     .config-item {
         display: flex;
         flex-direction: column;
@@ -787,7 +787,7 @@
         border-radius: 4px;
         background: var(--rvo-color-grijs-25);
     }
-    
+
     .config-label {
         display: flex;
         align-items: center;
@@ -795,11 +795,11 @@
         font-weight: 600;
         color: var(--rvo-color-grijs-900);
     }
-    
+
     .config-value {
         margin-left: var(--rvo-space-xl);
     }
-    
+
     .config-code {
         background: var(--rvo-color-grijs-100);
         padding: var(--rvo-space-sm);
@@ -809,21 +809,21 @@
         display: block;
         word-break: break-all;
     }
-    
+
     /* Sensitive Fields */
     .sensitive-field {
         display: flex;
         align-items: center;
         gap: var(--rvo-space-md);
     }
-    
+
     .sensitive-dots {
         font-family: monospace;
         font-size: 1.25rem;
         letter-spacing: 2px;
         color: var(--rvo-color-grijs-600);
     }
-    
+
     .sensitive-value {
         font-family: monospace;
         font-size: 0.875rem;
@@ -834,31 +834,31 @@
         max-width: 100%;
         overflow-x: auto;
     }
-    
+
     /* Repositories Section */
     .repositories-section {
         display: flex;
         flex-direction: column;
         gap: var(--rvo-space-lg);
     }
-    
+
     .repository-card {
         border-left: 4px solid var(--rvo-color-oranje);
     }
-    
+
     .repo-header {
         display: flex;
         align-items: center;
         gap: var(--rvo-space-md);
     }
-    
+
     .repo-url {
         font-family: monospace;
         font-size: 0.875rem;
         color: var(--rvo-color-grijs-600);
         word-break: break-all;
     }
-    
+
     .repo-details {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -867,11 +867,11 @@
         padding-top: var(--rvo-space-md);
         border-top: 1px solid var(--rvo-color-grijs-200);
     }
-    
+
     .repo-item {
         font-size: 0.875rem;
     }
-    
+
     /* Empty States */
     .empty-state {
         text-align: center;

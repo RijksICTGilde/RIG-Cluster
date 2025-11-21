@@ -1,0 +1,241 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-bootstrap
+  namespace: rig-system
+  labels:
+    app: forgejo
+    component: bootstrap
+spec:
+  ttlSecondsAfterFinished: 86400  # Clean up after 24 hours
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: forgejo
+        component: bootstrap
+    spec:
+      restartPolicy: OnFailure
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      initContainers:
+      # Wait for Forgejo to be healthy before attempting bootstrap
+      - name: wait-for-forgejo
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for Forgejo to be healthy..."
+          until wget -q --spider http://forgejo.rig-system.svc.cluster.local:3000/api/healthz; do
+            echo "Forgejo not ready yet, sleeping 5 seconds..."
+            sleep 5
+          done
+          echo "Forgejo is healthy!"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+
+      containers:
+      - name: bootstrap
+        image: codeberg.org/forgejo/forgejo:7
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+
+          echo "========================================="
+          echo "Forgejo Bootstrap Job"
+          echo "========================================="
+
+          # Install required tools (curl and jq)
+          echo "Installing required tools..."
+          apk add --no-cache curl jq
+
+          FORGEJO_URL="http://forgejo.rig-system.svc.cluster.local:3000"
+          ADMIN_USER="admin"
+          ADMIN_PASSWORD="admin"
+          ADMIN_EMAIL="admin@example.com"
+
+          # Step 1: Create admin user
+          echo ""
+          echo "Step 1: Creating admin user..."
+          forgejo admin user create \
+            --admin \
+            --username "$ADMIN_USER" \
+            --password "$ADMIN_PASSWORD" \
+            --email "$ADMIN_EMAIL" \
+            --must-change-password=false \
+            -c /data/gitea/conf/app.ini 2>&1 || {
+            echo "Admin user may already exist (this is OK)"
+          }
+
+          # Step 2: Generate API access token
+          echo ""
+          echo "Step 2: Generating API access token..."
+          TOKEN_RESPONSE=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+            -d '{"name":"bootstrap-token","scopes":["write:repository","write:user","write:organization"]}' \
+            "$FORGEJO_URL/api/v1/users/$ADMIN_USER/tokens" || echo '{}')
+
+          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.sha1 // empty')
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "Failed to create token, trying to use existing token..."
+            # Try to list existing tokens and use the first one
+            EXISTING_TOKENS=$(curl -s -X GET \
+              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+              "$FORGEJO_URL/api/v1/users/$ADMIN_USER/tokens")
+
+            # If we have existing tokens, we'll just log a message
+            # In production, you might want to store the token securely
+            echo "Using basic auth instead of token for repository creation"
+            USE_BASIC_AUTH=true
+          else
+            echo "API token created successfully"
+            USE_BASIC_AUTH=false
+          fi
+
+          # Step 3: Create repositories
+          echo ""
+          echo "Step 3: Creating repositories..."
+
+          # Repository 1: user-applications
+          echo "Creating repository: user-applications"
+          if [ "$USE_BASIC_AUTH" = "true" ]; then
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+              -d '{
+                "name":"user-applications",
+                "description":"User application deployments for RIG projects",
+                "private":false,
+                "auto_init":true,
+                "default_branch":"main",
+                "gitignores":"",
+                "license":"",
+                "readme":"Default"
+              }' \
+              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
+          else
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: token $TOKEN" \
+              -d '{
+                "name":"user-applications",
+                "description":"User application deployments for RIG projects",
+                "private":false,
+                "auto_init":true,
+                "default_branch":"main",
+                "gitignores":"",
+                "license":"",
+                "readme":"Default"
+              }' \
+              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
+          fi
+
+          # Repository 2: argo-user-applications
+          echo "Creating repository: argo-user-applications"
+          if [ "$USE_BASIC_AUTH" = "true" ]; then
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+              -d '{
+                "name":"argo-user-applications",
+                "description":"ArgoCD application manifests for RIG projects",
+                "private":false,
+                "auto_init":true,
+                "default_branch":"main",
+                "gitignores":"",
+                "license":"",
+                "readme":"Default"
+              }' \
+              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
+          else
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: token $TOKEN" \
+              -d '{
+                "name":"argo-user-applications",
+                "description":"ArgoCD application manifests for RIG projects",
+                "private":false,
+                "auto_init":true,
+                "default_branch":"main",
+                "gitignores":"",
+                "license":"",
+                "readme":"Default"
+              }' \
+              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
+          fi
+
+          echo ""
+          echo "========================================="
+          echo "Bootstrap completed successfully!"
+          echo "========================================="
+          echo "Forgejo URL: http://forgejo.kind"
+          echo "Admin user: $ADMIN_USER"
+          echo "Admin password: $ADMIN_PASSWORD"
+          echo ""
+          echo "Repositories created:"
+          echo "  - $FORGEJO_URL/admin/user-applications"
+          echo "  - $FORGEJO_URL/admin/argo-user-applications"
+          echo "========================================="
+
+        env:
+        # Database configuration (same as StatefulSet)
+        - name: FORGEJO__database__DB_TYPE
+          value: "postgres"
+        - name: FORGEJO__database__HOST
+          value: "rig-db-rw.rig-system.svc.cluster.local:5432"
+        - name: FORGEJO__database__NAME
+          value: "forgejo"
+        - name: FORGEJO__database__USER
+          value: "forgejo"
+        - name: FORGEJO__database__PASSWD
+          valueFrom:
+            secretKeyRef:
+              name: forgejo-db-credentials
+              key: password
+        - name: FORGEJO__database__SSL_MODE
+          value: "disable"
+        - name: FORGEJO__database__SCHEMA
+          value: "public"
+
+        volumeMounts:
+        - name: temp
+          mountPath: /tmp
+        - name: data
+          mountPath: /data
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false  # Need to write to /data
+
+      volumes:
+      - name: temp
+        emptyDir: {}
+      - name: data
+        emptyDir: {}

@@ -217,6 +217,54 @@ tasks:
         echo "⚠️  For production use, consider storing the key in a secure vault or HSM."
     silent: true
 
+  encrypt-value-age-base64:
+    desc: "Encrypt a value with AGE and output in base64+age:base64encoded format"
+    vars:
+      VALUE: '{{.VALUE | default ""}}'
+    cmds:
+      - |
+        if [[ -z "{{.VALUE}}" ]]; then
+          echo "❌ Usage: task encrypt-value-age-base64 VALUE='your-secret-value'"
+          exit 1
+        fi
+
+        if [[ ! -f "security/key.txt" ]]; then
+          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+          exit 1
+        fi
+
+        # Extract the public key from security/key.txt
+        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+
+        # Encrypt the value with age and encode to base64
+        ENCRYPTED=$(echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a | base64 | tr -d '\n')
+
+        echo "base64+age:$ENCRYPTED"
+    silent: true
+
+  encrypt-value-age:
+    desc: "Encrypt a value with AGE and output in armor format"
+    vars:
+      VALUE: '{{.VALUE | default ""}}'
+    cmds:
+      - |
+        if [[ -z "{{.VALUE}}" ]]; then
+          echo "❌ Usage: task encrypt-value-age VALUE='your-secret-value'"
+          exit 1
+        fi
+
+        if [[ ! -f "security/key.txt" ]]; then
+          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+          exit 1
+        fi
+
+        # Extract the public key from security/key.txt
+        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+
+        # Encrypt the value with age in armor format
+        echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a
+    silent: true
+
   configure-coredns-kind-domains:
     desc: "Configure CoreDNS to resolve *.kind domains to ingress controller (re-runnable)"
     cmds:
@@ -327,6 +375,129 @@ tasks:
       - echo -e "✅ Kind cluster '{{.KIND_CLUSTER_NAME}}' successfully uninstalled\n"
     silent: true
 
+  create-local-kind-cluster:
+    desc: "Create a local Kind cluster with ingress support"
+    cmds:
+      - |
+        echo "========================================="
+        echo "Creating Kind cluster: {{.KIND_CLUSTER_NAME}}"
+        echo "========================================="
+        echo ""
+
+        # Check if cluster already exists
+        if kind get clusters | grep -q "^{{.KIND_CLUSTER_NAME}}$"; then
+          echo "⚠️  Cluster '{{.KIND_CLUSTER_NAME}}' already exists"
+          echo "To recreate, first run: task uninstall-local-kind-cluster"
+          exit 1
+        fi
+
+        # Create cluster from config
+        echo "📦 Creating cluster from kind-config.yaml..."
+        kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind-config.yaml
+
+        echo ""
+        echo "✅ Kind cluster created successfully!"
+        echo ""
+        echo "Cluster details:"
+        kubectl cluster-info --context kind-{{.KIND_CLUSTER_NAME}}
+    silent: false
+
+  install-cnpg-operator:
+    desc: "Install CloudNativePG operator for PostgreSQL"
+    cmds:
+      - |
+        echo "========================================="
+        echo "Installing CloudNativePG operator"
+        echo "========================================="
+        echo ""
+
+        # Check if operator is already installed
+        if kubectl get deployment -n cnpg-system cnpg-controller-manager 2>/dev/null; then
+          echo "✅ CloudNativePG operator already installed"
+          exit 0
+        fi
+
+        echo "📦 Installing CloudNativePG operator v1.23.0..."
+        kubectl apply -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.23/releases/cnpg-1.23.0.yaml
+
+        echo ""
+        echo "⏳ Waiting for operator to be ready..."
+        kubectl wait --for=condition=Available --timeout=300s \
+          deployment/cnpg-controller-manager -n cnpg-system
+
+        echo ""
+        echo "✅ CloudNativePG operator installed successfully!"
+        echo ""
+        echo "Verify with: kubectl get pods -n cnpg-system"
+    silent: false
+
+  install-ingress-nginx:
+    desc: "Install NGINX Ingress Controller for Kind"
+    cmds:
+      - |
+        echo "========================================="
+        echo "Installing NGINX Ingress Controller"
+        echo "========================================="
+        echo ""
+
+        # Check if ingress is already installed
+        if kubectl get namespace ingress-nginx 2>/dev/null; then
+          echo "✅ NGINX Ingress Controller already installed"
+          exit 0
+        fi
+
+        echo "📦 Installing NGINX Ingress Controller for Kind..."
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+        echo ""
+        echo "⏳ Waiting for ingress controller to be ready..."
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=300s
+
+        echo ""
+        echo "✅ NGINX Ingress Controller installed successfully!"
+        echo ""
+        echo "Verify with: kubectl get pods -n ingress-nginx"
+    silent: false
+
+  setup-local-cluster:
+    desc: "Complete setup: create cluster, install operators, and bootstrap infrastructure"
+    cmds:
+      - task: create-local-kind-cluster
+      - task: install-ingress-nginx
+      - task: install-cnpg-operator
+      - task: configure-coredns-kind-domains
+      - task: prepare-argocd-operator
+      - task: update-cmp-kustomize-sops
+      - task: generate-age-key
+      - task: generate-bootstrap-secrets-for-cluster
+      - task: generate-infrastructure-secrets-for-cluster
+      - task: update-operations-manager
+      - |
+        echo ""
+        echo "========================================="
+        echo "✅ Local cluster setup complete!"
+        echo "========================================="
+        echo ""
+        echo "Next steps:"
+        echo "1. Start git daemon (for infrastructure repo):"
+        echo "   git daemon --base-path=. --export-all --reuseaddr --informative-errors --verbose --enable=upload-pack --port=9090 --listen=0.0.0.0 --log-destination=stderr"
+        echo ""
+        echo "2. Bootstrap ArgoCD:"
+        echo "   task bootstrap-argo-system"
+        echo ""
+        echo "3. Add to /etc/hosts:"
+        echo "   127.0.0.1 argo.kind keycloak.kind minio.kind operations-manager.kind forgejo.kind"
+        echo ""
+        echo "4. Access services:"
+        echo "   - ArgoCD: http://argo.kind (admin/admin)"
+        echo "   - Forgejo: http://forgejo.kind (admin/admin)"
+        echo "   - Keycloak: http://keycloak.kind"
+        echo "   - Operations Manager: http://operations-manager.kind"
+    silent: false
+
   generate-env-secrets-for-operations-manager:
     desc: "Generate SOPS-encrypted secret from cluster-specific env file for operations-manager"
     vars:
@@ -414,10 +585,6 @@ tasks:
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
       - |
-        echo "Copying jinja-roos-components for Docker build..."
-        mkdir -p ./jinja-roos-components
-        cp -r ../jinja-roos-components/jinja-roos-components ./jinja-roos-components/
-      - |
         echo "Building operations-manager Docker image with BuildKit optimizations..."
         # Use image-based caching which is compatible with standard Docker driver
         DOCKER_BUILDKIT=1 docker build \
@@ -428,9 +595,6 @@ tasks:
           -t operations-manager \
           -f operations-manager/Dockerfile .
       - |
-        echo "Cleaning up copied jinja-roos-components..."
-        rm -rf ./jinja-roos-components
-      - |
         echo "Loading image into kind cluster..."
         kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
       - |
@@ -439,6 +603,26 @@ tasks:
         kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
+
+  skaffold-dev:
+    desc: "Start Skaffold with hot-reload mode for fast development iteration"
+    cmds:
+      - echo "Starting Skaffold in hot-reload mode..."
+      - echo "Files will sync automatically and uvicorn will auto-reload"
+      - SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" skaffold dev --port-forward -f operations-manager/skaffold.yaml
+
+  skaffold-debug:
+    desc: "Instructions for running Skaffold in debug mode"
+    cmds:
+      - echo 'To enable debug mode'
+      - echo '1. Edit bootstrap/rig-system/kustomize/operations-manager/overlays/local/kustomization.yaml'
+      - echo '2. Comment out enable-hot-reload.yaml patch'
+      - echo '3. Uncomment enable-debug.yaml patch'
+      - echo '4. Run kubectl apply -k bootstrap/rig-system/kustomize/operations-manager/overlays/local'
+      - echo '5. Wait for pod restart with kubectl rollout status deployment/operations-manager -n rig-system'
+      - echo '6. Start Skaffold with task skaffold-dev'
+      - echo '7. In IntelliJ Run → Debug Remote Debug - Operations Manager'
+      - echo '8. Debugger will attach to localhost 5678'
 
   deploy-operations-manager:
     desc: "Deploy the operations-manager to the current cluster"
@@ -453,90 +637,211 @@ tasks:
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
 
+  docker-build-and-push:
+    desc: "Build and publish Docker images to container registry"
+    vars:
+      # Required parameters (no defaults)
+      BUILD_CONTEXT: '{{.BUILD_CONTEXT | default ""}}'
+      DOCKERFILE_PATH: '{{.DOCKERFILE_PATH | default "Dockerfile"}}'
+      IMAGE_NAME: '{{.IMAGE_NAME | default ""}}'
+      REGISTRY_IMAGE: '{{.REGISTRY_IMAGE | default ""}}'
+
+      # Optional parameters (with defaults)
+      IMAGE_TAG: '{{.IMAGE_TAG | default "latest"}}'
+      PLATFORMS: '{{.PLATFORMS | default "linux/amd64,linux/arm64"}}'
+      BUILD_TARGET: '{{.BUILD_TARGET | default ""}}'
+      CACHE_IMAGE: '{{.CACHE_IMAGE | default ""}}'
+      SKIP_VALIDATION: '{{.SKIP_VALIDATION | default "false"}}'
+      BUILDER_NAME: '{{.BUILDER_NAME | default "buildx-builder"}}'
+
+      # Computed: Full registry path with image name
+      FULL_REGISTRY_IMAGE: '{{.REGISTRY_IMAGE}}{{if not (hasSuffix "/" .REGISTRY_IMAGE)}}/{{end}}{{.IMAGE_NAME}}'
+
+    preconditions:
+      - sh: '[ -n "{{.BUILD_CONTEXT}}" ]'
+        msg: |
+          Build and publish Docker images to container registry
+
+          Required parameters:
+            BUILD_CONTEXT    - Path to build context (e.g., ".", "./app")
+            IMAGE_NAME       - Local image name (e.g., "my-app", "backend")
+            REGISTRY_IMAGE   - Registry path (e.g., "ghcr.io/org/repo" or "ghcr.io/org/")
+
+          Optional parameters:
+            IMAGE_TAG        - Image tag (default: "latest")
+            DOCKERFILE_PATH  - Dockerfile path relative to BUILD_CONTEXT (default: "Dockerfile")
+            PLATFORMS        - Target platforms (default: "linux/amd64,linux/arm64")
+            BUILD_TARGET     - Docker build target stage (default: none)
+            CACHE_IMAGE      - Additional cache image (default: none)
+            SKIP_VALIDATION  - Skip local validation build (default: "false")
+            BUILDER_NAME     - Buildx builder name (default: "buildx-builder")
+
+          Examples:
+            # Basic usage
+            task docker-build-and-push BUILD_CONTEXT=. IMAGE_NAME=my-app REGISTRY_IMAGE=ghcr.io/myorg/my-app
+
+            # With custom tag and Dockerfile
+            task docker-build-and-push BUILD_CONTEXT=./backend IMAGE_NAME=api REGISTRY_IMAGE=ghcr.io/myorg/api IMAGE_TAG=v1.2.3 DOCKERFILE_PATH=docker/Dockerfile
+
+            # Multi-stage build with target
+            task docker-build-and-push BUILD_CONTEXT=. IMAGE_NAME=app REGISTRY_IMAGE=ghcr.io/myorg/app BUILD_TARGET=production
+
+            # Skip validation (faster, for CI/CD)
+            task docker-build-and-push BUILD_CONTEXT=. IMAGE_NAME=app REGISTRY_IMAGE=ghcr.io/myorg/app SKIP_VALIDATION=true
+
+            # Single platform build (faster for testing)
+            task docker-build-and-push BUILD_CONTEXT=. IMAGE_NAME=app REGISTRY_IMAGE=ghcr.io/myorg/app PLATFORMS=linux/amd64
+      - sh: '[ -n "{{.IMAGE_NAME}}" ]'
+        msg: "IMAGE_NAME is required (see help above)"
+      - sh: '[ -n "{{.REGISTRY_IMAGE}}" ]'
+        msg: "REGISTRY_IMAGE is required (see help above)"
+      - sh: '[ -d "{{.BUILD_CONTEXT}}" ]'
+        msg: 'BUILD_CONTEXT directory does not exist: {{.BUILD_CONTEXT}}'
+      - sh: '[ -f "{{.BUILD_CONTEXT}}/{{.DOCKERFILE_PATH}}" ]'
+        msg: 'Dockerfile not found: {{.BUILD_CONTEXT}}/{{.DOCKERFILE_PATH}}'
+
+    cmds:
+      # Step 1: Local validation build
+      - |
+        if [[ "{{.SKIP_VALIDATION}}" != "true" ]]; then
+          echo "Building {{.IMAGE_NAME}} locally for validation..."
+          TARGET_FLAG=""
+          if [[ -n "{{.BUILD_TARGET}}" ]]; then
+            TARGET_FLAG="--target {{.BUILD_TARGET}}"
+          fi
+          CACHE_FLAG=""
+          if [[ -n "{{.CACHE_IMAGE}}" ]]; then
+            CACHE_FLAG="--cache-from {{.CACHE_IMAGE}}"
+          fi
+
+          DOCKER_BUILDKIT=1 docker build \
+            $TARGET_FLAG \
+            $CACHE_FLAG \
+            --cache-from {{.IMAGE_NAME}}:latest \
+            -t {{.IMAGE_NAME}}:test \
+            -f {{.BUILD_CONTEXT}}/{{.DOCKERFILE_PATH}} \
+            {{.BUILD_CONTEXT}}
+          echo "✅ Local build successful"
+        fi
+
+      # Step 2: Interactive confirmation
+      - |
+        echo ""
+        echo "Publishing {{.IMAGE_NAME}} to container registry..."
+        echo "Registry: {{.FULL_REGISTRY_IMAGE}}:{{.IMAGE_TAG}}"
+        echo "Platforms: {{.PLATFORMS}}"
+        echo "Build context: {{.BUILD_CONTEXT}}"
+        echo "Dockerfile: {{.DOCKERFILE_PATH}}"
+        echo ""
+        printf "Continue with publishing? [y/N]: "
+        read -r REPLY
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+          echo "Publishing cancelled."
+          if [[ "{{.SKIP_VALIDATION}}" != "true" ]]; then
+            docker rmi {{.IMAGE_NAME}}:test 2>/dev/null || true
+          fi
+          exit 1
+        fi
+
+      # Step 3: Create buildx builder if needed
+      - |
+        docker buildx create --name {{.BUILDER_NAME}} --use --driver docker-container 2>/dev/null || docker buildx use {{.BUILDER_NAME}}
+
+      # Step 4: Multi-platform build and push
+      - |
+        echo "Building and pushing multi-platform image..."
+        TARGET_FLAG=""
+        if [[ -n "{{.BUILD_TARGET}}" ]]; then
+          TARGET_FLAG="--target {{.BUILD_TARGET}}"
+        fi
+        CACHE_FLAGS=""
+        if [[ -n "{{.CACHE_IMAGE}}" ]]; then
+          CACHE_FLAGS="--cache-from type=registry,ref={{.CACHE_IMAGE}} --cache-to type=registry,ref={{.CACHE_IMAGE}},mode=max"
+        fi
+
+        # Disable provenance and SBOM to avoid unknown/unknown platform entries in GHCR
+        # See: https://github.com/orgs/community/discussions/45969
+        DOCKER_BUILDKIT=1 docker buildx build \
+          --platform {{.PLATFORMS}} \
+          --provenance=false \
+          --sbom=false \
+          $TARGET_FLAG \
+          $CACHE_FLAGS \
+          -f {{.BUILD_CONTEXT}}/{{.DOCKERFILE_PATH}} \
+          -t {{.FULL_REGISTRY_IMAGE}}:{{.IMAGE_TAG}} \
+          --push \
+          {{.BUILD_CONTEXT}}
+
+        echo "✅ Image published successfully to {{.FULL_REGISTRY_IMAGE}}:{{.IMAGE_TAG}}"
+
+      # Step 5: Cleanup
+      - |
+        if [[ "{{.SKIP_VALIDATION}}" != "true" ]]; then
+          echo "Cleaning up local test image..."
+          docker rmi {{.IMAGE_NAME}}:test 2>/dev/null || true
+        fi
+    silent: true
+    # Usage Examples:
+    #
+    # Example 1: Build and publish operations-manager
+    #   task docker-build-and-push \
+    #     BUILD_CONTEXT=. \
+    #     DOCKERFILE_PATH=operations-manager/Dockerfile \
+    #     IMAGE_NAME=operations-manager \
+    #     REGISTRY_IMAGE=ghcr.io/minbzk/base-images/operations-manager \
+    #     BUILD_TARGET=application \
+    #     CACHE_IMAGE=ghcr.io/minbzk/base-images/operations-manager:cache
+    #
+    # Example 2: Build PostgreSQL image from subdirectory
+    #   task docker-build-and-push \
+    #     BUILD_CONTEXT=images/postgresql-with-dictionaries \
+    #     DOCKERFILE_PATH=Dockerfile \
+    #     IMAGE_NAME=postgresql-with-dictionaries \
+    #     REGISTRY_IMAGE=ghcr.io/rijksictgilde/postgresql-with-dictionaries \
+    #     IMAGE_TAG=17
+    #
+    # Example 3: Build with custom tag and skip validation
+    #   task docker-build-and-push \
+    #     BUILD_CONTEXT=. \
+    #     DOCKERFILE_PATH=operations-manager/Dockerfile \
+    #     IMAGE_NAME=operations-manager \
+    #     REGISTRY_IMAGE=ghcr.io/rijksictgilde/operations-manager \
+    #     IMAGE_TAG=v2.0.0 \
+    #     SKIP_VALIDATION=true
+    #
+    # Example 4: Build for single platform (faster local testing)
+    #   task docker-build-and-push \
+    #     BUILD_CONTEXT=. \
+    #     DOCKERFILE_PATH=operations-manager/Dockerfile \
+    #     IMAGE_NAME=operations-manager \
+    #     REGISTRY_IMAGE=ghcr.io/rijksictgilde/operations-manager \
+    #     PLATFORMS=linux/amd64
+    #
+    # Parameters:
+    #   BUILD_CONTEXT    - Root directory for build context (required)
+    #   DOCKERFILE_PATH  - Path to Dockerfile relative to context (default: "Dockerfile")
+    #   IMAGE_NAME       - Local test image name (required)
+    #   REGISTRY_IMAGE   - Full registry path without tag (required)
+    #   IMAGE_TAG        - Image tag (default: "latest")
+    #   PLATFORMS        - Target platforms (default: "linux/amd64,linux/arm64")
+    #   BUILD_TARGET     - Multi-stage build target (optional)
+    #   CACHE_IMAGE      - Registry cache location (optional)
+    #   SKIP_VALIDATION  - Skip local build validation (default: "false")
+    #   BUILDER_NAME     - Buildx builder name (default: "buildx-builder")
+
   publish-operations-manager:
     desc: "Build and publish the operations-manager to GitHub Container Registry"
     deps: [requirements-check, generate-env-secrets-for-operations-manager]
     cmds:
-      - |
-        echo "Copying jinja-roos-components for Docker build..."
-        mkdir -p ./jinja-roos-components
-        cp -r ../jinja-roos-components/jinja-roos-components ./jinja-roos-components/
-      - |
-        echo "Building operations-manager locally for validation with BuildKit cache..."
-        # Build intermediate cache images for better layer reuse
-        echo "Building base system cache..."
-        DOCKER_BUILDKIT=1 docker build \
-          --target base-system \
-          --cache-from operations-manager:cache-base-system \
-          -t operations-manager:cache-base-system \
-          -f operations-manager/Dockerfile . || echo "Base system cache failed, continuing..."
-        
-        echo "Building dependencies cache..."
-        DOCKER_BUILDKIT=1 docker build \
-          --target dependencies \
-          --cache-from operations-manager:cache-base-system \
-          --cache-from operations-manager:cache-dependencies \
-          -t operations-manager:cache-dependencies \
-          -f operations-manager/Dockerfile . || echo "Dependencies cache failed, continuing..."
-        
-        echo "Building final application image..."
-        DOCKER_BUILDKIT=1 docker build \
-          --target application \
-          --cache-from operations-manager:cache-base-system \
-          --cache-from operations-manager:cache-dependencies \
-          --cache-from operations-manager:latest \
-          -t operations-manager:test \
-          -f operations-manager/Dockerfile .
-        echo "✅ Local build successful"
-        echo ""
-      - |
-        echo "Cleaning up copied jinja-roos-components..."
-        rm -rf ./jinja-roos-components
-      - |
-        echo "Publishing operations-manager to GHCR..."
-        echo "Registry: ghcr.io/minbzk/base-images/operations-manager:latest"
-        echo ""
-        echo "Prerequisites:"
-        echo "- Docker buildx installed"
-        echo "- Authenticated with GHCR: docker login ghcr.io"
-        echo "- Push permissions to minbzk/base-images repository"
-        echo ""
-        printf "Continue with publishing? [y/N]: "
-        read -r REPLY
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-          echo "Copying jinja-roos-components for multi-platform build..."
-          mkdir -p ./jinja-roos-components
-          cp -r ../jinja-roos-components/jinja-roos-components ./jinja-roos-components/
-          echo "Building and pushing multi-platform image with registry-based caching..."
-          
-          # First, create a buildx builder if it doesn't exist (supports registry caching)
-          docker buildx create --name operations-manager-builder --use --driver docker-container 2>/dev/null || docker buildx use operations-manager-builder
-          
-          # Build and push with registry cache (works with buildx driver)
-          DOCKER_BUILDKIT=1 docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --target application \
-            --cache-from type=registry,ref=ghcr.io/minbzk/base-images/operations-manager:cache \
-            --cache-to type=registry,ref=ghcr.io/minbzk/base-images/operations-manager:cache,mode=max \
-            -f operations-manager/Dockerfile \
-            -t ghcr.io/minbzk/base-images/operations-manager:latest \
-            --push .
-          echo "Cleaning up copied jinja-roos-components..."
-          rm -rf ./jinja-roos-components
-          echo "✅ Operations manager published successfully to GHCR with registry cache!"
-          echo "Cleaning up local images..."
-          docker rmi operations-manager:test || true
-          docker rmi operations-manager:cache-base-system || true
-          docker rmi operations-manager:cache-dependencies || true
-        else
-          echo "Publishing cancelled."
-          echo "Cleaning up local images..."
-          docker rmi operations-manager:test || true
-          docker rmi operations-manager:cache-base-system || true
-          docker rmi operations-manager:cache-dependencies || true
-          exit 1
-        fi
-    silent: true
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: .
+          DOCKERFILE_PATH: operations-manager/Dockerfile
+          IMAGE_NAME: operations-manager
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images/operations-manager
+          BUILD_TARGET: application
+          CACHE_IMAGE: ghcr.io/minbzk/base-images/operations-manager:cache
+          BUILDER_NAME: operations-manager-builder
 
   update-cmp-kustomize-sops:
     desc: "Build and deploy the cmp-kustomize-sops image to the local kind cluster"
@@ -577,7 +882,9 @@ tasks:
         read -r REPLY
         if [[ $REPLY =~ ^[Yy]$ ]]; then
           echo "Building multi-platform image and pushing to GHCR..."
-          docker buildx build --platform linux/amd64,linux/arm64 -f images/cmp-kustomize-sops/Dockerfile -t ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest --push .
+          # Disable provenance and SBOM to avoid unknown/unknown platform entries in GHCR
+          # See: https://github.com/orgs/community/discussions/45969
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --sbom=false -f images/cmp-kustomize-sops/Dockerfile -t ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest --push .
           echo "✅ CMP kustomize-sops image published successfully to GHCR!"
           echo "Cleaning up local test image..."
           docker rmi rig-cmp-argo-kustomize-sops:test || true
@@ -586,6 +893,18 @@ tasks:
           docker rmi rig-cmp-argo-kustomize-sops:test || true
           exit 1
         fi
+    silent: true
+
+  build-postgresql-image:
+    desc: "Build and load PostgreSQL image with dictionary files into kind cluster"
+    cmds:
+      - |
+        echo "Building PostgreSQL image with full-text search dictionaries..."
+        docker build -t postgresql-with-dictionaries:17 -f images/postgresql-with-dictionaries/Dockerfile images/postgresql-with-dictionaries/
+      - |
+        echo "Loading image into kind cluster..."
+        kind load docker-image postgresql-with-dictionaries:17 --name {{.KIND_CLUSTER_NAME}}
+      - echo -e "✅ PostgreSQL image built and loaded successfully!"
     silent: true
 
   # Internal shared task for secret generation
@@ -718,9 +1037,13 @@ tasks:
           done
           
           echo "" >> "$OVERVIEW_FILE"
-          
+
           # Path substitution not needed - path annotation is only for informational purposes
-          
+
+          # Always replace namespace with the cluster-specific namespace from env settings
+          echo "  Setting namespace to: {{.RIG_NAMESPACE}}"
+          yq eval '.metadata.namespace = "{{.RIG_NAMESPACE}}"' -i "$temp_file"
+
           # Copy to final location and encrypt with SOPS using AGE key
           output_file="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/${filename}.sops.yaml"
           cp "$temp_file" "$output_file"
@@ -732,13 +1055,16 @@ tasks:
           # Clean up temp file
           rm "$temp_file"
         done
-        
-        # Generate kustomization.yaml and decrypt-sops.yaml for infrastructure mode
-        if [ "{{.MODE}}" = "infrastructure" ]; then
-          echo "Generating kustomization.yaml and decrypt-sops.yaml..."
-          
-          # Create decrypt-sops.yaml with all generated .sops.yaml files
-          cat > "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/decrypt-sops.yaml" << 'DECRYPT_EOF'
+
+        # Update or create decrypt-sops.yaml
+        echo ""
+        echo "Updating decrypt-sops.yaml..."
+        DECRYPT_FILE="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/decrypt-sops.yaml"
+
+        # Create decrypt-sops.yaml if it doesn't exist
+        if [ ! -f "$DECRYPT_FILE" ]; then
+          echo "  Creating new decrypt-sops.yaml"
+          cat > "$DECRYPT_FILE" << 'DECRYPT_EOF'
         apiVersion: viaduct.ai/v1
         kind: ksops
         metadata:
@@ -747,28 +1073,34 @@ tasks:
             config.kubernetes.io/function: "exec:\n  path: ksops\n"
         files:
         DECRYPT_EOF
-          
-          # Add all secret .sops.yaml files to decrypt-sops.yaml
-          for template in {{.TEMPLATES_DIR}}/*.yaml; do
-            if [ -f "$template" ]; then
-              filename=$(basename "$template")
-              # Only include files that are clearly secrets (contain '-secret' or '.secret' in filename)
-              if [[ "$filename" == *"-secret.yaml" ]] || [[ "$filename" == *".secret.yaml" ]]; then
-                echo "  - ${filename}.sops.yaml" >> "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/decrypt-sops.yaml"
-              fi
+        fi
+
+        # Add all .sops.yaml files from output directory if not already present
+        for sops_file in "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"/*.sops.yaml; do
+          if [ -f "$sops_file" ]; then
+            filename=$(basename "$sops_file")
+            # Check if this file is already referenced
+            if ! grep -qF "$filename" "$DECRYPT_FILE"; then
+              echo "  - $filename" >> "$DECRYPT_FILE"
+              echo "  ✅ Added: $filename"
+            else
+              echo "  ℹ️  Already present: $filename"
             fi
-          done
-          
-          # Create kustomization.yaml
-          cat > "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/kustomization.yaml" << 'KUSTOMIZATION_EOF'
+          fi
+        done
+
+        # Create kustomization.yaml if it doesn't exist
+        KUSTOMIZATION_FILE="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/kustomization.yaml"
+        if [ ! -f "$KUSTOMIZATION_FILE" ]; then
+          echo "  Creating kustomization.yaml"
+          cat > "$KUSTOMIZATION_FILE" << 'KUSTOMIZATION_EOF'
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
 
         generators:
         - decrypt-sops.yaml
         KUSTOMIZATION_EOF
-        
-          echo "  ✅ Generated kustomization.yaml and decrypt-sops.yaml"
+          echo "  ✅ Created kustomization.yaml"
         fi
         
         echo ""
@@ -834,52 +1166,40 @@ tasks:
     silent: false
 
   publish-keycloak-custom-mapper:
-    desc: "Build and publish the Keycloak custom mapper JAR to GitHub Container Registry"
+    desc: "Build and publish the Keycloak custom mapper JAR to GitHub Releases"
     deps: [build-keycloak-custom-mapper]
     cmds:
       - |
-        echo "📦 Publishing Keycloak custom mapper to GHCR..."
-        echo "Registry: ghcr.io/minbzk/base-images/keycloak-custom-mappers/keycloak-saml-nameid-mapper-1.0.0.jar"
+        echo "📦 Publishing Keycloak custom mapper to GitHub Releases..."
         echo ""
         echo "Prerequisites:"
-        echo "- GitHub CLI (gh) installed"
-        echo "- Authenticated with GitHub: gh auth login"
-        echo "- Push permissions to minbzk/base-images repository"
+        echo "- GitHub CLI (gh) installed and authenticated"
+        echo "- Repository must be public for wget downloads"
         echo ""
-        printf "Continue with publishing? [y/N]: "
-        read -r REPLY
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-          echo "Creating release and uploading JAR..."
 
-          # Create a GitHub release for the JAR
-          cd keycloak-migration/custom-mapper
+        cd keycloak-migration/custom-mapper
 
-          # Tag and release version
-          VERSION="v1.0.0"
-          REPO="minbzk/base-images"
+        VERSION="v1.0.0"
+        REPO="RijksICTGilde/RIG-Cluster"
 
-          # Check if release exists, if not create it
-          if ! gh release view "$VERSION" --repo "$REPO" 2>/dev/null; then
-            echo "Creating release $VERSION..."
-            gh release create "$VERSION" \
-              --repo "$REPO" \
-              --title "Keycloak Custom Mapper $VERSION" \
-              --notes "Unrestricted XPath Attribute Mapper for Keycloak - allows extracting SAML NameID to user attributes"
-          fi
-
-          # Upload JAR as release asset
-          echo "Uploading JAR to release..."
-          gh release upload "$VERSION" \
-            --repo "$REPO" \
-            --clobber \
-            target/keycloak-saml-nameid-mapper-1.0.0.jar
-
-          echo "✅ Keycloak custom mapper published successfully!"
-          echo "📥 Download URL: https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.0.0.jar"
-        else
-          echo "Publishing cancelled."
-          exit 1
+        # Check if release already exists
+        if gh release view "$VERSION" --repo "$REPO" 2>/dev/null; then
+          echo "⚠️  Release $VERSION already exists. Deleting and recreating..."
+          gh release delete "$VERSION" --repo "$REPO" --yes
         fi
+
+        echo "Creating release $VERSION..."
+        gh release create "$VERSION" \
+          --repo "$REPO" \
+          --title "Keycloak SAML NameID Mapper $VERSION" \
+          --notes "Custom Keycloak mapper for extracting SAML NameID to user attributes using unrestricted XPath" \
+          target/keycloak-saml-nameid-mapper-1.0.0.jar
+
+        echo ""
+        echo "✅ Keycloak custom mapper published successfully!"
+        echo "📥 Download URL: https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.0.0.jar"
+        echo ""
+        echo "Verify with: curl -sI https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.0.0.jar"
     silent: false
 
   export-keycloak-users:

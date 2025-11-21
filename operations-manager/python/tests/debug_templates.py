@@ -62,7 +62,7 @@ try:
     if "<c-" in result:
         pos = result.find("<c-")
         print(f"\n   First <c- tag at position {pos}:")
-        print(f"   Context: ...{result[max(0,pos-50):pos+100]}...")
+        print(f"   Context: ...{result[max(0, pos - 50) : pos + 100]}...")
 
 except Exception as e:
     print(f"   ERROR: {e}")

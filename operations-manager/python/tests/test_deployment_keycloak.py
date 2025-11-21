@@ -127,18 +127,18 @@ metadata:
   namespace: myapp
 type: Opaque
 stringData:
-  OIDC_CLIENT_ID: {frontend_client['client_id']}
+  OIDC_CLIENT_ID: {frontend_client["client_id"]}
   OIDC_CLIENT_SECRET: ENC[AES256_GCM,data:abc123...,iv:def456...,tag:ghi789...,type:str]
-  OIDC_DISCOVERY_URL: {frontend_client['discovery_url']}""")
+  OIDC_DISCOVERY_URL: {frontend_client["discovery_url"]}""")
 
         print("\n📝 Example values.yaml section:")
         print(f"""oidc:
   enabled: true
-  clientId: {frontend_client['client_id']}
+  clientId: {frontend_client["client_id"]}
   clientSecretRef:
     name: myapp-frontend-oidc
     key: OIDC_CLIENT_SECRET
-  discoveryUrl: {frontend_client['discovery_url']}
+  discoveryUrl: {frontend_client["discovery_url"]}
   
 ingress:
   hosts:

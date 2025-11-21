@@ -203,25 +203,28 @@ async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnect
 
     # Perform explicit recovery check for each namespace
     project_manager = create_project_manager()
-    recovery_needed = False
+    try:
+        recovery_needed = False
 
-    # Check each deployment namespace for missing SOPS secrets
-    for deployment in (d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER):
-        deployment_name = deployment.get("name")
+        # Check each deployment namespace for missing SOPS secrets
+        for deployment in (d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER):
+            deployment_name = deployment.get("name")
 
-        # TODO: namespace is too kubernetes specific; maybe 'target: 'shared' or target: 'unique'?
-        namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, deployment.get("namespace"))
+            # TODO: namespace is too kubernetes specific; maybe 'target: 'shared' or target: 'unique'?
+            namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, deployment.get("namespace"))
 
-        logger.info(f"Checking SOPS secret in namespace: {namespace}")
+            logger.info(f"Checking SOPS secret in namespace: {namespace}")
 
-        # Check if SOPS secret exists in namespace
-        existing_secret = await kubectl.get_sops_secret_from_namespace(namespace)
-        if existing_secret:
-            logger.info(f"SOPS secret already exists in namespace: {namespace}")
-            continue
+            # Check if SOPS secret exists in namespace
+            existing_secret = await kubectl.get_sops_secret_from_namespace(namespace)
+            if existing_secret:
+                logger.info(f"SOPS secret already exists in namespace: {namespace}")
+                continue
 
-        logger.warning(f"Missing SOPS secret in namespace: {namespace} - attempting recovery")
-        recovery_needed = True
+            logger.warning(f"Missing SOPS secret in namespace: {namespace} - attempting recovery")
+            recovery_needed = True
+    finally:
+        await project_manager.close()
 
         # Try to recover from GitOps backup
         try:
@@ -400,20 +403,22 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             user_service.add_allowed_emails(env_emails)
             logger.info(f"Added {len(env_emails)} allowed emails from ALLOWED_EMAILS environment variable")
 
-    # Initialize git connector variable for cleanup
-    git_connector_for_project_files = None
+    # Get the list of project files to process
+    try:
+        # Create temporary git connector just to get the working directory
+        temp_git_connector = await create_git_connector_for_project_files("get project files list")
+        projects_repo_root_dir = await temp_git_connector.get_working_dir()
+        project_files = await get_project_files(projects_repo_root_dir)
+        await temp_git_connector.close()
+    except Exception as e:
+        logger.error(f"Failed to get project files list: {e}")
+        raise
 
     try:
-        git_connector_for_project_files = await create_git_connector_for_project_files("all project files")
-        projects_repo_root_dir = await git_connector_for_project_files.get_working_dir()
-        project_files = await get_project_files(projects_repo_root_dir)
-
         all_successful = True
         for project_file in project_files:
-            project_manager = ProjectManager(
-                git_connector_for_project_files=git_connector_for_project_files,
-                project_file_relative_path=project_file,
-            )
+            # Each ProjectManager gets its own git connector and all resources
+            project_manager = ProjectManager(project_file_relative_path=project_file)
             try:
                 project_file_base_name = os.path.basename(project_file)
                 logger.info(f"Processing project file: {project_file_base_name}")
@@ -434,8 +439,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
                 )
             except Exception as e:
                 logger.error(f"Error processing project file {project_file}: {e}")
+                all_successful = False
             finally:
-                await project_manager.close_git_connectors_for_deployments()
+                # Close all resources including database connections
+                await project_manager.close()
 
         logger.info("Checking MinIO CLI availability")
         minio_success = await check_minio_availability()
@@ -477,12 +484,6 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             logger.warning("Some startup tasks failed, but application will continue")
 
         return all_successful
-
-    finally:
-        # Clean up the git connector to remove temporary repository
-        if git_connector_for_project_files is not None:
-            try:
-                await git_connector_for_project_files.close()
-                logger.debug("Main git connector cleaned up successfully")
-            except Exception as e:
-                logger.warning(f"Error cleaning up main git connector: {e}")
+    except Exception as e:
+        logger.error(f"Startup failed with error: {e}")
+        raise

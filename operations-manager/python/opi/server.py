@@ -2,7 +2,9 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -22,6 +24,8 @@ from opi.middleware.authorization import AuthorizationMiddleware
 from opi.web.router import web_router
 
 logger = logging.getLogger(__name__)
+
+STATIC_DIR_ROOS = Path(jinja_roos_components.__file__).parent / "static" / "roos" / "dist"
 
 
 # todo(berry): move lifespan to own file
@@ -152,7 +156,7 @@ def create_app() -> FastAPI:
 
         # Just mount the entire static directory
         if os.path.exists(roos_static_path):
-            app.mount("/static/roos", StaticFiles(directory=roos_static_path), name="roos-static")
+            app.mount("/static/roos/dist", StaticFiles(directory=STATIC_DIR_ROOS), name="roos")
             logger.info(f"ROOS static files mounted at /static/roos from {roos_static_path}")
         else:
             logger.error(f"ROOS static path does not exist: {roos_static_path}")
@@ -171,3 +175,33 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+# Conditional startup for different development modes
+if __name__ == "__main__":
+    import uvicorn
+
+    from opi.core.config import settings
+
+    if settings.DEBUG_MODE == "debug":
+        # Debug mode: Start with debugpy, no reload
+        import debugpy
+
+        debugpy.listen(("0.0.0.0", 5678))
+        logger.info("🐛 Debug mode: Waiting for debugger to attach on port 5678...")
+        debugpy.wait_for_client()
+        logger.info("🐛 Debugger attached! Starting server...")
+        uvicorn.run("opi.server:app", host="0.0.0.0", port=8000, reload=False)
+    elif settings.DEBUG_MODE == "reload":
+        # Reload mode: Fast iteration, no debugging
+        logger.info("🔥 Hot-reload mode: File changes will auto-reload")
+        uvicorn.run(
+            "opi.server:app",
+            host="0.0.0.0",
+            port=8000,
+            reload=True,
+            reload_dirs=["/app/opi", "/app/templates", "/app/manifests"],
+        )
+    else:
+        # Production mode: No reload, no debugging
+        uvicorn.run(app, host="0.0.0.0", port=8000)

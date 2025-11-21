@@ -9,7 +9,7 @@ from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.cluster_config import get_minio_server
 from opi.core.config import settings
 from opi.services import ServiceType
-from opi.utils.naming import generate_bucket_name, generate_minio_username
+from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import MinIOSecret
 
@@ -39,7 +39,7 @@ class MinioManager:
             project_data: The project configuration data
             deployment: The specific deployment configuration
         """
-        project_name = project_data["name"]
+        project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
 
         # Check if this deployment has MinIO service enabled
@@ -271,7 +271,7 @@ class MinioManager:
         Returns:
             Dictionary containing deletion results and status
         """
-        project_name = project_data["name"]
+        project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
 
         deletion_results = {
@@ -316,10 +316,10 @@ class MinioManager:
 
             # Remove bucket access from user first
             try:
-                policy_name = self._generate_policy_name(project_name, deployment_name)
+                policy_name = generate_minio_policy_name(project_name, deployment_name)
                 revoke_result = await minio_connector.detach_policy(alias_name, policy_name, minio_username)
 
-                if revoke_result["status"] == "success":
+                if revoke_result["status"] in ["success", "detached"]:
                     deletion_results["operations"].append(
                         {
                             "type": "minio_bucket_access_revocation",
@@ -356,7 +356,7 @@ class MinioManager:
 
             # Delete the policy itself (after detaching from user)
             try:
-                policy_name = self._generate_policy_name(project_name, deployment_name)
+                policy_name = generate_minio_policy_name(project_name, deployment_name)
                 policy_result = await minio_connector.remove_policy(alias_name, policy_name)
 
                 if policy_result["status"] == "success":
@@ -379,7 +379,7 @@ class MinioManager:
                         )
 
             except Exception as e:
-                policy_name = self._generate_policy_name(project_name, deployment_name)  # Ensure policy_name is defined
+                policy_name = generate_minio_policy_name(project_name, deployment_name)  # Ensure policy_name is defined
                 deletion_results["operations"].append(
                     {"type": "minio_policy_deletion", "target": policy_name, "status": "error", "error": str(e)}
                 )
@@ -390,24 +390,28 @@ class MinioManager:
             try:
                 bucket_result = await minio_connector.delete_bucket(alias_name, bucket_name, force=True)
 
-                if bucket_result["status"] == "success":
+                if bucket_result["status"] in ["deleted", "success"]:
                     deletion_results["operations"].append(
                         {"type": "minio_bucket_deletion", "target": bucket_name, "status": "success"}
                     )
                     logger.info(f"Successfully deleted MinIO bucket: {bucket_name}")
+                elif bucket_result["status"] == "not_found" or "does not exist" in bucket_result.get("message", ""):
+                    deletion_results["operations"].append(
+                        {"type": "minio_bucket_deletion", "target": bucket_name, "status": "not_found"}
+                    )
+                    logger.info(f"MinIO bucket {bucket_name} does not exist or was already deleted")
                 else:
                     deletion_results["operations"].append(
                         {
                             "type": "minio_bucket_deletion",
                             "target": bucket_name,
-                            "status": "not_found" if "does not exist" in bucket_result.get("message", "") else "failed",
+                            "status": "failed",
                             "error": bucket_result.get("message", "Unknown error"),
                         }
                     )
-                    if "does not exist" not in bucket_result.get("message", ""):
-                        deletion_results["errors"].append(
-                            f"Failed to delete bucket {bucket_name}: {bucket_result.get('message')}"
-                        )
+                    deletion_results["errors"].append(
+                        f"Failed to delete bucket {bucket_name}: {bucket_result.get('message')}"
+                    )
 
             except Exception as e:
                 deletion_results["operations"].append(
@@ -420,24 +424,28 @@ class MinioManager:
             try:
                 user_result = await minio_connector.delete_user(alias_name, minio_username)
 
-                if user_result["status"] == "success":
+                if user_result["status"] in ["deleted", "success"]:
                     deletion_results["operations"].append(
                         {"type": "minio_user_deletion", "target": minio_username, "status": "success"}
                     )
                     logger.info(f"Successfully deleted MinIO user: {minio_username}")
+                elif user_result["status"] == "not_found" or "does not exist" in user_result.get("message", ""):
+                    deletion_results["operations"].append(
+                        {"type": "minio_user_deletion", "target": minio_username, "status": "not_found"}
+                    )
+                    logger.info(f"MinIO user {minio_username} does not exist or was already deleted")
                 else:
                     deletion_results["operations"].append(
                         {
                             "type": "minio_user_deletion",
                             "target": minio_username,
-                            "status": "not_found" if "does not exist" in user_result.get("message", "") else "failed",
+                            "status": "failed",
                             "error": user_result.get("message", "Unknown error"),
                         }
                     )
-                    if "does not exist" not in user_result.get("message", ""):
-                        deletion_results["errors"].append(
-                            f"Failed to delete user {minio_username}: {user_result.get('message')}"
-                        )
+                    deletion_results["errors"].append(
+                        f"Failed to delete user {minio_username}: {user_result.get('message')}"
+                    )
 
             except Exception as e:
                 deletion_results["operations"].append(
@@ -520,21 +528,6 @@ class MinioManager:
             logger.debug(f"Could not retrieve MinIO secret for {deployment_name}: {e}")
             return None
 
-    def _generate_policy_name(self, project_name: str, deployment_name: str) -> str:
-        """
-        Generate a consistent policy name for MinIO bucket access.
-
-        Args:
-            project_name: Project name
-            deployment_name: Deployment name
-
-        Returns:
-            Policy name in format: {project}-{deployment}-policy
-        """
-        # Use bucket naming format for consistency but add policy suffix
-        base_name = generate_bucket_name(project_name, deployment_name)
-        return f"{base_name}-policy"
-
     async def _test_minio_connection(
         self, minio_connector: MinioConnector, access_key: str, secret_key: str, bucket_name: str
     ) -> bool:
@@ -598,7 +591,7 @@ class MinioManager:
             source_deployment_name: Name of the source deployment to clone from
             force_clone: If True, clone even if target resources already exist (default: False)
         """
-        project_name = project_data["name"]
+        project_name = await self.project_manager.get_name()
         target_deployment_name = target_deployment["name"]
         force_clone = target_deployment.get("force-clone", False)
 
@@ -664,8 +657,13 @@ class MinioManager:
             # For cloning operations, always delete existing resources first to ensure clean state
             if target_bucket_exists:
                 logger.info(f"Target MinIO bucket '{target_bucket}' exists, deleting before clone")
+                # Only delete user if we don't have existing valid credentials
                 await self._delete_existing_target_resources(
-                    minio_connector, alias_name, project_name, target_deployment_name
+                    minio_connector,
+                    alias_name,
+                    project_name,
+                    target_deployment_name,
+                    delete_user=not bool(existing_credentials),
                 )
             else:
                 logger.info(
@@ -796,26 +794,66 @@ class MinioManager:
             return False
 
     async def _delete_existing_target_resources(
-        self, minio_connector: MinioConnector, alias_name: str, project_name: str, deployment_name: str
+        self,
+        minio_connector: MinioConnector,
+        alias_name: str,
+        project_name: str,
+        deployment_name: str,
+        delete_user: bool = False,
     ) -> None:
         """
-        Delete existing target MinIO resources (bucket and user) for force clone.
+        Delete existing target MinIO resources (bucket and policy) for force clone.
+
+        Optionally deletes the user if delete_user=True (when we don't have valid credentials).
 
         Args:
             minio_connector: MinIO connector instance
             alias_name: MinIO alias name
             project_name: Project name
             deployment_name: Deployment name
+            delete_user: If True, also delete the user (only when credentials are invalid)
         """
         target_username = generate_minio_username(project_name, deployment_name)
         target_bucket = generate_bucket_name(project_name, deployment_name)
-        logger.info(f"Deleting existing MinIO resources: bucket '{target_bucket}' and user '{target_username}'")
 
+        if delete_user:
+            logger.info(
+                f"Deleting existing MinIO resources: bucket '{target_bucket}', policy, and user '{target_username}'"
+            )
+        else:
+            logger.info(
+                f"Deleting existing MinIO resources: bucket '{target_bucket}' and policy "
+                f"(keeping user '{target_username}')"
+            )
+
+        # STEP 1: Detach policy from user (required before deleting policy)
+        policy_name = generate_minio_policy_name(project_name, deployment_name)
         try:
-            # Delete bucket first (will fail if not empty, which is expected)
+            detach_result = await minio_connector.detach_policy(alias_name, policy_name, target_username)
+            if detach_result["status"] == "success":
+                logger.info(f"Detached policy {policy_name} from user {target_username}")
+            else:
+                logger.debug(f"Could not detach policy (may not be attached): {detach_result.get('message')}")
+        except Exception as e:
+            logger.debug(f"Error detaching policy (may not be attached): {e}")
+
+        # STEP 2: Delete policy
+        try:
+            policy_result = await minio_connector.remove_policy(alias_name, policy_name)
+            if policy_result["status"] == "success":
+                logger.info(f"Deleted existing policy: {policy_name}")
+            elif policy_result["status"] == "not_found":
+                logger.info(f"Policy {policy_name} was already deleted or does not exist")
+        except Exception as e:
+            logger.debug(f"Error deleting policy (may not exist): {e}")
+
+        # STEP 3: Delete bucket
+        try:
             bucket_result = await minio_connector.delete_bucket(alias_name, target_bucket, force=True)
-            if bucket_result["status"] == "success":
+            if bucket_result["status"] in ["deleted", "success"]:
                 logger.info(f"Deleted existing bucket: {target_bucket}")
+            elif bucket_result["status"] == "not_found":
+                logger.info(f"Bucket {target_bucket} was already deleted or does not exist")
             else:
                 logger.warning(
                     f"Could not delete bucket {target_bucket}: {bucket_result.get('message', 'Unknown error')}"
@@ -823,26 +861,20 @@ class MinioManager:
         except Exception as e:
             logger.warning(f"Error deleting bucket {target_bucket}: {e}")
 
-        try:
-            # Delete user
-            user_result = await minio_connector.delete_user(alias_name, target_username)
-            if user_result["status"] == "success":
-                logger.info(f"Deleted existing user: {target_username}")
-            else:
-                logger.warning(
-                    f"Could not delete user {target_username}: {user_result.get('message', 'Unknown error')}"
-                )
-        except Exception as e:
-            logger.warning(f"Error deleting user {target_username}: {e}")
-
-        # Also try to delete associated policy
-        try:
-            policy_name = self._generate_policy_name(project_name, deployment_name)
-            policy_result = await minio_connector.remove_policy(alias_name, policy_name)
-            if policy_result["status"] == "success":
-                logger.info(f"Deleted existing policy: {policy_name}")
-        except Exception as e:
-            logger.debug(f"Error deleting policy (may not exist): {e}")
+        # STEP 4: Only delete user if explicitly requested (when credentials are invalid)
+        if delete_user:
+            try:
+                user_result = await minio_connector.delete_user(alias_name, target_username)
+                if user_result["status"] in ["deleted", "success"]:
+                    logger.info(f"Deleted existing user: {target_username}")
+                elif user_result["status"] == "not_found":
+                    logger.info(f"User {target_username} was already deleted or does not exist")
+                else:
+                    logger.warning(
+                        f"Could not delete user {target_username}: {user_result.get('message', 'Unknown error')}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error deleting user {target_username}: {e}")
 
     async def _validate_and_fix_credentials(
         self,
@@ -960,3 +992,386 @@ class MinioManager:
             )
 
         logger.info(f"Granted full access on bucket {bucket_name} to user {username}")
+
+    @staticmethod
+    async def _validate_external_source(
+        source_host: str,
+        source_port: int,
+        source_access_key: str,
+        source_secret_key: str,
+        source_bucket: str,
+        source_secure: bool,
+    ) -> dict[str, Any]:
+        """
+        Validate external source MinIO connectivity and bucket existence.
+
+        Single responsibility: Connect to external source and verify bucket exists.
+
+        Args:
+            source_host: External source MinIO host
+            source_port: External source MinIO port
+            source_access_key: Access key for external source connection
+            source_secret_key: Secret key for external source connection
+            source_bucket: Source bucket name
+            source_secure: Whether source uses HTTPS
+
+        Returns:
+            Dictionary with validation results:
+                - bucket_exists: bool - Whether the bucket exists
+                - object_count: int | None - Number of objects in bucket (if accessible)
+
+        Raises:
+            Exception: If connection or validation fails
+        """
+        logger.info(f"Validating external source: {source_host}:{source_port}/{source_bucket}")
+
+        minio_connector = None
+        temp_alias = None
+
+        try:
+            # Create MinIO connector for validation
+            minio_connector = create_minio_connector()
+
+            # Configure temporary alias for external source
+            temp_alias = f"validate-external-{source_host.replace('.', '-')}-{source_port}"
+            alias_configured = await minio_connector.configure_alias(
+                alias=temp_alias,
+                host=f"{source_host}:{source_port}",
+                access_key=source_access_key,
+                secret_key=source_secret_key,
+                secure=source_secure,
+            )
+
+            if not alias_configured:
+                raise Exception(f"Failed to connect to external MinIO at {source_host}:{source_port}")
+
+            # List buckets to verify connectivity and bucket existence
+            bucket_list = await minio_connector.list_buckets(temp_alias)
+
+            bucket_exists = False
+            if isinstance(bucket_list, list):
+                bucket_names = [bucket.get("name", "") for bucket in bucket_list]
+                bucket_exists = source_bucket in bucket_names
+
+            if not bucket_exists:
+                raise Exception(f"Source bucket '{source_bucket}' does not exist at {source_host}:{source_port}")
+
+            logger.info(f"External source validated: {source_host}:{source_port}/{source_bucket}")
+
+            # Note: Getting object count would require additional mc commands
+            # For now, we just validate connectivity and bucket existence
+            return {"bucket_exists": bucket_exists, "object_count": None}
+
+        except Exception as e:
+            raise Exception(
+                f"Failed to validate external source {source_host}:{source_port}/{source_bucket}: {e!s}"
+            ) from e
+        finally:
+            # Cleanup temporary alias
+            if minio_connector and temp_alias:
+                try:
+                    await minio_connector._run_mc_command(["alias", "rm", temp_alias])
+                    logger.debug(f"Removed validation alias: {temp_alias}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup validation alias {temp_alias}: {cleanup_error}")
+
+    async def clone_bucket_from_external_source(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_host: str,
+        source_port: int,
+        source_access_key: str,
+        source_secret_key: str,
+        source_bucket: str,
+        source_secure: bool = False,
+        force_clone: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Orchestrate cloning a MinIO bucket from an external source into a target deployment.
+
+        This orchestrator method validates, prepares, and executes cross-cluster bucket cloning
+        by calling existing single-responsibility methods in sequence.
+
+        Args:
+            project_name: Name of the target project
+            deployment_name: Name of the target deployment
+            source_host: External source MinIO host (e.g., localhost for port-forward)
+            source_port: External source MinIO port (e.g., 19000)
+            source_access_key: Access key for external source connection
+            source_secret_key: Secret key for external source connection
+            source_bucket: Source bucket name
+            source_secure: Whether source uses HTTPS (default: False)
+            force_clone: If True, overwrite existing target bucket (default: False)
+
+        Returns:
+            Dictionary containing operation results with status and operations list
+
+        Example:
+            >>> result = await minio_manager.clone_bucket_from_external_source(
+            ...     project_name="amt",
+            ...     deployment_name="production",
+            ...     source_host="localhost",
+            ...     source_port=19000,
+            ...     source_access_key="minioadmin",
+            ...     source_secret_key="minioadmin",
+            ...     source_bucket="amt-staging",
+            ...     source_secure=False,
+            ...     force_clone=True
+            ... )
+        """
+        logger.info(
+            f"Starting external bucket clone: {project_name}/{deployment_name} "
+            f"<- {source_host}:{source_port}/{source_bucket}"
+        )
+
+        result = {
+            "project": project_name,
+            "deployment": deployment_name,
+            "source": {"host": source_host, "port": source_port, "bucket": source_bucket},
+            "operations": [],
+            "success": False,
+            "errors": [],
+        }
+
+        try:
+            # STEP 1: Validate external source
+            try:
+                validation = await self._validate_external_source(
+                    source_host, source_port, source_access_key, source_secret_key, source_bucket, source_secure
+                )
+                result["operations"].append(
+                    {
+                        "type": "source_validation",
+                        "status": "success",
+                        "bucket_exists": validation["bucket_exists"],
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Source validation failed: {e}")
+                result["errors"].append(f"Source validation failed: {e!s}")
+                result["operations"].append({"type": "source_validation", "status": "failed", "error": str(e)})
+                return result
+
+            # STEP 2: Validate target deployment
+            try:
+                project_data = await self.project_manager.get_contents()
+                if not project_data:
+                    raise Exception(f"Project '{project_name}' not found")
+
+                deployment = next(
+                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
+                )
+                if not deployment:
+                    raise Exception(f"Deployment '{deployment_name}' not found")
+
+                if not await self._deployment_uses_minio(project_data, deployment_name):
+                    raise Exception(f"Deployment '{deployment_name}' does not use MinIO service")
+
+                result["operations"].append({"type": "target_validation", "status": "success"})
+            except Exception as e:
+                logger.error(f"Target validation failed: {e}")
+                result["errors"].append(f"Target validation failed: {e!s}")
+                result["operations"].append({"type": "target_validation", "status": "failed", "error": str(e)})
+                return result
+
+            # STEP 3: Resolve target credentials (reuse existing method)
+            target_username = generate_minio_username(project_name, deployment_name)
+            target_bucket = generate_bucket_name(project_name, deployment_name)
+
+            try:
+                minio_connector = create_minio_connector()
+                alias_name = "default-minio"
+
+                # Configure MinIO alias
+                alias_configured = await minio_connector.configure_alias(
+                    alias=alias_name,
+                    host=settings.MINIO_HOST,
+                    access_key=settings.MINIO_ADMIN_ACCESS_KEY,
+                    secret_key=settings.MINIO_ADMIN_SECRET_KEY,
+                    secure=settings.MINIO_USE_TLS,
+                    region=settings.MINIO_REGION,
+                )
+
+                if not alias_configured:
+                    raise RuntimeError(f"Failed to configure MinIO alias '{alias_name}' for {settings.MINIO_HOST}")
+
+                # Validate and fix credentials
+                existing_credentials = await self._validate_and_fix_credentials(
+                    minio_connector, alias_name, project_name, deployment_name, deployment
+                )
+
+                if existing_credentials:
+                    target_username_final, target_password = existing_credentials
+                    logger.info(f"Using existing validated credentials for {deployment_name}")
+                else:
+                    # Generate new credentials
+                    target_password = generate_secure_password(
+                        min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20
+                    )
+                    target_username_final = target_username
+
+                result["target"] = {"bucket": target_bucket, "username": target_username_final}
+                result["operations"].append({"type": "credentials_resolved", "status": "success"})
+            except Exception as e:
+                logger.error(f"Credential resolution failed: {e}")
+                result["errors"].append(f"Credential resolution failed: {e!s}")
+                result["operations"].append({"type": "credentials_resolved", "status": "failed", "error": str(e)})
+                return result
+
+            # STEP 4: Handle force_clone (drop + recreate bucket and user)
+            if force_clone:
+                try:
+                    logger.info(f"force_clone=True: Deleting existing MinIO resources for {deployment_name}")
+                    # Only delete user if we don't have existing valid credentials
+                    await self._delete_existing_target_resources(
+                        minio_connector,
+                        alias_name,
+                        project_name,
+                        deployment_name,
+                        delete_user=not bool(existing_credentials),
+                    )
+                    result["operations"].append({"type": "resources_deleted", "status": "success"})
+                except Exception as e:
+                    logger.error(f"Force clone preparation failed: {e}")
+                    result["errors"].append(f"Force clone preparation failed: {e!s}")
+                    result["operations"].append({"type": "resources_deleted", "status": "failed", "error": str(e)})
+                    return result
+
+            # STEP 5: Prepare target (reuse existing clone method)
+            try:
+                logger.info(f"Preparing target bucket and user for {deployment_name}")
+
+                # Reuse the existing method that properly creates user, bucket, and permissions
+                await self._create_user_and_bucket_for_clone(
+                    minio_connector,
+                    alias_name,
+                    target_username_final,
+                    target_password,
+                    target_bucket,
+                    existing_credentials,
+                )
+
+                result["operations"].append({"type": "target_prepared", "status": "success"})
+            except Exception as e:
+                logger.error(f"Target preparation failed: {e}")
+                result["errors"].append(f"Target preparation failed: {e!s}")
+                result["operations"].append({"type": "target_prepared", "status": "failed", "error": str(e)})
+                return result
+
+            # STEP 6: Mirror data from external source to target bucket
+            temp_source_alias = None
+            try:
+                logger.info(f"Executing bucket clone from external source to {target_bucket}")
+
+                # Configure temporary alias for external source
+                temp_source_alias = f"external-source-{source_host.replace('.', '-')}-{source_port}"
+                logger.info(f"Configuring temporary source alias: {temp_source_alias}")
+
+                source_configured = await minio_connector.configure_alias(
+                    alias=temp_source_alias,
+                    host=f"{source_host}:{source_port}",
+                    access_key=source_access_key,
+                    secret_key=source_secret_key,
+                    secure=source_secure,
+                )
+
+                if not source_configured:
+                    raise Exception(f"Failed to configure temporary source alias for {source_host}:{source_port}")
+
+                # Use simple mirror helper to copy data between aliases
+                mirror_result = await minio_connector.mirror_bucket_cross_alias(
+                    source_alias=temp_source_alias,
+                    source_bucket=source_bucket,
+                    target_alias=alias_name,
+                    target_bucket=target_bucket,
+                )
+
+                if mirror_result["status"] != "success":
+                    raise Exception(f"Mirror failed: {mirror_result.get('message')}")
+
+                result["operations"].append({"type": "bucket_cloned", "status": "success"})
+            except Exception as e:
+                logger.error(f"Bucket clone failed: {e}")
+                result["errors"].append(f"Bucket clone failed: {e!s}")
+                result["operations"].append({"type": "bucket_cloned", "status": "failed", "error": str(e)})
+                return result
+            finally:
+                # Cleanup temporary source alias (always run)
+                if temp_source_alias:
+                    try:
+                        logger.debug(f"Removing temporary source alias: {temp_source_alias}")
+                        await minio_connector._run_mc_command(["alias", "rm", temp_source_alias])
+                        logger.debug(f"Removed temporary source alias: {temp_source_alias}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup temporary alias {temp_source_alias}: {cleanup_error}")
+
+            # STEP 7: Store credentials in memory map ONLY if they're new (not reused)
+            credentials_are_new = existing_credentials is None
+            if credentials_are_new:
+                try:
+                    logger.info(f"Storing NEW credentials for {deployment_name} (will sync to Git)")
+                    minio_server_host = get_minio_server(deployment["cluster"])
+                    minio_secret = MinIOSecret(
+                        host=minio_server_host,
+                        access_key=target_username_final,
+                        secret_key=target_password,
+                        bucket_name=target_bucket,
+                        region=settings.MINIO_REGION,
+                    )
+                    self.project_manager._add_secret_to_create(deployment_name, "minio", minio_secret)
+                    result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})
+                except Exception as e:
+                    logger.warning(f"Failed to store credentials in memory (clone succeeded): {e}")
+                    result["operations"].append(
+                        {"type": "credentials_stored_in_memory", "status": "warning", "error": str(e)}
+                    )
+            else:
+                logger.info(f"Reusing existing credentials for {deployment_name} (no Git sync needed)")
+                result["operations"].append(
+                    {"type": "credentials_reused", "status": "success", "message": "Existing credentials reused"}
+                )
+
+            # STEP 8: Sync secrets to Git ONLY if credentials were NEW
+            if deployment_name in self.project_manager._secrets_to_create:
+                logger.info(f"External clone updated secrets for {deployment_name}, syncing to Git for ArgoCD")
+                try:
+                    # Regenerate manifests for this deployment to write secrets to Git
+                    await self.project_manager._process_application_manifests(deployment_name)
+
+                    # Commit and push the updated secret manifests to Git
+                    git_connector = await self.project_manager.get_git_connector_for_project_files()
+                    await git_connector.commit_and_push(
+                        f"Update MinIO credentials for {project_name}/{deployment_name} after external clone"
+                    )
+
+                    result["operations"].append(
+                        {
+                            "type": "secrets_synced_to_git",
+                            "status": "success",
+                            "message": "Updated MinIO credentials committed to Git for ArgoCD sync",
+                        }
+                    )
+                    logger.info(f"Successfully synced updated secrets to Git for {deployment_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to sync updated secrets to Git: {e}")
+                    result["operations"].append(
+                        {
+                            "type": "secrets_synced_to_git",
+                            "status": "warning",
+                            "error": str(e),
+                            "message": (
+                                "Bucket clone succeeded but failed to sync credentials to Git. "
+                                "Manual sync may be required."
+                            ),
+                        }
+                    )
+
+            result["success"] = True
+            logger.info(f"External bucket clone completed successfully: {project_name}/{deployment_name}")
+            return result
+
+        except Exception as e:
+            logger.exception(f"Unexpected error during external clone: {e}")
+            result["errors"].append(f"Unexpected error: {e!s}")
+            return result

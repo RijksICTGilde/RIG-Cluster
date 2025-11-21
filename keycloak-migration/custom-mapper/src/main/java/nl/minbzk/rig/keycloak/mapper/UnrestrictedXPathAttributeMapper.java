@@ -44,6 +44,12 @@ public class UnrestrictedXPathAttributeMapper extends AbstractIdentityProviderMa
     public static final String PROVIDER_ID = "saml-unrestricted-xpath-idp-mapper";
     public static final String XPATH_EXPRESSION = "xpath.expression";
     public static final String USER_ATTRIBUTE = "user.attribute";
+    public static final String VALUE_TRANSFORMATION = "value.transformation";
+
+    // Transformation options
+    public static final String TRANSFORM_AS_IS = "AS_IS";
+    public static final String TRANSFORM_LOWERCASE = "LOWERCASE";
+    public static final String TRANSFORM_UPPERCASE = "UPPERCASE";
 
     private static final Pattern NAMESPACE_PATTERN = Pattern.compile("xmlns:(\\w+)=\"(.+?)\"");
 
@@ -79,15 +85,12 @@ public class UnrestrictedXPathAttributeMapper extends AbstractIdentityProviderMa
         configProperties.add(property);
 
         property = new ProviderConfigProperty();
-        property.setName(IdentityProviderMapperModel.SYNC_MODE);
-        property.setLabel("Sync Mode Override");
-        property.setHelpText("Sync mode for this mapper.");
+        property.setName(VALUE_TRANSFORMATION);
+        property.setLabel("Value Transformation");
+        property.setHelpText("How to transform the extracted value before storing it.");
         property.setType(ProviderConfigProperty.LIST_TYPE);
-        property.setOptions(Arrays.asList(
-            IdentityProviderSyncMode.IMPORT.toString(),
-            IdentityProviderSyncMode.LEGACY.toString(),
-            IdentityProviderSyncMode.FORCE.toString()
-        ));
+        property.setOptions(Arrays.asList(TRANSFORM_AS_IS, TRANSFORM_LOWERCASE, TRANSFORM_UPPERCASE));
+        property.setDefaultValue(TRANSFORM_AS_IS);
         configProperties.add(property);
     }
 
@@ -127,6 +130,7 @@ public class UnrestrictedXPathAttributeMapper extends AbstractIdentityProviderMa
                                            BrokeredIdentityContext context) {
         String attribute = mapperModel.getConfig().get(USER_ATTRIBUTE);
         String xpathExpression = mapperModel.getConfig().get(XPATH_EXPRESSION);
+        String transformationType = mapperModel.getConfig().get(VALUE_TRANSFORMATION);
 
         if (attribute == null || attribute.trim().isEmpty()) {
             LOGGER.warn("User attribute name not configured");
@@ -140,7 +144,10 @@ public class UnrestrictedXPathAttributeMapper extends AbstractIdentityProviderMa
 
         String value = extractValue(context, xpathExpression);
         if (value != null && !value.isEmpty()) {
-            context.setUserAttribute(attribute, Arrays.asList(value));
+            value = applyTransformation(value, transformationType);
+            List<String> values = new ArrayList<>();
+            values.add(value);
+            context.setUserAttribute(attribute, values);
         }
     }
 
@@ -150,6 +157,7 @@ public class UnrestrictedXPathAttributeMapper extends AbstractIdentityProviderMa
                                   BrokeredIdentityContext context) {
         String attribute = mapperModel.getConfig().get(USER_ATTRIBUTE);
         String xpathExpression = mapperModel.getConfig().get(XPATH_EXPRESSION);
+        String transformationType = mapperModel.getConfig().get(VALUE_TRANSFORMATION);
 
         if (attribute == null || attribute.trim().isEmpty()) {
             return;
@@ -161,7 +169,35 @@ public class UnrestrictedXPathAttributeMapper extends AbstractIdentityProviderMa
 
         String value = extractValue(context, xpathExpression);
         if (value != null && !value.isEmpty()) {
+            value = applyTransformation(value, transformationType);
             user.setSingleAttribute(attribute, value);
+        }
+    }
+
+    /**
+     * Apply transformation to the extracted value based on configuration.
+     *
+     * @param value The value to transform
+     * @param transformationType The type of transformation to apply
+     * @return The transformed value
+     */
+    private String applyTransformation(String value, String transformationType) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+
+        if (transformationType == null || transformationType.isEmpty()) {
+            transformationType = TRANSFORM_AS_IS;
+        }
+
+        switch (transformationType) {
+            case TRANSFORM_LOWERCASE:
+                return value.toLowerCase();
+            case TRANSFORM_UPPERCASE:
+                return value.toUpperCase();
+            case TRANSFORM_AS_IS:
+            default:
+                return value;
         }
     }
 

@@ -1,0 +1,193 @@
+# Algoritmeregister Keycloak Configuration
+# Purpose: Application-specific realm for the Algoritmeregister application
+# This configuration provides local authentication with role-based access control and organization groups
+
+---
+# Variables section for deployment-specific configuration
+# Most configuration is hardcoded for the Algoritmeregister application
+# Only realm_name and realm_display_name need to be provided by the calling code
+variables:
+  # Organization groups (2 groups)
+  demo_groups:
+    - name: "ICTU"
+      path: "/ICTU"
+    - name: "MIN_BZK"
+      path: "/MIN_BZK"
+
+  # All available roles (will be assigned to all demo users)
+  all_roles:
+    - "admin"
+    - "all_groups"
+    - "orgdetail"
+    - "ictu"
+    - "role_1"
+    - "role_2"
+
+  # Demo users: 2 per group, all get all roles
+  demo_users:
+    - username: "ictu_user1"
+      email: "ictu.user1@example.com"
+      firstName: "ICTU"
+      lastName: "User One"
+      password: "demo123"
+      roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
+      groups: ["ICTU"]
+      removeDefaultGroups: true  # Remove default Keycloak group assignments
+
+    - username: "ictu_user2"
+      email: "ictu.user2@example.com"
+      firstName: "ICTU"
+      lastName: "User Two"
+      password: "demo123"
+      roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
+      groups: ["ICTU"]
+      removeDefaultGroups: true
+
+    - username: "minbzk_user1"
+      email: "minbzk.user1@example.com"
+      firstName: "MinBZK"
+      lastName: "User One"
+      password: "demo123"
+      roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
+      groups: ["MIN_BZK"]
+      removeDefaultGroups: true
+
+    - username: "minbzk_user2"
+      email: "minbzk.user2@example.com"
+      firstName: "MinBZK"
+      lastName: "User Two"
+      password: "demo123"
+      roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
+      groups: ["MIN_BZK"]
+      removeDefaultGroups: true
+
+realms:
+  - name: "{{ realm_name }}"
+    displayName: "{{ realm_display_name }}"
+    enabled: true
+    registrationAllowed: true
+    loginWithEmailAllowed: true
+    resetPasswordAllowed: true
+    editUsernameAllowed: false
+    verifyEmail: true
+    bruteForceProtected: true
+
+# No identity providers - local authentication only
+
+realmRoles:
+  - name: "admin"
+    description: "Administrator with full access to all features"
+    composite: false
+
+  - name: "all_groups"
+    description: "Access to all organization groups"
+    composite: false
+
+  - name: "disabled"
+    description: "Disabled account - no access"
+    composite: false
+
+  - name: "orgdetail"
+    description: "Access to organization detail page"
+    composite: false
+
+  - name: "ictu"
+    description: "ICTU employee with special publication rights and user management"
+    composite: false
+
+  - name: "role_1"
+    description: "Editor role (Redacteur) - can create and edit algorithms"
+    composite: false
+
+  - name: "role_2"
+    description: "Approver role (Goedkeurder) - can approve algorithms"
+    composite: false
+
+groups:
+  # Organizations are represented as groups (created via forEach loop)
+  forEach: "{{ demo_groups }}"
+  as: group
+  group:
+    name: "{{ group.name }}"
+    path: "{{ group.path }}"
+
+clients:
+  # Frontend authentication client (public client for user authentication)
+  - clientId: "authentication-client"
+    name: "Algoritmeregister - Authentication"
+    enabled: true
+    publicClient: true
+    protocol: "openid-connect"
+    redirectUris:
+      - "{{ frontend_redirect_uris }}"
+    postLogoutRedirectUris:
+      - "{{ frontend_redirect_uris }}"
+    webOrigins:
+      - "+"
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: true
+    serviceAccountsEnabled: false
+    protocolMappers:
+      # Realm roles mapper - puts roles at root level of JWT token
+      - name: "app-realm-roles"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-realm-role-mapper"
+        config:
+          claim.name: "roles"
+          jsonType.label: "String"
+          multivalued: "true"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      # Groups mapper - puts groups at root level WITHOUT leading slashes
+      - name: "app-groups"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-group-membership-mapper"
+        config:
+          claim.name: "groups"
+          full.path: "false"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+  # Backend service client (confidential client with service account for API calls)
+  - clientId: "service-client"
+    name: "Algoritmeregister - Backend Service"
+    enabled: true
+    publicClient: false
+    protocol: "openid-connect"
+    serviceAccountsEnabled: true
+    authorizationServicesEnabled: true
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+
+    # Service account roles for user management
+    serviceAccountClientRoles:
+      realm-management:
+        - "manage-users"
+        - "view-users"
+        - "manage-clients"
+        - "view-clients"
+        - "manage-realm"
+        - "query-users"
+        - "query-groups"
+        - "view-realm"
+
+users:
+  # Demo users created via forEach loop
+  forEach: "{{ demo_users }}"
+  as: user
+  user:
+    username: "{{ user.username }}"
+    enabled: true
+    email: "{{ user.email }}"
+    firstName: "{{ user.firstName }}"
+    lastName: "{{ user.lastName }}"
+    credentials:
+      - type: "password"
+        value: "{{ user.password }}"
+        temporary: false
+    realmRoles: "{{ user.roles }}"
+    groups: "{{ user.groups }}"
+    removeDefaultGroups: "{{ user.removeDefaultGroups }}"

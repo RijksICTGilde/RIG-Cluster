@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Backfill SSO-Rijk attributes for existing users.
+Backfill SSO-Rijk NameID attributes for existing users.
 
-This script reads users' federatedIdentities and populates user attributes
-that should have been set by IDP mappers.
+This script reads users' federatedIdentities (specifically the userId field which contains
+the SAML NameID) and populates two user attributes:
+  - sso-rijk-userid: Original NameID value
+  - sso-rijk-userid-lowercase: Lowercase version for case-insensitive matching
+
+These attributes should have been set by IDP mappers going forward, but this script
+backfills them for users who logged in before the mappers were configured.
 
 Usage:
     python backfill-sso-attributes.py <keycloak_url> <realm> <admin_user> [options]
@@ -11,6 +16,7 @@ Usage:
 Options:
     --dry-run                    Only show what would be changed, don't update
     --test-user <username>       Only process this specific user (good for testing)
+    --debug                      Show detailed request/response information
 
 Examples:
     # Dry-run to see what would change
@@ -22,6 +28,9 @@ Examples:
     # Dry-run for single user (recommended first step!)
     python backfill-sso-attributes.py https://keycloak.apps.digilab.network algoritmes admin --test-user robbert.uittenbroek --dry-run
 
+    # Debug single user to see request details
+    python backfill-sso-attributes.py https://keycloak.apps.digilab.network algoritmes admin --test-user robbert.uittenbroek --debug
+
     # Full run (after testing)
     python backfill-sso-attributes.py https://keycloak.apps.digilab.network algoritmes admin
 """
@@ -29,6 +38,7 @@ Examples:
 import getpass
 import json
 import sys
+from copy import deepcopy
 
 import requests
 
@@ -100,18 +110,79 @@ def get_federated_identities(
 
 
 def update_user_attributes(
-    keycloak_url: str, realm: str, token: str, user_id: str, attributes: dict
+    keycloak_url: str, realm: str, token: str, user_id: str, user: dict, attributes: dict, debug: bool = False
 ) -> None:
-    """Update user attributes."""
+    """Update user attributes.
+
+    Note: Keycloak 24.0.0+ has a bug where if you don't send firstName, lastName, email,
+    those fields will be CLEARED even though they're marked as optional!
+
+    See:
+    - https://github.com/keycloak/keycloak/issues/27777 (no partial updates)
+    - https://github.com/keycloak/keycloak/issues/28220 (clears firstName/lastName/email)
+
+    Workaround: Send minimal required fields to preserve data.
+    """
     url = f"{keycloak_url}/admin/realms/{realm}/users/{user_id}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    data = {"attributes": attributes}
-    response = requests.put(url, headers=headers, json=data)
+
+    # Build minimal user data to avoid clearing fields
+    # Include firstName, lastName, email to prevent them from being cleared
+    user_data = {
+        "username": user.get("username"),
+        "enabled": user.get("enabled", True),
+        "emailVerified": user.get("emailVerified", False),
+        "attributes": attributes,
+    }
+
+    # CRITICAL: Include firstName, lastName, email if they exist (to prevent clearing)
+    if user.get("firstName"):
+        user_data["firstName"] = user.get("firstName")
+    if user.get("lastName"):
+        user_data["lastName"] = user.get("lastName")
+    if user.get("email"):
+        user_data["email"] = user.get("email")
+
+    if debug:
+        print("\n" + "=" * 80)
+        print("DEBUG: Request Details")
+        print("=" * 80)
+        print(f"URL: {url}")
+        print(f"Method: PUT")
+        print(f"\nOriginal user attributes:")
+        print(json.dumps(user.get("attributes", {}), indent=2))
+        print(f"\nNew attributes being set:")
+        print(json.dumps(attributes, indent=2))
+        print(f"\nMinimal user data being sent (to preserve firstName/lastName/email):")
+        print(json.dumps(user_data, indent=2))
+        print("=" * 80 + "\n")
+
+    response = requests.put(url, headers=headers, json=user_data)
+
+    if debug:
+        print(f"Response Status: {response.status_code}")
+        if response.text:
+            print(f"Response Body: {response.text}")
+        print("=" * 80 + "\n")
+
     response.raise_for_status()
 
 
+def get_user_by_id(keycloak_url: str, realm: str, token: str, user_id: str) -> dict:
+    """Get full user representation by ID.
+
+    CRITICAL: This returns the COMPLETE user object with ALL attributes.
+    The list users endpoint might not return all attributes!
+    """
+    url = f"{keycloak_url}/admin/realms/{realm}/users/{user_id}"
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+
 def backfill_user(
-    keycloak_url: str, realm: str, token: str, user: dict, dry_run: bool = False
+    keycloak_url: str, realm: str, token: str, user: dict, dry_run: bool = False, debug: bool = False
 ) -> tuple[bool, str, dict | None]:
     """
     Backfill SSO-Rijk attributes for a single user.
@@ -122,6 +193,16 @@ def backfill_user(
     """
     user_id = user["id"]
     username = user.get("username", "unknown")
+
+    # CRITICAL: Get the FULL user object to ensure we have ALL current attributes
+    # The user object from get_users() might not include all attributes!
+    try:
+        full_user = get_user_by_id(keycloak_url, realm, token, user_id)
+        if debug:
+            print(f"\n[DEBUG] Fetched full user object for {username}")
+            print(f"[DEBUG] Current attributes: {json.dumps(full_user.get('attributes', {}), indent=2)}")
+    except Exception as e:
+        return False, f"Failed to get full user object: {e}", None
 
     # Get federated identities
     try:
@@ -146,42 +227,57 @@ def backfill_user(
     if not sso_userid:
         return False, "sso-rijk identity has no userId", None
 
-    # Get current attributes
-    current_attrs = user.get("attributes", {})
+    # Get current attributes from the FULL user object (not the list response)
+    current_attrs = full_user.get("attributes", {})
 
-    # Check if already has the attribute
-    if "sso_rijk_collab_person_id" in current_attrs:
-        existing_value = current_attrs["sso_rijk_collab_person_id"][0]
+    # Check if already has the attributes
+    has_original = "sso-rijk-userid" in current_attrs
+    has_lowercase = "sso-rijk-userid-lowercase" in current_attrs
+
+    if has_original and has_lowercase:
+        existing_original = current_attrs["sso-rijk-userid"][0]
+        existing_lowercase = current_attrs["sso-rijk-userid-lowercase"][0]
         details = {
             "sso_userid": sso_userid,
             "sso_username": sso_username,
-            "existing_value": existing_value,
+            "existing_original": existing_original,
+            "existing_lowercase": existing_lowercase,
             "would_set": False,
         }
         return (
             False,
-            f"Already has sso_rijk_collab_person_id = {existing_value}",
+            f"Already has sso-rijk-userid = {existing_original}",
             details,
         )
 
-    # Set the attribute (Keycloak expects list values)
-    current_attrs["sso_rijk_collab_person_id"] = [sso_userid]
+    # Set both attributes (Keycloak expects list values)
+    # CRITICAL: We're MERGING with existing attributes, not replacing!
+    # Original value from NameID
+    current_attrs["sso-rijk-userid"] = [sso_userid]
+    # Lowercase version for case-insensitive matching
+    current_attrs["sso-rijk-userid-lowercase"] = [sso_userid.lower()]
+
+    if debug:
+        print(f"\n[DEBUG] After merge, current_attrs has {len(current_attrs)} keys:")
+        for key in current_attrs.keys():
+            print(f"  - {key}")
 
     details = {
         "sso_userid": sso_userid,
         "sso_username": sso_username,
+        "sso_userid_lowercase": sso_userid.lower(),
         "would_set": True,
     }
 
     # Update user (unless dry-run)
     if not dry_run:
         try:
-            update_user_attributes(keycloak_url, realm, token, user_id, current_attrs)
+            update_user_attributes(keycloak_url, realm, token, user_id, full_user, current_attrs, debug)
         except Exception as e:
             return False, f"Failed to update attributes: {e}", details
 
     action = "Would set" if dry_run else "Set"
-    return True, f"{action} sso_rijk_collab_person_id = {sso_userid}", details
+    return True, f"{action} sso-rijk-userid = {sso_userid}, sso-rijk-userid-lowercase = {sso_userid.lower()}", details
 
 
 def main():
@@ -195,12 +291,13 @@ def main():
         print("\nOptions:")
         print("  --dry-run                    Only show what would be changed")
         print("  --test-user <username>       Only process specific user")
+        print("  --debug                      Show detailed request/response information")
         print("\nExamples:")
         print(
             "  python backfill-sso-attributes.py https://keycloak.apps.digilab.network algoritmes admin --dry-run"
         )
         print(
-            "  python backfill-sso-attributes.py https://keycloak.apps.digilab.network algoritmes admin --test-user robbert.uittenbroek --dry-run"
+            "  python backfill-sso-attributes.py https://keycloak.apps.digilab.network algoritmes admin --test-user robbert.uittenbroek --debug"
         )
         sys.exit(1)
 
@@ -210,6 +307,7 @@ def main():
 
     # Parse options
     dry_run = "--dry-run" in args
+    debug = "--debug" in args
     test_user = None
 
     if "--test-user" in args:
@@ -226,6 +324,8 @@ def main():
     print(f"Admin User: {admin_user}")
     if dry_run:
         print("Mode: 🔍 DRY-RUN (no changes will be made)")
+    if debug:
+        print("Mode: 🐛 DEBUG (detailed request/response logging)")
     if test_user:
         print(f"Test User: {test_user}")
     print()
@@ -288,7 +388,7 @@ def main():
             print(f"Processing {username} ({email})...")
 
         success, message, details = backfill_user(
-            keycloak_url, realm, token, user, dry_run
+            keycloak_url, realm, token, user, dry_run, debug
         )
 
         if details:
@@ -326,13 +426,16 @@ def main():
         for detail in details_list:
             print(f"Username: {detail['username']}")
             print(f"Email: {detail['email']}")
-            print(f"SSO-Rijk userId: {detail['sso_userid']}")
+            print(f"SSO-Rijk userId (from NameID): {detail['sso_userid']}")
             print(f"SSO-Rijk userName: {detail['sso_username']}")
-            if "existing_value" in detail:
-                print(f"Existing attribute value: {detail['existing_value']}")
+            if "existing_original" in detail:
+                print(f"Existing sso-rijk-userid: {detail['existing_original']}")
+                print(f"Existing sso-rijk-userid-lowercase: {detail['existing_lowercase']}")
             if detail["would_set"]:
                 action = "Would be set" if dry_run else "Was set"
-                print(f"Action: {action} to {detail['sso_userid']}")
+                print(f"Action: {action}")
+                print(f"  - sso-rijk-userid = {detail['sso_userid']}")
+                print(f"  - sso-rijk-userid-lowercase = {detail['sso_userid_lowercase']}")
             print("=" * 60)
 
     if dry_run:

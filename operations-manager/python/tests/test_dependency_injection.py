@@ -63,7 +63,7 @@ async def test_dependency_injection_architecture():
         logger.info("✅ DatabaseManager with DI created successfully")
 
         # Test connection initialization
-        await db_manager._ensure_connection()
+        db_manager._ensure_connection()
         logger.info("✅ DatabaseManager connection ensured")
 
         # Clean up

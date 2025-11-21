@@ -86,7 +86,7 @@
                                             name="cluster"
                                             label="Cluster"
                                             helperText="Selecteer het gewenste cluster voor uw project"
-                                            :required="true"
+                                            required="true"
                                             :options="[
                                                 {'value': '', 'label': 'Selecteer een cluster'},
                                                 {'value': 'local', 'label': 'Lokaal'},
@@ -147,6 +147,7 @@
 
                                         <div>
                                             <c-button
+                                                type="button"
                                                 label="Gebruiker toevoegen"
                                                 kind="tertiary"
                                                 size="sm"
@@ -159,7 +160,7 @@
                                             <c-icon icon="info" size="md"/>
                                             <div class="rvo-alert__content">
                                                 <p><strong>Rollen uitleg:</strong></p>
-                                                <ul class="rvo-ul rvo-ul--icon rvo-ul--icon-option">
+                                                <c-ul bulletType="icon" bulletIcon="option-1">
                                                     <li><strong>Administrator:</strong> Volledige toegang tot alle
                                                         resources en instellingen
                                                     </li>
@@ -168,7 +169,7 @@
                                                     </li>
                                                     <li><strong>Operator:</strong> Alleen-lezen toegang voor monitoring
                                                     </li>
-                                                </ul>
+                                                </c-ul>
                                             </div>
                                         </div>
                                     </c-layout-flow>
@@ -228,7 +229,7 @@
                                                         <c-checkbox
                                                             id="service-sso"
                                                             name="services[]"
-                                                            value="sso-rijk"/>
+                                                            value="keycloak"/>
                                                     </div>
                                                 </div>
                                             </c-card>
@@ -328,8 +329,66 @@
                                     </c-layout-flow>
                                 </c-fieldset>
 
+                                {# Section 4: Web Address Configuration #}
+                                <c-fieldset legend="Web Adres Configuratie">
+                                    <c-layout-flow gap="md">
+                                        <c-text-input-field
+                                            id="deployment-name"
+                                            name="deployment-name"
+                                            label="Deployment Naam"
+                                            :value="'main'"
+                                            placeholder="main"
+                                            helperText="De naam voor deze deployment. Wordt gebruikt in URL-generatie en resource-identificatie. Standaard: 'main'"/>
+
+                                        <div class="rvo-alert rvo-alert--info">
+                                            <c-icon icon="info" size="md"/>
+                                            <div class="rvo-alert__content">
+                                                <c-p><strong>Hoe worden web adressen gegenereerd?</strong></c-p>
+
+                                                <c-layout-flow gap="lg">
+                                                    <div>
+                                                        <c-p><strong>1. Component-specifiek (standaard)</strong></c-p>
+                                                        <c-p>Elk component krijgt zijn eigen unieke URL zoals <code>frontend-prod-myapp.example.com</code> en <code>backend-prod-myapp.example.com</code>.</c-p>
+                                                    </div>
+
+                                                    <div>
+                                                        <c-p><strong>2. Deployment-naam (gedeeld domein)</strong></c-p>
+                                                        <c-p>Alle componenten delen dezelfde domeinnaam gebaseerd op de deployment-naam (bijvoorbeeld <code>prod-myapp.example.com</code>), maar verschillen in pad zoals <code>/</code> en <code>/api</code>.</c-p>
+                                                        <c-p class="rvo-text--sm rvo-text--subtle">Dit voorkomt CORS-problemen tussen componenten.</c-p>
+                                                    </div>
+
+                                                    <div>
+                                                        <c-p><strong>3. Aangepast subdomein</strong></c-p>
+                                                        <c-p>Alle componenten delen een door u opgegeven domeinnaam (bijvoorbeeld <code>myapp.example.com</code>), met verschillende paden.</c-p>
+                                                        <c-p class="rvo-text--sm rvo-text--subtle">Dit geeft u volledige controle over de URL-structuur.</c-p>
+                                                    </div>
+                                                </c-layout-flow>
+                                            </div>
+                                        </div>
+
+                                        <c-form-select
+                                            id="domain-mode"
+                                            name="domain-mode"
+                                            :options="[
+                                                {'value': 'component-specific', 'label': 'Component-specifiek (standaard)'},
+                                                {'value': 'deployment-name', 'label': 'Deployment-naam (gedeeld domein)'},
+                                                {'value': 'custom', 'label': 'Aangepast subdomein'}
+                                            ]"
+                                            value="'component-specific'"
+                                            @change="handleDomainModeChange()"/>
+
+                                        <c-text-input-field
+                                            id="subdomain"
+                                            name="subdomain"
+                                            label="Subdomein"
+                                            helperText="Geef een custom subdomein op (bijvoorbeeld: myapp). Dit zal worden gebruikt als basis voor alle component URLs."
+                                            placeholder="myapp"
+                                            style="display: none;"/>
+                                    </c-layout-flow>
+                                </c-fieldset>
+
                                 {# Components Section #}
-                                <c-fieldset legend="4. Components Configuratie">
+                                <c-fieldset legend="Components Configuratie">
                                     <div class="rvo-alert rvo-alert--info">
                                         <c-icon icon="info" size="md"/>
                                         <div class="rvo-alert__content">
@@ -346,7 +405,7 @@
                                                 <c-layout-flow gap="md">
                                                     <div
                                                         style="display: flex; justify-content: space-between; align-items: center;">
-                                                        <c-heading type="h3" textContent="Component 1"/>
+                                                        <c-heading type="h3" textContent="Component"/>
                                                         <c-button
                                                             kind="quaternary"
                                                             size="sm"
@@ -389,6 +448,14 @@
                                                         helperText="Docker image van uw applicatie. Moet een rootless image zijn (draait niet als root gebruiker)."
                                                         expandableHelperText="true"
                                                         expandableHelperTextTitle="Meer info over rootless images"/>
+
+                                                    <c-text-input-field
+                                                        id="component-path-1"
+                                                        name="components[0][path]"
+                                                        label="Publicatie Pad"
+                                                        placeholder="/"
+                                                        :value="'/'"
+                                                        helperText="Het pad waarop dit component gepubliceerd wordt (bijvoorbeeld: /, /api, /aanleverapi). Bij gedeelde domeinen wordt dit pad gebruikt om verkeer naar het juiste component te routeren."/>
 
                                                     <c-layout-row gap="md">
                                                         <c-layout-column size="md-6">
@@ -442,6 +509,24 @@ DEBUG: false"
                                                         rows="6"
                                                         helperText="Environment variables voor dit component. Ondersteunt beide formaten: KEY=VALUE (een per regel) of YAML syntax"/>
 
+                                                    <c-textarea-field
+                                                        id="component-aliases-1"
+                                                        name="components[0][aliases]"
+                                                        label="Aliases"
+                                                        placeholder="YAML format - reference system variables:
+DATABASE_URL: $DATABASE_SERVER_HOST:$DATABASE_SERVER_PORT/$DATABASE_DB
+S3_ENDPOINT: $OBJECT_STORE_URL
+OIDC_URL: $OIDC_DISCOVERY_URL
+
+Available variables depend on selected services:
+- Database: DATABASE_SERVER_HOST, DATABASE_SERVER_PORT, DATABASE_DB, etc.
+- MinIO: OBJECT_STORE_URL, OBJECT_STORE_USER, OBJECT_STORE_PASSWORD, etc.
+- Keycloak: OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_DISCOVERY_URL"
+                                                        rows="8"
+                                                        helperText="Aliases voor systeemvariabelen. Gebruik $VARIABLE_NAME om naar service variabelen te verwijzen. Geen encoding nodig."
+                                                        :expandableHelperText="true"
+                                                        expandableHelperTextTitle="Meer info over aliases"/>
+
                                                     {# Service binding for this component #}
                                                     <div class="service-binding">
                                                         <c-heading type="h4" textContent="Gekoppelde Services"/>
@@ -457,6 +542,7 @@ DEBUG: false"
                                         </div>
 
                                         <c-button
+                                            type="button"
                                             kind="tertiary"
                                             size="sm"
                                             :showIcon="'before'"
@@ -483,20 +569,20 @@ DEBUG: false"
                                         :actions="[
                                             {
                                                 'type': 'button',
-                                                'buttonType': 'submit',
+                                                'type': 'submit',
                                                 'kind': 'primary',
                                                 'size': 'md',
                                                 'label': 'Project Aanmaken',
                                                 'showIcon': 'after',
                                                 'icon': 'pijl-naar-rechts',
-                                                'onclick': 'document.getElementById(\'project-form\').submit()'
+                                                '@click': 'document.getElementById(\'project-form\').submit()'
                                             },
                                             {
                                                 'type': 'button',
                                                 'kind': 'tertiary',
                                                 'size': 'md',
                                                 'label': 'Annuleren',
-                                                'onclick': 'window.location.href=\'/dashboard/\''
+                                                '@click': 'window.location.href=\'/dashboard/\''
                                             }
                                             ]" />
 
@@ -543,6 +629,51 @@ DEBUG: false"
     <script>
       let userCount = 1;
       let componentCount = 1;
+
+      // Handle domain mode changes
+      function handleDomainModeChange() {
+        const domainMode = document.getElementById('domain-mode').value;
+        const subdomainField = document.getElementById('subdomain').closest('c-text-input-field');
+        const displayNameField = document.getElementById('display-name');
+
+        if (domainMode === 'component-specific') {
+          // Hide subdomain field
+          if (subdomainField) {
+            subdomainField.style.display = 'none';
+          }
+          document.getElementById('subdomain').value = '';
+          document.getElementById('subdomain').removeAttribute('required');
+        } else if (domainMode === 'deployment-name') {
+          // Hide subdomain field but populate it from display name
+          if (subdomainField) {
+            subdomainField.style.display = 'none';
+          }
+          // Auto-populate with deployment name (convert to lowercase, replace spaces with hyphens)
+          const deploymentName = displayNameField.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+          document.getElementById('subdomain').value = deploymentName;
+          document.getElementById('subdomain').removeAttribute('required');
+        } else if (domainMode === 'custom') {
+          // Show subdomain field for custom input
+          if (subdomainField) {
+            subdomainField.style.display = 'block';
+          }
+          document.getElementById('subdomain').setAttribute('required', 'true');
+        }
+      }
+
+      // Update subdomain when deployment name changes (if deployment-name mode is selected)
+      document.addEventListener('DOMContentLoaded', function() {
+        const displayNameField = document.getElementById('display-name');
+        if (displayNameField) {
+          displayNameField.addEventListener('input', function() {
+            const domainMode = document.getElementById('domain-mode').value;
+            if (domainMode === 'deployment-name') {
+              const deploymentName = this.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+              document.getElementById('subdomain').value = deploymentName;
+            }
+          });
+        }
+      });
 
       function addUserRow() {
         userCount++;
@@ -638,7 +769,7 @@ DEBUG: false"
 
       // Service template mapping: service value -> template ID
       const serviceTemplates = {
-        'sso-rijk': 'service-sso-template',
+        'keycloak': 'service-sso-template',
         'postgresql-database': 'service-postgresql-template',
         'minio-storage': 'service-minio-template',
         'publish-on-web': 'service-web-publishing-template',
@@ -790,7 +921,7 @@ DEBUG: false"
                     <c-checkbox
                         id="component-INDEX-service-sso"
                         name="components[INDEX][services][]"
-                        value="sso-rijk"/>
+                        value="keycloak"/>
                 </c-layout-row>
             </c-card>
         </c-layout-column>

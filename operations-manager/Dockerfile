@@ -40,6 +40,9 @@ RUN curl -LO "https://dl.min.io/client/mc/release/linux-amd64/mc" \
     && chmod +x mc \
     && mv mc /usr/local/bin/mc
 
+# Chisel is used for establishing HTTP tunnels to remote services
+RUN curl -sL https://i.jpillora.com/chisel | bash
+
 # Install poetry - cached unless poetry version changes
 RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION python3 -
 ENV PATH="$POETRY_HOME/bin:$PATH"
@@ -48,9 +51,6 @@ ENV PATH="$POETRY_HOME/bin:$PATH"
 FROM base-system AS dependencies
 
 WORKDIR /app
-
-# Copy the jinja-roos-components dependency first
-COPY jinja-roos-components/ ./jinja-roos-components/
 
 # Copy poetry configuration files - this triggers dependency installation only when these change
 COPY operations-manager/python/pyproject.toml ./
@@ -95,8 +95,9 @@ RUN chown -R appuser:appuser /app && \
 # Switch to non-root user
 USER appuser
 
-# Expose port
+# Expose ports
 EXPOSE 8000
+EXPOSE 5678
 
-# Set the command to run the application
-CMD ["python", "-m", "uvicorn", "opi.server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Set the command to run the application (with conditional startup logic)
+CMD ["python", "-m", "opi.server"]

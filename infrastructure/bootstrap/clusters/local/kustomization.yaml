@@ -4,6 +4,8 @@ kind: Kustomization
 resources:
   - ../../infrastructure/secrets/templates
   - ../../infrastructure/postgresql/database/overlays/local
+  - ../../infrastructure/forgejo/controller/base
+  - ../../infrastructure/forgejo/config/base
   - ../../infrastructure/chisel/controller/base
 #  - ../../infrastructure/vault/controller/overlays/local
 #  - ../../infrastructure/vault/config/overlays/local

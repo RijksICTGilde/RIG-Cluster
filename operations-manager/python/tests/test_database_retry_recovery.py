@@ -158,9 +158,9 @@ async def run_all_tests():
 
     for test_name, test_func in tests:
         try:
-            logger.info(f"\n{'='*50}")
+            logger.info(f"\n{'=' * 50}")
             logger.info(f"Running: {test_name}")
-            logger.info(f"{'='*50}")
+            logger.info(f"{'=' * 50}")
 
             result = await test_func()
             results[test_name] = result
@@ -182,9 +182,9 @@ async def run_all_tests():
         pass
 
     # Summary
-    logger.info(f"\n{'='*50}")
+    logger.info(f"\n{'=' * 50}")
     logger.info("TEST SUMMARY")
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' * 50}")
 
     passed = sum(1 for result in results.values() if result)
     total = len(results)

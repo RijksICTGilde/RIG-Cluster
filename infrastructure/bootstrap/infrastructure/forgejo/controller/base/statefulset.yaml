@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: forgejo
+  namespace: rig-system
+  labels:
+    app: forgejo
+    component: git-server
+spec:
+  serviceName: forgejo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: forgejo
+  template:
+    metadata:
+      labels:
+        app: forgejo
+        component: git-server
+    spec:
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+      - name: forgejo
+        image: codeberg.org/forgejo/forgejo:7
+        imagePullPolicy: IfNotPresent
+
+        ports:
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+
+        env:
+        # User/Group ID for file permissions
+        - name: USER_UID
+          value: "1000"
+        - name: USER_GID
+          value: "1000"
+
+        # Security - Skip web installer
+        - name: FORGEJO__security__INSTALL_LOCK
+          value: "true"
+
+        # Server configuration
+        - name: FORGEJO__server__ROOT_URL
+          value: "http://forgejo.kind"
+        - name: FORGEJO__server__HTTP_PORT
+          value: "3000"
+        - name: FORGEJO__server__DOMAIN
+          value: "forgejo.kind"
+        - name: FORGEJO__server__PROTOCOL
+          value: "http"
+
+        # Database configuration - PostgreSQL via CNPG
+        - name: FORGEJO__database__DB_TYPE
+          value: "postgres"
+        - name: FORGEJO__database__HOST
+          value: "rig-db-rw.rig-system.svc.cluster.local:5432"
+        - name: FORGEJO__database__NAME
+          value: "forgejo"
+        - name: FORGEJO__database__USER
+          value: "forgejo"
+        - name: FORGEJO__database__PASSWD
+          valueFrom:
+            secretKeyRef:
+              name: forgejo-db-credentials
+              key: password
+        - name: FORGEJO__database__SSL_MODE
+          value: "disable"
+        - name: FORGEJO__database__SCHEMA
+          value: "public"
+
+        # Service configuration - Disable user registration for local dev
+        - name: FORGEJO__service__DISABLE_REGISTRATION
+          value: "true"
+        - name: FORGEJO__service__REQUIRE_SIGNIN_VIEW
+          value: "false"
+        - name: FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE
+          value: "true"
+
+        # Repository defaults
+        - name: FORGEJO__repository__DEFAULT_BRANCH
+          value: "main"
+        - name: FORGEJO__repository__DEFAULT_PRIVATE
+          value: "false"
+
+        # Webhook configuration - Allow internal network for ArgoCD
+        - name: FORGEJO__webhook__ALLOWED_HOST_LIST
+          value: "*"
+        - name: FORGEJO__webhook__SKIP_TLS_VERIFY
+          value: "true"
+
+        volumeMounts:
+        - name: data
+          mountPath: /data
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+        livenessProbe:
+          httpGet:
+            path: /api/healthz
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /api/healthz
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false  # Forgejo needs writable filesystem
+
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        app: forgejo
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+      storageClassName: standard

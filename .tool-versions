@@ -5,3 +5,4 @@ kubectl 1.32.3
 argocd 3.0.5
 mc 2025-07-21T05-28-08Z
 maven 3.5.4
+skaffold 2.17.0

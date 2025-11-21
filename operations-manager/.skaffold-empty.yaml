@@ -1,0 +1,2 @@
+# Empty manifest - Skaffold requires a manifest file for kubectl deployer
+# Actual deployment is managed by ArgoCD
