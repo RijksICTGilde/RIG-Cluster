@@ -11,6 +11,7 @@ spec:
   strategy:
     type: {{ pod_replacement_mode }}
   replicas: 1
+  revisionHistoryLimit: 3
   selector:
     matchLabels:
       app: "{{ name }}"
@@ -22,9 +23,11 @@ spec:
         project: "{{ project.name }}"
         component: application
         network-policy: allow-db-access
-      annotations:
-        config-hash: "{{ config_hash }}"  # Triggers deployment reload when secrets/env vars change
     spec:
+      {% if imagePullSecretsMap and imageURL in imagePullSecretsMap %}
+      imagePullSecrets:
+        - name: {{ imagePullSecretsMap[imageURL] }}
+      {% endif %}
       # Pod-level security context (OpenShift compatible)
       securityContext:
         {% if cluster == 'local' %}
@@ -41,6 +44,7 @@ spec:
       containers:
         - name: app
           image: "{{ imageURL }}"
+          imagePullPolicy: {{ imagePullPolicy }}
           ports:
             - containerPort: {{ application_port }}
               name: http
@@ -83,22 +87,19 @@ spec:
               memory: "512Mi"
               cpu: "500m"
           startupProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: {{ application_port }}
             initialDelaySeconds: 5
-            periodSeconds: 5
-            failureThreshold: 12  # 5 + (12 × 5) = 65 seconds max startup time
+            periodSeconds: 10
+            failureThreshold: 30  # 5 + (30 × 10) = 305 seconds max startup time for ML model loading
           livenessProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: {{ application_port }}
             initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: {{ application_port }}
             initialDelaySeconds: 10
             periodSeconds: 20
@@ -109,7 +110,7 @@ spec:
         {% if storage.type == 'persistent' %}
         - name: {{ storage.name }}
           persistentVolumeClaim:
-            claimName: {{ name }}-{{ storage.name }}-pvc
+            claimName: {{ storage.pvc_name }}
         {% elif storage.type == 'ephemeral' %}
         - name: {{ storage.name }}
           emptyDir:

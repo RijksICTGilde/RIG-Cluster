@@ -5,9 +5,32 @@ This module sets up Jinja2 templates with ROOS components for the operations-man
 """
 
 from pathlib import Path
+from typing import Any
 
 from fastapi.templating import Jinja2Templates
 from jinja_roos_components import setup_components
+
+
+def get_service_name(service: str | dict[str, Any]) -> str:
+    """
+    Extract service name from mixed service format.
+
+    Services can be either:
+    - A string: "publish-on-web"
+    - A dict with service name as key: {"keycloak": {"config": {...}}}
+
+    Args:
+        service: Service definition (string or dict)
+
+    Returns:
+        Service name as string
+    """
+    if isinstance(service, str):
+        return service
+    if isinstance(service, dict):
+        # Return the first key as the service name
+        return next(iter(service.keys()), "")
+    return str(service)
 
 # Get the opi package directory (operations-manager/python/opi)
 OPI_DIR = Path(__file__).parent.parent
@@ -31,6 +54,9 @@ setup_components(
 
 # Add global variables that components might need
 templates.env.globals["roos_assets_base_url"] = "/static/roos/dist/"
+
+# Register custom filters
+templates.env.filters["service_name"] = get_service_name
 
 
 def setup_templates() -> Jinja2Templates:

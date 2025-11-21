@@ -278,10 +278,10 @@ def display_user_data(tokens: dict[str, Any], user_info: dict[str, Any]) -> HTML
         
         <div class="data-section">
             <h3>🔑 Token Information</h3>
-            <p><strong>Token Type:</strong> <span class="highlight">{tokens.get('token_type', 'N/A')}</span></p>
-            <p><strong>Expires In:</strong> <span class="highlight">{tokens.get('expires_in', 'N/A')} seconds</span></p>
-            <p><strong>Refresh Token:</strong> <span class="highlight">{'Present' if tokens.get('refresh_token') else 'Not provided'}</span></p>
-            <p><strong>Scope:</strong> <span class="highlight">{tokens.get('scope', 'N/A')}</span></p>
+            <p><strong>Token Type:</strong> <span class="highlight">{tokens.get("token_type", "N/A")}</span></p>
+            <p><strong>Expires In:</strong> <span class="highlight">{tokens.get("expires_in", "N/A")} seconds</span></p>
+            <p><strong>Refresh Token:</strong> <span class="highlight">{"Present" if tokens.get("refresh_token") else "Not provided"}</span></p>
+            <p><strong>Scope:</strong> <span class="highlight">{tokens.get("scope", "N/A")}</span></p>
         </div>
         
         <div class="data-section">

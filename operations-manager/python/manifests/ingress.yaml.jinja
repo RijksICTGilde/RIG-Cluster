@@ -4,12 +4,15 @@ metadata:
   name: {{ name }}
   annotations:
     haproxy.router.openshift.io/ip_whitelist: {{ ip_whitelist | default("0.0.0.0") }}
+    # TODO: determine if we always want to set the proxy buffers
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
 spec:
   rules:
     - host: {{ hostname }}
       http:
         paths:
-          - path: /
+          - path: {{ path | default('/') }}
             pathType: Prefix
             backend:
               service:

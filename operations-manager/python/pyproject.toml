@@ -47,9 +47,12 @@ gitpython = "^3.1.44"
 deepdiff = "^8.0.1"
 jsonpath-ng = "^1.7.0"
 tenacity = "^9.1.2"
-jinja-roos-components = {path = "./jinja-roos-components", develop = true}
+# keep line below if you want to switch to a 'development' version on disk instead
+#jinja-roos-components = {path = "../../../jinja-roos-components", develop = true}
+jinja-roos-components = {git = "https://github.com/RijksICTGilde/jinja-roos-components.git", branch = "table-and-more-conversion"}
 beautifulsoup4 = "^4.13.4"
 lxml = "^6.0.1"
+python-keycloak = "^5.3.0"
 
 
 [tool.poetry.group.test.dependencies]
@@ -74,6 +77,7 @@ pyright = "^1.1.401"
 liccheck = "^0.9.2"
 setuptools = "^80.8.0"
 djlint = "^1.36.1"
+debugpy = "^1.8.0"
 
 
 [build-system]

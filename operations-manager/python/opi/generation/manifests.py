@@ -23,6 +23,41 @@ from opi.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def render_template(template_name: str, variables: dict[str, Any]) -> str:
+    """
+    Load and render a Jinja2 template from the manifests directory.
+
+    Args:
+        template_name: Name of the template file (relative to MANIFESTS_PATH)
+        variables: Dictionary of variables for template substitution
+
+    Returns:
+        Rendered template as a string
+
+    Raises:
+        FileNotFoundError: If template file doesn't exist
+        RuntimeError: If template rendering fails
+    """
+    template_path = os.path.join(settings.MANIFESTS_PATH, template_name)
+
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"Template file not found: {template_path}")
+
+    with open(template_path) as f:
+        template_content = f.read()
+
+    # Create Jinja2 environment with whitespace control
+    # Note: autoescape=False is intentional for YAML template generation
+    env = Environment(loader=BaseLoader(), trim_blocks=True, lstrip_blocks=True, autoescape=False)  # noqa: S701
+    template = env.from_string(template_content)
+
+    # Render the template with variables
+    result = template.render(**variables)
+
+    logger.debug(f"Successfully rendered template: {template_name}")
+    return result
+
+
 class ManifestGenerator:
     """Generator for Kubernetes manifests with templating and kustomization support."""
 

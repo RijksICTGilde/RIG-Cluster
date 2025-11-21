@@ -25,20 +25,59 @@ Output: `target/keycloak-saml-nameid-mapper-1.0.0.jar`
 
 ## Publishing to GitHub
 
+### Prerequisites
+- GitHub CLI (`gh`) installed and authenticated
+- Repository must be public for wget downloads to work
+- Push permissions to the repository
+
+### Quick Publish
+
+Using Taskfile (recommended):
 ```bash
 task publish-keycloak-custom-mapper
 ```
 
-This will create a GitHub release and upload the JAR to:
-`https://github.com/minbzk/base-images/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar`
+This will:
+1. Build the JAR (if not already built)
+2. Create or update the GitHub release v1.0.0
+3. Upload the JAR as a release asset
+4. Verify the download URL
+
+The JAR will be available at:
+`https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar`
+
+### Manual Publishing Steps
+
+If you prefer to publish manually:
+
+1. **Build the JAR**:
+   ```bash
+   task build-keycloak-custom-mapper
+   ```
+
+2. **Create GitHub Release**:
+   ```bash
+   cd keycloak-migration/custom-mapper
+   gh release create v1.0.0 \
+     --repo "RijksICTGilde/RIG-Cluster" \
+     --title "Keycloak SAML NameID Mapper v1.0.0" \
+     --notes "Custom mapper for extracting SAML NameID to user attributes" \
+     target/keycloak-saml-nameid-mapper-1.0.0.jar
+   ```
+
+3. **Verify Release**:
+   ```bash
+   curl -sI https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar
+   # Should return HTTP 200 or 302
+   ```
 
 ## Deployment
 
 The JAR needs to be in `/opt/keycloak/providers/` when Keycloak starts.
 
-### Option 1: Extend Existing Init Container (Recommended)
+### Option 1: Init Container Download (Recommended)
 
-Update your Keycloak deployment's init container to also download the custom mapper:
+Update your Keycloak deployment's init container to download the custom mapper from the GitHub release:
 
 ```yaml
 initContainers:
@@ -47,13 +86,14 @@ initContainers:
       - sh
       - -c
       - |
+        cd /tmp
         # Download theme
-        wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.2.1/keycloak-nl-design-system.jar \
-          -O /opt/keycloak/providers/keycloak-nl-design-system.jar
+        wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.2.1/keycloak-nl-design-system.jar
+        cp keycloak-nl-design-system.jar /opt/keycloak/providers/
 
-        # Download custom mapper (after publishing with task publish-keycloak-custom-mapper)
-        wget https://github.com/minbzk/base-images/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar \
-          -O /opt/keycloak/providers/keycloak-saml-nameid-mapper.jar
+        # Download custom mapper
+        wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar
+        cp keycloak-saml-nameid-mapper-1.0.0.jar /opt/keycloak/providers/
     image: busybox:1.37.0
     securityContext:
       runAsUser: 0
@@ -62,9 +102,30 @@ initContainers:
         name: keycloak-provider
 ```
 
-Then restart Keycloak:
+**Apply the change**:
 ```bash
+# Update the deployment YAML in your GitOps repo
+# Commit and push the change
+git add infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+git commit -m "Add custom SAML NameID mapper to Keycloak"
+git push
+
+# If using ArgoCD, sync the application
+# Or manually apply:
+kubectl apply -f infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+
+# Restart Keycloak to load the new JAR
 kubectl rollout restart deployment/keycloak-dpl -n keycloak
+```
+
+**Verify the JAR is loaded**:
+```bash
+# Check JAR is in the pod
+kubectl exec deployment/keycloak-dpl -n keycloak -- ls -lh /opt/keycloak/providers/
+
+# Check Keycloak logs for mapper registration
+kubectl logs deployment/keycloak-dpl -n keycloak | grep "saml-unrestricted-xpath-idp-mapper"
+# Should show: "KC-SERVICES0047: saml-unrestricted-xpath-idp-mapper (nl.minbzk.rig.keycloak.mapper.UnrestrictedXPathAttributeMapper) is implementing the internal SPI"
 ```
 
 ### Option 2: Host JAR in Git Repository

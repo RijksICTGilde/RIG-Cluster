@@ -137,9 +137,36 @@ For each attribute below, create an `Attribute Importer` mapper:
 - **Attribute Name Format**: `URI Reference` or `URI`
 - **Sync Mode Override**: `INHERIT` (or `FORCE` for critical attributes)
 
+#### 1.0 Enable Unmanaged Attributes (CRITICAL - Keycloak 24+)
+
+**⚠️ REQUIRED FOR KEYCLOAK 24.0+ - Must be done BEFORE running the backfill script!**
+
+Keycloak 24.0+ introduced User Profile with strict attribute management. Custom attributes (like `sso-rijk-userid`) that are not defined in the User Profile are called "unmanaged attributes" and cannot be saved via the Admin API unless explicitly enabled.
+
+**Symptom if not enabled:**
+- Backfill script completes successfully (204 No Content response)
+- BUT attributes are not actually saved
+- When you check the user, the attributes are missing
+
+**How to enable in Admin Console:**
+
+1. Login to Keycloak Admin Console
+2. Navigate to: **Realm Settings** (left sidebar)
+3. Click the **User Profile** tab
+4. Scroll down to find the **Unmanaged attributes** dropdown
+5. Change from `Disabled` to: **Enabled**
+6. Click **Save**
+
+**What this does:**
+- Allows saving custom attributes via Admin API
+- Required for the backfill script to work
+- Needed for any IDP mappers that create custom attributes
+
+---
+
 #### 1.1.1 Backfill Existing Users (REQUIRED)
 
-**⚠️ Run this BEFORE adding the mappers above, or AFTER adding them but BEFORE proceeding to Phase 1.2**
+**⚠️ Run this AFTER enabling unmanaged attributes (step 1.0)!**
 
 Since IDP mappers only execute during login, existing users won't have the `sso_rijk_collab_person_id` attribute. Use the backfill script to populate it from their existing `federatedIdentities`.
 

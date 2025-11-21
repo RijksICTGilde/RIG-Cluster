@@ -6,7 +6,7 @@ class ServiceType(Enum):
 
     # Web services
     PUBLISH_ON_WEB = "publish-on-web"
-    SSO_RIJK = "sso-rijk"
+    KEYCLOAK = "keycloak"
 
     # Storage services
     PERSISTENT_STORAGE = "persistent-storage"
@@ -14,6 +14,7 @@ class ServiceType(Enum):
 
     # Database services
     POSTGRESQL_DATABASE = "postgresql-database"
+    NAMESPACE_POSTGRESQL_DATABASE = "namespace-postgresql-database"
 
     # Object storage services
     MINIO_STORAGE = "minio-storage"

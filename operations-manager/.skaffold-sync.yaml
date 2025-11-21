@@ -1,0 +1,19 @@
+# This file helps Skaffold identify the pods to sync files to
+# It doesn't deploy anything - ArgoCD manages the actual deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-manager
+  namespace: rig-system
+spec:
+  selector:
+    matchLabels:
+      app: operations-manager
+  template:
+    metadata:
+      labels:
+        app: operations-manager
+    spec:
+      containers:
+      - name: operations-manager
+        image: operations-manager:latest

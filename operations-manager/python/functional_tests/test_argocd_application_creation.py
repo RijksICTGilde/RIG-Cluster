@@ -122,8 +122,11 @@ class TestArgocdApplicationCreation:
                 # Ensure the repository is cloned
                 await git_connector.ensure_repo_cloned()
 
-                # Call the actual method we want to test
-                result = await self.project_manager._create_argocd_application(project_data, git_connector)
+                # Set the git connector on project manager so ArgoManager can access it
+                await self.project_manager.set_git_connector_for_argocd(git_connector)
+
+                # Call the new ArgoManager method
+                result = await self.project_manager._argo_manager.create_applications(project_data)
 
                 if result:
                     print("  ✓ ArgoCD application creation completed successfully")

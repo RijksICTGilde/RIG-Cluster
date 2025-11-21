@@ -9,7 +9,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/RijksICTGilde/RIG-Cluster.git
+    repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/clusters/odcn
     targetRevision: main
     plugin:

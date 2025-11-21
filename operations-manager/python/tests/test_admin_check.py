@@ -65,7 +65,7 @@ async def test_admin_check():
                     if table["table_name"] in ["alembic_version", "user", "algorithm"]:
                         try:
                             count = await admin_conn.fetchval(f"""
-                                SELECT COUNT(*) FROM {schema_name}.{table['table_name']}
+                                SELECT COUNT(*) FROM {schema_name}.{table["table_name"]}
                             """)
                             print(f"    └─ {count} rows")
                         except Exception as e:

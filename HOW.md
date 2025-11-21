@@ -254,3 +254,23 @@ https://stackoverflow.com/questions/56126864/why-do-i-get-502-when-trying-to-aut
 Deleting all argo resources (the application and project) in the same run does not seem to work,
 a race condition where the application can not be deleted because the project is gone occurs,
 maybe this also occurs with the setup which makes it so slow..
+
+# Git naming
+We encountered an issue where multiple projects were using the same GitHub repository URL with different credentials. ArgoCD was logging warnings:
+
+```
+Found multiple credentials for repoURL: https://github.com/RijksICTGilde/rig-cluster-application-test.git
+```
+
+ArgoCD caches repository credentials using the full URL as a key. When multiple projects create secrets with the same URL, ArgoCD gets confused about which credentials to use, leading to authentication failures.
+We embed the project name as a username in the repository URL. Git ignores this username when using token authentication, but ArgoCD treats it as a unique URL.
+
+# Images to build:
+
+task docker-build-and-push BUILD_CONTEXT=images/postgresql-with-dictionaries IMAGE_NAME=postgresql-with-dictionaries REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.11.19 DOCKERFILE_PATH=Dockerfile
+
+task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=backend REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.11.21 DOCKERFILE_PATH=backend/Dockerfile
+
+task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=backend REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.11.21 DOCKERFILE_PATH=frontend/Dockerfile
+
+

@@ -35,7 +35,7 @@ async def test_complete_architecture():
             logger.info("✅ DatabaseManager successfully injected with pool")
 
             # Test that the connection can be established
-            await project_manager._database_manager._ensure_connection()
+            project_manager._database_manager._ensure_connection()
             logger.info("✅ Database connection established through injected pool")
 
             # Clean up the connection

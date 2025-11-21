@@ -3,8 +3,8 @@ kind: Application
 metadata:
   name: user-applications
   namespace: rig-system
-#  annotations:
-#    argocd.argoproj.io/sync-wave: "2"  # Deploy after infrastructure
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"  # Deploy after infrastructure
 spec:
   project: default
   sources:

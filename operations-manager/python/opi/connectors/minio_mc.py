@@ -15,6 +15,8 @@ import tempfile
 import threading
 from typing import Any
 
+from opi.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,6 +59,12 @@ class MinioConnector:
 
         # Setup environment variables for mc
         self.env = os.environ.copy()
+
+        # Set MC_CONFIG_DIR if not already set via environment
+        # This allows ConfigMap/env overrides while providing a sensible default
+        if "MC_CONFIG_DIR" not in self.env:
+            self.env["MC_CONFIG_DIR"] = settings.MC_CONFIG_DIR
+            logger.debug(f"Set MC_CONFIG_DIR to: {settings.MC_CONFIG_DIR}")
 
         # Test mc CLI availability synchronously during initialization
         try:
@@ -167,6 +175,30 @@ class MinioConnector:
             MinioConnector.is_mc_available = False
             return False
 
+    @staticmethod
+    def _is_sensitive_command(args: list[str]) -> bool:
+        """
+        Check if a command contains sensitive data that should not be logged.
+
+        Args:
+            args: List of command arguments
+
+        Returns:
+            True if command contains sensitive data, False otherwise
+        """
+        if len(args) < 2:
+            return False
+
+        # Commands that contain passwords/secrets
+        if args[0] == "alias" and args[1] == "set":
+            # mc alias set <alias> <endpoint> <access-key> <secret-key>
+            return True
+        if len(args) >= 3 and args[0] == "admin" and args[1] == "user" and args[2] == "add":
+            # mc admin user add <alias> <username> <secret-key>
+            return True
+
+        return False
+
     async def _run_mc_command(
         self, args: list[str], env: dict[str, str] | None = None, stdin_input: str | None = None
     ) -> tuple[str, str, int]:
@@ -193,12 +225,11 @@ class MinioConnector:
         if env:
             cmd_env.update(env)
 
-        # Create cmd_str for logging
-        cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
-        cmd_str = f"mc {cmd_args_str}"
-
         if stdin_input:
             # Use shell execution with EOF markers for stdin input
+            # Create cmd_str for shell command
+            cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
+            cmd_str = f"mc {cmd_args_str}"
             shell_cmd = f"{cmd_str} <<'EOF'\n{stdin_input}\nEOF"
 
             logger.debug("Running mc shell command with stdin")
@@ -213,7 +244,12 @@ class MinioConnector:
             cmd = ["mc"]
             cmd.extend(args)
 
-            logger.debug(f"Running mc command: {cmd_str}")
+            # Only log non-sensitive commands
+            if not self._is_sensitive_command(args):
+                cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
+                logger.debug(f"Running mc command: mc {cmd_args_str}")
+            else:
+                logger.debug("Running mc command (sensitive data hidden)")
 
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env
@@ -856,6 +892,68 @@ class MinioConnector:
         except Exception as e:
             logger.exception(f"Failed to grant access to user {username} for bucket {bucket_name}")
             raise MinioExecutionError(f"Granting access failed: {e}") from e
+
+    async def mirror_bucket_cross_alias(
+        self, source_alias: str, source_bucket: str, target_alias: str, target_bucket: str
+    ) -> dict[str, Any]:
+        """
+        Mirror data from a source bucket to a target bucket across different aliases.
+
+        This is a simple data transfer method that assumes both buckets already exist
+        and only handles the mirroring operation. Bucket and user lifecycle management
+        should be handled at the manager layer.
+
+        Args:
+            source_alias: Source MinIO server alias
+            source_bucket: Source bucket name
+            target_alias: Target MinIO server alias
+            target_bucket: Target bucket name
+
+        Returns:
+            Dictionary with operation status and details
+
+        Raises:
+            MinioValidationError: If input validation fails
+            MinioExecutionError: If mirroring operation fails
+        """
+        try:
+            # Validate bucket names
+            validated_source_bucket = self._validate_bucket_name(source_bucket)
+            validated_target_bucket = self._validate_bucket_name(target_bucket)
+
+            logger.info(
+                f"Mirroring data from {source_alias}/{validated_source_bucket} "
+                f"to {target_alias}/{validated_target_bucket}"
+            )
+
+            source_path = f"{source_alias}/{validated_source_bucket}"
+            target_path = f"{target_alias}/{validated_target_bucket}"
+
+            stdout, stderr, return_code = await self._run_mc_command(["mirror", source_path, target_path])
+
+            if return_code != 0:
+                raise MinioExecutionError(f"mc mirror command failed: {stderr or 'Unknown error'}")
+
+            logger.info(f"Successfully mirrored bucket from {source_path} to {target_path}")
+
+            return {
+                "status": "success",
+                "message": f"Data mirrored successfully from {source_alias}/{validated_source_bucket} to {target_alias}/{validated_target_bucket}",
+                "source": {"alias": source_alias, "bucket": validated_source_bucket},
+                "target": {"alias": target_alias, "bucket": validated_target_bucket},
+            }
+
+        except MinioValidationError:
+            logger.exception("Validation failed for cross-alias bucket mirroring")
+            raise
+        except MinioExecutionError:
+            logger.exception("Execution failed for cross-alias bucket mirroring")
+            raise
+        except Exception as e:
+            logger.exception(
+                f"Failed to mirror bucket from {source_alias}/{source_bucket} to {target_alias}/{target_bucket}"
+            )
+            raise MinioExecutionError(f"Cross-alias bucket mirroring failed: {e}") from e
 
 
 # Factory function for creating connector instances

@@ -39,8 +39,9 @@ class BaseSecret(ABC):
     def __post_init__(self) -> None:
         """Default post-initialization hook. Subclasses can override for custom validation."""
 
-    def _get_service_variables(self) -> list[Any]:
-        return ServiceAdapter.get_service_definition(self.SERVICE_TYPE).variables
+    @classmethod
+    def _get_service_variables(cls) -> list[Any]:
+        return ServiceAdapter.get_service_definition(cls.SERVICE_TYPE).variables
 
     def to_k8s_secret_data(self) -> dict[str, str]:
         """Convert dataclass fields to Kubernetes secret key-value pairs including aliases."""
@@ -79,11 +80,14 @@ class BaseSecret(ABC):
             # This method should only be called on concrete subclasses, not the abstract base class
             return cls(**kwargs)
 
-        service_def = ServiceAdapter.get_service_definition(cls.SERVICE_TYPE)
-        variables = service_def.get("variables", [])
+        variables = cls._get_service_variables()
 
         for var_def in variables:
-            if var_def.source == "secret":
+            if var_def.source == "secret" and var_def.secret_key:
+                # Skip computed fields that aren't actual dataclass fields (e.g., connection_string property)
+                if hasattr(cls, "__dataclass_fields__") and var_def.secret_key not in cls.__dataclass_fields__:
+                    continue
+
                 # Try main key first, then aliases
                 k8s_keys_to_try = [var_def.name] + var_def.aliases
 
@@ -221,9 +225,11 @@ class KeycloakSecret(BaseSecret):
     client_id: str
     client_secret: str
     discovery_url: str
+    base_url: str
+    realm: str
 
     SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-keycloak"
-    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SSO_RIJK
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.KEYCLOAK
 
     def __post_init__(self) -> None:
         """Validate Keycloak secret data."""
@@ -250,3 +256,69 @@ class UserSecret(BaseSecret):
     def from_k8s_secret_data(cls, secret_data: dict[str, str]) -> "UserSecret":
         """Create from all secret data as env_vars."""
         return cls(env_vars=secret_data.copy())
+
+
+@dataclass
+class RegistrySecret(BaseSecret):
+    """Container registry secret configuration for imagePullSecrets."""
+
+    registry_url: str
+    username: str
+    password: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-{registry}-registry"
+
+    def __post_init__(self) -> None:
+        """Validate registry secret data."""
+        super().__post_init__()
+
+    def to_dockerconfigjson(self) -> str:
+        """
+        Generate .dockerconfigjson content in auth-only format.
+
+        Returns:
+            JSON string with docker config in format:
+            {"auths": {"registry.example.com": {"auth": "base64(username:password)"}}}
+        """
+        import base64
+        import json
+
+        auth_string = f"{self.username}:{self.password}"
+        auth_base64 = base64.b64encode(auth_string.encode()).decode()
+
+        config = {"auths": {self.registry_url: {"auth": auth_base64}}}
+
+        return json.dumps(config)
+
+    def to_k8s_secret_data(self) -> dict[str, str]:
+        """For registry secrets, return the .dockerconfigjson key."""
+        return {".dockerconfigjson": self.to_dockerconfigjson()}
+
+    @classmethod
+    def from_k8s_secret_data(cls, secret_data: dict[str, str]) -> "RegistrySecret":
+        """Create from .dockerconfigjson secret data."""
+        import base64
+        import json
+
+        dockerconfig_json = secret_data.get(".dockerconfigjson", "{}")
+        config = json.loads(dockerconfig_json)
+
+        # Extract first registry from auths
+        auths = config.get("auths", {})
+        if not auths:
+            msg = "No registry found in .dockerconfigjson"
+            raise ValueError(msg)
+
+        registry_url = list(auths.keys())[0]
+        auth_data = auths[registry_url]
+
+        # Decode auth field if present
+        if "auth" in auth_data:
+            auth_decoded = base64.b64decode(auth_data["auth"]).decode()
+            username, password = auth_decoded.split(":", 1)
+        else:
+            # Fallback to legacy username/password fields
+            username = auth_data.get("username", "")
+            password = auth_data.get("password", "")
+
+        return cls(registry_url=registry_url, username=username, password=password)

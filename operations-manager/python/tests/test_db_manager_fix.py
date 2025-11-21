@@ -43,7 +43,7 @@ async def test_database_manager_fix():
         logger.info("✅ DatabaseManager instance created")
 
         # Test connection initialization
-        await db_manager._ensure_connection()
+        db_manager._ensure_connection()
         logger.info("✅ Database connection acquired successfully")
 
         # Clean up the connection

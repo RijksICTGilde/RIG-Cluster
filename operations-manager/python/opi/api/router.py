@@ -69,7 +69,7 @@ class ComponentReference(BaseModel):
 class AddDeploymentRequest(BaseModel):
     deploymentName: str = Field(..., description="Name of the deployment", example="production")
     components: list[ComponentReference] = Field(..., description="List of components for this deployment")
-    cloneFrom: str | None = Field(None, description="Optional deployment to clone from", example="staging")
+    forceClone: bool = Field(False, description="Force clone even if target resources exist (runtime parameter)")
 
     model_config = {
         "json_schema_extra": {
@@ -79,17 +79,43 @@ class AddDeploymentRequest(BaseModel):
                     {"reference": "frontend", "image": "ghcr.io/minbzk/amt:pr-597"},
                     {"reference": "backend", "image": "ghcr.io/minbzk/amt-api:v1.2.0"},
                 ],
-                "cloneFrom": "staging",
+                "forceClone": False,
             }
         }
     }
 
 
+class StorageAction(BaseModel):
+    action: str = Field(..., description="Action to perform on the storage (recreate, keep)", example="recreate")
+
+
+class ServiceReference(BaseModel):
+    reference: dict[str, StorageAction] = Field(
+        ..., description="Storage references with actions. Key is storage name (e.g., 'data', 'temp')"
+    )
+
+
 class UpdateImageRequest(BaseModel):
     componentName: str = Field(..., description="Name of the component to update", example="frontend")
     newImageUrl: str = Field(..., description="New image URL", example="nginx:1.21")
+    services: dict[str, ServiceReference] | None = Field(
+        None,
+        description="Service-specific actions for storage recreation. Key is service type (e.g., 'persistent-storage')",
+        example={"persistent-storage": {"reference": {"data": {"action": "recreate"}}}},
+    )
 
-    model_config = {"json_schema_extra": {"example": {"componentName": "frontend", "newImageUrl": "nginx:1.21"}}}
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"componentName": "frontend", "newImageUrl": "nginx:1.21"},
+                {
+                    "componentName": "frontend",
+                    "newImageUrl": "nginx:1.22",
+                    "services": {"persistent-storage": {"reference": {"data": {"action": "recreate"}}}},
+                },
+            ]
+        }
+    }
 
 
 class ProjectDeleteRequest(BaseModel):
@@ -98,13 +124,128 @@ class ProjectDeleteRequest(BaseModel):
     model_config = {"json_schema_extra": {"example": {"confirmDeletion": True}}}
 
 
+class ChiselTunnelConfig(BaseModel):
+    """
+    Chisel tunnel configuration for accessing remote services.
+
+    If provided, a Chisel tunnel will be established to access the remote service,
+    allowing cloning from sources that are not directly accessible.
+    """
+
+    serverUrl: str = Field(
+        ..., description="Chisel server URL in source cluster", example="https://chisel.source-cluster.example.com"
+    )
+    username: str = Field(..., description="Chisel authentication username", example="admin")
+    password: str = Field(..., description="Chisel authentication password", example="secret")
+    remoteHost: str = Field(
+        ..., description="Remote service hostname in source cluster", example="postgres.namespace.svc.cluster.local"
+    )
+    remotePort: int = Field(..., description="Remote service port in source cluster", example=5432)
+
+
+class CloneDatabaseFromExternalRequest(BaseModel):
+    sourceHost: str | None = Field(
+        None, description="External source database host (not needed if using tunnel)", example="localhost"
+    )
+    sourcePort: int | None = Field(
+        None, description="External source database port (not needed if using tunnel)", example=15432
+    )
+    sourceUsername: str = Field(..., description="Username for external source connection", example="postgres")
+    sourcePassword: str = Field(..., description="Password for external source connection", example="password")
+    sourceDatabase: str = Field(..., description="Source database name", example="amt_staging")
+    sourceSchema: str = Field(..., description="Source schema name", example="amt_staging")
+    forceClone: bool = Field(False, description="If true, drop existing target database before cloning", example=True)
+    tunnel: ChiselTunnelConfig | None = Field(
+        None, description="Optional Chisel tunnel configuration for accessing remote source"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "sourceHost": "localhost",
+                    "sourcePort": 15432,
+                    "sourceUsername": "postgres",
+                    "sourcePassword": "password",
+                    "sourceDatabase": "amt_staging",
+                    "sourceSchema": "amt_staging",
+                    "forceClone": True,
+                },
+                {
+                    "sourceUsername": "postgres",
+                    "sourcePassword": "password",
+                    "sourceDatabase": "amt_staging",
+                    "sourceSchema": "amt_staging",
+                    "forceClone": True,
+                    "tunnel": {
+                        "serverUrl": "https://chisel.source-cluster.example.com",
+                        "username": "admin",
+                        "password": "secret",
+                        "remoteHost": "postgres.namespace.svc.cluster.local",
+                        "remotePort": 5432,
+                    },
+                },
+            ]
+        }
+    }
+
+
+class CloneBucketFromExternalRequest(BaseModel):
+    sourceHost: str | None = Field(
+        None, description="External source MinIO host (not needed if using tunnel)", example="localhost"
+    )
+    sourcePort: int | None = Field(
+        None, description="External source MinIO port (not needed if using tunnel)", example=19000
+    )
+    sourceAccessKey: str = Field(..., description="Access key for external source connection", example="minioadmin")
+    sourceSecretKey: str = Field(..., description="Secret key for external source connection", example="minioadmin")
+    sourceBucket: str = Field(..., description="Source bucket name", example="amt-staging")
+    sourceSecure: bool = Field(False, description="Whether source uses HTTPS", example=False)
+    forceClone: bool = Field(False, description="If true, overwrite existing target bucket", example=True)
+    tunnel: ChiselTunnelConfig | None = Field(
+        None, description="Optional Chisel tunnel configuration for accessing remote source"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "sourceHost": "localhost",
+                    "sourcePort": 19000,
+                    "sourceAccessKey": "minioadmin",
+                    "sourceSecretKey": "minioadmin",
+                    "sourceBucket": "amt-staging",
+                    "sourceSecure": False,
+                    "forceClone": True,
+                },
+                {
+                    "sourceAccessKey": "minioadmin",
+                    "sourceSecretKey": "minioadmin",
+                    "sourceBucket": "amt-staging",
+                    "sourceSecure": False,
+                    "forceClone": True,
+                    "tunnel": {
+                        "serverUrl": "https://chisel.source-cluster.example.com",
+                        "username": "admin",
+                        "password": "secret",
+                        "remoteHost": "minio.namespace.svc.cluster.local",
+                        "remotePort": 9000,
+                    },
+                },
+            ]
+        }
+    }
+
+
 class SelfServiceComponent(BaseModel):
     type: str  # "deployment", "cronjob", "daemonset"
     port: int | None = None
     image: str
+    path: str = "/"  # Publication path for ingress routing (e.g., "/", "/api", "/aanleverapi")
     cpu_limit: str | None = None  # e.g., "100m", "1000m"
     memory_limit: str | None = None  # e.g., "128Mi", "1Gi"
     env_vars: str | None = None  # Environment variables in KEY=value format
+    aliases: str | None = None  # Aliases for system-provided variables (not encoded)
     services: list[str] | None = None  # ["keycloak", "postgres", "minio"]
 
 
@@ -114,6 +255,11 @@ class SelfServiceProjectRequest(BaseModel):
     display_name: str  # User-friendly name from form (maps to name="display-name")
     project_description: str | None = None  # Maps to name="project-description"
     cluster: str  # Maps to name="cluster"
+    deployment_name: str = "main"  # Name for the deployment (defaults to "main")
+
+    # Web Address Configuration
+    domain_mode: str = "component-specific"  # "component-specific", "deployment-name", or "custom"
+    subdomain: str | None = None  # Custom subdomain (required when domain_mode is "custom")
 
     # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
@@ -140,10 +286,10 @@ async def add_deployment(
 ) -> JSONResponse:
     """
     Add a new deployment to an existing project.
-    
+
     Headers:
         X-API-Key: The API key for the project (required)
-        
+
     Example:
     ```bash
     curl -X POST "http://localhost:9595/api/projects/my-project/:add-deployment" \
@@ -158,6 +304,7 @@ async def add_deployment(
       }'
     ```
     """
+    project_manager = None
     try:
         logger.info(f"Adding deployment '{deployment_data.deploymentName}' to project: {project_name}")
 
@@ -176,13 +323,14 @@ async def add_deployment(
         result = await project_manager.add_deployment(
             deployment_name=deployment_data.deploymentName,
             components=deployment_data.components,
-            clone_from=deployment_data.cloneFrom,
         )
 
         if result["success"]:
             # Process only the new deployment
             processing_result = await project_manager.process_project_from_git(
-                f"projects/{project_name}.yaml", deployment_name=deployment_data.deploymentName
+                f"projects/{project_name}.yaml",
+                deployment_name=deployment_data.deploymentName,
+                force_clone=deployment_data.forceClone,
             )
 
             content = {
@@ -192,7 +340,7 @@ async def add_deployment(
                     "name": deployment_data.deploymentName,
                     "project": project_name,
                     "components": [{"reference": c.reference, "image": c.image} for c in deployment_data.components],
-                    "clone_from": deployment_data.cloneFrom,
+                    "force_clone": deployment_data.forceClone,
                 },
                 "processing": {"status": "completed" if processing_result else "failed"},
             }
@@ -219,6 +367,9 @@ async def add_deployment(
     except Exception as e:
         logger.error(f"Error adding deployment: {e!s}")
         raise HTTPException(status_code=500, detail=f"Error adding deployment: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
 
 
 @api_router.put("/projects/{project_name}/deployments/{deployment_name}/image")
@@ -228,11 +379,13 @@ async def update_deployment_image(
 ) -> JSONResponse:
     """
     Update the container image for a specific component in a deployment.
-    
+
     Headers:
         X-API-Key: The API key for the project (required)
-        
-    Example:
+
+    Examples:
+
+    Basic image update:
     ```bash
     curl -X PUT "http://localhost:9595/api/projects/my-project/deployments/staging/image" \
       -H "Content-Type: application/json" \
@@ -242,35 +395,66 @@ async def update_deployment_image(
         "newImageUrl": "nginx:1.21"
       }'
     ```
+
+    Image update with storage recreation:
+    ```bash
+    curl -X PUT "http://localhost:9595/api/projects/my-project/deployments/staging/image" \
+      -H "Content-Type: application/json" \
+      -H "X-API-Key: your-api-key" \
+      -d '{
+        "componentName": "frontend",
+        "newImageUrl": "nginx:1.22",
+        "services": {
+          "persistent-storage": {
+            "reference": {
+              "data": {
+                "action": "recreate"
+              }
+            }
+          }
+        }
+      }'
+    ```
     """
+    project_manager = None
     try:
         logger.info(f"Updating image for component '{image_data.componentName}' in {project_name}/{deployment_name}")
 
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
-        # Handle the update-image action
-        change_preview = await project_manager.update_image(
-            deployment_name, image_data.componentName, image_data.newImageUrl
+        # Extract service actions if provided (e.g., persistent-storage recreate actions)
+        service_actions = image_data.services if image_data.services else None
+        if service_actions:
+            logger.info(f"Service actions requested: {service_actions}")
+
+        # Handle the update-image action with optional service actions
+        # TODO: this method exist because we do not 'diff' yet between project files
+        #  in the future, a diff would show what has changed and we could determine what actions to take
+        result = await project_manager.update_image_and_regenerate(
+            deployment_name=deployment_name,
+            component_name=image_data.componentName,
+            new_image_url=image_data.newImageUrl,
+            service_actions=service_actions,
         )
 
         content = {
-            "status": "preview",
-            "message": "Image update validated successfully. Changes preview generated.",
-            "update": {
-                "project": project_name,
-                "deployment": deployment_name,
-                "component": image_data.componentName,
-                "new_image": image_data.newImageUrl,
-            },
-            "preview": change_preview,
-            "note": "This is a preview only. No changes have been applied.",
+            "status": result["status"],
+            "message": result["message"],
+            "project": project_name,
+            "deployment": deployment_name,
+            "component": image_data.componentName,
+            "updates": result["updates"],
+            "actions_performed": result["actions_performed"],
         }
         return JSONResponse(content=content, status_code=200)
 
     except Exception as e:
         logger.error(f"Error updating image: {e!s}")
         raise HTTPException(status_code=500, detail=f"Error updating image: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
 
 
 # @api_router.post("/projects")
@@ -305,16 +489,21 @@ async def update_deployment_image(
 
 @api_router.get("/projects/{project_name}/:refresh")
 @validate_api_token
-async def refresh_project(request: Request, project_name: str) -> JSONResponse:
+async def refresh_project(request: Request, project_name: str, force_clone: bool = False) -> JSONResponse:
     """
     Refresh/retry a project deployment by reprocessing the project from its YAML file.
-    
-    curl -X GET "http://localhost:9595/api/projects/example-name/:refresh" \
+
+    Query Parameters:
+        force_clone: Force clone even if target resources exist (default: False)
+
+    Example:
+    curl -X GET "http://localhost:9595/api/projects/example-name/:refresh?force_clone=true" \
       -H "Content-Type: application/json" \
       -H "X-API-Key: d68d6aebd694d636e5eb4784a952b9c3"
     """
+    project_manager = None
     try:
-        logger.info(f"Project refresh request for: {project_name}")
+        logger.info(f"Project refresh request for: {project_name} (force_clone={force_clone})")
 
         # Validate project name format
         if not validate_project_name(project_name):
@@ -337,7 +526,7 @@ async def refresh_project(request: Request, project_name: str) -> JSONResponse:
         project_file_path = f"projects/{project.filename}"
 
         # Process the project file from Git (this will handle all the steps)
-        processing_result = await project_manager.process_project_from_git(project_file_path)
+        processing_result = await project_manager.process_project_from_git(project_file_path, force_clone=force_clone)
 
         if processing_result:
             logger.info(f"Project refresh completed successfully: {project_name}")
@@ -370,6 +559,9 @@ async def refresh_project(request: Request, project_name: str) -> JSONResponse:
     except Exception as e:
         logger.error(f"Error processing project refresh request: {e!s}")
         raise HTTPException(status_code=500, detail=f"Error refreshing project: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
 
 
 @api_router.delete("/projects/{project_name}")
@@ -379,17 +571,17 @@ async def delete_project(
 ) -> JSONResponse:
     """
     Delete a project and all its associated resources.
-    
+
     This endpoint performs a complete cleanup of:
     1. Project YAML file from Git projects repository
-    2. ArgoCD GitOps folders for all deployments/clusters  
+    2. ArgoCD GitOps folders for all deployments/clusters
     3. Kubernetes namespaces for all deployments
-    
+
     WARNING: This operation is irreversible and will permanently delete all project resources.
-    
+
     Headers:
         X-API-Key: The API key for the project (required)
-        
+
     Example curl command:
     ```
     curl -X DELETE "http://localhost:9595/api/projects/example-project" \
@@ -399,15 +591,16 @@ async def delete_project(
         "confirmDeletion": true
       }'
     ```
-    
+
     Args:
         request: The FastAPI request object
         project_name: Name of the project to delete (from URL path)
         delete_data: Deletion confirmation data
-        
+
     Returns:
         JSON response with detailed deletion results
     """
+    project_manager = None
     try:
         logger.info(f"Project deletion request for: {project_name}")
 
@@ -424,7 +617,7 @@ async def delete_project(
         project_manager = create_project_manager()
 
         # Perform the deletion
-        deletion_results = await project_manager.delete_project_resources(project_name)
+        deletion_results = await project_manager.delete_project(project_name)
 
         # Determine response status code based on results
         if deletion_results["success"]:
@@ -450,6 +643,9 @@ async def delete_project(
     except Exception as e:
         logger.error(f"Error processing project deletion request: {e!s}")
         raise HTTPException(status_code=500, detail=f"Error processing project deletion: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
 
 
 @api_router.delete("/projects/{project_name}/{deployment_name}")
@@ -523,6 +719,360 @@ async def delete_project_deployment(request: Request, project_name: str, deploym
             await project_manager.close()
 
 
+@api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external")
+@validate_api_token
+async def clone_database_from_external(
+    request: Request, project_name: str, deployment_name: str, clone_data: CloneDatabaseFromExternalRequest = Body(...)
+) -> JSONResponse:
+    """
+    Clone a database from an external source (e.g., another cluster via port-forward) into a deployment.
+
+    This endpoint enables migrating database data from external sources such as:
+    - Port-forwarded databases from other clusters (e.g., digilab to local/ODCN)
+    - External PostgreSQL instances
+    - Production to staging/development environments
+
+    The operation validates connectivity to both source and target before cloning.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example curl command (with port-forward running):
+    ```bash
+    # First, establish port-forward from source cluster:
+    # kubectl port-forward -n namespace svc/postgresql 15432:5432
+
+    curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:clone-database-from-external" \
+      -H "Content-Type: application/json" \
+      -H "X-API-Key: your-api-key" \
+      -d '{
+        "sourceHost": "localhost",
+        "sourcePort": 15432,
+        "sourceUsername": "postgres",
+        "sourcePassword": "password",
+        "sourceDatabase": "amt_staging",
+        "sourceSchema": "amt_staging",
+        "forceClone": true
+      }'
+    ```
+
+    Args:
+        request: The FastAPI request object
+        project_name: Name of the target project
+        deployment_name: Name of the target deployment
+        clone_data: External database clone configuration
+
+    Returns:
+        JSON response with detailed clone operation results
+    """
+    project_manager = None
+    try:
+        # TODO: we need a method to create a project manager from a given project_name
+        #  like: init(projectname)
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+
+        # Determine if we're using Chisel tunnel or direct connection
+        if clone_data.tunnel:
+            # Using Chisel tunnel
+            logger.info(
+                f"External database clone request via Chisel tunnel: {project_name}/{deployment_name} "
+                f"<- {clone_data.tunnel.remoteHost}:{clone_data.tunnel.remotePort}/{clone_data.sourceDatabase} "
+                f"(via {clone_data.tunnel.serverUrl})"
+            )
+
+            # Execute clone via ProjectManager
+            clone_result = await project_manager.clone_database_from_external_with_tunnel(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_database=clone_data.sourceDatabase,
+                source_schema=clone_data.sourceSchema,
+                source_username=clone_data.sourceUsername,
+                source_password=clone_data.sourcePassword,
+                tunnel_server_url=clone_data.tunnel.serverUrl,
+                tunnel_username=clone_data.tunnel.username,
+                tunnel_password=clone_data.tunnel.password,
+                tunnel_remote_host=clone_data.tunnel.remoteHost,
+                tunnel_remote_port=clone_data.tunnel.remotePort,
+                force_clone=clone_data.forceClone,
+            )
+        else:
+            # Direct connection (no tunnel)
+            if not clone_data.sourceHost or not clone_data.sourcePort:
+                raise HTTPException(
+                    status_code=400, detail="sourceHost and sourcePort are required when not using tunnel configuration"
+                )
+
+            logger.info(
+                f"External database clone request (direct): {project_name}/{deployment_name} "
+                f"<- {clone_data.sourceHost}:{clone_data.sourcePort}/{clone_data.sourceDatabase}"
+            )
+
+            # Execute clone via ProjectManager
+            clone_result = await project_manager.clone_database_from_external_direct(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_host=clone_data.sourceHost,
+                source_port=clone_data.sourcePort,
+                source_database=clone_data.sourceDatabase,
+                source_schema=clone_data.sourceSchema,
+                source_username=clone_data.sourceUsername,
+                source_password=clone_data.sourcePassword,
+                force_clone=clone_data.forceClone,
+            )
+
+        # Determine response status
+        if clone_result["success"]:
+            status_code = 200
+            message = (
+                f"Database cloned successfully from {clone_data.sourceHost}:{clone_data.sourcePort} "
+                f"to {project_name}/{deployment_name}"
+            )
+        else:
+            status_code = 500
+            message = f"Database clone failed: {', '.join(clone_result.get('errors', []))}"
+
+        content = {
+            "status": "success" if clone_result["success"] else "failed",
+            "message": message,
+            "project": project_name,
+            "deployment": deployment_name,
+            "source": clone_result["source"],
+            "target": clone_result.get("target", {}),
+            "operations": clone_result["operations"],
+            "errors": clone_result.get("errors", []),
+        }
+
+        logger.info(
+            f"External database clone completed: {project_name}/{deployment_name} (success: {clone_result['success']})"
+        )
+        return JSONResponse(content=content, status_code=status_code)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing external database clone request: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Error cloning database from external source: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+@api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external")
+@validate_api_token
+async def clone_bucket_from_external(
+    request: Request, project_name: str, deployment_name: str, clone_data: CloneBucketFromExternalRequest = Body(...)
+) -> JSONResponse:
+    """
+    Clone a MinIO bucket from an external source (e.g., another cluster via port-forward) into a deployment.
+
+    This endpoint enables migrating object storage data from external sources such as:
+    - Port-forwarded MinIO instances from other clusters (e.g., digilab to local/ODCN)
+    - External MinIO instances exposed via LoadBalancer or NodePort
+    - Production to staging/development environments
+
+    The operation validates connectivity to both source and target before cloning.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example curl command (with port-forward running):
+    ```bash
+    # First, establish port-forward from source cluster:
+    # kubectl port-forward -n namespace svc/minio 19000:9000
+
+    curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:clone-bucket-from-external" \
+      -H "Content-Type: application/json" \
+      -H "X-API-Key: your-api-key" \
+      -d '{
+        "sourceHost": "localhost",
+        "sourcePort": 19000,
+        "sourceAccessKey": "minioadmin",
+        "sourceSecretKey": "minioadmin",
+        "sourceBucket": "amt-staging",
+        "sourceSecure": false,
+        "forceClone": true
+      }'
+    ```
+
+    Args:
+        request: The FastAPI request object
+        project_name: Name of the target project
+        deployment_name: Name of the target deployment
+        clone_data: External bucket clone configuration
+
+    Returns:
+        JSON response with detailed clone operation results
+    """
+    project_manager = None
+    try:
+        # Create project manager for the target project
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+
+        # Determine if we're using Chisel tunnel or direct connection
+        if clone_data.tunnel:
+            # Using Chisel tunnel
+            logger.info(
+                f"External bucket clone request via Chisel tunnel: {project_name}/{deployment_name} "
+                f"<- {clone_data.tunnel.remoteHost}:{clone_data.tunnel.remotePort}/{clone_data.sourceBucket} "
+                f"(via {clone_data.tunnel.serverUrl})"
+            )
+
+            # Execute clone via ProjectManager
+            clone_result = await project_manager.clone_minio_bucket_from_external_with_tunnel(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_bucket=clone_data.sourceBucket,
+                source_access_key=clone_data.sourceAccessKey,
+                source_secret_key=clone_data.sourceSecretKey,
+                tunnel_server_url=clone_data.tunnel.serverUrl,
+                tunnel_username=clone_data.tunnel.username,
+                tunnel_password=clone_data.tunnel.password,
+                tunnel_remote_host=clone_data.tunnel.remoteHost,
+                tunnel_remote_port=clone_data.tunnel.remotePort,
+                source_secure=clone_data.sourceSecure,
+                force_clone=clone_data.forceClone,
+            )
+        else:
+            # Direct connection (no tunnel)
+            if not clone_data.sourceHost or not clone_data.sourcePort:
+                raise HTTPException(
+                    status_code=400, detail="sourceHost and sourcePort are required when not using tunnel configuration"
+                )
+
+            logger.info(
+                f"External bucket clone request (direct): {project_name}/{deployment_name} "
+                f"<- {clone_data.sourceHost}:{clone_data.sourcePort}/{clone_data.sourceBucket}"
+            )
+
+            # Execute clone via ProjectManager
+            clone_result = await project_manager.clone_minio_bucket_from_external_direct(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_host=clone_data.sourceHost,
+                source_port=clone_data.sourcePort,
+                source_bucket=clone_data.sourceBucket,
+                source_access_key=clone_data.sourceAccessKey,
+                source_secret_key=clone_data.sourceSecretKey,
+                source_secure=clone_data.sourceSecure,
+                force_clone=clone_data.forceClone,
+            )
+
+        # Determine response status
+        if clone_result["success"]:
+            status_code = 200
+            message = (
+                f"Bucket cloned successfully from {clone_data.sourceHost}:{clone_data.sourcePort} "
+                f"to {project_name}/{deployment_name}"
+            )
+        else:
+            status_code = 500
+            message = f"Bucket clone failed: {', '.join(clone_result.get('errors', []))}"
+
+        content = {
+            "status": "success" if clone_result["success"] else "failed",
+            "message": message,
+            "project": project_name,
+            "deployment": deployment_name,
+            "source": clone_result["source"],
+            "target": clone_result.get("target", {}),
+            "operations": clone_result["operations"],
+            "errors": clone_result.get("errors", []),
+        }
+
+        logger.info(
+            f"External bucket clone completed: {project_name}/{deployment_name} (success: {clone_result['success']})"
+        )
+        return JSONResponse(content=content, status_code=status_code)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing external bucket clone request: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Error cloning bucket from external source: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+@api_router.post("/projects/{project_name}/deployments/{deployment_name}/:validate-clone")
+@validate_api_token
+async def validate_clone_configuration(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+    """
+    Validate clone configuration without executing the clone.
+
+    Performs pre-flight checks:
+    - Clone configuration validity
+    - Remote source existence (if remote-source type)
+    - Source/target connectivity (if applicable)
+    - Credentials verification
+    - Resource existence checks
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example:
+    ```bash
+    curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:validate-clone" \
+      -H "Content-Type: application/json" \
+      -H "X-API-Key: your-api-key"
+    ```
+
+    Args:
+        request: The FastAPI request object
+        project_name: Name of the project
+        deployment_name: Name of the deployment to validate
+
+    Returns:
+        JSON response with detailed validation results
+    """
+    project_manager = None
+    try:
+        logger.info(f"Clone validation request for: {project_name}/{deployment_name}")
+
+        # Create project manager instance
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+
+        # Read project data
+        project_full_file_path = await project_manager.get_project_full_file_path()
+        project_data = await project_manager._file_handler.read_project_file(project_full_file_path)
+
+        # Execute validation (no actual cloning)
+        validation_result = await project_manager._clone_manager.validate_clone_readiness(
+            project_data=project_data, deployment_name=deployment_name
+        )
+
+        # Determine status code based on validation result
+        if validation_result.get("validation", {}).get("passed"):
+            status_code = 200
+            message = f"Clone configuration for {deployment_name} is valid and ready"
+        else:
+            status_code = 422  # Unprocessable Entity
+            message = f"Clone validation failed for {deployment_name}"
+
+        content = {
+            "status": "valid" if validation_result.get("validation", {}).get("passed") else "invalid",
+            "message": message,
+            "project": project_name,
+            "deployment": deployment_name,
+            "validation": validation_result.get("validation", {}),
+        }
+
+        logger.info(
+            f"Clone validation completed for {project_name}/{deployment_name}: "
+            f"passed={validation_result.get('validation', {}).get('passed')}"
+        )
+        return JSONResponse(content=content, status_code=status_code)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing clone validation request: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Error validating clone configuration: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
 async def create_self_service_project(
     request: Request, project_data: SelfServiceProjectRequest = Body(...)
 ) -> JSONResponse:
@@ -562,6 +1112,7 @@ async def create_self_service_project(
         JSON response with project creation and processing status
     """
     start_time = time.time()
+    project_manager = None
     try:
         logger.info(f"Creating self-service project: {project_data.project_name}")
 
@@ -641,3 +1192,6 @@ async def create_self_service_project(
         elapsed_time = time.time() - start_time
         logger.error(f"Error creating self-service project: {e!s} (took {elapsed_time:.2f} seconds)")
         raise HTTPException(status_code=500, detail=f"Error creating self-service project: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()

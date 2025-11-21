@@ -45,12 +45,65 @@ We created a **custom Keycloak mapper** that extracts SAML NameID to user attrib
 
 3. **Deploy to Keycloak**: Update deployment init container to download the JAR (see [custom-mapper/README.md](./custom-mapper/README.md))
 
-4. **Configure in Keycloak UI**:
-   - Add mapper: **Unrestricted XPath Attribute Importer**
-   - XPath: `//*[local-name()='Subject']/*[local-name()='NameID']/text()`
-   - User Attribute: `sso_rijk_collab_person_id`
+4. **Configure in Keycloak UI** (see detailed configuration below)
 
-5. **Override sub claim**: Add protocol mapper on OIDC client to map attribute to `sub` claim
+## SSO Rijk Configuration
+
+To enable transparent migration, we need to map the SSO Rijk user ID in both its original form and lowercase. This ensures our Keycloak provides the same attributes as SSO Rijk does directly.
+
+### Required Identity Provider Mappers
+
+Configure two mappers on the **sso-rijk** identity provider to import the NameID attribute twice:
+
+1. **Mapper: sso-rijk-userid** (original value)
+   - Type: **Unrestricted XPath Attribute Importer**
+   - XPath Expression: `//*[local-name()='Subject']/*[local-name()='NameID']/text()`
+   - User Attribute Name: `sso-rijk-userid`
+   - Value Transformation: **AS_IS**
+   - Sync Mode: **FORCE**
+
+2. **Mapper: sso-rijk-userid-lowercase** (lowercase value)
+   - Type: **Unrestricted XPath Attribute Importer**
+   - XPath Expression: `//*[local-name()='Subject']/*[local-name()='NameID']/text()`
+   - User Attribute Name: `sso-rijk-userid-lowercase`
+   - Value Transformation: **LOWERCASE**
+   - Sync Mode: **FORCE**
+
+### Client Scope Configuration
+
+In the **profile** client scope:
+
+1. **Disable the default username mapper**
+   - This prevents conflicts with our custom mappings
+
+2. **Add custom protocol mappers**:
+
+   **Mapper: preferred_username**
+   - Mapper Type: **User Attribute**
+   - User Attribute: `sso-rijk-userid-lowercase`
+   - Token Claim Name: `preferred_username`
+   - Claim JSON Type: **String**
+   - Add to ID token: **ON**
+   - Add to access token: **ON**
+   - Add to userinfo: **ON**
+
+   **Mapper: sub**
+   - Mapper Type: **User Attribute**
+   - User Attribute: `sso-rijk-userid`
+   - Token Claim Name: `sub`
+   - Claim JSON Type: **String**
+   - Add to ID token: **ON**
+   - Add to access token: **ON**
+   - Add to userinfo: **ON**
+
+### Why This Configuration?
+
+This setup ensures that our Keycloak acts as a transparent intermediary:
+
+- **sub** claim contains the original NameID value (e.g., `urn:collab:person:minbzk:nl:Uittenbroek`)
+- **preferred_username** contains the lowercase version (e.g., `urn:collab:person:minbzk:nl:uittenbroek`)
+
+This matches what SSO Rijk provides directly, making the migration transparent to client applications. When we remove the intermediary Keycloak, applications will receive the same claims.
 
 ## Files
 

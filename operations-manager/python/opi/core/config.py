@@ -14,7 +14,6 @@ PROJECT_NAME: str = "OPI"
 VERSION: str = "0.1.0"  # replace in CI/CD pipeline
 PROJECT_DESCRIPTION: str = "OPI - Operational Platform Interface"
 
-
 def _check_env_file_for_environment_var(file_path: str) -> None:
     """
     Check if an .env file contains ENVIRONMENT variable and warn if found.
@@ -140,6 +139,9 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     CLUSTER_MANAGER: str = "local"
 
+    # Development mode: "reload" (hot-reload) | "debug" (debugger) | "production"
+    DEBUG_MODE: str = "reload"
+
     # Developer settings
     FIXED_PROJECT_POSTFIX: str | None = None  # If set, use this instead of random postfix for project names
     ALLOW_PROJECTFILES_OVERWRITE: bool = False  # If True, allow overwriting existing project files
@@ -230,6 +232,9 @@ class Settings(BaseSettings):
     MINIO_ADMIN_SECRET_KEY: str = "changeMe123!"
     MINIO_USE_TLS: bool = False
     MINIO_REGION: str = "us-east-1"  # AWS region for S3 compatibility
+
+    # MinIO client configuration
+    MC_CONFIG_DIR: str = "/tmp/mc-config"  # Directory for mc CLI configuration files
 
 
 def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:

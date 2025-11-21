@@ -105,7 +105,7 @@
                             <td class="col-services">
                                 <div class="services-list">
                                     {% for service in project.services[:4] %}
-                                        <span class="service-tag">{{ service|replace('-', ' ')|title }}</span>
+                                        <span class="service-tag">{{ service|service_name|replace('-', ' ')|title }}</span>
                                     {% endfor %}
                                     {% if project.services|length > 4 %}
                                         <span class="service-tag">+{{ project.services|length - 4 }}</span>
@@ -178,7 +178,7 @@
         <c-card class="summary-card" outline="true" padding="lg" backgroundColor="wit">
             <c-layout-flow gap="sm">
                 {% set all_services = projects|map(attribute='services')|list %}
-                {% set unique_services = all_services|sum(start=[])|unique|list %}
+                {% set unique_services = all_services|sum(start=[])|map('service_name')|unique|list %}
                 <div class="summary-number">{{ (projects|map(attribute='services')|map('length')|sum) or 0 }}</div>
                 <div class="summary-label">Services actief</div>
                 <div class="summary-change">Across alle projecten</div>

@@ -96,7 +96,7 @@ def test_layout_flow_size():
         if 'data-roos-component="layout-flow"' in line:
             # Show this line and the previous one (which should have the class)
             if i > 0:
-                print(f"  {lines[i-1].strip()}")
+                print(f"  {lines[i - 1].strip()}")
             print(f"  {line.strip()}")
             break
 

@@ -1,0 +1,203 @@
+# Bootstrap Keycloak Configuration
+# Purpose: Initial setup of the RIG Platform Keycloak instance for operations manager authentication
+# This configuration creates the platform realm with SSO-Rijk integration and operations manager client
+
+---
+realms:
+  - name: "{{ realm_name }}"
+    displayName: "{{ realm_display_name }}"
+    enabled: true
+    registrationAllowed: false
+    loginWithEmailAllowed: false
+    bruteForceProtected: true
+    loginTheme: "nl-design-system"
+
+identityProviders:
+  - alias: "sso-rijk"
+    displayName: "SSO Rijk"
+    providerId: "oidc"
+    enabled: true
+    authenticateByDefault: true
+    config:
+      clientId: "{{ sso_client_id }}"
+      clientSecret: "{{ sso_client_secret }}"
+      discoveryUrl: "{{ sso_discovery_url }}"
+      syncMode: "INHERIT"
+    mappers:
+      - name: "email-to-username"
+        identityProviderMapper: "oidc-username-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          template: "${CLAIM.email}"
+
+      - name: "email-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "email"
+          user.attribute: "email"
+
+      - name: "first-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "given_name"
+          user.attribute: "firstName"
+
+      - name: "last-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "family_name"
+          user.attribute: "lastName"
+
+      - name: "full-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "name"
+          user.attribute: "displayName"
+
+      - name: "organization-number-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "organization.number"
+          user.attribute: "organization.number"
+
+      - name: "organization-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "organization.name"
+          user.attribute: "organization.name"
+
+      - name: "sso-rijk-userid-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "FORCE"
+          claim: "sub"
+          user.attribute: "sso-rijk-userid"
+
+      - name: "sso-rijk-userid-lowercase-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "FORCE"
+          claim: "preferred_username"
+          user.attribute: "sso-rijk-userid-lowercase"
+
+authenticationFlows:
+  - alias: "External IDP Redirector"
+    description: "Automatically redirect to external identity provider"
+    providerId: "basic-flow"
+    topLevel: true
+    builtIn: false
+    executions:
+      - authenticator: "auth-cookie"
+        requirement: "ALTERNATIVE"
+        priority: 10
+
+      - authenticator: "identity-provider-redirector"
+        requirement: "ALTERNATIVE"
+        priority: 20
+        authenticatorConfig:
+          alias: "sso-rijk-redirector"
+          config:
+            defaultProvider: "sso-rijk"
+
+    # Set as browser flow for the realm
+    setAsBrowserFlow: true
+
+clientScopes:
+  - name: "custom_attributes_passthrough"
+    description: "Custom attributes passthrough with override mappers for platform realm"
+    realmType: "PLATFORM"
+    protocol: "openid-connect"
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      - name: "Organization Name Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "organization.name"
+          claim.name: "organization.name"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "Organization Number Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "organization.number"
+          claim.name: "organization.number"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Override (sub)"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid"
+          claim.name: "sub"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Lowercase Override"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid-lowercase"
+          claim.name: "preferred_username"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid"
+          claim.name: "sso-rijk-userid"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Lowercase Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid-lowercase"
+          claim.name: "sso-rijk-userid-lowercase"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+    # Assign as realm-level default client scope
+    defaultScope: true
+
+clients:
+  - clientId: "{{ client_id }}"
+    name: "{{ client_name }}"
+    enabled: true
+    publicClient: false
+    protocol: "openid-connect"
+    redirectUris: "{{ redirect_uris }}"
+    webOrigins: "{{ web_origins }}"
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: true
+    serviceAccountsEnabled: true
+
+    # Automatically includes custom_attributes_passthrough scope as default
+    defaultClientScopes:
+      - "custom_attributes_passthrough"

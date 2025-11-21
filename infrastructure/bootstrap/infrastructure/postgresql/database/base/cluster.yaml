@@ -7,7 +7,11 @@ spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
   enableSuperuserAccess: true
-  
+
+  # Use custom superuser password instead of auto-generated
+  superuserSecret:
+    name: postgres-admin-credentials
+
   # Using existing storage class provided by the cluster
   storage:
     size: 1Gi
@@ -29,6 +33,8 @@ spec:
       owner: postgres
       secret:
         name: postgres-admin-credentials
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
 
   managed:
     roles:
@@ -38,6 +44,13 @@ spec:
         createdb: true
         passwordSecret:
           name: keycloak-db-credentials  # This must exist
+
+      - name: forgejo
+        ensure: present
+        login: true
+        createdb: true
+        passwordSecret:
+          name: forgejo-db-credentials  # This must exist
 
   # Enable backups if the cluster provides S3-compatible storage
   # backup:

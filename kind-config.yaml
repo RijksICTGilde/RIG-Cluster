@@ -1,0 +1,40 @@
+# Kind cluster configuration for local RIG-Cluster development
+# This creates a throw-away Kubernetes cluster with ingress support
+#
+# Usage: kind create cluster --name gitops-fluxcd --config kind-config.yaml
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+# Kubernetes version
+# Note: Update this version as needed
+kubeadmConfigPatches:
+- |
+  kind: InitConfiguration
+  nodeRegistration:
+    kubeletExtraArgs:
+      node-labels: "ingress-ready=true"
+
+nodes:
+- role: control-plane
+  # Kubernetes version
+  image: kindest/node:v1.32.0
+
+  # Port mappings to expose ingress controller
+  # This allows access to services via localhost:80 and localhost:443
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+
+  extraPortMappings:
+  # HTTP
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+  # HTTPS
+  - containerPort: 443
+    hostPort: 443
+    protocol: TCP

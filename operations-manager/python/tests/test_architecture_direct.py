@@ -34,7 +34,7 @@ try:
     if unprocessed:
         print(f"\n✗ Found {len(unprocessed)} unprocessed components:")
         for i, comp in enumerate(unprocessed[:10]):  # Show first 10
-            print(f"  {i+1}. {comp}")
+            print(f"  {i + 1}. {comp}")
     else:
         print("\n✓ All components processed successfully!")
 

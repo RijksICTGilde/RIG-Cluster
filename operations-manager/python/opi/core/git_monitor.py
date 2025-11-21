@@ -119,19 +119,21 @@ async def file_change_handler(file_path: str, content: dict) -> None:
 
         # First validate cluster configuration
         project_manager = ProjectManager()
+        try:
+            if not project_manager.has_deployments_for_current_cluster(content):
+                logger.info(f"Project '{project_name}' cluster validation failed - skipping processing")
+                return
 
-        if not project_manager.has_deployments_for_current_cluster(content):
-            logger.info(f"Project '{project_name}' cluster validation failed - skipping processing")
-            return
+            # Task 1: Check and create namespaces for deployments
+            logger.info("Task 1: Checking and creating namespaces for deployments...")
+            namespace_success = await check_and_create_namespaces(content)
 
-        # Task 1: Check and create namespaces for deployments
-        logger.info("Task 1: Checking and creating namespaces for deployments...")
-        namespace_success = await check_and_create_namespaces(content)
-
-        if namespace_success:
-            logger.info("Namespace check/creation completed successfully")
-        else:
-            logger.error("Namespace check/creation failed")
+            if namespace_success:
+                logger.info("Namespace check/creation completed successfully")
+            else:
+                logger.error("Namespace check/creation failed")
+        finally:
+            await project_manager.close()
 
     # Keep the original debug output
     logger.debug(f"Full content: {content}")

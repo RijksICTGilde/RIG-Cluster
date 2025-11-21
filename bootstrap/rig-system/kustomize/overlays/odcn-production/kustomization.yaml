@@ -12,7 +12,7 @@ resources:
 - network-policies/argocd-network-policy.yaml
 - ../../operations-manager/overlays/odcn-production
 - argocd-application-production-infrastructure.yaml
-- argocd-user-applications.yaml
+- argocd-application-user-applications.yaml
 
 components:
 - ../../components/sops-plugin

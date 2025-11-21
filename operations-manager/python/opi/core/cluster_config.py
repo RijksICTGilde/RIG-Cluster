@@ -284,3 +284,58 @@ def get_minio_server(cluster_name: str) -> str:
 def get_namespace(cluster_name: str) -> str:
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["namespace"]
+
+
+def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
+    """
+    Get infrastructure namespace with cluster-specific prefix.
+
+    This combines the base infrastructure namespace name with the cluster's
+    namespace prefix to create the final namespace name.
+
+    Args:
+        cluster_name: Name of the cluster (e.g., "local", "odcn-production")
+        project_name: Name of the project
+
+    Returns:
+        Infrastructure namespace with cluster prefix
+
+    Examples:
+        get_infrastructure_namespace("local", "myproject")
+        -> "rig-myproject-infrastructure"
+
+        get_infrastructure_namespace("odcn-production", "myproject")
+        -> "rig-prd-myproject-infrastructure"
+    """
+    from opi.utils.naming import generate_infrastructure_namespace_base
+
+    base_name = generate_infrastructure_namespace_base(project_name)
+    return get_prefixed_namespace(cluster_name, base_name)
+
+
+def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) -> str:
+    """
+    Get full database service endpoint with namespace for namespace-specific database.
+
+    Returns the complete service endpoint including the infrastructure namespace
+    to ensure proper DNS resolution across namespaces.
+
+    Args:
+        cluster_name: Name of the cluster
+        project_name: Name of the project
+
+    Returns:
+        Full database service endpoint
+
+    Examples:
+        get_database_cluster_service_endpoint("local", "myproject")
+        -> "myproject-db-rw.rig-myproject-infrastructure.svc.cluster.local"
+
+        get_database_cluster_service_endpoint("odcn-production", "myproject")
+        -> "myproject-db-rw.rig-prd-myproject-infrastructure.svc.cluster.local"
+    """
+    from opi.utils.naming import _sanitize_for_lowercase
+
+    infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{project_clean}-db-rw.{infrastructure_namespace}.svc.cluster.local"

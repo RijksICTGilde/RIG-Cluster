@@ -79,13 +79,13 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         raise HTTPException(status_code=500, detail=f"Cannot create project: API key encryption failed. {e!s}")
 
     # Default encrypted password for git repository
+    # TODO: this should be read from the config file
     age_password = """-----BEGIN AGE ENCRYPTED FILE-----
-YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA0K28zZERxZ29ZMjVuQVNP
-WEpMU0wwMXNPN2F1T3ZSK2M5TmN4b3RNY3dnCmhLN3FxLzcvN01OdmIxWXVFL00z
-dCt0L0drcVFZUTBKOERIZ3NQK3VFUGcKLS0tIFNCQUM3Z1U0MGJ3eTYxeC9Tb29Z
-ZmxTWm9BRGtpUExUVlN3N1JPUjRhV0kKt96lbcSOqLThEgvr67Pk3i4IBV6j8mPo
-ATTaHv3CMKcMQOrDcJ4Z2ilL6CgB/RUw+5G3mBZ/A0f1n5HdqYfXfLi8slY7348S
-DQ==
+YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBwYUZMYTVuRGxvbkR6MzVQ
+K1lUUTNjZnp6YXF0TUplZ2VsenJ4QkM1empvCi9GMjJPVWRMckRtRjE2Y3NmYWpU
+dFN0c3dyUlo0cFdLT0ZxaXVxSmpVcU0KLS0tIGQxRmRWVHdaMWUwWjhtRUovZysy
+dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
+28SNnwfqikaAa5tcVrb/9n13pK7sDAT6mzYKsJxXqt5tRzIylTXy9vI4DKbrdbJi
 -----END AGE ENCRYPTED FILE-----
 """
 
@@ -103,6 +103,7 @@ DQ==
                 "name": f"component-{idx + 1}",
                 "type": comp.type,
                 "ports": {"inbound": [comp.port] if comp.port else [8080], "outbound": [80, 443]},
+                "path": comp.path,  # Publication path for ingress routing
                 "uses-services": [service.value for service in component_services],
                 "uses-components": [],
             }
@@ -127,6 +128,18 @@ DQ==
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
+            # Add aliases if provided (no encryption needed - they reference system variables)
+            if comp.aliases:
+                try:
+                    # Parse aliases as YAML to validate format
+                    yaml_instance = YAML()
+                    aliases_dict = yaml_instance.load(comp.aliases)
+                    if aliases_dict and isinstance(aliases_dict, dict):
+                        component_config["aliases"] = aliases_dict
+                except Exception as e:
+                    logger.warning(f"Failed to parse aliases for component {idx + 1}: {e}")
+                    raise HTTPException(status_code=400, detail=f"Invalid aliases format: {e!s}")
+
             components_list.append(component_config)
     else:
         # Default component if none specified
@@ -146,30 +159,53 @@ DQ==
 
         components_list.append(fallback_component_config)
 
-    # Build deployments list
+    # Build deployments list - create ONE deployment with all components
     deployments_list = []
     if project_data.components:
+        # Build component references for all components
+        component_refs = []
         for idx, comp in enumerate(project_data.components):
-            deployments_list.append(
-                {
-                    "name": f"deployment-{idx + 1}",
-                    "cluster": project_data.cluster,
-                    "namespace": project_data.project_name,
-                    "repository": "main-repo",
-                    "components": [{"reference": f"component-{idx + 1}", "image": comp.image or "nginx:latest"}],
-                }
-            )
+            component_refs.append({"reference": f"component-{idx + 1}", "image": comp.image or "nginx:latest"})
+
+        # Create a single deployment with all components
+        # Use deployment_name from form data (defaults to "main")
+        deployment_name = project_data.deployment_name
+        deployment_config = {
+            "name": deployment_name,
+            "cluster": project_data.cluster,
+            "namespace": project_data.project_name,
+            "repository": "main-repo",
+            "components": component_refs,
+        }
+
+        # Add subdomain based on domain-mode
+        if project_data.domain_mode == "deployment-name":
+            deployment_config["subdomain"] = deployment_name
+        elif project_data.domain_mode == "custom" and project_data.subdomain:
+            deployment_config["subdomain"] = project_data.subdomain
+        # For "component-specific" mode, don't add subdomain field
+
+        deployments_list.append(deployment_config)
     else:
         # Default deployment
-        deployments_list.append(
-            {
-                "name": "main",
-                "cluster": project_data.cluster,
-                "namespace": project_data.project_name,
-                "repository": "main-repo",
-                "components": [{"reference": "main", "image": "nginx:latest"}],
-            }
-        )
+        # Use deployment_name from form data (defaults to "main")
+        deployment_name = project_data.deployment_name
+        deployment_config = {
+            "name": deployment_name,
+            "cluster": project_data.cluster,
+            "namespace": project_data.project_name,
+            "repository": "main-repo",
+            "components": [{"reference": "main", "image": "nginx:latest"}],
+        }
+
+        # Add subdomain based on domain-mode
+        if project_data.domain_mode == "deployment-name":
+            deployment_config["subdomain"] = deployment_name
+        elif project_data.domain_mode == "custom" and project_data.subdomain:
+            deployment_config["subdomain"] = project_data.subdomain
+        # For "component-specific" mode, don't add subdomain field
+
+        deployments_list.append(deployment_config)
 
     # Create project structure
     project_config = {

@@ -14,6 +14,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: operations-manager
+        image: operations-manager:latest
         imagePullPolicy: Never
         env:
         - name: TMPDIR

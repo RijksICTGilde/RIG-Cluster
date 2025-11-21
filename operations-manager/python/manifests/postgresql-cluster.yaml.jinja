@@ -1,0 +1,48 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ project_name }}-db
+  namespace: {{ infrastructure_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  instances: {{ database_config.instances }}
+  imageName: {{ database_config.image }}
+  {% if imagePullSecretsMap and database_config.image in imagePullSecretsMap %}
+  imagePullSecrets:
+    - name: {{ imagePullSecretsMap[database_config.image] }}
+  {% endif %}
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: true
+
+  # Use custom superuser password
+  superuserSecret:
+    name: {{ project_name }}-postgres-superuser
+
+  # Storage configuration
+  storage:
+    size: {{ database_config.storage }}
+    storageClass: {{ storage_class }}
+
+  # Resource limits
+  resources:
+    requests:
+      memory: {{ database_config.resources.requests.memory }}
+      cpu: {{ database_config.resources.requests.cpu }}
+    limits:
+      memory: {{ database_config.resources.limits.memory }}
+      cpu: {{ database_config.resources.limits.cpu }}
+
+  # Bootstrap initial database
+  bootstrap:
+    initdb:
+      database: postgres
+      owner: postgres
+      secret:
+        name: {{ project_name }}-postgres-superuser
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
+
+  # Enable monitoring
+  monitoring:
+    enablePodMonitor: true

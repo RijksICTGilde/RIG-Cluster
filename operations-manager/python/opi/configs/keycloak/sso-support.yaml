@@ -1,0 +1,171 @@
+# SSO-Support Keycloak Configuration
+# Purpose: Project realm with both SSO and local authentication support
+# This configuration creates a project realm that allows both SSO and local username/password authentication
+
+---
+# Platform client in RIG Platform realm (for federation)
+platformClients:
+  - as: platform_client  # Capture outputs for use in identityProviders
+    realm: "{{ platform_realm_name }}"
+    clientId: "{{ platform_client_id }}"
+    name: "{{ project_name }} - {{ cluster }} - Platform Federation"
+    enabled: true
+    publicClient: false
+    protocol: "openid-connect"
+    redirectUris:
+      - "{{ keycloak_url }}/realms/{{ project_realm_name }}/broker/rig-platform-oidc/endpoint/*"
+    webOrigins:
+      - "+"
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+
+# Project realm with SSO support and local authentication
+realms:
+  - name: "{{ project_realm_name }}"
+    displayName: "{{ project_display_name }}"
+    enabled: true
+    registrationAllowed: true
+    loginWithEmailAllowed: true
+    resetPasswordAllowed: true
+    editUsernameAllowed: false
+    verifyEmail: true
+    bruteForceProtected: true
+    loginTheme: "nl-design-system"
+
+identityProviders:
+  - alias: "rig-platform-oidc"
+    displayName: "RIG Platform"
+    providerId: "oidc"
+    enabled: true
+    authenticateByDefault: false  # Show login form with SSO option button
+    config:
+      clientId: "{{ platform_client.client_id }}"
+      clientSecret: "{{ platform_client.client_secret }}"
+      discoveryUrl: "{{ keycloak_url }}/realms/{{ platform_realm_name }}/.well-known/openid-configuration"
+      syncMode: "INHERIT"
+    mappers:
+      - name: "email-to-username"
+        identityProviderMapper: "oidc-username-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          template: "${CLAIM.email}"
+
+      - name: "email-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "email"
+          user.attribute: "email"
+
+      - name: "first-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "given_name"
+          user.attribute: "firstName"
+
+      - name: "last-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "family_name"
+          user.attribute: "lastName"
+
+      - name: "full-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "name"
+          user.attribute: "displayName"
+
+      - name: "organization-number-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "organization.number"
+          user.attribute: "organization.number"
+
+      - name: "organization-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "organization.name"
+          user.attribute: "organization.name"
+
+      - name: "sso-rijk-userid-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "sso-rijk-userid"
+          user.attribute: "sso-rijk-userid"
+
+      - name: "sso-rijk-userid-lowercase-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "sso-rijk-userid-lowercase"
+          user.attribute: "sso-rijk-userid-lowercase"
+
+# No custom authentication flow - use standard browser flow with login form
+# Users can choose between local login or SSO via button
+
+clientScopes:
+  - name: "custom_attributes_passthrough"
+    description: "Custom attributes passthrough for project realm (no override mappers)"
+    realmType: "PROJECT"
+    protocol: "openid-connect"
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      - name: "Organization Name Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "organization.name"
+          claim.name: "organization.name"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "Organization Number Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "organization.number"
+          claim.name: "organization.number"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid"
+          claim.name: "sso-rijk-userid"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Lowercase Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid-lowercase"
+          claim.name: "sso-rijk-userid-lowercase"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+    # Assign as realm-level default client scope
+    defaultScope: true
+
+# Note: Deployment clients are created separately via deployment-specific flow,
+# not during project realm setup

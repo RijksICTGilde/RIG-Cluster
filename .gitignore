@@ -9,7 +9,7 @@
 /.env-taskfile-current
 
 # Local symlink to jinja-roos-components (for Docker builds)
-/jinja-roos-components
+/jinja-roos-components/
 /operations-manager/python/jinja-roos-components
 
 # Generated secret overview files (contains plain text passwords)

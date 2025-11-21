@@ -35,7 +35,7 @@ matches = list(pattern.finditer(test_content))
 print(f"Found {len(matches)} matches:\n")
 
 for i, match in enumerate(matches):
-    print(f"Match {i+1}:")
+    print(f"Match {i + 1}:")
     print(f"  Full match: {match.group(0)[:60]!r}...")
     print(f"  Component: {match.group(1)}")
     print(f"  Start: {match.start()}, End: {match.end()}")

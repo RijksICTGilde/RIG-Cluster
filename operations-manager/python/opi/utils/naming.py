@@ -60,38 +60,75 @@ def generate_storage_name(mount_path: str, index: int) -> str:
     return storage_name or f"storage{index}"
 
 
-def generate_pvc_name(unique_name: str, storage_name: str) -> str:
+def generate_pvc_name(unique_name: str, storage_name: str, generation: int = 0) -> str:
     """
-    Generate a PVC name using the unique resource name and storage name.
+    Generate a PVC name using the unique resource name and storage name with optional generation.
 
     Args:
         unique_name: The unique name for the resource (from generate_unique_name)
         storage_name: The storage name (from generate_storage_name)
+        generation: Generation number for PVC recreation (0 = no suffix, for backward compatibility)
 
     Returns:
-        PVC name in format: unique_name-storage_name-pvc
+        PVC name in format:
+        - generation 0: unique_name-storage_name-pvc
+        - generation > 0: unique_name-storage_name-pvc-v{generation}
 
     Example:
         generate_pvc_name("frontend-webapp", "data") -> "frontend-webapp-data-pvc"
+        generate_pvc_name("frontend-webapp", "data", 1) -> "frontend-webapp-data-pvc-v1"
+        generate_pvc_name("frontend-webapp", "data", 2) -> "frontend-webapp-data-pvc-v2"
     """
-    return f"{unique_name}-{storage_name}-pvc"
+    base_name = f"{unique_name}-{storage_name}-pvc"
+    if generation > 0:
+        return f"{base_name}-v{generation}"
+    return base_name
 
 
-def generate_manifest_name(component_name: str, manifest_type: str) -> str:
+def generate_manifest_name(component_name: str, manifest_type: str, generation: int = 0) -> str:
     """
     Generate a manifest filename that includes the component name for uniqueness.
 
     Args:
         component_name: Name of the component
-        manifest_type: Type of manifest (e.g., "deployment", "service", "ingress")
+        manifest_type: Type of manifest (e.g., "deployment", "service", "data-pvc")
+        generation: Optional generation number for versioned resources (0 = no suffix, for backward compatibility)
 
     Returns:
-        Unique manifest name in format: component-manifest_type
+        Unique manifest name in format:
+        - generation 0: component-manifest_type
+        - generation > 0: component-manifest_type-v{generation}
 
     Example:
         generate_manifest_name("webapp", "deployment") -> "webapp-deployment"
+        generate_manifest_name("webapp", "data-pvc") -> "webapp-data-pvc"
+        generate_manifest_name("webapp", "data-pvc", 1) -> "webapp-data-pvc-v1"
+        generate_manifest_name("webapp", "data-pvc", 2) -> "webapp-data-pvc-v2"
     """
-    return f"{component_name}-{manifest_type}"
+    base_name = f"{component_name}-{manifest_type}"
+    if generation > 0:
+        return f"{base_name}-v{generation}"
+    return base_name
+
+
+def generate_pvc_manifest_type(storage_name: str) -> str:
+    """
+    Generate the manifest type string for PVC resources.
+
+    This centralizes the naming pattern for PVC manifest types to ensure
+    consistency across manifest generation and cleanup operations.
+
+    Args:
+        storage_name: The storage name (from generate_storage_name)
+
+    Returns:
+        Manifest type string in format: {storage_name}-pvc
+
+    Example:
+        generate_pvc_manifest_type("data") -> "data-pvc"
+        generate_pvc_manifest_type("applogs") -> "applogs-pvc"
+    """
+    return f"{storage_name}-pvc"
 
 
 def sanitize_kubernetes_name(name: str, max_length: int = 63) -> str:
@@ -155,45 +192,56 @@ def generate_ingress_map(
     """
     Generate a map of ingress names to hostnames for a component.
 
-    Creates ingresses for:
-    - Default: standard project naming convention
-    - Subdomain: custom subdomain if specified in deployment
+    Supports 3 domain modes:
+    1. Component-specific (subdomain=None): Each component gets unique URL
+       -> component-deployment-project.domain
+    2. Deployment-name mode (subdomain=deployment_name): Components share deployment-based domain
+       -> deploymentname-project.domain (same for all components in deployment)
+    3. Custom subdomain mode (subdomain!=deployment_name): Components share custom domain
+       -> customsubdomain.domain (same for all components in deployment)
 
     Args:
         component_name: Name of the component
         deployment_name: Name of the deployment
         project_name: Name of the project
         ingress_postfix: Cluster-specific ingress postfix (e.g., ".dev.example.com")
-        subdomain: Optional subdomain for additional ingress
+        subdomain: Optional subdomain for shared domain mode (either deployment name or custom)
 
     Returns:
         Dictionary mapping ingress names to hostnames
 
-    Example:
-        generate_ingress_map("webapp", "frontend", "myproject", ".dev.example.com", "api")
-        -> {
-            "frontend-webapp": "webapp-frontend-myproject.dev.example.com",
-            "frontend-webapp-subdomain": "api.dev.example.com"
-        }
+    Examples:
+        # Component-specific mode (no subdomain)
+        generate_ingress_map("webapp", "main", "myproject", ".dev.example.com", None)
+        -> {"main-webapp": "webapp-main-myproject.dev.example.com"}
+
+        # Deployment-name mode (subdomain matches deployment name)
+        generate_ingress_map("webapp", "main", "myproject", ".dev.example.com", "main")
+        -> {"main-webapp": "main-myproject.dev.example.com"}
+
+        # Custom subdomain mode (subdomain is custom value)
+        generate_ingress_map("webapp", "main", "myproject", ".dev.example.com", "myapp")
+        -> {"main-webapp": "myapp.dev.example.com"}
     """
     # Generate the base unique name for the resource
     base_name = generate_unique_name(deployment_name, component_name)
 
-    # Default ingress with standard naming
-    default_hostname = generate_hostname(component_name, deployment_name, project_name, ingress_postfix)
-
-    ingress_map = {base_name: default_hostname}
-
-    # Add subdomain ingress if subdomain is specified
+    # Determine hostname based on domain mode
     if subdomain:
-        # Extract domain from ingress_postfix (remove leading dot if present)
+        # Shared domain mode: distinguish between deployment-name and custom subdomain
         domain = ingress_postfix.lstrip(".")
-        subdomain_hostname = f"{subdomain}.{domain}"
-        subdomain_ingress_name = f"{base_name}-subdomain"
 
-        ingress_map[subdomain_ingress_name] = subdomain_hostname
+        # If subdomain matches deployment_name, it's deployment-name mode -> include project name
+        if subdomain == deployment_name:
+            hostname = f"{subdomain}-{project_name}.{domain}"
+        else:
+            # Custom subdomain mode -> use subdomain as-is without project name
+            hostname = f"{subdomain}.{domain}"
+    else:
+        # Component-specific mode: each component gets unique URL
+        hostname = generate_hostname(component_name, deployment_name, project_name, ingress_postfix)
 
-    return ingress_map
+    return {base_name: hostname}
 
 
 # Simple resource naming utilities
@@ -388,7 +436,32 @@ def generate_bucket_name(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(bucket, 63)  # S3 bucket name limit
 
 
-def generate_keycloak_client_id(project_name: str, deployment_name: str, component_name: str = None) -> str:
+def generate_minio_policy_name(project_name: str, deployment_name: str) -> str:
+    """
+    Generate a consistent MinIO policy name.
+
+    Format: {username}-{bucket}-policy
+    This must match the connector's grant_bucket_access naming convention where
+    policies are named using both username and bucket name.
+
+    Args:
+        project_name: Name of the project
+        deployment_name: Name of the deployment
+
+    Returns:
+        MinIO policy name string
+
+    Example:
+        generate_minio_policy_name("amt-136", "deployment-1")
+        -> "amt_136_deployment_1-amt-136-deployment-1-policy"
+    """
+    username = generate_minio_username(project_name, deployment_name)
+    bucket = generate_bucket_name(project_name, deployment_name)
+    policy_name = f"{username}-{bucket}-policy"
+    return _truncate_if_needed(policy_name, 128)  # MinIO policy name limit
+
+
+def generate_keycloak_client_id(project_name: str, deployment_name: str, component_name: str | None = None) -> str:
     """
     Generate a consistent Keycloak client ID.
 
@@ -541,6 +614,29 @@ def generate_project_deployment_prefix(project_name: str, deployment_name: str) 
     return f"{project_clean}-{deployment_clean}"
 
 
+def generate_infrastructure_namespace_base(project_name: str) -> str:
+    """
+    Generate base infrastructure namespace name (without cluster prefix).
+
+    Format: {project}-infrastructure
+
+    This is the base name that will be prefixed with cluster-specific prefix
+    using get_prefixed_namespace() to create the final namespace name.
+
+    Args:
+        project_name: Name of the project
+
+    Returns:
+        Base infrastructure namespace name
+
+    Example:
+        generate_infrastructure_namespace_base("myproject") -> "myproject-infrastructure"
+        Then use: get_prefixed_namespace("local", "myproject-infrastructure") -> "rig-myproject-infrastructure"
+    """
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{project_clean}-infrastructure"
+
+
 def generate_argocd_appproject_prefix(project_name: str, namespace: str) -> str:
     """
     Generate a consistent project-namespace prefix for ArgoCD AppProject naming.
@@ -559,6 +655,49 @@ def generate_argocd_appproject_prefix(project_name: str, namespace: str) -> str:
     project_clean = _sanitize_for_lowercase(project_name)
     namespace_clean = _sanitize_for_lowercase(namespace)
     return f"{project_clean}-{namespace_clean}"
+
+
+def generate_argocd_repository_secret_name(
+    project_name: str, repository_name: str, credential_hash: str | None = None
+) -> str:
+    """
+    Generate a consistent name for ArgoCD repository secrets.
+
+    Combines project name with repository name to create a unique identifier
+    for the repository secret. The name is sanitized to comply with Kubernetes
+    naming requirements.
+
+    When credential_hash is provided, it's included in the name to create a
+    version-specific identifier. This forces ArgoCD to create a new secret when
+    credentials change, as the filename (which includes this name) will be different.
+
+    Format: {project}-{repository}[-{hash}] (hyphen separated, lowercase, sanitized)
+
+    Args:
+        project_name: Name of the project
+        repository_name: Name of the repository from project configuration
+        credential_hash: Optional 8-character hash of credentials for versioning
+
+    Returns:
+        Sanitized secret name suitable for Kubernetes resources
+
+    Example:
+        >>> generate_argocd_repository_secret_name("my-project", "main-repo")
+        'my-project-main-repo'
+        >>> generate_argocd_repository_secret_name("MyProject", "Main_Repo")
+        'myproject-main-repo'
+        >>> generate_argocd_repository_secret_name("my-project", "main-repo", "a1b2c3d4")
+        'my-project-main-repo-a1b2c3d4'
+    """
+    # Combine project and repository name
+    combined = f"{project_name}-{repository_name}"
+
+    # Add credential hash if provided for versioning
+    if credential_hash:
+        combined = f"{combined}-{credential_hash}"
+
+    # Sanitize to ensure Kubernetes compliance
+    return sanitize_kubernetes_name(combined)
 
 
 def get_output_filename_from_template(template_filename: str, prefix: str = "") -> str:
@@ -598,6 +737,66 @@ def generate_public_url(hostname: str, use_https: bool = True) -> str:
     """
     protocol = "https" if use_https else "http"
     return f"{protocol}://{hostname}"
+
+
+def make_argocd_repository_url_unique(repo_url: str, project_name: str) -> str:
+    """
+    Make a repository URL unique for ArgoCD by embedding project name as username.
+
+    ArgoCD uses the full URL string as a cache key for repository credentials.
+    By adding the project name as a username, each project gets a unique URL while
+    Git operations remain unaffected (username is ignored for token authentication).
+
+    This function safely handles URLs that already contain usernames by replacing them.
+    It only modifies HTTPS URLs from known Git hosting services.
+
+    Args:
+        repo_url: Original repository URL
+        project_name: Project name to use as unique identifier
+
+    Returns:
+        Modified URL with project name as username, or original URL if not applicable
+
+    Examples:
+        >>> make_argocd_repository_url_unique(
+        ...     "https://github.com/org/repo.git",
+        ...     "project-a"
+        ... )
+        'https://project-a@github.com/org/repo.git'
+
+        >>> make_argocd_repository_url_unique(
+        ...     "https://existing@github.com/org/repo.git",
+        ...     "project-b"
+        ... )
+        'https://project-b@github.com/org/repo.git'
+
+        >>> make_argocd_repository_url_unique(
+        ...     "ssh://git@github.com/org/repo.git",
+        ...     "project-c"
+        ... )
+        'ssh://git@github.com/org/repo.git'  # SSH URLs unchanged
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    # Only modify HTTPS URLs
+    if not repo_url.startswith("https://"):
+        return repo_url
+
+    # Only modify known Git hosting services to avoid breaking custom URLs
+    known_hosts = ["github.com", "gitlab.com", "bitbucket.org"]
+    if not any(host in repo_url for host in known_hosts):
+        return repo_url
+
+    # Parse the URL
+    parsed = urlparse(repo_url)
+
+    # Build netloc with project name as username (replaces existing username if present)
+    netloc = f"{project_name}@{parsed.hostname}"
+    if parsed.port:
+        netloc += f":{parsed.port}"
+
+    # Reconstruct URL with new username
+    return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
 
 
 def generate_project_admin_username(project_name: str, cluster: str) -> str:
@@ -670,3 +869,95 @@ def generate_project_platform_client_id(project_name: str, cluster: str) -> str:
     cluster_clean = _sanitize_for_lowercase(cluster)
     client_id = f"{project_clean}-{cluster_clean}-platform"
     return _truncate_if_needed(client_id, 255)
+
+
+def generate_postgres_superuser_secret_name(project_name: str) -> str:
+    """
+    Generate the secret name for namespace-specific PostgreSQL superuser credentials.
+
+    Format: {project}-postgres-superuser (hyphen separated, lowercase)
+    This secret is stored in the infrastructure namespace and contains
+    the superuser credentials for the project's dedicated PostgreSQL cluster.
+
+    Args:
+        project_name: Name of the project
+
+    Returns:
+        Secret name string
+
+    Example:
+        generate_postgres_superuser_secret_name("myproject")
+        -> "myproject-postgres-superuser"
+    """
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{project_clean}-postgres-superuser"
+
+
+def generate_infrastructure_application_name(project_name: str) -> str:
+    """
+    Generate the ArgoCD application name for project infrastructure.
+
+    Format: {project}-infrastructure (hyphen separated, lowercase)
+    This application manages the infrastructure resources like PostgreSQL clusters.
+
+    Args:
+        project_name: Name of the project
+
+    Returns:
+        Infrastructure application name string
+
+    Example:
+        generate_infrastructure_application_name("myproject")
+        -> "myproject-infrastructure"
+    """
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{project_clean}-infrastructure"
+
+
+def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_path: str = "") -> str:
+    """
+    Generate the path to infrastructure manifests in the deployment git repository.
+
+    Format: {repo_path}/{cluster}/{project}/infrastructure (if repo_path provided)
+            {cluster}/{project}/infrastructure (if no repo_path)
+
+    Args:
+        cluster: Name of the cluster
+        project_name: Name of the project
+        repo_path: Optional repository base path
+
+    Returns:
+        Infrastructure manifest path string
+
+    Example:
+        generate_infrastructure_manifest_path("production", "myproject")
+        -> "production/myproject/infrastructure"
+
+        generate_infrastructure_manifest_path("production", "myproject", "deployments")
+        -> "deployments/production/myproject/infrastructure"
+    """
+    project_clean = _sanitize_for_lowercase(project_name)
+    cluster_clean = _sanitize_for_lowercase(cluster)
+
+    if repo_path:
+        return f"{repo_path}/{cluster_clean}/{project_clean}/infrastructure"
+    return f"{cluster_clean}/{project_clean}/infrastructure"
+
+
+def generate_registry_secret_name(deployment_name: str, registry_name: str) -> str:
+    """
+    Generate registry secret name for a deployment and registry combination.
+
+    Args:
+        deployment_name: Name of the deployment
+        registry_name: Name of the registry (will be normalized)
+
+    Returns:
+        Registry secret name in format: {deployment}-{normalized-registry}-secret
+
+    Example:
+        >>> generate_registry_secret_name("frontend", "github-registry")
+        'frontend-github-registry-secret'
+    """
+    normalized_registry = _sanitize_for_lowercase(registry_name)
+    return f"{deployment_name}-{normalized_registry}-secret"
