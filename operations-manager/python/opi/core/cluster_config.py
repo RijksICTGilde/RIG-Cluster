@@ -16,6 +16,9 @@ CLUSTER_CONFIG = {
         "minio_server": "minio.rig-system.svc.cluster.local:9000",
         "ingress": {"enable_tls": False, "ip_whitelist": "0.0.0.0"},
         "storage": {"storage_class_name": "standard", "access_modes": ["ReadWriteOnce"]},
+        "keycloak": {
+            "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
+        },
     },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
@@ -30,6 +33,9 @@ CLUSTER_CONFIG = {
             "ip_whitelist": "0.0.0.0/0",  # VPN only: "147.181.0.0/16"
         },
         "storage": {"storage_class_name": "ocs-storagecluster-ceph-rbd", "access_modes": ["ReadWriteOnce"]},
+        "keycloak": {
+            "support_http": False,  # Only generate HTTPS redirect URIs in production
+        },
     },
 }
 
@@ -241,6 +247,40 @@ def get_keycloak_discovery_url(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["keycloak_discovery_url"]
+
+
+def get_keycloak_config(cluster_name: str) -> dict:
+    """
+    Get the Keycloak configuration for a specific cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Dictionary containing Keycloak configuration
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("keycloak", {"support_http": False})
+
+
+def get_keycloak_support_http(cluster_name: str) -> bool:
+    """
+    Check if HTTP redirect URIs should be generated for Keycloak clients.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        True if both HTTP and HTTPS redirect URIs should be generated, False for HTTPS only
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    keycloak_config = get_keycloak_config(cluster_name)
+    return keycloak_config.get("support_http", False)
 
 
 def get_database_server(cluster_name: str) -> str:

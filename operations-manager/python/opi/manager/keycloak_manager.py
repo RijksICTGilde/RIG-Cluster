@@ -8,7 +8,7 @@ from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.connectors.keycloak import create_keycloak_connector
-from opi.core.cluster_config import get_ingress_postfix, get_keycloak_discovery_url
+from opi.core.cluster_config import get_ingress_postfix, get_keycloak_discovery_url, get_keycloak_support_http
 from opi.core.config import settings
 from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
@@ -289,6 +289,9 @@ class KeycloakManager:
                     variables:  # Optional template-specific variables
                       frontend_redirect_uris: "https://..."
                       realm_display_name: "Custom Name"
+                    additional_redirect_uris:  # Optional additional redirect URIs for development
+                      - "http://localhost:8080/*"
+                      - "http://127.0.0.1:8080/*"
 
         Args:
             project_data: The project configuration data
@@ -297,7 +300,8 @@ class KeycloakManager:
             Dictionary with merged configuration:
             {
                 "template": "sso-only",  # Template filename (without .yaml)
-                "variables": {...}        # Template-specific variables
+                "variables": {...},       # Template-specific variables
+                "additional_redirect_uris": [...]  # Optional additional redirect URIs
             }
 
         Raises:
@@ -308,6 +312,7 @@ class KeycloakManager:
         DEFAULT_CONFIG = {
             "template": "sso-only",
             "variables": {},
+            "additional_redirect_uris": [],
         }
 
         project_services = project_data.get("services", [])
@@ -364,6 +369,20 @@ class KeycloakManager:
             if not isinstance(variables, dict):
                 raise ValueError(f"Template variables must be a dict, got {type(variables).__name__}")
             merged_config["variables"] = variables
+
+        # Extract and validate additional_redirect_uris
+        if "additional_redirect_uris" in user_config:
+            additional_uris = user_config["additional_redirect_uris"]
+            if not isinstance(additional_uris, list):
+                raise ValueError(f"additional_redirect_uris must be a list, got {type(additional_uris).__name__}")
+            # Validate all entries are strings
+            for uri in additional_uris:
+                if not isinstance(uri, str):
+                    raise ValueError(
+                        f"All additional_redirect_uris must be strings, got {type(uri).__name__}: {uri}"
+                    )
+            merged_config["additional_redirect_uris"] = additional_uris
+            logger.info(f"Found {len(additional_uris)} additional redirect URIs in config")
 
         # CRITICAL: Validate template file exists
         template_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{merged_config['template']}.yaml"
@@ -555,12 +574,20 @@ class KeycloakManager:
                 admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
             )
 
+            # Get cluster-specific HTTP support setting
+            support_http = get_keycloak_support_http(cluster)
+
+            # Get additional redirect URIs from config
+            additional_redirect_uris = config.get("additional_redirect_uris", [])
+
             # Create client in project realm
             client_info = await keycloak.create_deployment_client(
                 project_name=project_name,
                 deployment_name=deployment_name,
                 ingress_hosts=ingress_hosts,
                 realm_name=realm_name,
+                support_http=support_http,
+                additional_redirect_uris=additional_redirect_uris if additional_redirect_uris else None,
             )
 
             # Get cluster-specific discovery URL for the project realm
@@ -727,10 +754,21 @@ class KeycloakManager:
 
         # Add redirect URIs from component ingress hosts if provided
         if ingress_hosts:
-            # Build redirect URIs from ingress hosts (add https:// and /* wildcards)
+            # Get cluster-specific HTTP support setting
+            support_http = get_keycloak_support_http(cluster)
+
+            # Build redirect URIs from ingress hosts based on cluster protocol support
             # Use first host as frontend_redirect_uris (templates expect single value)
             # TODO: Support multiple redirect URIs using forEach in templates
-            first_redirect_uri = f"https://{ingress_hosts[0]}/*"
+            if support_http:
+                # Local cluster: support both HTTP and HTTPS
+                first_redirect_uri = f"http://{ingress_hosts[0]}/*"
+                logger.info("Cluster supports HTTP - using HTTP redirect URI for template")
+            else:
+                # Production cluster: HTTPS only
+                first_redirect_uri = f"https://{ingress_hosts[0]}/*"
+                logger.info("Cluster HTTPS only - using HTTPS redirect URI for template")
+
             context["frontend_redirect_uris"] = first_redirect_uri
             logger.info(f"Added frontend_redirect_uris to context: {first_redirect_uri}")
             if len(ingress_hosts) > 1:
@@ -754,17 +792,18 @@ class KeycloakManager:
         await handler.execute_config(yaml_path, context)
         logger.info(f"Executed YAML configuration ({template_name}) for realm {realm_name}")
 
-        # Create admin user in master realm (not in YAML because it needs user_id for next step)
+        # Create admin user in the project realm itself (not master realm)
+        logger.info(f"Creating admin user {admin_username} in project realm {realm_name}")
         user_info = await keycloak.create_user(
-            realm_name="master", username=admin_username, password=admin_password, enabled=True
+            realm_name=realm_name, username=admin_username, password=admin_password, enabled=True
         )
-        logger.info(f"Ensured admin user {admin_username} exists in master realm")
+        logger.info(f"Created admin user {admin_username} in realm {realm_name}")
 
-        # Assign realm management roles
-        await keycloak.assign_realm_management_role(
-            realm_name="master", user_id=user_info["id"], target_realm=realm_name
+        # Assign realm-admin role (built-in composite role that grants full realm management)
+        await keycloak.assign_realm_roles_to_user(
+            realm_name=realm_name, user_id=user_info["id"], role_names=["realm-admin"]
         )
-        logger.info(f"Ensured realm management roles assigned to {admin_username} for {realm_name}")
+        logger.info(f"Assigned realm-admin role to {admin_username} in realm {realm_name}")
 
         # Store in project config
         if "config" not in project_data:

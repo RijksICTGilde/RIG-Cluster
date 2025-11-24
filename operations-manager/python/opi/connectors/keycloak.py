@@ -288,7 +288,13 @@ class KeycloakConnector:
         return "".join(secrets.choice(alphabet) for _ in range(32))
 
     async def create_deployment_client(
-        self, deployment_name: str, project_name: str, ingress_hosts: list[str], realm_name: str
+        self,
+        deployment_name: str,
+        project_name: str,
+        ingress_hosts: list[str],
+        realm_name: str,
+        support_http: bool = False,
+        additional_redirect_uris: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Create a client for a specific deployment in the specified realm.
@@ -298,6 +304,8 @@ class KeycloakConnector:
             project_name: Name of the project
             ingress_hosts: List of ingress hostnames for redirect URIs
             realm_name: Realm name (required, must be explicitly provided)
+            support_http: Whether to generate both HTTP and HTTPS redirect URIs (default: False, HTTPS only)
+            additional_redirect_uris: Optional list of additional redirect URIs (e.g., localhost URLs for development)
 
         Returns:
             Dictionary containing client information and OIDC configuration
@@ -307,20 +315,36 @@ class KeycloakConnector:
 
         logger.info(f"Creating client '{client_id}' for deployment '{deployment_name}' in project '{project_name}'")
         logger.info(f"Received ingress_hosts: {ingress_hosts}")
+        logger.info(f"HTTP support: {support_http}")
+        if additional_redirect_uris:
+            logger.info(f"Additional redirect URIs: {additional_redirect_uris}")
 
         # Build redirect URIs and web origins from ingress hosts
         redirect_uris_set = set()
         web_origins_set = set()
 
         for host in ingress_hosts:
-            redirect_uris_set.update([f"https://{host}/*", f"http://{host}/*"])
-            web_origins_set.update([f"https://{host}", f"http://{host}"])
+            # Always add HTTPS
+            redirect_uris_set.add(f"https://{host}/*")
+            web_origins_set.add(f"https://{host}")
 
-        # Add localhost for development
-        local_ports = ["8080", "8000", "9595"]
-        for port in local_ports:
-            redirect_uris_set.update([f"http://localhost:{port}/*", f"http://127.0.0.1:{port}/*"])
-            web_origins_set.update([f"http://localhost:{port}", f"http://127.0.0.1:{port}"])
+            # Add HTTP only if cluster supports it
+            if support_http:
+                redirect_uris_set.add(f"http://{host}/*")
+                web_origins_set.add(f"http://{host}")
+
+        # Add project-specific additional redirect URIs (e.g., localhost for development)
+        if additional_redirect_uris:
+            for uri in additional_redirect_uris:
+                redirect_uris_set.add(uri)
+                # Extract origin from URI (remove /* suffix and path components)
+                if uri.endswith("/*"):
+                    origin = uri[:-2]
+                elif "/*" in uri:
+                    origin = uri.split("/*")[0]
+                else:
+                    origin = uri.rstrip("/")
+                web_origins_set.add(origin)
 
         redirect_uris = list(redirect_uris_set)
         web_origins = list(web_origins_set)
@@ -438,7 +462,13 @@ class KeycloakConnector:
             raise
 
     async def update_deployment_client_hosts(
-        self, deployment_name: str, project_name: str, ingress_hosts: list[str], realm_name: str | None = None
+        self,
+        deployment_name: str,
+        project_name: str,
+        ingress_hosts: list[str],
+        realm_name: str | None = None,
+        support_http: bool = False,
+        additional_redirect_uris: list[str] | None = None,
     ) -> bool:
         """
         Update the ingress hosts for an existing deployment client.
@@ -448,6 +478,8 @@ class KeycloakConnector:
             project_name: Name of the project
             ingress_hosts: Updated list of ingress hostnames
             realm_name: Realm name (uses default if None)
+            support_http: Whether to generate both HTTP and HTTPS redirect URIs (default: False, HTTPS only)
+            additional_redirect_uris: Optional list of additional redirect URIs (e.g., localhost URLs for development)
 
         Returns:
             True if update was successful
@@ -457,6 +489,9 @@ class KeycloakConnector:
 
         logger.info(f"Updating hosts for client '{client_id}' in deployment '{deployment_name}'")
         logger.info(f"Received ingress_hosts for update: {ingress_hosts}")
+        logger.info(f"HTTP support: {support_http}")
+        if additional_redirect_uris:
+            logger.info(f"Additional redirect URIs: {additional_redirect_uris}")
 
         try:
             # Switch to target realm
@@ -475,14 +510,27 @@ class KeycloakConnector:
             web_origins_set = set()
 
             for host in ingress_hosts:
-                redirect_uris_set.update([f"https://{host}/*", f"http://{host}/*"])
-                web_origins_set.update([f"https://{host}", f"http://{host}"])
+                # Always add HTTPS
+                redirect_uris_set.add(f"https://{host}/*")
+                web_origins_set.add(f"https://{host}")
 
-            # Add localhost for development
-            local_ports = ["8080", "8000", "9595"]
-            for port in local_ports:
-                redirect_uris_set.update([f"http://localhost:{port}/*", f"http://127.0.0.1:{port}/*"])
-                web_origins_set.update([f"http://localhost:{port}", f"http://127.0.0.1:{port}"])
+                # Add HTTP only if cluster supports it
+                if support_http:
+                    redirect_uris_set.add(f"http://{host}/*")
+                    web_origins_set.add(f"http://{host}")
+
+            # Add project-specific additional redirect URIs (e.g., localhost for development)
+            if additional_redirect_uris:
+                for uri in additional_redirect_uris:
+                    redirect_uris_set.add(uri)
+                    # Extract origin from URI (remove /* suffix and path components)
+                    if uri.endswith("/*"):
+                        origin = uri[:-2]
+                    elif "/*" in uri:
+                        origin = uri.split("/*")[0]
+                    else:
+                        origin = uri.rstrip("/")
+                    web_origins_set.add(origin)
 
             redirect_uris = list(redirect_uris_set)
             web_origins = list(web_origins_set)
