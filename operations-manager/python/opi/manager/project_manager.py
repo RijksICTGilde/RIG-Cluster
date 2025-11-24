@@ -185,7 +185,9 @@ class ProjectManager:
             admin_password = settings.DATABASE_ADMIN_PASSWORD
             logger.info(f"Initializing DatabaseManager with shared PostgreSQL: {db_host}")
 
-        self._database_manager = DatabaseManager(self, db_host=db_host, admin_username=admin_username, admin_password=admin_password)
+        self._database_manager = DatabaseManager(
+            self, db_host=db_host, admin_username=admin_username, admin_password=admin_password
+        )
         return self._database_manager
 
     async def get_name(self) -> str:
@@ -1204,7 +1206,7 @@ class ProjectManager:
             logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
 
     @staticmethod
-    async def _test_infrastructure_database_connection(username: str, password: str, host: str) -> bool:
+    async def _test_infrastructure_database_connection(username: str, password: str, host: str) -> tuple[bool, str]:
         """
         Test if infrastructure database credentials are valid by attempting a direct connection.
 
@@ -1217,19 +1219,35 @@ class ProjectManager:
             host: Database host (namespace-specific service endpoint)
 
         Returns:
-            True if connection successful, False otherwise
+            Tuple of (success: bool, error_type: str) where error_type is:
+            - "success" if connection successful
+            - "auth_error" if authentication failed (wrong password)
+            - "connection_error" if database not reachable (not running yet)
+            - "unknown_error" for other errors
         """
         import asyncpg
+        import socket
 
         try:
             # Create a direct connection with the superuser credentials to the postgres database
-            conn = await asyncpg.connect(host=host, port=5432, user=username, password=password, database="postgres")
+            conn = await asyncpg.connect(
+                host=host, port=5432, user=username, password=password, database="postgres", timeout=5
+            )
             await conn.close()
             logger.debug(f"Infrastructure database connection test successful for {username}@{host}/postgres")
-            return True
+            return True, "success"
+        except asyncpg.InvalidPasswordError as e:
+            # Authentication failed - wrong password
+            logger.debug(f"Infrastructure database authentication failed for user {username}: {e}")
+            return False, "auth_error"
+        except (ConnectionRefusedError, socket.gaierror, OSError) as e:
+            # Database not reachable - likely not running yet or DNS not ready
+            logger.debug(f"Infrastructure database not reachable at {host}: {e}")
+            return False, "connection_error"
         except Exception as e:
+            # Other errors
             logger.debug(f"Infrastructure database connection test failed for user {username}: {e}")
-            return False
+            return False, "unknown_error"
 
     async def _create_infrastructure_namespace(self, project_data: dict[str, Any], cluster_name: str) -> None:
         """
@@ -1302,7 +1320,10 @@ class ProjectManager:
         3. Generate infrastructure kustomization.yaml
         4. Commit manifests to deployment Git repository
         5. Create ArgoCD infrastructure application (with sync-wave 0)
-        6. Wait for ArgoCD to report infrastructure as Synced + Healthy
+        6. Refresh user-applications to detect new infrastructure application
+        7. Wait for infrastructure application to be created by ArgoCD
+        8. Refresh the infrastructure application to pick up latest changes
+        9. Wait for ArgoCD to report infrastructure as Synced + Healthy
 
         Args:
             project_data: The project configuration data
@@ -1346,9 +1367,7 @@ class ProjectManager:
             existing_secret = await self._kubectl_connector.get_secret(superuser_secret_name, infrastructure_namespace)
 
             if existing_secret:
-                logger.info(
-                    f"Found existing superuser secret for project '{project_name}', validating credentials"
-                )
+                logger.info(f"Found existing superuser secret for project '{project_name}', validating credentials")
                 superuser_username = existing_secret.get("username", "postgres")
                 superuser_password = existing_secret.get("password")
 
@@ -1360,25 +1379,41 @@ class ProjectManager:
 
                 # Test the credentials against the PostgreSQL cluster
                 db_host = get_database_cluster_service_endpoint(cluster_name, project_name)
-                credentials_valid = await self._test_infrastructure_database_connection(
+                credentials_valid, error_type = await self._test_infrastructure_database_connection(
                     username=superuser_username,
                     password=superuser_password,
                     host=db_host,
                 )
 
                 if not credentials_valid:
-                    raise RuntimeError(
-                        f"Superuser credentials for project '{project_name}' are invalid. "
-                        f"The password in secret '{superuser_secret_name}' does not match the PostgreSQL cluster. "
-                        f"This usually happens when the secret was regenerated after the cluster was created. "
-                        f"Manual intervention required: either restore the correct password in the secret, "
-                        f"or delete both the secret and the PostgreSQL cluster to recreate from scratch."
-                    )
-
-                logger.info(f"Existing superuser credentials validated successfully for project '{project_name}'")
+                    if error_type == "auth_error":
+                        # Actual authentication failure - wrong password
+                        raise RuntimeError(
+                            f"Superuser credentials for project '{project_name}' are invalid. "
+                            f"The password in secret '{superuser_secret_name}' does not match the PostgreSQL cluster. "
+                            f"This usually happens when the secret was regenerated after the cluster was created. "
+                            f"Manual intervention required: either restore the correct password in the secret, "
+                            f"or delete both the secret and the PostgreSQL cluster to recreate from scratch."
+                        )
+                    elif error_type == "connection_error":
+                        # Database not reachable yet - assume credentials are correct and continue
+                        logger.info(
+                            f"Cannot verify superuser credentials for project '{project_name}' because database is not reachable yet. "
+                            f"Assuming existing credentials are correct and proceeding with infrastructure creation."
+                        )
+                    else:
+                        # Unknown error - log warning but continue
+                        logger.warning(
+                            f"Could not verify superuser credentials for project '{project_name}' due to unknown error. "
+                            f"Assuming existing credentials are correct and proceeding with infrastructure creation."
+                        )
+                else:
+                    logger.info(f"Existing superuser credentials validated successfully for project '{project_name}'")
             else:
                 # No existing secret - generate new credentials for first-time creation
-                logger.info(f"No existing superuser secret found, generating new credentials for project '{project_name}'")
+                logger.info(
+                    f"No existing superuser secret found, generating new credentials for project '{project_name}'"
+                )
                 superuser_username = "postgres"
                 superuser_password = generate_secure_password(
                     min_uppercase=3, min_lowercase=3, min_digits=3, total_length=32
@@ -1398,15 +1433,51 @@ class ProjectManager:
 
             # STEP 2: Generate PostgreSQL cluster manifest
             logger.info(f"Generating PostgreSQL cluster manifest for project '{project_name}'")
-            # TODO: Add registry support for PostgreSQL infrastructure if needed
+
+            # Handle registry configuration for PostgreSQL image
+            database_config = database_cluster_config["database_config"]
+            registry_name = database_config.get("registry")
+            image_pull_secrets_map = {}
+            registry_config = None
+
+            if registry_name:
+                logger.info(f"PostgreSQL database configured with registry: {registry_name}")
+
+                # Reuse existing registry extraction logic
+                registries = self._project_file_handler.extract_registries(project_data)
+                for registry in registries:
+                    if registry.get("name") == registry_name:
+                        registry_config = registry
+                        break
+
+                if not registry_config:
+                    raise ValueError(
+                        f"Registry '{registry_name}' specified in namespace-postgresql-database service "
+                        f"but not found in project registries. Available registries: "
+                        f"{[r.get('name') for r in registries]}"
+                    )
+
+                # Generate registry secret name for infrastructure (using "infrastructure" as deployment name)
+                from opi.utils.naming import generate_registry_secret_name
+
+                registry_secret_name = generate_registry_secret_name("infrastructure", registry_name)
+                database_image = database_config.get("image")
+
+                # Map the database image to its registry secret
+                image_pull_secrets_map[database_image] = registry_secret_name
+
+                logger.info(
+                    f"PostgreSQL will use imagePullSecret '{registry_secret_name}' for image '{database_image}'"
+                )
+
             cluster_manifest = render_template(
                 "postgresql-cluster.yaml.jinja",
                 {
                     "project_name": project_clean,
                     "infrastructure_namespace": infrastructure_namespace,
-                    "database_config": database_cluster_config["database_config"],
+                    "database_config": database_config,
                     "storage_class": storage_class,
-                    "imagePullSecretsMap": {},  # Empty map for now, can be extended for private registries
+                    "imagePullSecretsMap": image_pull_secrets_map,
                 },
             )
 
@@ -1454,7 +1525,47 @@ class ProjectManager:
             with open(cluster_path, "w") as f:
                 f.write(cluster_manifest)
 
-            # STEP 4: SOPS encrypt the secret using project's SOPS key
+            # Create registry secret if PostgreSQL uses a private registry
+            if registry_name and registry_config:
+                logger.info(
+                    f"Creating registry secret for PostgreSQL infrastructure in namespace: {infrastructure_namespace}"
+                )
+
+                # Decrypt registry credentials (reuse existing logic)
+                from opi.utils.secrets import RegistrySecret
+
+                registry_url = registry_config.get("url", "")
+                username = registry_config.get("username", "")
+                password_encrypted = registry_config.get("password", "")
+
+                private_key = await get_decoded_project_private_key(project_data)
+                password = await decrypt_password_smart(password_encrypted, private_key)
+
+                # Create RegistrySecret instance (same as deployments)
+                registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
+
+                # Use generic secret template with kubernetes.io/dockerconfigjson type (same as deployments)
+                registry_secret_manifest = render_template(
+                    "generic-secret.yaml.to-sops.jinja",
+                    {
+                        "name": registry_secret_name,
+                        "namespace": infrastructure_namespace,
+                        "secret_type": "registry",
+                        "secret_k8s_type": "kubernetes.io/dockerconfigjson",
+                        "secret_pairs": registry_secret.to_k8s_secret_data(),  # Contains .dockerconfigjson
+                    },
+                )
+
+                # Write registry secret to infrastructure directory
+                registry_secret_path = os.path.join(infra_resources_dir, f"{registry_secret_name}.to-sops.yaml")
+                with open(registry_secret_path, "w") as f:
+                    f.write(registry_secret_manifest)
+
+                logger.info(
+                    f"Created registry secret '{registry_secret_name}' for registry '{registry_name}' ({registry_url})"
+                )
+
+            # STEP 4: SOPS encrypt the secrets using project's SOPS key
             logger.info(f"Encrypting secret with SOPS for project '{project_name}'")
             project_public_key = get_project_public_key(project_data)
             if not project_public_key:
@@ -1516,9 +1627,27 @@ class ProjectManager:
             if not await argo_connector.refresh_application("user-applications"):
                 raise RuntimeError("Failed to refresh ArgoCD user-applications")
 
-            logger.info("ArgoCD user-applications refreshed, infrastructure application should be created")
+            logger.info("ArgoCD user-applications refreshed, waiting for infrastructure application to be created")
 
-            # STEP 8: Wait for infrastructure to be ready
+            # STEP 8: Wait for infrastructure application to be created by ArgoCD
+            infra_app_name = f"{project_name}-infrastructure"
+            if progress_manager and infra_task:
+                progress_manager.update_task(infra_task, "Waiting for ArgoCD to create infrastructure application")
+
+            await self._argo_manager.wait_for_application_created(
+                app_name=infra_app_name,
+                timeout=120,  # 2 minutes timeout for application creation
+            )
+
+            logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
+
+            # STEP 9: Refresh the infrastructure application to ensure it picks up latest changes
+            if not await argo_connector.refresh_application(infra_app_name):
+                raise RuntimeError(f"Failed to refresh ArgoCD infrastructure application '{infra_app_name}'")
+
+            logger.info(f"Infrastructure application '{infra_app_name}' refreshed successfully")
+
+            # STEP 10: Wait for infrastructure to be synced and healthy
             logger.info(
                 f"Waiting for infrastructure to be ready for project '{project_name}' (this may take a few minutes)..."
             )
@@ -2198,16 +2327,12 @@ class ProjectManager:
             secret_name = generate_registry_secret_name(deployment_name, registry_name)
 
             # Create RegistrySecret instance
-            registry_secret = RegistrySecret(
-                registry_url=registry_url, username=username, password=password
-            )
+            registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
 
             # Add to secrets to be created (using generic secret template with dockerconfigjson type)
             self._add_secret_to_create(deployment_name, registry_name, registry_secret)
 
-            logger.info(
-                f"Created registry secret '{secret_name}' for registry '{registry_name}' ({registry_url})"
-            )
+            logger.info(f"Created registry secret '{secret_name}' for registry '{registry_name}' ({registry_url})")
 
             # Map all images using this registry to the secret name
             for image_url, img_registry_name in image_to_registry_map.items():
@@ -2677,7 +2802,9 @@ class ProjectManager:
                         }
 
                         # Create registry secret manifest
-                        registry_manifest_name = generate_manifest_name(deployment_name, f"{registry_name}-registry-secret")
+                        registry_manifest_name = generate_manifest_name(
+                            deployment_name, f"{registry_name}-registry-secret"
+                        )
                         use_sops_for_registry = True  # Always use SOPS encryption for registry credentials
 
                         registry_secret_path = self._manifest_generator.create_manifest_file(

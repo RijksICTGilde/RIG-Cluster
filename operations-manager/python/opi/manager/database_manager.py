@@ -746,6 +746,8 @@ class DatabaseManager:
         Optional config keys:
         - privileges: List of PostgreSQL privileges for created users
           (e.g., ["SUPERUSER"], ["CREATEDB", "CREATEROLE"])
+        - registry: Name of the registry to use for pulling PostgreSQL image
+          (e.g., "github-packages", "docker-hub")
 
         Args:
             project_data: The project configuration data
@@ -812,7 +814,7 @@ class DatabaseManager:
         merged_config = DEFAULT_CONFIG.copy()
 
         # Merge top-level fields
-        for key in ["image", "instances", "storage", "privileges"]:
+        for key in ["image", "instances", "storage", "privileges", "registry"]:
             if key in user_config:
                 merged_config[key] = user_config[key]
 

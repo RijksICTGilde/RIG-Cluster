@@ -123,6 +123,31 @@ deployments:
         image: "nginx:alpine"      # No registry field needed for public images
 ```
 
+### PostgreSQL infrastructure with private registry
+
+When using `namespace-postgresql-database` service with a private PostgreSQL image:
+
+```yaml
+registries:
+  - name: internal-registry
+    url: registry.internal.company.net
+    username: database-service-account
+    password: |
+      -----BEGIN AGE ENCRYPTED FILE-----
+      ...
+      -----END AGE ENCRYPTED FILE-----
+
+services:
+  - namespace-postgresql-database:
+      config:
+        image: "registry.internal.company.net/postgres/postgres:17-custom"
+        instances: 2
+        storage: "20Gi"
+        registry: internal-registry    # Reference to registry for pulling PostgreSQL image
+```
+
+**Note**: The `registry` field in `namespace-postgresql-database` service config works the same as deployment components - it references a registry defined in the top-level `registries:` section.
+
 ## Troubleshooting
 
 ### ImagePullBackOff errors

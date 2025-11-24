@@ -271,6 +271,6 @@ task docker-build-and-push BUILD_CONTEXT=images/postgresql-with-dictionaries IMA
 
 task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=backend REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.11.21 DOCKERFILE_PATH=backend/Dockerfile
 
-task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=backend REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.11.21 DOCKERFILE_PATH=frontend/Dockerfile
+task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=frontend REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.11.21 DOCKERFILE_PATH=frontend/Dockerfile
 
 

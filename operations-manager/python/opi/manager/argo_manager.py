@@ -702,6 +702,71 @@ class ArgoManager:
             logger.exception(f"Error creating infrastructure ArgoCD application: {e}")
             return False
 
+    async def wait_for_application_created(self, app_name: str, timeout: int = 120, poll_interval: int = 5) -> bool:
+        """
+        Wait for an ArgoCD application to be created and appear in the API.
+
+        This method polls the ArgoCD API until the application exists or timeout is reached.
+        Used after creating ArgoCD application manifests to wait for ArgoCD to detect them.
+
+        Args:
+            app_name: Name of the application to wait for
+            timeout: Maximum time to wait in seconds (default: 120 = 2 minutes)
+            poll_interval: Seconds between checks (default: 5)
+
+        Returns:
+            True if application was created, False otherwise
+
+        Raises:
+            TimeoutError: If application is not created within timeout
+        """
+        from opi.connectors.argo import ArgoConnector
+
+        logger.info(
+            f"Waiting for ArgoCD application '{app_name}' to be created (timeout: {timeout}s, poll: {poll_interval}s)"
+        )
+
+        # Create ArgoConnector instance
+        argo_connector = ArgoConnector(
+            server_host=settings.ARGOCD_HOST,
+            server_port=settings.ARGOCD_PORT,
+            username=settings.ARGOCD_USERNAME,
+            password=settings.ARGOCD_PASSWORD,
+            use_tls=settings.ARGOCD_USE_TLS,
+            verify_ssl=settings.ARGOCD_VERIFY_SSL,
+        )
+
+        # Login to ArgoCD
+        if not await argo_connector.login():
+            raise RuntimeError("Failed to login to ArgoCD")
+
+        import asyncio
+
+        elapsed_time = 0
+        while elapsed_time < timeout:
+            try:
+                # Check if application exists
+                if await argo_connector.application_exists(app_name):
+                    logger.info(f"ArgoCD application '{app_name}' has been created!")
+                    return True
+
+                # Not created yet, wait and retry
+                logger.debug(
+                    f"Application '{app_name}' not found yet, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
+                )
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+
+            except Exception as e:
+                logger.warning(f"Error checking application creation status: {e}, retrying...")
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+
+        # Timeout reached
+        error_msg = f"Timeout waiting for ArgoCD application '{app_name}' to be created after {timeout}s"
+        logger.error(error_msg)
+        raise TimeoutError(error_msg)
+
     async def wait_for_infrastructure_ready(
         self, project_name: str, cluster_name: str, timeout: int = 300, poll_interval: int = 10
     ) -> bool:
