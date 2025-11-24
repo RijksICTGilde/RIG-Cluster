@@ -82,7 +82,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         user = get_user(request)
 
         # Check if the route requires SSO by examining route metadata
-        route_requires_sso = False # self._route_requires_sso(request)
+        route_requires_sso = self._route_requires_sso(request)
 
         if route_requires_sso and not user:
             logger.info(f"Redirecting unauthenticated user to login from: {path}")
