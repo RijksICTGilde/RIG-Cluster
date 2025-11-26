@@ -10,5 +10,5 @@ resources:
   - ../../infrastructure/keycloak/config/overlays/odcn
 #  - ../../infrastructure/pgadmin/controller/overlays/odcn
 #  - ../../infrastructure/pgadmin/config/overlays/odcn
-#  - ../../infrastructure/minio/controller/overlays/odcn
+  - ../../infrastructure/minio/controller/overlays/odcn
 #  - ../../infrastructure/minio/config/overlays/odcn
