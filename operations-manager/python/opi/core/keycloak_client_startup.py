@@ -28,7 +28,9 @@ async def validate_oidc_credentials() -> bool:
         logger.debug("OIDC credentials not fully configured")
         return False
 
-    logger.info("Validating existing OIDC credentials...")
+    logger.info(f"Validating existing OIDC credentials: OIDC_CLIENT_ID = {settings.OIDC_CLIENT_ID}")
+    logger.info(f"Validating existing OIDC credentials: OIDC_OIDC_DISCOVERY_URL = {settings.OIDC_DISCOVERY_URL}")
+    logger.info(f"Validating existing OIDC credentials: OIDC_CLIENT_SECRET = {settings.OIDC_CLIENT_SECRET[:4]}***")
 
     try:
         realm_name = settings.KEYCLOAK_DEFAULT_REALM

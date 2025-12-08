@@ -255,6 +255,9 @@ Deleting all argo resources (the application and project) in the same run does n
 a race condition where the application can not be deleted because the project is gone occurs,
 maybe this also occurs with the setup which makes it so slow..
 
+# ArgoCD Sync Options
+We removed `Replace=true` from the ArgoCD Application template. Replace causes ArgoCD to use `kubectl replace` instead of `kubectl apply`, which fails for resources with immutable fields (like PVCs where `volumeName` is set by Kubernetes after binding).
+
 # Git naming
 We encountered an issue where multiple projects were using the same GitHub repository URL with different credentials. ArgoCD was logging warnings:
 

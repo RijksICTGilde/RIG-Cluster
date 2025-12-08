@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
+from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import ServiceType
 from opi.utils.naming import generate_resource_identifier
@@ -64,7 +65,12 @@ class DatabaseManager:
             await self._postgres_connector.close()
             self._postgres_connector = None
 
-    async def create_resources_for_deployment(self, project_data: dict[str, Any], deployment: dict[str, Any]) -> None:
+    async def create_resources_for_deployment(
+        self,
+        project_data: dict[str, Any],
+        deployment: dict[str, Any],
+        force_clone: bool = False,
+    ) -> None:
         """
         Create database resources for a deployment that has PostgreSQL service enabled.
 
@@ -84,6 +90,7 @@ class DatabaseManager:
         Args:
             project_data: The project configuration data
             deployment: The specific deployment configuration
+            force_clone: If True, force clone even if target already exists (runtime override)
         """
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
@@ -124,8 +131,9 @@ class DatabaseManager:
                     project_name, infrastructure_namespace
                 )
             else:
-                # Shared database configuration
-                db_host = settings.DATABASE_HOST
+                # Shared database configuration - use cluster-specific fully qualified hostname
+                # for cross-namespace DNS resolution (user pods are in different namespaces)
+                db_host = get_database_server(cluster_name)
                 admin_username = settings.DATABASE_ADMIN_NAME
                 admin_password = settings.DATABASE_ADMIN_PASSWORD
                 logger.info(f"Using shared PostgreSQL for {project_name} (host: {db_host})")
@@ -171,6 +179,8 @@ class DatabaseManager:
                 db_schema,
                 db_username,
                 db_password,
+                project_data,
+                force_clone,
             )
 
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
@@ -345,12 +355,15 @@ class DatabaseManager:
         db_schema: str,
         db_username: str,
         db_password: str,
+        project_data: dict[str, Any] | None = None,
+        force_clone_override: bool = False,
     ) -> None:
         """
         Ensure the database exists in the correct state, handling clone-from and force-clone logic.
         This runs regardless of whether credentials existed initially.
 
         Uses the DatabaseManager's bound credentials for all operations.
+        Handles both local deployment clones and remote-source clones with Chisel tunnels.
 
         Args:
             project_name: Name of the project
@@ -360,12 +373,76 @@ class DatabaseManager:
             db_schema: Schema name to create
             db_username: Owner username for the database
             db_password: Password for the owner
+            project_data: Project configuration data (needed for remote-source clones)
+            force_clone_override: Runtime override for force_clone (from API)
         """
         clone_from = deployment.get("clone-from")
-        force_clone = deployment.get("force-clone", False)
+        # Use runtime override if True, otherwise fall back to deployment config
+        force_clone = force_clone_override or deployment.get("force-clone", False)
+
+        # Handle clone-from configuration - can be dict (new format) or string (legacy)
+        if clone_from:
+            # New format: clone-from is a dict with type, reference, mode
+            if isinstance(clone_from, dict):
+                clone_type = clone_from.get("type")
+                if clone_type == "remote-source":
+                    # Handle remote source cloning directly
+                    remote_source_name = clone_from.get("reference")
+                    if project_data is None:
+                        raise ValueError(f"project_data is required for remote-source clone: {deployment.get('name')}")
+
+                    remote_source = self._get_remote_source_config(project_data, remote_source_name)
+                    if not remote_source:
+                        raise ValueError(f"Remote source '{remote_source_name}' not found in project configuration")
+
+                    db_config = remote_source.get("services", {}).get("postgresql-database", {})
+                    if not db_config:
+                        logger.debug(
+                            f"No postgresql-database service in remote source '{remote_source_name}', "
+                            "skipping database clone"
+                        )
+                        return
+
+                    chisel_config = remote_source.get("chisel")
+
+                    # Decrypt source password using project's AGE key
+                    from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
+
+                    project_private_key = await get_decoded_project_private_key(project_data)
+                    source_password = await decrypt_password_smart(db_config.get("password", ""), project_private_key)
+
+                    logger.info(
+                        f"Cloning database from remote source '{remote_source_name}' for deployment {deployment_name}"
+                    )
+
+                    result = await self.clone_database_from_external_source(
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        source_host=db_config["host"],
+                        source_port=db_config.get("port", 5432),
+                        source_username=db_config["username"],
+                        source_password=source_password,
+                        source_database=db_config["database"],
+                        source_schema=db_config["schema"],
+                        force_clone=force_clone,
+                        chisel_config=chisel_config,
+                        project_data=project_data,
+                    )
+
+                    if not result.get("success"):
+                        raise RuntimeError(f"Remote source clone failed: {result.get('errors', ['Unknown error'])}")
+
+                    return  # Skip normal create flow
+                elif clone_type == "deployment":
+                    # Local deployment clone - extract reference
+                    clone_from = clone_from.get("reference")
+                else:
+                    logger.warning(f"Unknown clone-from type: {clone_type}, skipping clone")
+                    clone_from = None
+            # else: clone_from is a string (legacy format), use as-is
 
         if clone_from:
-            # Handle database cloning
+            # Handle local database cloning (type: deployment)
             source_database = generate_resource_identifier(project_name, clone_from, "_")
             source_schema = generate_resource_identifier(project_name, clone_from, "_")
             logger.info(f"Clone requested from {source_database} to {db_database} (force={force_clone})")
@@ -545,8 +622,9 @@ class DatabaseManager:
                 project_name, infrastructure_namespace
             )
         else:
-            # Shared database configuration
-            db_host = settings.DATABASE_HOST
+            # Shared database configuration - use cluster-specific fully qualified hostname
+            # for cross-namespace DNS resolution (user pods are in different namespaces)
+            db_host = get_database_server(cluster_name)
             admin_username = settings.DATABASE_ADMIN_NAME
             admin_password = settings.DATABASE_ADMIN_PASSWORD
             logger.info(f"Using shared PostgreSQL for {project_name} (host: {db_host})")
@@ -1046,6 +1124,23 @@ class DatabaseManager:
 
         return False
 
+    def _get_remote_source_config(self, project_data: dict[str, Any], remote_source_name: str) -> dict[str, Any] | None:
+        """
+        Get remote source configuration by name from project data.
+
+        Args:
+            project_data: Project configuration data
+            remote_source_name: Name of the remote source to find
+
+        Returns:
+            Remote source configuration dict or None if not found
+        """
+        remote_sources = project_data.get("remote-sources", [])
+        for source in remote_sources:
+            if source.get("name") == remote_source_name:
+                return source
+        return None
+
     async def _get_existing_database_credentials_from_k8s(
         self, deployment_name: str, deployment: dict[str, Any]
     ) -> DatabaseSecret | None:
@@ -1191,6 +1286,60 @@ class DatabaseManager:
             if source_conn:
                 await source_conn.close()
 
+    async def _clone_database_with_chisel_tunnel(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_host: str,
+        source_port: int,
+        source_username: str,
+        source_password: str,
+        source_database: str,
+        source_schema: str,
+        force_clone: bool,
+        chisel_config: dict[str, Any],
+        project_data: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """
+        Clone database from external source via Chisel tunnel.
+
+        Internal method that handles tunnel setup/teardown and delegates the actual
+        clone operation to the direct clone implementation.
+        """
+        from opi.utils.chisel_helper import chisel_tunnel
+
+        logger.info(
+            f"Starting database clone via Chisel tunnel: {project_name}/{deployment_name} "
+            f"<- {source_host}:{source_port}/{source_database}.{source_schema} "
+            f"(via {chisel_config['server-url']})"
+        )
+
+        async with chisel_tunnel(chisel_config, source_host, source_port, project_data) as endpoint:
+            logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']} -> {source_host}:{source_port}")
+
+            # Call the direct clone method with tunneled connection
+            result = await self._execute_external_clone(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_host=endpoint["host"],
+                source_port=endpoint["port"],
+                source_username=source_username,
+                source_password=source_password,
+                source_database=source_database,
+                source_schema=source_schema,
+                force_clone=force_clone,
+            )
+
+            # Add tunnel info to result
+            result["tunnel"] = {
+                "used": True,
+                "server": chisel_config["server-url"],
+                "local_endpoint": f"{endpoint['host']}:{endpoint['port']}",
+                "remote_endpoint": f"{source_host}:{source_port}",
+            }
+
+            return result
+
     async def clone_database_from_external_source(
         self,
         project_name: str,
@@ -1202,12 +1351,17 @@ class DatabaseManager:
         source_database: str,
         source_schema: str,
         force_clone: bool = False,
+        chisel_config: dict[str, Any] | None = None,
+        project_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Orchestrate cloning a database from an external source into a target deployment.
 
         This orchestrator method validates, prepares, and executes cross-cluster database cloning
         by calling existing single-responsibility methods in sequence.
+
+        If chisel_config is provided, a Chisel tunnel is automatically established to reach
+        the source database through the tunnel.
 
         Args:
             project_name: Name of the target project
@@ -1219,6 +1373,11 @@ class DatabaseManager:
             source_database: Source database name
             source_schema: Source schema name
             force_clone: If True, drop existing target database before cloning
+            chisel_config: Optional Chisel tunnel configuration dict with keys:
+                - server-url: Chisel server URL
+                - username: Chisel auth username
+                - password: Chisel auth password (may be encrypted)
+            project_data: Optional project data for password decryption context
 
         Returns:
             Dictionary containing operation results with status and operations list
@@ -1235,6 +1394,54 @@ class DatabaseManager:
             ...     source_schema="amt_staging",
             ...     force_clone=True
             ... )
+        """
+        if chisel_config:
+            # Use Chisel tunnel for the connection
+            return await self._clone_database_with_chisel_tunnel(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_host=source_host,
+                source_port=source_port,
+                source_username=source_username,
+                source_password=source_password,
+                source_database=source_database,
+                source_schema=source_schema,
+                force_clone=force_clone,
+                chisel_config=chisel_config,
+                project_data=project_data,
+            )
+
+        # Direct connection (no tunnel)
+        return await self._execute_external_clone(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=source_host,
+            source_port=source_port,
+            source_username=source_username,
+            source_password=source_password,
+            source_database=source_database,
+            source_schema=source_schema,
+            force_clone=force_clone,
+        )
+
+    async def _execute_external_clone(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_host: str,
+        source_port: int,
+        source_username: str,
+        source_password: str,
+        source_database: str,
+        source_schema: str,
+        force_clone: bool,
+    ) -> dict[str, Any]:
+        """
+        Execute the actual database clone operation.
+
+        Internal method that performs the clone without tunnel handling.
+        Called by clone_database_from_external_source for direct connections
+        and by _clone_database_with_chisel_tunnel for tunneled connections.
         """
         logger.info(
             f"Starting external database clone: {project_name}/{deployment_name} "

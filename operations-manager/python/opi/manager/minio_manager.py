@@ -28,7 +28,12 @@ class MinioManager:
         """
         self.project_manager = project_manager
 
-    async def create_resources_for_deployment(self, project_data: dict[str, Any], deployment: dict[str, Any]) -> None:
+    async def create_resources_for_deployment(
+        self,
+        project_data: dict[str, Any],
+        deployment: dict[str, Any],
+        force_clone_override: bool = False,
+    ) -> None:
         """
         Create MinIO object storage resources for a deployment that has MinIO storage enabled.
 
@@ -38,6 +43,7 @@ class MinioManager:
         Args:
             project_data: The project configuration data
             deployment: The specific deployment configuration
+            force_clone_override: Runtime override for force_clone (from API)
         """
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
@@ -49,10 +55,32 @@ class MinioManager:
 
         # Check if this deployment should be cloned from another deployment
         clone_from = deployment.get("clone-from")
+        # Use runtime override if True, otherwise fall back to deployment config
+        force_clone = force_clone_override or deployment.get("force-clone", False)
         if clone_from:
-            logger.info(f"Deployment {deployment_name} has clone-from: {clone_from}, using clone instead of create")
-            await self.clone_minio_from_deployment(project_data, deployment, clone_from)
-            return
+            # Handle clone-from configuration - can be dict (new format) or string (legacy)
+            if isinstance(clone_from, dict):
+                clone_type = clone_from.get("type")
+                if clone_type == "remote-source":
+                    # Handle remote source cloning directly
+                    remote_source_name = clone_from.get("reference")
+                    await self._handle_remote_source_clone(
+                        project_name, deployment_name, remote_source_name, project_data, force_clone
+                    )
+                    return
+                elif clone_type == "deployment":
+                    # Local deployment clone - extract reference
+                    source_deployment = clone_from.get("reference")
+                    logger.info(f"Deployment {deployment_name} has clone-from deployment: {source_deployment}")
+                    await self.clone_minio_from_deployment(project_data, deployment, source_deployment)
+                    return
+                else:
+                    logger.warning(f"Unknown clone-from type: {clone_type}, proceeding with normal resource creation")
+            else:
+                # Legacy format: clone_from is a string (deployment name)
+                logger.info(f"Deployment {deployment_name} has clone-from: {clone_from}, using clone instead of create")
+                await self.clone_minio_from_deployment(project_data, deployment, clone_from)
+                return
 
         logger.info(f"Processing MinIO resources for project: {project_name}, deployment: {deployment_name}")
 
@@ -1075,6 +1103,132 @@ class MinioManager:
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to cleanup validation alias {temp_alias}: {cleanup_error}")
 
+    async def _handle_remote_source_clone(
+        self,
+        project_name: str,
+        deployment_name: str,
+        remote_source_name: str,
+        project_data: dict[str, Any],
+        force_clone: bool,
+    ) -> None:
+        """
+        Handle MinIO cloning from a remote source.
+
+        Args:
+            project_name: Name of the target project
+            deployment_name: Name of the target deployment
+            remote_source_name: Name of the remote source in project config
+            project_data: Project configuration data
+            force_clone: If True, overwrite existing bucket
+        """
+        from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
+
+        remote_source = self._get_remote_source_config(project_data, remote_source_name)
+        if not remote_source:
+            raise ValueError(f"Remote source '{remote_source_name}' not found in project configuration")
+
+        minio_config = remote_source.get("services", {}).get("minio-storage", {})
+        if not minio_config:
+            logger.debug(f"No minio-storage service in remote source '{remote_source_name}', skipping MinIO clone")
+            return
+
+        chisel_config = remote_source.get("chisel")
+
+        # Decrypt credentials using project's AGE key
+        project_private_key = await get_decoded_project_private_key(project_data)
+        access_key = await decrypt_password_smart(minio_config.get("access-key", ""), project_private_key)
+        secret_key = await decrypt_password_smart(minio_config.get("secret-key", ""), project_private_key)
+
+        logger.info(f"Cloning MinIO from remote source '{remote_source_name}' for deployment {deployment_name}")
+
+        result = await self.clone_bucket_from_external_source(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=minio_config["host"],
+            source_port=minio_config.get("port", 9000),
+            source_access_key=access_key,
+            source_secret_key=secret_key,
+            source_bucket=minio_config["bucket"],
+            source_secure=minio_config.get("secure", False),
+            force_clone=force_clone,
+            chisel_config=chisel_config,
+            project_data=project_data,
+        )
+
+        if not result.get("success"):
+            raise RuntimeError(f"Remote source MinIO clone failed: {result.get('errors', ['Unknown error'])}")
+
+    def _get_remote_source_config(self, project_data: dict[str, Any], remote_source_name: str) -> dict[str, Any] | None:
+        """
+        Get remote source configuration by name from project data.
+
+        Args:
+            project_data: Project configuration data
+            remote_source_name: Name of the remote source to find
+
+        Returns:
+            Remote source configuration dict or None if not found
+        """
+        remote_sources = project_data.get("remote-sources", [])
+        for source in remote_sources:
+            if source.get("name") == remote_source_name:
+                return source
+        return None
+
+    async def _clone_bucket_with_chisel_tunnel(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_host: str,
+        source_port: int,
+        source_access_key: str,
+        source_secret_key: str,
+        source_bucket: str,
+        source_secure: bool,
+        force_clone: bool,
+        chisel_config: dict[str, Any],
+        project_data: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """
+        Clone MinIO bucket from external source via Chisel tunnel.
+
+        Internal method that handles tunnel setup/teardown and delegates the actual
+        clone operation to the direct clone implementation.
+        """
+        from opi.utils.chisel_helper import chisel_tunnel
+
+        logger.info(
+            f"Starting MinIO clone via Chisel tunnel: {project_name}/{deployment_name} "
+            f"<- {source_host}:{source_port}/{source_bucket} "
+            f"(via {chisel_config['server-url']})"
+        )
+
+        async with chisel_tunnel(chisel_config, source_host, source_port, project_data) as endpoint:
+            logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']} -> {source_host}:{source_port}")
+
+            # Call the direct clone method with tunneled connection
+            result = await self._execute_external_bucket_clone(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_host=endpoint["host"],
+                source_port=endpoint["port"],
+                source_access_key=source_access_key,
+                source_secret_key=source_secret_key,
+                source_bucket=source_bucket,
+                source_secure=source_secure,
+                force_clone=force_clone,
+            )
+
+            # Add tunnel info to result
+            result["tunnel"] = {
+                "used": True,
+                "server": chisel_config["server-url"],
+                "local_endpoint": f"{endpoint['host']}:{endpoint['port']}",
+                "remote_endpoint": f"{source_host}:{source_port}",
+            }
+
+            return result
+
     async def clone_bucket_from_external_source(
         self,
         project_name: str,
@@ -1086,12 +1240,17 @@ class MinioManager:
         source_bucket: str,
         source_secure: bool = False,
         force_clone: bool = False,
+        chisel_config: dict[str, Any] | None = None,
+        project_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Orchestrate cloning a MinIO bucket from an external source into a target deployment.
 
         This orchestrator method validates, prepares, and executes cross-cluster bucket cloning
         by calling existing single-responsibility methods in sequence.
+
+        If chisel_config is provided, a Chisel tunnel is automatically established to reach
+        the source MinIO through the tunnel.
 
         Args:
             project_name: Name of the target project
@@ -1103,6 +1262,11 @@ class MinioManager:
             source_bucket: Source bucket name
             source_secure: Whether source uses HTTPS (default: False)
             force_clone: If True, overwrite existing target bucket (default: False)
+            chisel_config: Optional Chisel tunnel configuration dict with keys:
+                - server-url: Chisel server URL
+                - username: Chisel auth username
+                - password: Chisel auth password (may be encrypted)
+            project_data: Optional project data for password decryption context
 
         Returns:
             Dictionary containing operation results with status and operations list
@@ -1119,6 +1283,54 @@ class MinioManager:
             ...     source_secure=False,
             ...     force_clone=True
             ... )
+        """
+        if chisel_config:
+            # Use Chisel tunnel for the connection
+            return await self._clone_bucket_with_chisel_tunnel(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                source_host=source_host,
+                source_port=source_port,
+                source_access_key=source_access_key,
+                source_secret_key=source_secret_key,
+                source_bucket=source_bucket,
+                source_secure=source_secure,
+                force_clone=force_clone,
+                chisel_config=chisel_config,
+                project_data=project_data,
+            )
+
+        # Direct connection (no tunnel)
+        return await self._execute_external_bucket_clone(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=source_host,
+            source_port=source_port,
+            source_access_key=source_access_key,
+            source_secret_key=source_secret_key,
+            source_bucket=source_bucket,
+            source_secure=source_secure,
+            force_clone=force_clone,
+        )
+
+    async def _execute_external_bucket_clone(
+        self,
+        project_name: str,
+        deployment_name: str,
+        source_host: str,
+        source_port: int,
+        source_access_key: str,
+        source_secret_key: str,
+        source_bucket: str,
+        source_secure: bool,
+        force_clone: bool,
+    ) -> dict[str, Any]:
+        """
+        Execute the actual bucket clone operation.
+
+        Internal method that performs the clone without tunnel handling.
+        Called by clone_bucket_from_external_source for direct connections
+        and by _clone_bucket_with_chisel_tunnel for tunneled connections.
         """
         logger.info(
             f"Starting external bucket clone: {project_name}/{deployment_name} "

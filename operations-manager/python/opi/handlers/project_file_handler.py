@@ -393,6 +393,9 @@ class ProjectFileHandler:
         """
         Extract the publication path from a component definition by name.
 
+        This method returns the first path as a string for backward compatibility.
+        For multiple paths, use extract_component_paths() instead.
+
         Args:
             project_data: The parsed project data
             component_name: Name of the component to find
@@ -402,8 +405,22 @@ class ProjectFileHandler:
             The publication path of the component or default_path if not found
         """
         # Use JSONPath with extended parser to find the component by name and extract its path
-        path = f"$.components[?(@.name='{component_name}')].path"
-        component_path = self.extract_value_by_path(project_data, path, default_path)
+        json_path = f"$.components[?(@.name='{component_name}')].path"
+        path_config = self.extract_value_by_path(project_data, json_path, default_path)
+
+        # Handle both string and list formats
+        if isinstance(path_config, str):
+            component_path = path_config
+        elif isinstance(path_config, list) and path_config:
+            # Return first path for backward compatibility
+            first_item = path_config[0]
+            if isinstance(first_item, dict):
+                # Use 'match' key (new format)
+                component_path = first_item.get("match", default_path)
+            else:
+                component_path = str(first_item)
+        else:
+            component_path = default_path
 
         if component_path != default_path:
             logger.info(f"Found path '{component_path}' for component '{component_name}'")
@@ -411,6 +428,60 @@ class ProjectFileHandler:
             logger.debug(f"No path found for component '{component_name}', using default '{default_path}'")
 
         return component_path
+
+    def extract_component_paths(self, project_data: dict[str, Any], component_name: str) -> list[dict[str, str | None]]:
+        """
+        Extract publication paths from a component definition.
+
+        Supports both simple string format and list format with optional rewrite.
+
+        Args:
+            project_data: The parsed project data
+            component_name: Name of the component to find paths for
+
+        Returns:
+            List of path configs: [{"match": "/api", "rewrite": None}, ...]
+
+        Raises:
+            NotImplementedError: If rewrite is specified (not yet implemented)
+
+        Examples:
+            # Simple string format
+            path: "/"
+            -> [{"match": "/", "rewrite": None}]
+
+            # List format
+            path:
+              - match: "/api"
+              - match: "/v1"
+            -> [{"match": "/api", "rewrite": None}, {"match": "/v1", "rewrite": None}]
+        """
+        json_path = f"$.components[?(@.name='{component_name}')].path"
+        path_config = self.extract_value_by_path(project_data, json_path, "/")
+
+        # Normalize to list format
+        if isinstance(path_config, str):
+            logger.debug(f"Found single path '{path_config}' for component '{component_name}'")
+            return [{"match": path_config, "rewrite": None}]
+        elif isinstance(path_config, list):
+            result = []
+            for p in path_config:
+                if isinstance(p, dict):
+                    rewrite = p.get("rewrite")
+                    match_value = p.get("match", "/")
+                    if rewrite is not None:
+                        raise NotImplementedError(
+                            f"Path rewrite is not yet implemented. "
+                            f"Found rewrite='{rewrite}' for match='{match_value}' in component '{component_name}'"
+                        )
+                    result.append({"match": match_value, "rewrite": None})
+                else:
+                    result.append({"match": str(p), "rewrite": None})
+            logger.info(f"Found {len(result)} path(s) for component '{component_name}'")
+            return result
+
+        logger.debug(f"No path found for component '{component_name}', using default '/'")
+        return [{"match": "/", "rewrite": None}]
 
     def extract_component_storage(self, project_data: dict[str, Any], component_name: str) -> list[dict[str, Any]]:
         """
@@ -486,6 +557,68 @@ class ProjectFileHandler:
             return cleaned_env_vars
         else:
             logger.debug(f"No user environment variables found for component '{component_name}'")
+            return {}
+
+    async def extract_deployment_component_user_env_vars(
+        self, project_data: dict[str, Any], deployment_name: str, component_reference: str
+    ) -> dict[str, str]:
+        """
+        Extract user environment variables from a deployment component by deployment and component reference.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component in the deployment
+
+        Returns:
+            Dictionary of user environment variables or empty dict if none found
+        """
+        private_key = await get_decoded_project_private_key(project_data)
+
+        # Use JSONPath to find the deployment component and extract its user-env-vars
+        path = (
+            f"$.deployments[?(@.name=='{deployment_name}')]"
+            f".components[?(@.reference=='{component_reference}')].user-env-vars"
+        )
+        user_env_vars_str = self.extract_value_by_path(project_data, path, {}, private_key)
+        user_env_vars = validate_and_parse_env_vars(user_env_vars_str)
+
+        if user_env_vars:
+            logger.info(
+                f"Found {len(user_env_vars)} deployment-level user environment variable(s) "
+                f"for component '{component_reference}' in deployment '{deployment_name}'"
+            )
+            # Clean up and decrypt user environment variables
+            cleaned_env_vars = {}
+
+            for key, value in user_env_vars.items():
+                # Convert to string and clean up quotes
+                value_str = str(value) if value is not None else ""
+                # Normalize and decrypt the value
+                normalized_value = self._normalize_age_content(value_str)
+                value_str = decrypt_password_smart_sync(normalized_value, private_key)
+
+                # Handle regular values with quote cleaning
+                if value_str == '""' or value_str == "''":
+                    # Convert quoted empty strings to actual empty strings
+                    cleaned_env_vars[key] = ""
+                elif len(value_str) >= 2:
+                    # Remove surrounding quotes if present (but preserve internal quotes)
+                    if (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2) or (
+                        value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2
+                    ):
+                        cleaned_env_vars[key] = value_str[1:-1]
+                    else:
+                        cleaned_env_vars[key] = value_str
+                else:
+                    cleaned_env_vars[key] = value_str
+
+            return cleaned_env_vars
+        else:
+            logger.debug(
+                f"No deployment-level user environment variables found for component '{component_reference}' "
+                f"in deployment '{deployment_name}'"
+            )
             return {}
 
     def get_persistent_storage(self, storage_configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -710,9 +843,7 @@ class ProjectFileHandler:
         logger.debug("No container registries configured in project file")
         return []
 
-    def extract_component_registry(
-        self, project_data: dict[str, Any], component_name: str
-    ) -> dict[str, Any] | None:
+    def extract_component_registry(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
         """
         Extract registry configuration for a component by resolving its registry reference.
 

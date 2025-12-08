@@ -395,6 +395,50 @@ class KubectlConnector:
             logger.error(f"Failed to delete namespace {namespace}: {stderr}")
             return False
 
+    async def wait_for_capsule_tenant_label(self, namespace: str, timeout: int = 30) -> bool:
+        """
+        Wait for Capsule to assign the tenant label to a namespace.
+
+        Capsule's admission webhook assigns an ownerReference and tenant label to namespaces
+        created by tenant users. Once this label is present, it's safe to modify the namespace
+        with labels and annotations.
+
+        Args:
+            namespace: The namespace to check
+            timeout: Maximum time to wait in seconds (default: 30)
+
+        Returns:
+            True if the tenant label was found within the timeout, False otherwise
+        """
+        logger.info(f"Waiting for Capsule to assign tenant label to namespace '{namespace}'")
+
+        start_time = asyncio.get_event_loop().time()
+        poll_interval = 1.0
+
+        while True:
+            elapsed = asyncio.get_event_loop().time() - start_time
+
+            if elapsed >= timeout:
+                logger.error(
+                    f"Timeout waiting for Capsule tenant label on namespace '{namespace}' after {timeout} seconds"
+                )
+                return False
+
+            args = ["get", "namespace", namespace, "-o", "jsonpath={.metadata.labels.capsule\\.clastix\\.io/tenant}"]
+
+            stdout, stderr, code = await self._run_kubectl_command(args)
+
+            if code == 0 and stdout.strip():
+                tenant_name = stdout.strip()
+                logger.info(
+                    f"Capsule tenant label found on namespace '{namespace}': tenant='{tenant_name}' "
+                    f"(waited {elapsed:.1f}s)"
+                )
+                return True
+
+            logger.debug(f"Capsule tenant label not yet present on namespace '{namespace}', waiting...")
+            await asyncio.sleep(poll_interval)
+
     async def encrypt_file_with_sops(self, file_path: str, public_key: str, output_path: str) -> bool:
         """
         Encrypt a file using SOPS with the specified AGE public key.

@@ -1,0 +1,46 @@
+# Algoritmeregister Bootstrap API Actions
+# Purpose: Initialize organization in Algoritmeregister backend after deployment
+---
+variables:
+  org_code: "RIG"
+  org_name: "Rijks ICT Gilde"
+  org_type: "adviescollege"
+  org_flow: "ictu_last"
+
+bootstrap:
+  - name: "algoritmeregister-organization-setup"
+    description: "Create RIG organization and enable public visibility"
+    base_url: "https://{{ PUBLIC_HOST }}"
+
+    authentication:
+      type: "keycloak-password"
+      token_url: "{{ OIDC_URL }}/realms/{{ OIDC_REALM }}/protocol/openid-connect/token"
+      client_id: "authentication-client"
+      username: "{{ bootstrap_username }}"
+      password: "{{ bootstrap_password }}"
+
+    actions:
+      - name: "create-organization"
+        description: "POST /aanleverapi/organisation - Create organization"
+        as: "org_response"
+        method: "POST"
+        path: "/aanleverapi/organisation"
+        headers:
+          Content-Type: "application/json"
+        body: |
+          {
+            "name": "{{ org_name }}",
+            "code": "{{ org_code }}",
+            "org_id": "{{ org_code }}",
+            "type": "{{ org_type }}",
+            "flow": "{{ org_flow }}"
+          }
+        expected_status: [200, 201, 409]
+        fail_on_error: false
+
+      - name: "enable-organization-visibility"
+        description: "PUT /organisation/{org_id}/show_page/true - Make organization publicly visible"
+        method: "PUT"
+        path: "/organisation/{{ org_code }}/show_page/true"
+        expected_status: [200, 204]
+        fail_on_error: false

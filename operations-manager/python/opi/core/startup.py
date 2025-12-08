@@ -184,6 +184,62 @@ async def get_project_files(repo_root_folder: str) -> list[str]:
     return project_files
 
 
+async def refresh_projects_from_git() -> int:
+    """
+    Refresh the project cache by fetching the latest from Git and reloading all project files.
+
+    This function:
+    1. Creates a new Git connector and fetches the latest changes
+    2. Clears the existing project cache
+    3. Reloads all project files from the Git repository
+    4. Registers each project in the ProjectService
+
+    Returns:
+        Number of projects successfully loaded
+    """
+    logger.info("Refreshing projects from Git...")
+
+    project_service = get_project_service()
+
+    # Clear existing projects to reload fresh data
+    project_service.clear_all_projects()
+
+    # Create a new Git connector to fetch the latest changes
+    try:
+        git_connector = await create_git_connector_for_project_files("refresh projects from git")
+        projects_repo_root_dir = await git_connector.get_working_dir()
+        project_files = await get_project_files(projects_repo_root_dir)
+        await git_connector.close()
+    except Exception as e:
+        logger.error(f"Failed to get project files from Git: {e}")
+        raise
+
+    loaded_count = 0
+    for project_file in project_files:
+        project_manager = ProjectManager(project_file_relative_path=project_file)
+        try:
+            project_file_base_name = os.path.basename(project_file)
+            logger.debug(f"Refreshing project file: {project_file_base_name}")
+
+            # Load project data
+            api_key = await project_manager.get_api_key()
+            project_name = await project_manager.get_name()
+            project_data = await project_manager.get_contents()
+
+            # Register project with users and full project data
+            project_service.register(
+                project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
+            )
+            loaded_count += 1
+        except Exception as e:
+            logger.error(f"Error refreshing project file {project_file}: {e}")
+        finally:
+            await project_manager.close()
+
+    logger.info(f"Refreshed {loaded_count} projects from Git")
+    return loaded_count
+
+
 async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnector) -> bool:
     """
     Ensure that all project namespaces have project-specific SOPS secrets.

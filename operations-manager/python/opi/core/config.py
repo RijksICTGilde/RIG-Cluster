@@ -14,6 +14,7 @@ PROJECT_NAME: str = "OPI"
 VERSION: str = "0.1.0"  # replace in CI/CD pipeline
 PROJECT_DESCRIPTION: str = "OPI - Operational Platform Interface"
 
+
 def _check_env_file_for_environment_var(file_path: str) -> None:
     """
     Check if an .env file contains ENVIRONMENT variable and warn if found.

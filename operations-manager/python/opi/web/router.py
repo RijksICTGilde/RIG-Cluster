@@ -674,7 +674,7 @@ async def project_details(request: Request, project_name: str):
         templates = get_templates()
         user = get_current_user(request)
         # TODO: this logic has to be centralized
-        user_email = "robbert.uittenbroek@rijksoverheid.nl" # user.get("email", "").lower()
+        user_email = "robbert.uittenbroek@rijksoverheid.nl"  # user.get("email", "").lower()
 
         # Get project service to validate access
         project_service = get_project_service()
@@ -975,20 +975,30 @@ async def project_details(request: Request, project_name: str):
 
 @web_router.get("/projects", response_class=HTMLResponse)
 @requires_sso
-async def projects_overview(request: Request):
+async def projects_overview(request: Request, refresh: bool = False):
     """
     Serve the projects overview page with table layout.
     Shows only projects where the current user's email is in the users list.
+
+    Args:
+        request: The HTTP request
+        refresh: If True, refresh project data from Git before rendering
 
     Returns:
         HTML response with a table showing user's projects and their status
     """
     try:
+        from opi.core.startup import refresh_projects_from_git
         from opi.services.project_service import get_project_service
 
         templates = get_templates()
         user = get_current_user(request)
-        user_email = "robbert.uittenbroek@rijksoverheid.nl" # user.get("email", "").lower()
+        user_email = "robbert.uittenbroek@rijksoverheid.nl"  # user.get("email", "").lower()
+
+        # Refresh projects from Git if requested
+        if refresh:
+            logger.info("Refreshing projects from Git (user requested)")
+            await refresh_projects_from_git()
 
         # Get project service to filter by user access
         project_service = get_project_service()

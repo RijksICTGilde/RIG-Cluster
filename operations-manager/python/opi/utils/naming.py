@@ -961,3 +961,43 @@ def generate_registry_secret_name(deployment_name: str, registry_name: str) -> s
     """
     normalized_registry = _sanitize_for_lowercase(registry_name)
     return f"{deployment_name}-{normalized_registry}-secret"
+
+
+def generate_ingress_name_from_path(base_name: str, path: str, max_length: int = 63) -> str:
+    """
+    Generate an ingress resource name that includes the path for uniqueness.
+
+    When a component exposes multiple paths, each path needs its own Ingress resource
+    with a unique name. This function creates that unique name by appending a
+    normalized version of the path to the base resource name.
+
+    Args:
+        base_name: Base resource name (e.g., "deployment-component")
+        path: The URL path (e.g., "/api", "/v1/users")
+        max_length: Maximum length for Kubernetes names (default: 63)
+
+    Returns:
+        Unique ingress name suitable for Kubernetes resources
+
+    Examples:
+        >>> generate_ingress_name_from_path("main-api", "/")
+        'main-api'
+        >>> generate_ingress_name_from_path("main-api", "/api")
+        'main-api-api'
+        >>> generate_ingress_name_from_path("main-api", "/v1/users")
+        'main-api-v1users'
+        >>> generate_ingress_name_from_path("main-api", "/health-check")
+        'main-api-healthcheck'
+    """
+    # Root path doesn't add suffix
+    if path == "/" or not path:
+        return sanitize_kubernetes_name(base_name, max_length)
+
+    # Normalize path: remove leading slash, replace / with empty, lowercase
+    path_suffix = path.lstrip("/").replace("/", "").lower()
+    path_suffix = re.sub(r"[^a-z0-9]", "", path_suffix)
+
+    if not path_suffix:
+        return sanitize_kubernetes_name(base_name, max_length)
+
+    return sanitize_kubernetes_name(f"{base_name}-{path_suffix}", max_length)

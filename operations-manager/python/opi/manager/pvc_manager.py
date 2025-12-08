@@ -164,8 +164,8 @@ class PVCManager:
         Raises:
             Exception: If manifest creation fails
         """
+        from opi.core.cluster_config import get_storage_access_modes, get_storage_class_name
         from opi.utils.naming import generate_pvc_name, generate_unique_name
-        from opi.utils.project_utils import get_storage_access_modes, get_storage_class_name
 
         created_files = []
         deployment_name = deployment["name"]
