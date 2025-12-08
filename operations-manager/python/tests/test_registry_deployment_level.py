@@ -1,7 +1,5 @@
 """Test registry configuration at deployment component level."""
 
-from opi.handlers.project_file_handler import ProjectFileHandler
-
 
 def test_registries_in_project_data():
     """Test that registries list exists in project data."""
@@ -11,7 +9,7 @@ def test_registries_in_project_data():
                 "name": "my-registry",
                 "url": "registry.example.com",
                 "username": "testuser",
-                "password": "encrypted-password"
+                "password": "encrypted-password",
             }
         ]
     }
@@ -31,26 +29,10 @@ def test_registry_from_deployment_component():
 
     project_data = {
         "registries": [
-            {
-                "name": "github-packages",
-                "url": "ghcr.io",
-                "username": "myuser",
-                "password": "encrypted-pat"
-            },
-            {
-                "name": "docker-hub",
-                "url": "docker.io",
-                "username": "mycompany",
-                "password": "encrypted-token"
-            }
+            {"name": "github-packages", "url": "ghcr.io", "username": "myuser", "password": "encrypted-pat"},
+            {"name": "docker-hub", "url": "docker.io", "username": "mycompany", "password": "encrypted-token"},
         ],
-        "components": [
-            {
-                "name": "frontend",
-                "type": "deployment",
-                "ports": {"inbound": [8080]}
-            }
-        ],
+        "components": [{"name": "frontend", "type": "deployment", "ports": {"inbound": [8080]}}],
         "deployments": [
             {
                 "name": "production",
@@ -60,11 +42,11 @@ def test_registry_from_deployment_component():
                     {
                         "reference": "frontend",
                         "image": "ghcr.io/myorg/frontend:v1.2.3",
-                        "registry": "github-packages"  # Registry at deployment component level
+                        "registry": "github-packages",  # Registry at deployment component level
                     }
-                ]
+                ],
             }
-        ]
+        ],
     }
 
     # Simulate what project_manager does
@@ -95,18 +77,13 @@ def test_multiple_registries_same_url():
     """Test that multiple registries can have the same URL with different credentials."""
     project_data = {
         "registries": [
-            {
-                "name": "github-org-packages",
-                "url": "ghcr.io",
-                "username": "org-bot",
-                "password": "encrypted-org-token"
-            },
+            {"name": "github-org-packages", "url": "ghcr.io", "username": "org-bot", "password": "encrypted-org-token"},
             {
                 "name": "github-user-packages",
                 "url": "ghcr.io",
                 "username": "myuser",
-                "password": "encrypted-user-token"
-            }
+                "password": "encrypted-user-token",
+            },
         ],
         "deployments": [
             {
@@ -115,16 +92,16 @@ def test_multiple_registries_same_url():
                     {
                         "reference": "frontend",
                         "image": "ghcr.io/myorg/frontend:latest",
-                        "registry": "github-org-packages"
+                        "registry": "github-org-packages",
                     },
                     {
                         "reference": "backend",
                         "image": "ghcr.io/myuser/backend:latest",
-                        "registry": "github-user-packages"
-                    }
-                ]
+                        "registry": "github-user-packages",
+                    },
+                ],
             }
-        ]
+        ],
     }
 
     registries = project_data.get("registries", [])
@@ -151,12 +128,7 @@ def test_registry_optional_on_deployment_component():
     """Test that registry field is optional on deployment components."""
     project_data = {
         "registries": [
-            {
-                "name": "private-registry",
-                "url": "registry.example.com",
-                "username": "user",
-                "password": "pass"
-            }
+            {"name": "private-registry", "url": "registry.example.com", "username": "user", "password": "pass"}
         ],
         "deployments": [
             {
@@ -164,17 +136,13 @@ def test_registry_optional_on_deployment_component():
                 "components": [
                     {
                         "reference": "nginx",
-                        "image": "nginx:alpine"
+                        "image": "nginx:alpine",
                         # No registry field - public image
                     },
-                    {
-                        "reference": "custom-app",
-                        "image": "registry.example.com/app:v1",
-                        "registry": "private-registry"
-                    }
-                ]
+                    {"reference": "custom-app", "image": "registry.example.com/app:v1", "registry": "private-registry"},
+                ],
             }
-        ]
+        ],
     }
 
     deployment = project_data["deployments"][0]

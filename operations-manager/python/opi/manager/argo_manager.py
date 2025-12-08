@@ -835,8 +835,9 @@ class ArgoManager:
                     logger.info(f"Infrastructure application '{app_name}' is ready!")
                     return True
 
-                # Check for failure states
-                if health_status in ["Degraded", "Missing"]:
+                # Check for failure states - only Degraded is a true failure
+                # "Missing" means resources are still being created, which is expected during initial deployment
+                if health_status == "Degraded":
                     error_msg = f"Infrastructure application '{app_name}' is in failed state: {health_status}"
                     logger.error(error_msg)
                     # Get more details from status
@@ -846,7 +847,19 @@ class ArgoManager:
                     raise RuntimeError(error_msg)
 
                 # Not ready yet, wait and retry
-                logger.debug(f"Infrastructure not ready yet, waiting {poll_interval}s... (elapsed: {elapsed_time}s)")
+                # Log different messages based on health status for clarity
+                if health_status == "Missing":
+                    logger.info(
+                        f"Infrastructure resources are being created, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
+                    )
+                elif health_status == "Progressing":
+                    logger.info(
+                        f"Infrastructure resources are progressing, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
+                    )
+                else:
+                    logger.debug(
+                        f"Infrastructure not ready yet (health={health_status}), waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
+                    )
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 

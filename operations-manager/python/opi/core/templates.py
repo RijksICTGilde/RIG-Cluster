@@ -32,6 +32,7 @@ def get_service_name(service: str | dict[str, Any]) -> str:
         return next(iter(service.keys()), "")
     return str(service)
 
+
 # Get the opi package directory (operations-manager/python/opi)
 OPI_DIR = Path(__file__).parent.parent
 TEMPLATES_DIR = OPI_DIR / "templates"

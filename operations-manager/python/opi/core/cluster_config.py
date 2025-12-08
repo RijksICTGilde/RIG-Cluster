@@ -19,6 +19,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
         },
+        "uses_capsule": False,
     },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
@@ -36,6 +37,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,  # Only generate HTTPS redirect URIs in production
         },
+        "uses_capsule": True,
     },
 }
 
@@ -379,3 +381,23 @@ def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) 
     infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
     project_clean = _sanitize_for_lowercase(project_name)
     return f"{project_clean}-db-rw.{infrastructure_namespace}.svc.cluster.local"
+
+
+def uses_capsule(cluster_name: str) -> bool:
+    """
+    Check if the cluster uses Capsule multi-tenancy.
+
+    When Capsule is enabled, namespace creation requires waiting for
+    Capsule to assign the tenant label before modifications can be made.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        True if the cluster uses Capsule, False otherwise
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("uses_capsule", False)

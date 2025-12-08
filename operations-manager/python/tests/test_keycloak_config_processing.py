@@ -211,14 +211,13 @@ class TestKeycloakRealmSetup:
         config = {"template": "sso-only", "variables": {}}
 
         # Mock dependencies
-        self.mock_project_manager.get_contents = AsyncMock(
-            return_value={"config": {"age-public-key": "age1test..."}}
-        )
+        self.mock_project_manager.get_contents = AsyncMock(return_value={"config": {"age-public-key": "age1test..."}})
 
-        with patch("opi.manager.keycloak_manager.create_keycloak_connector") as mock_connector, patch(
-            "opi.manager.keycloak_manager.encrypt_age_content"
-        ) as mock_encrypt, patch("opi.manager.keycloak_manager.KeycloakYamlHandler") as mock_handler_class:
-
+        with (
+            patch("opi.manager.keycloak_manager.create_keycloak_connector") as mock_connector,
+            patch("opi.manager.keycloak_manager.encrypt_age_content") as mock_encrypt,
+            patch("opi.manager.keycloak_manager.KeycloakYamlHandler") as mock_handler_class,
+        ):
             mock_keycloak = AsyncMock()
             mock_connector.return_value = mock_keycloak
             mock_encrypt.return_value = "encrypted-password"
@@ -265,14 +264,13 @@ class TestKeycloakRealmSetup:
         }
 
         # Mock dependencies
-        self.mock_project_manager.get_contents = AsyncMock(
-            return_value={"config": {"age-public-key": "age1test..."}}
-        )
+        self.mock_project_manager.get_contents = AsyncMock(return_value={"config": {"age-public-key": "age1test..."}})
 
-        with patch("opi.manager.keycloak_manager.create_keycloak_connector") as mock_connector, patch(
-            "opi.manager.keycloak_manager.encrypt_age_content"
-        ) as mock_encrypt, patch("opi.manager.keycloak_manager.KeycloakYamlHandler") as mock_handler_class:
-
+        with (
+            patch("opi.manager.keycloak_manager.create_keycloak_connector") as mock_connector,
+            patch("opi.manager.keycloak_manager.encrypt_age_content") as mock_encrypt,
+            patch("opi.manager.keycloak_manager.KeycloakYamlHandler") as mock_handler_class,
+        ):
             mock_keycloak = AsyncMock()
             mock_connector.return_value = mock_keycloak
             mock_encrypt.return_value = "encrypted-password"
@@ -311,14 +309,12 @@ class TestKeycloakRealmSetup:
         config = {"template": "nonexistent", "variables": {}}
 
         # Mock dependencies
-        self.mock_project_manager.get_contents = AsyncMock(
-            return_value={"config": {"age-public-key": "age1test..."}}
-        )
+        self.mock_project_manager.get_contents = AsyncMock(return_value={"config": {"age-public-key": "age1test..."}})
 
-        with patch("opi.manager.keycloak_manager.create_keycloak_connector") as mock_connector, patch(
-            "opi.manager.keycloak_manager.encrypt_age_content"
-        ) as mock_encrypt:
-
+        with (
+            patch("opi.manager.keycloak_manager.create_keycloak_connector") as mock_connector,
+            patch("opi.manager.keycloak_manager.encrypt_age_content") as mock_encrypt,
+        ):
             mock_keycloak = AsyncMock()
             mock_connector.return_value = mock_keycloak
             mock_encrypt.return_value = "encrypted-password"
@@ -364,23 +360,17 @@ class TestTemplateFilesExist:
 
     def test_default_template_exists(self):
         """Test that default sso-only template exists."""
-        template_path = (
-            Path(__file__).parent.parent / "opi" / "configs" / "keycloak" / "sso-only.yaml"
-        )
+        template_path = Path(__file__).parent.parent / "opi" / "configs" / "keycloak" / "sso-only.yaml"
         assert template_path.exists(), f"Default template not found: {template_path}"
 
     def test_algoritmeregister_template_exists(self):
         """Test that algoritmeregister template exists."""
-        template_path = (
-            Path(__file__).parent.parent / "opi" / "configs" / "keycloak" / "algoritmeregister.yaml"
-        )
+        template_path = Path(__file__).parent.parent / "opi" / "configs" / "keycloak" / "algoritmeregister.yaml"
         assert template_path.exists(), f"Algoritmeregister template not found: {template_path}"
 
     def test_bootstrap_template_exists(self):
         """Test that bootstrap template exists."""
-        template_path = (
-            Path(__file__).parent.parent / "opi" / "configs" / "keycloak" / "bootstrap.yaml"
-        )
+        template_path = Path(__file__).parent.parent / "opi" / "configs" / "keycloak" / "bootstrap.yaml"
         assert template_path.exists(), f"Bootstrap template not found: {template_path}"
 
 

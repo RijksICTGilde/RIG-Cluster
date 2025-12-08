@@ -32,7 +32,7 @@ variables:
       password: "demo123"
       roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
       groups: ["ICTU"]
-      removeDefaultGroups: true  # Remove default Keycloak group assignments
+      removeDefaultRoles: true  # Remove default Keycloak role assignments
 
     - username: "ictu_user2"
       email: "ictu.user2@example.com"
@@ -41,7 +41,7 @@ variables:
       password: "demo123"
       roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
       groups: ["ICTU"]
-      removeDefaultGroups: true
+      removeDefaultRoles: true
 
     - username: "minbzk_user1"
       email: "minbzk.user1@example.com"
@@ -50,7 +50,7 @@ variables:
       password: "demo123"
       roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
       groups: ["MIN_BZK"]
-      removeDefaultGroups: true
+      removeDefaultRoles: true
 
     - username: "minbzk_user2"
       email: "minbzk.user2@example.com"
@@ -59,7 +59,7 @@ variables:
       password: "demo123"
       roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
       groups: ["MIN_BZK"]
-      removeDefaultGroups: true
+      removeDefaultRoles: true
 
 realms:
   - name: "{{ realm_name }}"
@@ -190,4 +190,4 @@ users:
         temporary: false
     realmRoles: "{{ user.roles }}"
     groups: "{{ user.groups }}"
-    removeDefaultGroups: "{{ user.removeDefaultGroups }}"
+    removeDefaultRoles: "{{ user.removeDefaultRoles }}"

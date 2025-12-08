@@ -48,11 +48,13 @@ class KeycloakYamlHandler:
         logger.debug(f"Context variables: {list(variables.keys())}")
 
         # Process sections in dependency order
+        # Platform clients must be processed before identity providers since
+        # identity providers may reference platform_client outputs (client_id, client_secret)
         await self._process_realms(config.get("realms"), variables)
+        await self._process_platform_clients(config.get("platformClients"), variables)
         await self._process_identity_providers(config.get("identityProviders"), variables)
         await self._process_authentication_flows(config.get("authenticationFlows"), variables)
         await self._process_client_scopes(config.get("clientScopes"), variables)
-        await self._process_platform_clients(config.get("platformClients"), variables)
         await self._process_clients(config.get("clients"), variables)
         await self._process_realm_roles(config.get("realmRoles"), variables)
         await self._process_groups(config.get("groups"), variables)
@@ -665,9 +667,9 @@ class KeycloakYamlHandler:
 
             user_id = user_info["id"]
 
-            # Remove from all default groups if explicitly requested
-            if item.get("removeDefaultGroups", False):
-                await self.keycloak.leave_all_groups(realm_name, user_id)
+            # Remove all default realm roles if explicitly requested
+            if item.get("removeDefaultRoles", False):
+                await self.keycloak.remove_all_realm_roles(realm_name, user_id)
 
             # Assign realm roles if specified
             if "realmRoles" in item:

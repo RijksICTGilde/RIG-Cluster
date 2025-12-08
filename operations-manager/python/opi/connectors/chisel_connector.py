@@ -96,7 +96,10 @@ class ChiselConnector:
             tunnel_spec,
         ]
 
-        logger.info(f"Starting Chisel tunnel: localhost:{local_port} → {remote_host}:{remote_port}")
+        logger.info(
+            f"Starting Chisel tunnel: server={self.server_url}, "
+            f"local=localhost:{local_port} -> remote={remote_host}:{remote_port}"
+        )
 
         self.process = subprocess.Popen(
             cmd,
@@ -107,14 +110,55 @@ class ChiselConnector:
 
         # Wait for tunnel to be ready
         if not self._wait_for_port(local_port):
+            # Collect error output before stopping
+            error_details = self._collect_process_output()
             self.stop_tunnel()
             raise RuntimeError(
-                f"Chisel tunnel failed to start within {self.timeout}s. "
-                f"Check chisel server connectivity and credentials."
+                f"Chisel tunnel failed to connect to {self.server_url} within {self.timeout}s. "
+                f"Remote target: {remote_host}:{remote_port}. "
+                f"Error: {error_details}"
             )
 
-        logger.info(f"✓ Chisel tunnel ready: localhost:{local_port}")
+        logger.info(
+            f"Chisel tunnel established: localhost:{local_port} -> {remote_host}:{remote_port} (via {self.server_url})"
+        )
         return local_port
+
+    def _collect_process_output(self) -> str:
+        """Collect stdout/stderr from the chisel process for error reporting."""
+        if not self.process:
+            return "No process"
+
+        output_lines = []
+
+        # Read stderr if available (chisel logs to stderr)
+        if self.process.stderr:
+            stderr_content = self._read_available_output(self.process.stderr)
+            if stderr_content:
+                output_lines.extend(stderr_content)
+
+        # Read stdout if available
+        if self.process.stdout:
+            stdout_content = self._read_available_output(self.process.stdout)
+            if stdout_content:
+                output_lines.extend(stdout_content)
+
+        return "; ".join(output_lines[-5:]) if output_lines else "No output captured"
+
+    def _read_available_output(self, stream) -> list[str]:
+        """Read available output from a stream without blocking."""
+        import select
+
+        lines = []
+        try:
+            while select.select([stream], [], [], 0)[0]:
+                line = stream.readline()
+                if not line:
+                    break
+                lines.append(line.strip())
+        except (OSError, ValueError) as e:
+            logger.debug(f"Error reading chisel output: {e}")
+        return lines
 
     def stop_tunnel(self):
         """
@@ -186,20 +230,38 @@ class ChiselConnector:
             True if port is listening, False if timeout or process died
         """
         start_time = time.time()
+        check_count = 0
 
         while time.time() - start_time < self.timeout:
+            check_count += 1
+
             # Check if process died
             if self.process.poll() is not None:
+                exit_code = self.process.returncode
                 stderr = self.process.stderr.read() if self.process.stderr else ""
-                logger.error(f"Chisel process died: {stderr}")
+                logger.error(
+                    f"Chisel process exited with code {exit_code} after {check_count} checks. "
+                    f"Server: {self.server_url}. stderr: {stderr}"
+                )
                 return False
 
             # Check if port is listening
             if self._is_port_open("localhost", port):
+                logger.debug(f"Chisel tunnel port {port} is now listening (after {check_count} checks)")
                 return True
+
+            # Log progress every 10 checks (5 seconds)
+            if check_count % 10 == 0:
+                elapsed = time.time() - start_time
+                logger.debug(
+                    f"Waiting for Chisel tunnel on port {port}... ({elapsed:.1f}s elapsed, {check_count} checks)"
+                )
 
             time.sleep(0.5)
 
+        logger.error(
+            f"Chisel tunnel timed out after {self.timeout}s waiting for port {port}. Server: {self.server_url}"
+        )
         return False
 
     @staticmethod

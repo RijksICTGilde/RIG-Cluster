@@ -904,9 +904,7 @@ class DeleteProjectManager:
 
                         # 5.5.1: Delete infrastructure ArgoCD application file from GitOps
                         infra_app_name = generate_infrastructure_application_name(project_name)
-                        infra_app_file_path = generate_gitops_argocd_application_path(
-                            cluster, infra_app_name, ""
-                        )
+                        infra_app_file_path = generate_gitops_argocd_application_path(cluster, infra_app_name, "")
                         logger.info(f"Deleting infrastructure ArgoCD application file: {infra_app_file_path}")
 
                         gitops_connector = await self.project_manager.get_git_connector_for_argocd()
@@ -930,11 +928,9 @@ class DeleteProjectManager:
                             working_dir = await gitops_connector.get_working_dir()
                             project_dir = os.path.join(working_dir, cluster, project_name)
 
-                            kustomization_success = (
-                                self.project_manager._manifest_generator.create_kustomization_files(
-                                    output_dir=project_dir,
-                                    namespace=get_argo_namespace(cluster),
-                                )
+                            kustomization_success = self.project_manager._manifest_generator.create_kustomization_files(
+                                output_dir=project_dir,
+                                namespace=get_argo_namespace(cluster),
                             )
 
                             if kustomization_success:
@@ -946,9 +942,7 @@ class DeleteProjectManager:
                                     }
                                 )
 
-                            commit_message = (
-                                f"Delete infrastructure ArgoCD application for project '{project_name}'"
-                            )
+                            commit_message = f"Delete infrastructure ArgoCD application for project '{project_name}'"
                             await gitops_connector.commit_and_push(commit_message)
                             deletion_results["operations"].append(
                                 {"type": "infrastructure_gitops_commit", "status": "success", "message": commit_message}
@@ -1045,7 +1039,9 @@ class DeleteProjectManager:
                             )
 
                             repo_path = repo_config.get("path", "")
-                            infra_manifest_path = generate_infrastructure_manifest_path(cluster, project_name, repo_path)
+                            infra_manifest_path = generate_infrastructure_manifest_path(
+                                cluster, project_name, repo_path
+                            )
                             logger.info(f"Deleting infrastructure manifests folder: {infra_manifest_path}")
 
                             await manifest_connector.ensure_repo_cloned()
@@ -1089,7 +1085,9 @@ class DeleteProjectManager:
                             f"Skipping infrastructure deletion - {len(remaining_deployments)} deployment(s) still exist"
                         )
                 else:
-                    logger.debug(f"Project '{project_name}' does not use namespace-specific PostgreSQL - skipping infrastructure deletion")
+                    logger.debug(
+                        f"Project '{project_name}' does not use namespace-specific PostgreSQL - skipping infrastructure deletion"
+                    )
 
             except Exception as e:
                 deletion_results["operations"].append(

@@ -3,6 +3,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: "{{ name }}"
   namespace: "{{ namespace }}"
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=false
 spec:
   accessModes:
   {% for mode in access_modes %}

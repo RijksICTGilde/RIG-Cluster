@@ -66,9 +66,12 @@ class ComponentReference(BaseModel):
     image: str = Field(..., description="Image URL for this component", example="nginx:1.21")
 
 
-class AddDeploymentRequest(BaseModel):
+class UpsertDeploymentRequest(BaseModel):
     deploymentName: str = Field(..., description="Name of the deployment", example="production")
     components: list[ComponentReference] = Field(..., description="List of components for this deployment")
+    cloneFrom: str | None = Field(
+        None, description="Deployment name to clone data from (only on create, or if forceClone is true)"
+    )
     forceClone: bool = Field(False, description="Force clone even if target resources exist (runtime parameter)")
 
     model_config = {
@@ -79,6 +82,7 @@ class AddDeploymentRequest(BaseModel):
                     {"reference": "frontend", "image": "ghcr.io/minbzk/amt:pr-597"},
                     {"reference": "backend", "image": "ghcr.io/minbzk/amt-api:v1.2.0"},
                 ],
+                "cloneFrom": "staging",
                 "forceClone": False,
             }
         }
@@ -279,20 +283,24 @@ api_router: APIRouter = APIRouter(
 )
 
 
-@api_router.post("/projects/{project_name}/:add-deployment")
+@api_router.post("/projects/{project_name}/:upsert-deployment")
 @validate_api_token
-async def add_deployment(
-    request: Request, project_name: str, deployment_data: AddDeploymentRequest = Body(...)
+async def upsert_deployment(
+    request: Request, project_name: str, deployment_data: UpsertDeploymentRequest = Body(...)
 ) -> JSONResponse:
     """
-    Add a new deployment to an existing project.
+    Create or update a deployment in an existing project.
+
+    If the deployment doesn't exist, it will be created. If it exists, the component
+    images will be updated. The cloneFrom parameter is only used when creating a new
+    deployment, or when updating with forceClone set to true.
 
     Headers:
         X-API-Key: The API key for the project (required)
 
     Example:
     ```bash
-    curl -X POST "http://localhost:9595/api/projects/my-project/:add-deployment" \
+    curl -X POST "http://localhost:9595/api/projects/my-project/:upsert-deployment" \
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-api-key" \
       -d '{
@@ -300,13 +308,14 @@ async def add_deployment(
         "components": [
           {"reference": "frontend", "image": "ghcr.io/minbzk/amt:pr-597"}
         ],
-        "cloneFrom": "staging"
+        "cloneFrom": "staging",
+        "forceClone": false
       }'
     ```
     """
     project_manager = None
     try:
-        logger.info(f"Adding deployment '{deployment_data.deploymentName}' to project: {project_name}")
+        logger.info(f"Upserting deployment '{deployment_data.deploymentName}' to project: {project_name}")
 
         # Validate deployment name using naming utilities
         sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
@@ -319,36 +328,42 @@ async def add_deployment(
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
-        # Add the deployment to the project YAML
-        result = await project_manager.add_deployment(
+        # Upsert the deployment in the project YAML
+        result = await project_manager.upsert_deployment(
             deployment_name=deployment_data.deploymentName,
             components=deployment_data.components,
+            clone_from=deployment_data.cloneFrom,
+            force_clone=deployment_data.forceClone,
         )
 
         if result["success"]:
-            # Process only the new deployment
+            # Process the deployment
             processing_result = await project_manager.process_project_from_git(
                 f"projects/{project_name}.yaml",
                 deployment_name=deployment_data.deploymentName,
                 force_clone=deployment_data.forceClone,
             )
 
+            # Determine status code based on whether it was created or updated
+            status_code = 201 if result.get("created") else 200
+            action = "created" if result.get("created") else "updated"
+
             content = {
                 "status": "success",
-                "message": f"Deployment '{deployment_data.deploymentName}' added successfully",
+                "message": f"Deployment '{deployment_data.deploymentName}' {action} successfully",
                 "deployment": {
                     "name": deployment_data.deploymentName,
                     "project": project_name,
                     "components": [{"reference": c.reference, "image": c.image} for c in deployment_data.components],
-                    "force_clone": deployment_data.forceClone,
+                    "forceClone": deployment_data.forceClone,
+                    "created": result.get("created", False),
                 },
                 "processing": {"status": "completed" if processing_result else "failed"},
             }
-            return JSONResponse(content=content, status_code=201)
+            return JSONResponse(content=content, status_code=status_code)
         else:
             # Determine appropriate HTTP status code based on error type
             error_status_codes = {
-                "duplicate_deployment": 409,  # Conflict
                 "invalid_component_references": 400,  # Bad Request
                 "ambiguous_repository": 400,  # Bad Request
                 "no_repositories": 422,  # Unprocessable Entity
@@ -358,15 +373,15 @@ async def add_deployment(
 
             content = {
                 "status": "failed",
-                "message": f"Failed to add deployment '{deployment_data.deploymentName}'",
+                "message": f"Failed to upsert deployment '{deployment_data.deploymentName}'",
                 "error": result["error"],
                 "error_type": result["error_type"],
             }
             return JSONResponse(content=content, status_code=status_code)
 
     except Exception as e:
-        logger.error(f"Error adding deployment: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error adding deployment: {e!s}")
+        logger.error(f"Error upserting deployment: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Error upserting deployment: {e!s}")
     finally:
         if project_manager:
             await project_manager.close()
@@ -1034,7 +1049,7 @@ async def validate_clone_configuration(request: Request, project_name: str, depl
 
         # Read project data
         project_full_file_path = await project_manager.get_project_full_file_path()
-        project_data = await project_manager._file_handler.read_project_file(project_full_file_path)
+        project_data = await project_manager._project_file_handler.read_project_file(project_full_file_path)
 
         # Execute validation (no actual cloning)
         validation_result = await project_manager._clone_manager.validate_clone_readiness(

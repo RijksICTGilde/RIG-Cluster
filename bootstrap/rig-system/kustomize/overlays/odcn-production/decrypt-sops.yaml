@@ -6,5 +6,5 @@ metadata:
     config.kubernetes.io/function: "exec:\n  path: ksops\n"
 files:
   - argocd-repo-users-applications-secret.yaml.sops.yaml
-  - argocd-repo-users-applications-secret.yaml.sops.yaml
-#  - argocd-admin-secret.yaml.sops.yaml
+  - argocd-admin-secret.yaml.sops.yaml
+  - argocd-repo-secret-infrastructure-secret.yaml.sops.yaml

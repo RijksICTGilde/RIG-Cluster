@@ -2050,32 +2050,36 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             raise
 
-    async def leave_all_groups(self, realm_name: str, user_id: str) -> bool:
+    async def remove_all_realm_roles(self, realm_name: str, user_id: str) -> bool:
         """
-        Remove a user from all groups (useful for removing default group assignments).
+        Remove all realm roles from a user (useful for removing default role assignments).
+        After this, only explicitly assigned roles will remain.
 
         Args:
             realm_name: Name of the realm
             user_id: ID of the user
 
         Returns:
-            True if user was removed from all groups successfully
+            True if user roles were removed successfully
         """
-        logger.info(f"Removing user {user_id} from all groups in realm {realm_name}")
+        logger.info(f"Removing all realm roles from user {user_id} in realm {realm_name}")
 
         try:
             # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            # Get user's current groups
-            user_groups = self.admin.get_user_groups(user_id=user_id)
+            # Get user's current realm roles
+            user_roles = self.admin.get_realm_roles_of_user(user_id=user_id)
 
-            # Remove from each group
-            for group in user_groups:
-                self.admin.group_user_remove(user_id=user_id, group_id=group["id"])
-                logger.debug(f"Removed user from group '{group.get('name')}'")
-
-            logger.info(f"Successfully removed user {user_id} from {len(user_groups)} groups")
+            if user_roles:
+                # Remove all realm roles
+                self.admin.delete_realm_roles_of_user(user_id=user_id, roles=user_roles)
+                role_names = [role.get("name") for role in user_roles]
+                logger.info(
+                    f"Successfully removed {len(user_roles)} realm roles from user {user_id}: {', '.join(role_names)}"
+                )
+            else:
+                logger.info(f"No realm roles to remove for user {user_id}")
 
             # Switch back to master
             self.admin.change_current_realm("master")
@@ -2083,7 +2087,7 @@ class KeycloakConnector:
             return True
 
         except KeycloakError as e:
-            logger.error(f"Failed to remove user from groups: {e}")
+            logger.error(f"Failed to remove realm roles from user: {e}")
             # Switch back to master
             self.admin.change_current_realm("master")
             raise

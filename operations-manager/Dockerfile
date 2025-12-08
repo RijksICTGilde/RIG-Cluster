@@ -40,8 +40,12 @@ RUN curl -LO "https://dl.min.io/client/mc/release/linux-amd64/mc" \
     && chmod +x mc \
     && mv mc /usr/local/bin/mc
 
-# Chisel is used for establishing HTTP tunnels to remote services
-RUN curl -sL https://i.jpillora.com/chisel | bash
+# Install Chisel - used for establishing HTTP tunnels to remote services
+RUN CHISEL_VERSION=$(curl -s https://api.github.com/repos/jpillora/chisel/releases/latest | grep -Po '"tag_name": "v?\K[^"]*') \
+    && curl -LO "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_amd64.gz" \
+    && gunzip "chisel_${CHISEL_VERSION}_linux_amd64.gz" \
+    && chmod +x "chisel_${CHISEL_VERSION}_linux_amd64" \
+    && mv "chisel_${CHISEL_VERSION}_linux_amd64" /usr/local/bin/chisel
 
 # Install poetry - cached unless poetry version changes
 RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION python3 -

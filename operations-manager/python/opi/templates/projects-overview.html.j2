@@ -30,13 +30,13 @@
                 showIcon="before"
                 icon="plus"
                 @click="window.location.href='/projects/new'" />
-            <c-button 
+            <c-button
                 label="Vernieuwen"
                 kind="tertiary"
                 size="md"
                 showIcon="before"
                 icon="refresh"
-                @click="location.reload()" />
+                @click="window.location.href='/projects?refresh=true'" />
         </div>
         
         <div style="display: flex; gap: var(--rvo-space-sm); align-items: center;">

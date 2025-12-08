@@ -6,6 +6,7 @@ Processing means it can create, update, or delete any resources defined in a pro
 import glob
 import logging
 import os
+from datetime import UTC, datetime
 from typing import Any, TypeVar, cast
 from warnings import deprecated
 
@@ -32,6 +33,7 @@ from opi.core.cluster_config import (
     get_keycloak_discovery_url,
     get_minio_server,
     get_prefixed_namespace,
+    uses_capsule,
 )
 from opi.core.config import settings
 from opi.core.task_manager import TaskProgressManager
@@ -54,6 +56,7 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_ingress_map,
+    generate_ingress_name_from_path,
     generate_manifest_name,
     generate_project_realm_name,
     generate_public_url,
@@ -117,7 +120,7 @@ class ProjectManager:
         # Import here to avoid circular dependencies
         # TODO: fix me, we don't want this
         from opi.manager.argo_manager import ArgoManager
-        from opi.manager.clone_manager import CloneManager
+        from opi.manager.bootstrap_manager import BootstrapManager
         from opi.manager.database_manager import DatabaseManager
         from opi.manager.delete_project_manager import DeleteProjectManager
         from opi.manager.keycloak_manager import KeycloakManager
@@ -130,7 +133,7 @@ class ProjectManager:
         self._minio_manager = MinioManager(self)
         self._keycloak_manager = KeycloakManager(self)
         self._argo_manager = ArgoManager(self)
-        self._clone_manager = CloneManager(self)
+        self._bootstrap_manager = BootstrapManager(self)
         self._delete_project_manager = DeleteProjectManager(self)
         self._pvc_manager = PVCManager(self)
 
@@ -140,10 +143,26 @@ class ProjectManager:
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         await self.close()
 
-    async def _ensure_database_manager(self) -> "DatabaseManager":
-        """Lazily initialize DatabaseManager with correct database host based on project services."""
+    async def _ensure_database_manager(self, skip_credential_check: bool = False) -> "DatabaseManager":
+        """
+        Lazily initialize DatabaseManager with correct database host based on project services.
+
+        Args:
+            skip_credential_check: If True, skip checking for superuser credentials.
+                                  Used during infrastructure bootstrapping when credentials
+                                  don't exist yet.
+        """
         if self._database_manager is not None:
-            return self._database_manager
+            # If we have a cached manager but it was created with placeholder credentials,
+            # and now we need real credentials, reinitialize it
+            if not skip_credential_check and self._database_manager._admin_password == "placeholder":
+                logger.info(
+                    "DatabaseManager was initialized with placeholder credentials, reinitializing with real credentials"
+                )
+                await self._database_manager.close()
+                self._database_manager = None
+            else:
+                return self._database_manager
 
         from opi.core.cluster_config import get_database_cluster_service_endpoint, get_infrastructure_namespace
         from opi.manager.database_manager import DatabaseManager
@@ -168,16 +187,26 @@ class ProjectManager:
             infrastructure_namespace = get_infrastructure_namespace(settings.CLUSTER_MANAGER, project_name)
             secret_name = generate_postgres_superuser_secret_name(project_name)
 
-            secret_data = await self._kubectl_connector.get_secret(secret_name, infrastructure_namespace)
-            if not secret_data:
-                raise RuntimeError(
-                    f"Superuser secret '{secret_name}' not found in '{infrastructure_namespace}'. "
-                    f"Infrastructure may not be deployed yet."
+            if skip_credential_check:
+                # During infrastructure creation, credentials don't exist yet
+                # Use placeholder values - they'll be replaced after infrastructure is ready
+                admin_username = "postgres"
+                admin_password = "placeholder"
+                logger.info(
+                    f"Initializing DatabaseManager for configuration only (credentials not validated): {db_host}"
                 )
+            else:
+                # Normal operation - get credentials from Kubernetes secret
+                secret_data = await self._kubectl_connector.get_secret(secret_name, infrastructure_namespace)
+                if not secret_data:
+                    raise RuntimeError(
+                        f"Superuser secret '{secret_name}' not found in '{infrastructure_namespace}'. "
+                        f"Infrastructure may not be deployed yet."
+                    )
 
-            admin_username = secret_data.get("username")
-            admin_password = secret_data.get("password")
-            logger.info(f"Initializing DatabaseManager with namespace-specific PostgreSQL: {db_host}")
+                admin_username = secret_data.get("username")
+                admin_password = secret_data.get("password")
+                logger.info(f"Initializing DatabaseManager with namespace-specific PostgreSQL: {db_host}")
         else:
             # Shared database
             db_host = settings.DATABASE_HOST
@@ -778,12 +807,13 @@ class ProjectManager:
 
         return env_vars
 
-    def _generate_web_env_vars_from_services(self, hostname: str) -> dict[str, str]:
+    def _generate_web_env_vars_from_services(self, hostname: str, use_https: bool = True) -> dict[str, str]:
         """
         Generate web environment variables using service definitions.
 
         Args:
             hostname: The hostname for the component
+            use_https: Whether to use HTTPS protocol (based on cluster TLS config)
 
         Returns:
             Dictionary of environment variables based on service definitions
@@ -793,7 +823,7 @@ class ProjectManager:
         # Generate env vars using service variable definitions
         for var_def in ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB).variables:
             if var_def.source == "direct" and var_def.name == "PUBLIC_HOST":
-                public_url = generate_public_url(hostname)
+                public_url = generate_public_url(hostname, use_https)
                 env_vars[var_def.name] = public_url
                 logger.debug(f"Generated web env var: {var_def.name}={public_url}")
 
@@ -1150,6 +1180,18 @@ class ProjectManager:
 
         await self._kubectl_connector.apply_manifest(manifest_path, variables)
 
+        # If Capsule is enabled, wait for Capsule to assign the tenant label
+        # before attempting to modify the namespace with additional labels
+        if uses_capsule(settings.CLUSTER_MANAGER):
+            logger.info(f"Cluster uses Capsule, waiting for tenant label assignment on namespace '{namespace}'")
+            capsule_ready = await self._kubectl_connector.wait_for_capsule_tenant_label(namespace, timeout=30)
+
+            if not capsule_ready:
+                raise RuntimeError(
+                    f"Timeout waiting for Capsule to assign tenant label to namespace '{namespace}'. "
+                    "Cannot proceed with namespace configuration."
+                )
+
         # Apply the argocd.argoproj.io/managed-by label after creating the namespace
         manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
         await self._kubectl_connector.apply_label_to_resource(
@@ -1225,8 +1267,9 @@ class ProjectManager:
             - "connection_error" if database not reachable (not running yet)
             - "unknown_error" for other errors
         """
-        import asyncpg
         import socket
+
+        import asyncpg
 
         try:
             # Create a direct connection with the superuser credentials to the postgres database
@@ -1345,7 +1388,8 @@ class ProjectManager:
 
         # Get configuration
         infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
-        db_manager = await self._ensure_database_manager()
+        # Initialize database manager for configuration only (skip credential check during bootstrap)
+        db_manager = await self._ensure_database_manager(skip_credential_check=True)
         database_cluster_config = db_manager._get_database_cluster_config(project_data, cluster_name)
         storage_class = get_storage_class_name(cluster_name)
         project_clean = _sanitize_for_lowercase(project_name)
@@ -1524,6 +1568,20 @@ class ProjectManager:
                 f.write(secret_manifest)
             with open(cluster_path, "w") as f:
                 f.write(cluster_manifest)
+
+            # Create network policy to allow connectivity to PostgreSQL
+            logger.info(f"Generating network policy for infrastructure namespace: {infrastructure_namespace}")
+            network_policy_manifest = render_template(
+                "allow-all-network-policy.yaml.jinja",
+                {
+                    "name": "allow-all",
+                    "namespace": infrastructure_namespace,
+                },
+            )
+            network_policy_path = os.path.join(infra_resources_dir, "allow-all-network-policy.yaml")
+            with open(network_policy_path, "w") as f:
+                f.write(network_policy_manifest)
+            logger.info(f"Created network policy for infrastructure namespace: {infrastructure_namespace}")
 
             # Create registry secret if PostgreSQL uses a private registry
             if registry_name and registry_config:
@@ -1837,30 +1895,16 @@ class ProjectManager:
                 f"Changed: {len(deployment_changes['changed'])}, Deleted: {len(deployment_changes['deleted'])}"
             )
 
-            # Step 1.9: Execute clones BEFORE deployment processing (if deployment_name specified)
-            if deployment_name:
-                logger.info(f"Step 1.9: Executing clones for deployment: {deployment_name}")
-                clone_result = await self._clone_manager.execute_deployment_clones(
-                    project_data=current_yaml, deployment_name=deployment_name, force=force_clone
-                )
-
-                if clone_result.get("success") is False:
-                    error_msg = f"Clone failed for {deployment_name}: {clone_result.get('error', 'Unknown error')}"
-                    logger.error(error_msg)
-                    critical_failures.append(error_msg)
-                    # Don't proceed with deployment if clone failed
-                    return False
-                elif clone_result.get("skipped"):
-                    logger.info(f"Clone skipped for {deployment_name}: {clone_result.get('reason')}")
-                else:
-                    logger.info(f"Clone completed successfully for {deployment_name}")
+            # Note: Clone operations (both local deployment and remote-source) are now handled
+            # directly by DatabaseManager and MinioManager during their create_resources_for_deployment
+            # methods. The clone-from configuration is read from the deployment and processed inline.
 
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")
 
             # For now, still process the entire project but with change context available
             # TODO: In future iterations, we can use the changes to process only what's needed
-            process_success = await self.process_project(deployment_name)
+            process_success = await self.process_project(deployment_name, force_clone)
             if not process_success:
                 critical_failures.append("Project processing failed - check logs for details")
 
@@ -2094,12 +2138,13 @@ class ProjectManager:
         if self._database_manager:
             await self._database_manager.close()
 
-    async def process_project(self, deployment_name: str | None = None) -> bool:
+    async def process_project(self, deployment_name: str | None = None, force_clone: bool = False) -> bool:
         """
         Process the project file and create all required resources.
 
         Args:
             deployment_name: Optional deployment name to process only specific deployment
+            force_clone: Force clone even if target resources exist (runtime parameter)
 
         Returns:
             True if all operations succeeded, False if any operation failed
@@ -2144,24 +2189,34 @@ class ProjectManager:
             await self.check_and_create_namespaces(deployment_name)
             await self.check_and_create_sops_secrets_in_namespaces(deployment_name)
 
-            # TWO-STAGED WORKFLOW: Check if project uses namespace-specific PostgreSQL
-            # If yes, provision infrastructure first before application resources
-            db_manager = await self._ensure_database_manager()
-            if db_manager._project_uses_namespace_postgresql(project_data):
+            # Check if project requires infrastructure namespace (namespace-specific PostgreSQL)
+            # This check is infrastructure-level, independent of any manager initialization
+            project_services = project_data.get("services", [])
+            needs_infrastructure_namespace = any(
+                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                if isinstance(service_item, str)
+                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
+                for service_item in (project_services or [])
+            )
+
+            # If infrastructure is needed, provision it BEFORE initializing managers
+            if needs_infrastructure_namespace:
                 logger.info(
-                    f"Project '{project_name}' uses namespace-specific PostgreSQL - provisioning infrastructure first"
+                    f"Project '{project_name}' requires infrastructure namespace - provisioning infrastructure first"
                 )
 
-                # STAGE 1: Infrastructure Provisioning
-                # Create infrastructure namespace
+                # Create infrastructure namespace and wait for Capsule label if needed
                 await self._create_infrastructure_namespace(project_data, settings.CLUSTER_MANAGER)
 
-                # Create infrastructure resources (database cluster) and wait for ready
+                # Create infrastructure resources (database cluster, secrets) and wait for ready
                 await self._create_infrastructure_resources(project_data, settings.CLUSTER_MANAGER)
 
                 logger.info(
                     f"Infrastructure provisioning complete for project '{project_name}' - proceeding with applications"
                 )
+
+            # Initialize database manager (infrastructure is ready if it was needed)
+            db_manager = await self._ensure_database_manager()
 
             # Create service resources using service managers
             deployments = project_data.get("deployments", [])
@@ -2173,8 +2228,8 @@ class ProjectManager:
 
             for deployment in deployments:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
-                    await db_manager.create_resources_for_deployment(project_data, deployment)
-                    await self._minio_manager.create_resources_for_deployment(project_data, deployment)
+                    await db_manager.create_resources_for_deployment(project_data, deployment, force_clone)
+                    await self._minio_manager.create_resources_for_deployment(project_data, deployment, force_clone)
                     await self._keycloak_manager.create_resources_for_deployment(project_data, deployment)
 
             await self._process_application_manifests(deployment_name)
@@ -2189,6 +2244,11 @@ class ProjectManager:
             await (await self.get_git_connector_for_project_files()).commit_and_push(f"Adding project {project_name}")
 
             await self._argo_manager.create_argocd_resources(deployment_name)
+
+            # Execute bootstrap actions for deployments
+            for deployment in deployments:
+                if deployment.get("cluster") == settings.CLUSTER_MANAGER:
+                    await self._bootstrap_manager.execute_bootstrap_for_deployment(project_data, deployment)
 
             # Register the project with decrypted configuration data
             api_key = await self.get_api_key()
@@ -2363,10 +2423,10 @@ class ProjectManager:
                 project_data, component_reference, default_port=80
             )
 
-            # Extract the publication path from the component definition
-            component_path = self._project_file_handler.extract_component_path(
-                project_data, component_reference, default_path="/"
-            )
+            # Extract publication paths from the component definition (supports multiple paths)
+            component_paths = self._project_file_handler.extract_component_paths(project_data, component_reference)
+            # For backward compatibility, use first path as the primary path
+            component_path = component_paths[0]["match"] if component_paths else "/"
 
             # Extract imagePullPolicy from deployment-level component configuration (not component definition)
             # This allows overriding the pull policy per deployment
@@ -2380,18 +2440,29 @@ class ProjectManager:
                 project_data, component_reference
             )
 
-            # Extract user environment variables from component
+            # Extract user environment variables from component definition
             user_env_vars = await self._project_file_handler.extract_component_user_env_vars(
                 project_data, component_reference
             )
 
-            # Extract deployment-level env-vars and merge with component-level user-env-vars
+            # Extract deployment-level user-env-vars and merge (deployment takes precedence)
+            deployment_user_env_vars = await self._project_file_handler.extract_deployment_component_user_env_vars(
+                project_data, deployment_name, component_reference
+            )
+            if deployment_user_env_vars:
+                logger.info(
+                    f"Found {len(deployment_user_env_vars)} deployment-level user-env-vars for component: {component_name}"
+                )
+                # Deployment-level user-env-vars override component-level user-env-vars
+                user_env_vars.update(deployment_user_env_vars)
+
+            # Extract deployment-level env-vars (plaintext) and merge with user-env-vars
             deployment_env_vars = component.get("env-vars", {})
             if deployment_env_vars:
                 logger.info(
                     f"Found {len(deployment_env_vars)} deployment-level env-vars for component: {component_name}"
                 )
-                # Deployment-level env-vars override component-level user-env-vars
+                # Deployment-level env-vars override all other env-vars
                 user_env_vars.update(deployment_env_vars)
 
             # Create unique name combining deployment name and component name using centralized utility
@@ -2421,6 +2492,7 @@ class ProjectManager:
 
             # Generate ingress map based on cluster configuration and optional subdomain using centralized utility
             ingress_postfix = get_ingress_postfix(cluster)
+            use_https = get_ingress_tls_enabled(cluster)
             subdomain = deployment.get("subdomain")
             logger.info(f"Extracted subdomain for {component_name}: {subdomain}")
             ingress_map = generate_ingress_map(
@@ -2433,8 +2505,8 @@ class ProjectManager:
 
             # Update component web address if progress manager is available and hostname exists
             if progress_manager and hostname:
-                # Construct full URL using proper naming function
-                web_address = generate_public_url(hostname)
+                # Construct full URL using proper naming function (respects cluster TLS config)
+                web_address = generate_public_url(hostname, use_https)
                 progress_manager.update_component_web_address(component_name, web_address)
                 logger.debug(f"Updated component {component_name} web address to {web_address}")
 
@@ -2450,7 +2522,7 @@ class ProjectManager:
 
             # Register publish-on-web environment variables using service definitions
             if publish_on_web and hostname:
-                web_env_vars = self._generate_web_env_vars_from_services(hostname)
+                web_env_vars = self._generate_web_env_vars_from_services(hostname, use_https)
                 if web_env_vars:
                     env_vars.update(web_env_vars)
                     self._register_env_var(deployment_name, component_name, "web", web_env_vars)
@@ -2474,6 +2546,25 @@ class ProjectManager:
             # Register user environment variables
             # NOTE: User env vars go into a secret and are referenced via envFrom, not as direct env vars
             if user_env_vars:
+                # Substitute PUBLIC_HOST in user-env-vars if referenced
+                # NOTE: This is a simple substitution for PUBLIC_HOST only. If we need to support
+                # more direct variables in user-env-vars in the future, consider extending
+                # the alias system to support "direct" source variables.
+                public_host: str | None = env_vars.get("PUBLIC_HOST")
+                if public_host:
+                    substituted_user_env_vars: dict[str, Any] = {}
+                    for key, value in user_env_vars.items():
+                        if isinstance(value, str) and ("$PUBLIC_HOST" in value or "${PUBLIC_HOST}" in value):
+                            # Substitute both $PUBLIC_HOST and ${PUBLIC_HOST} syntax
+                            substituted_value = value.replace("${PUBLIC_HOST}", public_host)
+                            substituted_value = substituted_value.replace("$PUBLIC_HOST", public_host)
+                            substituted_user_env_vars[key] = substituted_value
+                            logger.debug(
+                                f"Substituted PUBLIC_HOST in user-env-var {key}: {value} -> {substituted_value}"
+                            )
+                        else:
+                            substituted_user_env_vars[key] = value
+                    user_env_vars = substituted_user_env_vars
                 self._register_env_var(deployment_name, component_name, "user", user_env_vars)
 
             # # IMPORTANT: Add component FIRST to prevent fallback creation with namespace=None
@@ -2543,6 +2634,9 @@ class ProjectManager:
             )
 
             # Prepare variables for templating
+            # Generate timestamp for pod annotation to force restart when secrets change
+            generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
             variables = {
                 "name": unique_name,
                 "namespace": namespace,
@@ -2563,6 +2657,8 @@ class ProjectManager:
                 "ip_whitelist": get_ingress_ip_whitelist(cluster),
                 # Registry authentication
                 "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
+                # Timestamp to force pod restart when secrets are regenerated
+                "generated_at": generated_at,
             }
 
             logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")
@@ -2630,34 +2726,49 @@ class ProjectManager:
                 # Extract just the manifest name (without .yaml.jinja extension)
                 manifest_name = manifest_file.replace(".yaml.jinja", "")
 
-                # Handle ingress manifests - iterate through ingress_map for both single and multiple ingresses
+                # Handle ingress manifests - iterate through paths and ingress_map
                 if manifest_name == "ingress":
-                    for ingress_name, ingress_hostname in ingress_map.items():
-                        # Create unique manifest name
-                        unique_manifest_name = generate_manifest_name(component_name, manifest_name)
+                    for ingress_base_name, ingress_hostname in ingress_map.items():
+                        # Iterate over each path to create separate ingress for each
+                        for path_config in component_paths:
+                            path_value = path_config["match"] or "/"
 
-                        # Create ingress-specific variables
-                        ingress_variables = variables.copy()
-                        ingress_variables.update(
-                            {
-                                "name": ingress_name,  # Unique ingress resource name
-                                "service_name": unique_name,  # Service name stays the same
-                                "hostname": ingress_hostname,
-                            }
-                        )
+                            # Generate unique ingress name that includes the path
+                            ingress_name = generate_ingress_name_from_path(ingress_base_name, path_value)
 
-                        # Create the ingress manifest file
-                        manifest_file_path = self._manifest_generator.create_manifest_file(
-                            template_path=manifest_path,
-                            values=ingress_variables,
-                            output_dir=full_output_dir,
-                            output_filename=unique_manifest_name,
-                            use_sops=False,
-                        )
-                        created_files.append(f"{unique_manifest_name}.yaml")
-                        logger.info(
-                            f"Successfully created {manifest_file} manifest for {ingress_hostname}: {manifest_file_path}"
-                        )
+                            # Create unique manifest filename that includes the path suffix
+                            if path_value == "/" or not path_value:
+                                unique_manifest_name = generate_manifest_name(component_name, manifest_name)
+                            else:
+                                # Sanitize path for filename: /api -> api, /v1/users -> v1users
+                                path_suffix = path_value.lstrip("/").replace("/", "").lower()
+                                unique_manifest_name = generate_manifest_name(
+                                    component_name, f"{manifest_name}-{path_suffix}"
+                                )
+
+                            # Create ingress-specific variables
+                            ingress_variables = variables.copy()
+                            ingress_variables.update(
+                                {
+                                    "name": ingress_name,  # Unique ingress resource name (includes path)
+                                    "service_name": unique_name,  # Service name stays the same
+                                    "hostname": ingress_hostname,
+                                    "path": path_value,  # Path for this specific ingress
+                                }
+                            )
+
+                            # Create the ingress manifest file
+                            manifest_file_path = self._manifest_generator.create_manifest_file(
+                                template_path=manifest_path,
+                                values=ingress_variables,
+                                output_dir=full_output_dir,
+                                output_filename=unique_manifest_name,
+                                use_sops=False,
+                            )
+                            created_files.append(f"{unique_manifest_name}.yaml")
+                            logger.info(
+                                f"Successfully created {manifest_file} manifest for {ingress_hostname}{path_value}: {manifest_file_path}"
+                            )
                 else:
                     # Standard single manifest creation
                     unique_manifest_name = generate_manifest_name(component_name, manifest_name)
@@ -3041,124 +3152,192 @@ class ProjectManager:
         logger.debug(f"Successfully decrypted API key for project: {project_name}")
         return decrypted_api_key
 
-    async def add_deployment(
+    async def upsert_deployment(
         self,
         deployment_name: str,
         components: list,  # ComponentReference objects from router
         clone_from: str | None = None,
+        force_clone: bool = False,
     ) -> dict[str, Any]:
         """
-        Add a new deployment to the project YAML file.
+        Create or update a deployment in the project YAML file.
+
+        If the deployment doesn't exist, it will be created. If it exists, the component
+        images will be updated. The clone_from parameter is only used when creating a new
+        deployment, or when updating with force_clone set to true.
 
         Args:
-            deployment_name: Name of the new deployment
+            deployment_name: Name of the deployment
             components: List of ComponentReference objects with reference and image
-            clone_from: Optional deployment name to clone configuration from
+            clone_from: Optional deployment name to clone configuration from (only on create or if force_clone)
+            force_clone: If true, use clone_from even when updating an existing deployment
 
         Returns:
-            Dict with success status and error details if applicable:
-            {"success": bool, "error": str | None, "error_type": str | None}
+            Dict with success status, created flag, and error details if applicable:
+            {"success": bool, "created": bool, "error": str | None, "error_type": str | None}
         """
         try:
             # Get current project data
             project_data = await self.get_contents()
             project_name = await self.get_name()
 
-            # Check if deployment already exists
-            existing_deployments = await self.get_deployments(cluster_filter=False)
-            for existing_deployment in existing_deployments:
-                if existing_deployment.get("name") == deployment_name:
-                    error_msg = f"Deployment '{deployment_name}' already exists in project '{project_name}'"
-                    logger.error(error_msg)
-                    return {"success": False, "error": error_msg, "error_type": "duplicate_deployment"}
-
             # Validate that all component references exist in the project
-            validation_result = self._validate_component_references(project_data, components, "new deployment")
+            validation_result = self._validate_component_references(project_data, components, "deployment")
             if not validation_result["success"]:
                 return {
                     "success": False,
+                    "created": False,
                     "error": validation_result["error"],
                     "error_type": "invalid_component_references",
                 }
 
-            # Create new deployment object
-            new_deployment = {"name": deployment_name, "components": []}
+            # Check if deployment already exists
+            existing_deployments = await self.get_deployments(cluster_filter=False)
+            existing_deployment = None
+            existing_deployment_index = None
+            for idx, deployment in enumerate(existing_deployments):
+                if deployment.get("name") == deployment_name:
+                    existing_deployment = deployment
+                    existing_deployment_index = idx
+                    break
 
-            # Convert components from router objects to dict format
-            for component in components:
-                new_deployment["components"].append({"reference": component.reference, "image": component.image})
+            if existing_deployment:
+                # UPDATE existing deployment - only update component images
+                logger.info(f"Updating existing deployment '{deployment_name}' in project '{project_name}'")
 
-            # Handle clone-from logic
-            if clone_from:
-                # Find source deployment to clone from
-                source_deployment = find_value_by_jsonpath(project_data, f"$.deployments[?(@.name=='{clone_from}')]")
+                # Find the deployment in project_data["deployments"] to update
+                for deployment in project_data["deployments"]:
+                    if deployment.get("name") == deployment_name:
+                        # Update images for existing components, add new ones
+                        existing_components = {c["reference"]: c for c in deployment.get("components", [])}
 
-                if source_deployment:
-                    logger.info(f"Cloning deployment configuration from '{clone_from}'")
+                        for component in components:
+                            if component.reference in existing_components:
+                                # Update existing component's image
+                                existing_components[component.reference]["image"] = component.image
+                                logger.info(
+                                    f"Updated image for component '{component.reference}' to '{component.image}'"
+                                )
+                            else:
+                                # Add new component
+                                deployment["components"].append(
+                                    {"reference": component.reference, "image": component.image}
+                                )
+                                logger.info(
+                                    f"Added new component '{component.reference}' with image '{component.image}'"
+                                )
 
-                    # Clone all properties except name and components
-                    for key, value in source_deployment.items():
-                        if key not in ["name", "components"]:
-                            new_deployment[key] = value
+                        # Handle clone_from only if force_clone is true
+                        if clone_from and force_clone:
+                            deployment["clone-from"] = clone_from
+                            logger.info(f"Setting clone-from to '{clone_from}' (force_clone=true)")
 
-                    # If clone-from is specified, add force-clone flag
-                    new_deployment["clone-from"] = clone_from
-                else:
-                    raise ValueError(f"Source deployment '{clone_from}' not found in project '{project_name}'")
+                        break
 
-            # Assume missing parameters from project configuration
-            if not new_deployment.get("cluster"):
-                # Use clusters from project root configuration
-                project_clusters = project_data.get("clusters", [])
-                if len(project_clusters) == 1:
-                    new_deployment["cluster"] = project_clusters[0]
-                elif len(project_clusters) > 1:
-                    logger.error(
-                        f"Multiple clusters defined in project '{project_name}': {project_clusters}. Cluster must be specified explicitly for new deployment."
+                # Save the updated project data
+                await self.save_project_data()
+
+                # Commit changes to Git
+                git_connector = await self.get_git_connector_for_project_files()
+                commit_message = f"Update deployment '{deployment_name}' in project '{project_name}'"
+                await git_connector.commit_and_push(commit_message)
+
+                logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")
+                return {"success": True, "created": False, "error": None, "error_type": None}
+
+            else:
+                # CREATE new deployment
+                logger.info(f"Creating new deployment '{deployment_name}' in project '{project_name}'")
+
+                # Create new deployment object
+                new_deployment = {"name": deployment_name, "components": []}
+
+                # Convert components from router objects to dict format
+                for component in components:
+                    new_deployment["components"].append({"reference": component.reference, "image": component.image})
+
+                # Handle clone-from logic for new deployments
+                if clone_from:
+                    # Find source deployment to clone from
+                    source_deployment = find_value_by_jsonpath(
+                        project_data, f"$.deployments[?(@.name=='{clone_from}')]"
                     )
-                    return False
 
-            if not new_deployment.get("namespace"):
-                # TODO: make this a naming.py ? this is tricky..
-                # Use project name as namespace (common pattern)
-                new_deployment["namespace"] = project_name
+                    if source_deployment:
+                        logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
-            if not new_deployment.get("repository"):
-                # Use repositories from project configuration
-                repositories = project_data.get("repositories", [])
-                if len(repositories) == 1:
-                    new_deployment["repository"] = repositories[0]["name"]
-                elif len(repositories) > 1:
-                    repo_names = [repo["name"] for repo in repositories]
-                    error_msg = f"Multiple repositories defined in project '{project_name}': {repo_names}. Repository must be specified explicitly for new deployment."
-                    logger.error(error_msg)
-                    return {"success": False, "error": error_msg, "error_type": "ambiguous_repository"}
-                else:
-                    error_msg = "No repositories found in project configuration"
-                    logger.error(error_msg)
-                    return {"success": False, "error": error_msg, "error_type": "no_repositories"}
+                        # Clone all properties except name and components
+                        for key, value in source_deployment.items():
+                            if key not in ["name", "components"]:
+                                new_deployment[key] = value
 
-            # Add the new deployment to the project data
-            project_data["deployments"].append(new_deployment)
+                        # If clone-from is specified, add clone-from flag
+                        new_deployment["clone-from"] = clone_from
+                    else:
+                        raise ValueError(f"Source deployment '{clone_from}' not found in project '{project_name}'")
 
-            # Save the updated project data
-            await self.save_project_data()
+                # Assume missing parameters from project configuration
+                if not new_deployment.get("cluster"):
+                    # Use clusters from project root configuration
+                    project_clusters = project_data.get("clusters", [])
+                    if len(project_clusters) == 1:
+                        new_deployment["cluster"] = project_clusters[0]
+                    elif len(project_clusters) > 1:
+                        logger.error(
+                            f"Multiple clusters defined in project '{project_name}': {project_clusters}. Cluster must be specified explicitly for new deployment."
+                        )
+                        return {
+                            "success": False,
+                            "created": False,
+                            "error": "Multiple clusters defined, cluster must be specified explicitly",
+                            "error_type": "ambiguous_cluster",
+                        }
 
-            # Commit changes to Git
-            git_connector = await self.get_git_connector_for_project_files()
-            commit_message = f"Add deployment '{deployment_name}' to project '{project_name}'"
-            if clone_from:
-                commit_message += f" (cloned from '{clone_from}')"
+                if not new_deployment.get("namespace"):
+                    # Use project name as namespace (common pattern)
+                    new_deployment["namespace"] = project_name
 
-            await git_connector.commit_and_push(commit_message)
+                if not new_deployment.get("repository"):
+                    # Use repositories from project configuration
+                    repositories = project_data.get("repositories", [])
+                    if len(repositories) == 1:
+                        new_deployment["repository"] = repositories[0]["name"]
+                    elif len(repositories) > 1:
+                        repo_names = [repo["name"] for repo in repositories]
+                        error_msg = f"Multiple repositories defined in project '{project_name}': {repo_names}. Repository must be specified explicitly for new deployment."
+                        logger.error(error_msg)
+                        return {
+                            "success": False,
+                            "created": False,
+                            "error": error_msg,
+                            "error_type": "ambiguous_repository",
+                        }
+                    else:
+                        error_msg = "No repositories found in project configuration"
+                        logger.error(error_msg)
+                        return {"success": False, "created": False, "error": error_msg, "error_type": "no_repositories"}
 
-            logger.info(f"Successfully added deployment '{deployment_name}' to project '{project_name}'")
-            return {"success": True, "error": None, "error_type": None}
+                # Add the new deployment to the project data
+                project_data["deployments"].append(new_deployment)
+
+                # Save the updated project data
+                await self.save_project_data()
+
+                # Commit changes to Git
+                git_connector = await self.get_git_connector_for_project_files()
+                commit_message = f"Add deployment '{deployment_name}' to project '{project_name}'"
+                if clone_from:
+                    commit_message += f" (cloned from '{clone_from}')"
+
+                await git_connector.commit_and_push(commit_message)
+
+                logger.info(f"Successfully created deployment '{deployment_name}' in project '{project_name}'")
+                return {"success": True, "created": True, "error": None, "error_type": None}
 
         except Exception as e:
-            error_msg = f"Error adding deployment '{deployment_name}': {e}"
+            error_msg = f"Error upserting deployment '{deployment_name}': {e}"
             logger.exception(error_msg)
-            return {"success": False, "error": error_msg, "error_type": "internal_error"}
+            return {"success": False, "created": False, "error": error_msg, "error_type": "internal_error"}
 
     async def update_image_and_regenerate(
         self,

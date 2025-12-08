@@ -179,9 +179,20 @@ services:
 - **Username**: GitLab username or deploy token
 - **Password**: Personal access token with `read_registry` scope
 
+## ODC-Noord Specific: Quay Proxy Requirement
+
+**IMPORTANT**: Direct pulls from external private registries (like GitHub Container Registry) are not allowed in ODC-Noord due to network restrictions.
+
+**Solution**: Images must be proxied through Quay:
+1. Request a Quay organization from ODC-Noord infrastructure team
+2. Choose: proxy specific repositories OR use credentials to pull any image
+3. Infrastructure team configures Quay to authenticate with upstream registry (e.g., GitHub)
+4. Use Quay URLs in your project YAML instead of direct registry URLs (e.g., `quay.io/odcn-proxy-org/myorg-frontend:v1.2.3` instead of `ghcr.io/myorg/frontend:v1.2.3`)
+
 ## Security Best Practices
 
 1. Always encrypt passwords with AGE (never commit plain text)
 2. Use service accounts with minimal permissions (read-only)
 3. Rotate credentials regularly
 4. Use descriptive registry names (e.g., `harbor-prod`, `github-org-packages`)
+5. In ODC-Noord: Always use Quay proxy, never expose direct external registry credentials

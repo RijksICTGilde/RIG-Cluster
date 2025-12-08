@@ -378,9 +378,7 @@ class KeycloakManager:
             # Validate all entries are strings
             for uri in additional_uris:
                 if not isinstance(uri, str):
-                    raise ValueError(
-                        f"All additional_redirect_uris must be strings, got {type(uri).__name__}: {uri}"
-                    )
+                    raise ValueError(f"All additional_redirect_uris must be strings, got {type(uri).__name__}: {uri}")
             merged_config["additional_redirect_uris"] = additional_uris
             logger.info(f"Found {len(additional_uris)} additional redirect URIs in config")
 
@@ -672,7 +670,12 @@ class KeycloakManager:
         logger.debug("Deployment credentials are stored in K8s secrets, not storing in project config")
 
     async def _setup_project_keycloak_realm(
-        self, project_name: str, cluster: str, keycloak_url: str, config: dict[str, Any], ingress_hosts: list[str] | None = None
+        self,
+        project_name: str,
+        cluster: str,
+        keycloak_url: str,
+        config: dict[str, Any],
+        ingress_hosts: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Set up project-level Keycloak infrastructure for a cluster using YAML configuration.

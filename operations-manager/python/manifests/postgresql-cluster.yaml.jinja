@@ -7,6 +7,15 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
 spec:
   instances: {{ database_config.instances }}
+
+  # PodDisruptionBudget (PDB) configuration
+  # Kyverno policy 'pdb-cnpg-cluster-validation' requires enablePDB to be false
+  # when instances < 2, as a PDB requires at least 2 pods to be meaningful.
+  # A PDB with a single instance would prevent necessary operations like updates.
+  {% if database_config.instances < 2 %}
+  enablePDB: false
+  {% endif %}
+
   imageName: {{ database_config.image }}
   {% if imagePullSecretsMap and database_config.image in imagePullSecretsMap %}
   imagePullSecrets:

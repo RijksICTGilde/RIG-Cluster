@@ -7,6 +7,8 @@ build:
   tagPolicy:
     customTemplate:
       template: "latest"
+  local:
+    useBuildkit: true
   artifacts:
   - image: operations-manager
     context: .
