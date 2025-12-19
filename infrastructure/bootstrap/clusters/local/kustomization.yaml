@@ -5,8 +5,8 @@ resources:
   - ../../infrastructure/secrets/templates
 #  - ../../infrastructure/cert-manager/config/overlays/local  # Using existing cluster cert-manager
   - ../../infrastructure/postgresql/database/overlays/local
-  - ../../infrastructure/forgejo/controller/base
-  - ../../infrastructure/forgejo/config/base
+#  - ../../infrastructure/forgejo/controller/base  # TODO: fix s6-overlay permission issue
+#  - ../../infrastructure/forgejo/config/base
   - ../../infrastructure/chisel/controller/base
 #  - ../../infrastructure/vault/controller/overlays/local
 #  - ../../infrastructure/vault/config/overlays/local
