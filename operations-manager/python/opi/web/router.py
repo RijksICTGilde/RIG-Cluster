@@ -706,15 +706,56 @@ async def project_details(request: Request, project_name: str):
             project_data["config"]["api-key"], project_private_key
         )
 
+        # Store decrypted private key for display (admins only see this in UI)
+        project_data_decrypted["config"]["age-private-key"] = project_private_key
+
         for deployment in project_data_decrypted.get("deployments", []):
             if deployment.get("configuration"):
                 decrypted_yaml = await decrypt_age_content(deployment["configuration"], project_private_key)
                 deployment["configuration"] = load_yaml_from_string(decrypted_yaml)
 
+            # Decrypt deployment-component-level user-env-vars
+            for dep_component in deployment.get("components", []):
+                if dep_component.get("user-env-vars"):
+                    try:
+                        decrypted_yaml = await decrypt_age_content(dep_component["user-env-vars"], project_private_key)
+                        dep_component["user-env-vars"] = load_yaml_from_string(decrypted_yaml)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to decrypt deployment component user-env-vars for {dep_component.get('reference')}: {e}"
+                        )
+                        dep_component["user-env-vars"] = None
+
+        logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
         for component in project_data_decrypted.get("components", []):
-            if component.get("user-env-vars"):
-                decrypted_yaml = await decrypt_age_content(component["user-env-vars"], project_private_key)
-                component["user-env-vars"] = load_yaml_from_string(decrypted_yaml)
+            component_name = component.get("name", "unknown")
+            raw_user_env_vars = component.get("user-env-vars")
+            logger.info(f"Component '{component_name}': has user-env-vars={raw_user_env_vars is not None}, type={type(raw_user_env_vars).__name__ if raw_user_env_vars else 'None'}")
+            if raw_user_env_vars:
+                logger.info(f"Processing user-env-vars for component '{component_name}'")
+                try:
+                    decrypted_yaml = await decrypt_age_content(raw_user_env_vars, project_private_key)
+                    logger.info(f"Decrypted content for '{component_name}': {decrypted_yaml[:200]}...")
+
+                    # Try YAML parsing first
+                    parsed_env_vars = load_yaml_from_string(decrypted_yaml)
+
+                    # If result is a string (not a dict), try parsing as KEY=VALUE format
+                    if isinstance(parsed_env_vars, str) or parsed_env_vars is None:
+                        from opi.utils.env_vars import validate_and_parse_env_vars
+                        logger.info(f"YAML returned {type(parsed_env_vars).__name__}, trying KEY=VALUE format")
+                        parsed_env_vars = validate_and_parse_env_vars(decrypted_yaml)
+
+                    logger.info(
+                        f"Parsed user-env-vars for component '{component_name}': "
+                        f"type={type(parsed_env_vars).__name__}, keys={list(parsed_env_vars.keys()) if isinstance(parsed_env_vars, dict) else 'N/A'}"
+                    )
+                    component["user-env-vars"] = parsed_env_vars
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt component user-env-vars for '{component_name}': {e}")
+                    component["user-env-vars"] = None
+            else:
+                logger.debug(f"No user-env-vars found for component '{component_name}'")
 
         # Process services to add display information
         services_with_info = []
@@ -837,6 +878,35 @@ async def project_details(request: Request, project_name: str):
                                     f"Failed to generate ingress link for component {component_name} in deployment {deployment['name']}: {ingress_error}"
                                 )
 
+        # Fetch Prometheus metrics for each deployment's components
+        deployment_metrics: dict[str, dict[str, dict[str, float | None]]] = {}
+        prometheus_available = False
+        try:
+            from opi.connectors.prometheus import PrometheusConnector
+
+            prom = PrometheusConnector()
+            prometheus_available = prom.is_connected
+
+            if prometheus_available:
+                for deployment in project_details["deployments"]:
+                    deployment_name = deployment.get("name")
+                    namespace = deployment.get("namespace")
+                    components = deployment.get("components", [])
+
+                    if deployment_name and namespace and components:
+                        component_names = [c.get("reference") for c in components if c.get("reference")]
+                        if component_names:
+                            metrics = prom.get_deployment_component_metrics(
+                                namespace=namespace,
+                                components=component_names,
+                                deployment_name=deployment_name,
+                                time_range="6h",
+                            )
+                            deployment_metrics[deployment_name] = metrics
+                            logger.debug(f"Fetched metrics for deployment {deployment_name}: {metrics}")
+        except Exception as metrics_error:
+            logger.warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
+
         return templates.TemplateResponse(
             "project-details.html.j2",
             {
@@ -847,6 +917,8 @@ async def project_details(request: Request, project_name: str):
                 "user": user,
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
+                "deployment_metrics": deployment_metrics,
+                "prometheus_available": prometheus_available,
             },
         )
 

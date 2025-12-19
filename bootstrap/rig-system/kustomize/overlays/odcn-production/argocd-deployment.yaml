@@ -25,10 +25,10 @@ spec:
       enabled: false
     resources:
       limits:
-        cpu: 150m
+        cpu: "1"
         memory: 2048Mi
       requests:
-        cpu: 50m
+        cpu: 250m
         memory: 128Mi
     insecure: true
     route:
@@ -104,10 +104,10 @@ spec:
         value: "true"
     resources:
       limits:
-        cpu: 100m
+        cpu: "1"
         memory: 2048Mi
       requests:
-        cpu: 50m
+        cpu: "500m"
         memory: 128Mi
     serviceaccount: argocd-argocd-server
     sidecarContainers:
@@ -170,10 +170,10 @@ spec:
   redis:
     resources:
       limits:
-        cpu: 100m
+        cpu: "500m"
         memory: 256Mi
       requests:
-        cpu: 50m
+        cpu: "250m"
         memory: 64Mi
   controller:
     env:
@@ -184,11 +184,13 @@ spec:
     processors: {}
     resources:
       limits:
-        cpu: 100m
+        cpu: "1"
         memory: 2Gi
       requests:
-        cpu: 50m
+        cpu: "500m"
         memory: 256Mi
-    sharding:
-      enabled: true
-      replicas: 2
+    # Sharding disabled - not needed for current cluster size.
+    # Enable when managing 100+ applications for better performance.
+    # sharding:
+    #   enabled: true
+    #   replicas: 2

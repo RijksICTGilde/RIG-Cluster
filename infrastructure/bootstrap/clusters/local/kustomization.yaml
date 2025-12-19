@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ../../infrastructure/secrets/templates
+  - ../../infrastructure/cert-manager/config/overlays/local
   - ../../infrastructure/postgresql/database/overlays/local
   - ../../infrastructure/forgejo/controller/base
   - ../../infrastructure/forgejo/config/base
@@ -12,6 +13,7 @@ resources:
   - ../../infrastructure/keycloak/controller/overlays/local
   - ../../infrastructure/keycloak/config/overlays/local
   - ../../infrastructure/minio/controller/overlays/local
+  - ../../infrastructure/prometheus/controller/overlays/local
 #  - ../../infrastructure/pgadmin/controller/overlays/local
 #  - ../../infrastructure/pgadmin/config/overlays/local
 #  - ../../infrastructure/minio/controller/overlays/local

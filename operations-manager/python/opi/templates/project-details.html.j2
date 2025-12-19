@@ -89,6 +89,124 @@
         </c-card>
     </div>
 
+    {# Metrics Section #}
+    {% if prometheus_available and project.deployments %}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="grafiek-lijn" size="xl" color="groen" />Resource Metrics</c-heading>
+                    <p class="rvo-text--subtle">Live resource usage per component (laatste 6 uur)</p>
+                </div>
+                {% if project.deployments|length > 1 %}
+                <div>
+                    <select id="deployment-selector" class="deployment-select" onchange="showDeploymentMetrics(this.value)">
+                        {% for deployment in project.deployments %}
+                        <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+            </div>
+
+            {% for deployment in project.deployments %}
+            <div id="metrics-{{ deployment.name }}" class="deployment-metrics-section" {% if not loop.first %}style="display: none;"{% endif %}>
+                {% if deployment.components %}
+                <div class="metrics-grid">
+                    {% for component in deployment.components %}
+                    {% set component_name = component.reference %}
+                    {% set metrics = deployment_metrics.get(deployment.name, {}).get(component_name, {}) %}
+                    <c-card class="metrics-component-card" padding="lg" backgroundColor="grijs-050" outline="true">
+                        <c-layout-flow gap="md">
+                            <div class="metrics-component-header">
+                                <c-icon icon="puzzel" size="md" color="donkerblauw" />
+                                <c-heading type="h4" textContent="{{ component_name }}" />
+                            </div>
+
+                            <div class="gauges-container">
+                                {# CPU Gauge #}
+                                <div class="gauge-item">
+                                    <div class="gauge-label">CPU</div>
+                                    <div class="gauge-wrapper">
+                                        <canvas id="cpu-gauge-{{ deployment.name }}-{{ component_name }}"
+                                                class="gauge-canvas"
+                                                data-value="{{ (metrics.cpu_cores or 0) * 1000 }}"
+                                                data-max="500"
+                                                data-unit="m"></canvas>
+                                    </div>
+                                    <div class="gauge-value">
+                                        {% if metrics.cpu_cores is not none %}
+                                            {{ "%.1f"|format(metrics.cpu_cores * 1000) }}m
+                                        {% else %}
+                                            <span class="no-data">-</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                {# Memory Gauge #}
+                                <div class="gauge-item">
+                                    <div class="gauge-label">Memory</div>
+                                    <div class="gauge-wrapper">
+                                        <canvas id="mem-gauge-{{ deployment.name }}-{{ component_name }}"
+                                                class="gauge-canvas"
+                                                data-value="{{ metrics.memory_mb or 0 }}"
+                                                data-max="512"
+                                                data-unit="MB"></canvas>
+                                    </div>
+                                    <div class="gauge-value">
+                                        {% if metrics.memory_mb is not none %}
+                                            {{ "%.0f"|format(metrics.memory_mb) }} MB
+                                        {% else %}
+                                            <span class="no-data">-</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                {# Requests/sec Gauge #}
+                                <div class="gauge-item">
+                                    <div class="gauge-label">Req/s</div>
+                                    <div class="gauge-wrapper">
+                                        <canvas id="req-gauge-{{ deployment.name }}-{{ component_name }}"
+                                                class="gauge-canvas"
+                                                data-value="{{ metrics.requests_per_second or 0 }}"
+                                                data-max="100"
+                                                data-unit="/s"></canvas>
+                                    </div>
+                                    <div class="gauge-value">
+                                        {% if metrics.requests_per_second is not none %}
+                                            {{ "%.1f"|format(metrics.requests_per_second) }}/s
+                                        {% else %}
+                                            <span class="no-data">-</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </c-layout-flow>
+                    </c-card>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <c-icon icon="info" size="lg" color="grijs-050" />
+                    <p class="rvo-text--md">Geen components in deze deployment</p>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </c-layout-flow>
+    </c-card>
+    {% elif not prometheus_available %}
+    <c-card outline="true" padding="lg" backgroundColor="grijs-050">
+        <c-layout-row gap="md" verticalSpacing="center">
+            <c-icon icon="info" size="lg" color="grijs-500" />
+            <div>
+                <strong>Metrics niet beschikbaar</strong>
+                <p class="rvo-text--sm rvo-text--subtle">Prometheus is niet verbonden. Resource metrics worden getoond wanneer Prometheus beschikbaar is.</p>
+            </div>
+        </c-layout-row>
+    </c-card>
+    {% endif %}
+
     {# Team Section #}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
@@ -483,38 +601,12 @@
                         </c-layout-flow>
                         {% endif %}
 
-                        {# User Environment Variables for this component #}
-                        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping %}
-                        <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                            <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="user" size="md" color="donkerblauw" />Gebruiker Environment Variables</c-heading>
-                            <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor dit component</p>
-
-                            <c-layout-flow gap="sm">
-                                {% for key, value in component['user-env-vars'].items() %}
-                                <c-card padding="sm" backgroundColor="grijs-050" outline="true">
-                                    <c-layout-flow gap="xs">
-                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
-                                            <c-icon icon="sleutel" size="sm" color="grijs-600" />
-                                            <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
-                                        </div>
-                                        <div style="margin-left: var(--rvo-space-lg);">
-                                            <div class="sensitive-field" id="component-{{ component.name }}-{{ key|replace('_', '-')|lower }}">
-                                                <span class="sensitive-dots">••••••••••••••••••••</span>
-                                                <span class="sensitive-value" style="display: none;">{{ value }}</span>
-                                                <c-button
-                                                    label="Tonen"
-                                                    kind="tertiary"
-                                                    size="sm"
-                                                    showIcon="before"
-                                                    icon="oog"
-                                                    class="toggle-sensitive"
-                                                    @click="toggleSensitive('component-{{ component.name }}-{{ key|replace('_', '-')|lower }}')" />
-                                            </div>
-                                        </div>
-                                    </c-layout-flow>
-                                </c-card>
-                                {% endfor %}
-                            </c-layout-flow>
+                        {# User Environment Variables indicator for this component #}
+                        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
+                        <div class="env-vars-indicator">
+                            <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                            <span>{{ component['user-env-vars']|length }} omgevingsvariabele{% if component['user-env-vars']|length != 1 %}n{% endif %}</span>
+                            <span class="rvo-text--subtle">(zie Omgevingsvariabelen sectie)</span>
                         </div>
                         {% endif %}
                     </c-layout-flow>
@@ -530,6 +622,170 @@
         </c-layout-flow>
     </c-card>
 
+
+    {# Environment Variables Overview Section #}
+    {% set ns = namespace(has_any_env_vars=false, has_component_env_vars=false, has_deployment_env_vars=false) %}
+    {% for component in project.components %}
+        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
+            {% set ns.has_any_env_vars = true %}
+            {% set ns.has_component_env_vars = true %}
+        {% endif %}
+    {% endfor %}
+    {% for deployment in project.deployments %}
+        {% for dep_component in deployment.components %}
+            {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
+                {% set ns.has_any_env_vars = true %}
+                {% set ns.has_deployment_env_vars = true %}
+            {% endif %}
+        {% endfor %}
+    {% endfor %}
+
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="sleutel" size="xl" color="hemelblauw" />Omgevingsvariabelen</c-heading>
+            <p class="rvo-text--subtle">Overzicht van alle gebruiker-gedefinieerde omgevingsvariabelen per scope</p>
+
+            {% if ns.has_any_env_vars %}
+            <c-layout-flow gap="xl">
+
+                {# Component-level Environment Variables #}
+                {% if ns.has_component_env_vars %}
+                <div class="env-vars-scope-section">
+                    <c-layout-flow gap="md">
+                        <div class="env-vars-scope-header">
+                            <c-icon icon="puzzel" size="lg" color="donkerblauw" />
+                            <div>
+                                <c-heading type="h3" textContent="Component niveau" />
+                                <p class="rvo-text--sm rvo-text--subtle">Standaard variabelen per component (gelden voor alle deployments)</p>
+                            </div>
+                        </div>
+
+                        {% for component in project.components %}
+                        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
+                        <c-card padding="md" backgroundColor="grijs-050" outline="true">
+                            <c-layout-flow gap="sm">
+                                <div class="env-vars-component-header">
+                                    <c-icon icon="puzzel" size="md" color="donkerblauw" />
+                                    <strong>{{ component.name }}</strong>
+                                    <span class="env-vars-count-badge">{{ component['user-env-vars']|length }} variabele{% if component['user-env-vars']|length != 1 %}n{% endif %}</span>
+                                </div>
+
+                                <div class="env-vars-list">
+                                    {% for key, value in component['user-env-vars'].items() %}
+                                    <div class="env-var-item">
+                                        <div class="env-var-key">
+                                            <c-icon icon="sleutel" size="sm" color="grijs-600" />
+                                            <code>{{ key }}</code>
+                                        </div>
+                                        <div class="env-var-value">
+                                            <div class="sensitive-field" id="env-overview-comp-{{ component.name }}-{{ key|replace('_', '-')|lower }}">
+                                                <span class="sensitive-dots">••••••••••••••••</span>
+                                                <span class="sensitive-value" style="display: none;">{{ value }}</span>
+                                                <c-button
+                                                    label="Tonen"
+                                                    kind="tertiary"
+                                                    size="sm"
+                                                    showIcon="before"
+                                                    icon="oog"
+                                                    class="toggle-sensitive"
+                                                    @click="toggleSensitive('env-overview-comp-{{ component.name }}-{{ key|replace('_', '-')|lower }}')" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </c-layout-flow>
+                        </c-card>
+                        {% endif %}
+                        {% endfor %}
+                    </c-layout-flow>
+                </div>
+                {% endif %}
+
+                {# Deployment-specific Environment Variables #}
+                {% if ns.has_deployment_env_vars %}
+                <div class="env-vars-scope-section">
+                    <c-layout-flow gap="md">
+                        <div class="env-vars-scope-header">
+                            <c-icon icon="server" size="lg" color="oranje" />
+                            <div>
+                                <c-heading type="h3" textContent="Deployment niveau" />
+                                <p class="rvo-text--sm rvo-text--subtle">Deployment-specifieke variabelen (overschrijven component niveau)</p>
+                            </div>
+                        </div>
+
+                        {% for deployment in project.deployments %}
+                        {% set dep_ns = namespace(has_env_vars=false) %}
+                        {% for dep_component in deployment.components %}
+                            {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
+                                {% set dep_ns.has_env_vars = true %}
+                            {% endif %}
+                        {% endfor %}
+
+                        {% if dep_ns.has_env_vars %}
+                        <c-card padding="md" backgroundColor="grijs-050" outline="true">
+                            <c-layout-flow gap="md">
+                                <div class="env-vars-deployment-header">
+                                    <c-icon icon="server" size="md" color="oranje" />
+                                    <strong>{{ deployment.name }}</strong>
+                                    <span class="cluster-badge">{{ deployment.cluster|title }}</span>
+                                </div>
+
+                                {% for dep_component in deployment.components %}
+                                {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
+                                <c-card padding="sm" backgroundColor="wit" outline="true">
+                                    <c-layout-flow gap="sm">
+                                        <div class="env-vars-component-header">
+                                            <c-icon icon="puzzel" size="sm" color="donkerblauw" />
+                                            <span>{{ dep_component.reference }}</span>
+                                            <span class="env-vars-count-badge">{{ dep_component['user-env-vars']|length }} variabele{% if dep_component['user-env-vars']|length != 1 %}n{% endif %}</span>
+                                        </div>
+
+                                        <div class="env-vars-list">
+                                            {% for key, value in dep_component['user-env-vars'].items() %}
+                                            <div class="env-var-item">
+                                                <div class="env-var-key">
+                                                    <c-icon icon="sleutel" size="sm" color="grijs-600" />
+                                                    <code>{{ key }}</code>
+                                                </div>
+                                                <div class="env-var-value">
+                                                    <div class="sensitive-field" id="env-overview-dep-{{ deployment.name }}-{{ dep_component.reference }}-{{ key|replace('_', '-')|lower }}">
+                                                        <span class="sensitive-dots">••••••••••••••••</span>
+                                                        <span class="sensitive-value" style="display: none;">{{ value }}</span>
+                                                        <c-button
+                                                            label="Tonen"
+                                                            kind="tertiary"
+                                                            size="sm"
+                                                            showIcon="before"
+                                                            icon="oog"
+                                                            class="toggle-sensitive"
+                                                            @click="toggleSensitive('env-overview-dep-{{ deployment.name }}-{{ dep_component.reference }}-{{ key|replace('_', '-')|lower }}')" />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    </c-layout-flow>
+                                </c-card>
+                                {% endif %}
+                                {% endfor %}
+                            </c-layout-flow>
+                        </c-card>
+                        {% endif %}
+                        {% endfor %}
+                    </c-layout-flow>
+                </div>
+                {% endif %}
+
+            </c-layout-flow>
+            {% else %}
+            <div class="empty-state">
+                <c-icon icon="info" size="lg" color="grijs-050" />
+                <p class="rvo-text--md">Geen omgevingsvariabelen geconfigureerd</p>
+            </div>
+            {% endif %}
+        </c-layout-flow>
+    </c-card>
 
     {# Repositories Section #}
     {% if project.repositories %}
@@ -611,6 +867,82 @@
 
 
     /* Team Grid - Replaced with c-grid component */
+
+    /* Metrics Section */
+    .deployment-select {
+        padding: var(--rvo-space-sm) var(--rvo-space-md);
+        border: 1px solid var(--rvo-color-grijs-300);
+        border-radius: 4px;
+        background: white;
+        font-size: 0.875rem;
+        cursor: pointer;
+        min-width: 200px;
+    }
+
+    .deployment-select:focus {
+        outline: 2px solid var(--rvo-color-hemelblauw);
+        outline-offset: 2px;
+    }
+
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: var(--rvo-space-lg);
+    }
+
+    .metrics-component-card {
+        border-left: 4px solid var(--rvo-color-groen);
+    }
+
+    .metrics-component-header {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-sm);
+    }
+
+    .gauges-container {
+        display: flex;
+        justify-content: space-around;
+        gap: var(--rvo-space-md);
+        flex-wrap: wrap;
+    }
+
+    .gauge-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 80px;
+    }
+
+    .gauge-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--rvo-color-grijs-600);
+        text-transform: uppercase;
+        margin-bottom: var(--rvo-space-xs);
+    }
+
+    .gauge-wrapper {
+        width: 80px;
+        height: 50px;
+        position: relative;
+    }
+
+    .gauge-canvas {
+        width: 100%;
+        height: 100%;
+    }
+
+    .gauge-value {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--rvo-color-grijs-800);
+        margin-top: var(--rvo-space-xs);
+    }
+
+    .gauge-value .no-data {
+        color: var(--rvo-color-grijs-400);
+    }
 
     /* Services Grid */
     .services-grid {
@@ -743,6 +1075,18 @@
         text-transform: capitalize;
     }
 
+    .env-vars-indicator {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-sm);
+        padding: var(--rvo-space-sm) var(--rvo-space-md);
+        background: var(--rvo-color-hemelblauw-50);
+        border-radius: 4px;
+        font-size: 0.875rem;
+        color: var(--rvo-color-hemelblauw);
+        margin-top: var(--rvo-space-sm);
+    }
+
     .component-specs {
         display: flex;
         flex-direction: column;
@@ -835,6 +1179,72 @@
         overflow-x: auto;
     }
 
+    /* Environment Variables Section */
+    .env-vars-scope-section {
+        padding: var(--rvo-space-md);
+        background: var(--rvo-color-grijs-025);
+        border-radius: 8px;
+        border: 1px solid var(--rvo-color-grijs-100);
+    }
+
+    .env-vars-scope-header {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--rvo-space-md);
+        margin-bottom: var(--rvo-space-md);
+    }
+
+    .env-vars-deployment-header,
+    .env-vars-component-header {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-sm);
+        flex-wrap: wrap;
+    }
+
+    .env-vars-count-badge {
+        background: var(--rvo-color-hemelblauw-50);
+        color: var(--rvo-color-hemelblauw);
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .env-vars-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-xs);
+    }
+
+    .env-var-item {
+        display: grid;
+        grid-template-columns: minmax(150px, auto) 1fr;
+        gap: var(--rvo-space-md);
+        padding: var(--rvo-space-sm);
+        background: var(--rvo-color-wit);
+        border-radius: 4px;
+        border: 1px solid var(--rvo-color-grijs-100);
+        align-items: center;
+    }
+
+    .env-var-key {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-xs);
+    }
+
+    .env-var-key code {
+        font-family: monospace;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--rvo-color-grijs-800);
+    }
+
+    .env-var-value {
+        min-width: 0;
+    }
+
     /* Repositories Section */
     .repositories-section {
         display: flex;
@@ -908,6 +1318,14 @@
         .repo-details {
             grid-template-columns: 1fr;
         }
+
+        .env-var-item {
+            grid-template-columns: 1fr;
+        }
+
+        .env-vars-scope-header {
+            flex-direction: column;
+        }
     }
 </style>
 
@@ -920,7 +1338,7 @@
         const dots = field.querySelector('.sensitive-dots');
         const value = field.querySelector('.sensitive-value');
         const button = field.querySelector('.toggle-sensitive');
-        
+
         if (dots.style.display === 'none') {
             // Hide sensitive value
             dots.style.display = 'inline';
@@ -935,6 +1353,95 @@
             button.querySelector('c-icon').setAttribute('icon', 'oog-dicht');
         }
     }
+
+    /**
+     * Switch between deployment metrics sections
+     */
+    function showDeploymentMetrics(deploymentName) {
+        // Hide all deployment metrics sections
+        document.querySelectorAll('.deployment-metrics-section').forEach(section => {
+            section.style.display = 'none';
+        });
+        // Show the selected deployment's metrics
+        const selectedSection = document.getElementById('metrics-' + deploymentName);
+        if (selectedSection) {
+            selectedSection.style.display = 'block';
+        }
+    }
+
+    /**
+     * Draw a semi-circular gauge on a canvas
+     */
+    function drawGauge(canvas, value, max, color) {
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+        const centerX = width / 2;
+        const centerY = height - 5;
+        const radius = Math.min(centerX, centerY) - 5;
+
+        // Clear canvas
+        ctx.clearRect(0, 0, width, height);
+
+        // Draw background arc (gray)
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, Math.PI, 0, false);
+        ctx.lineWidth = 8;
+        ctx.strokeStyle = '#e5e5e5';
+        ctx.stroke();
+
+        // Calculate percentage and angle
+        const percentage = Math.min(value / max, 1);
+        const endAngle = Math.PI + (percentage * Math.PI);
+
+        // Draw value arc
+        if (percentage > 0) {
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, Math.PI, endAngle, false);
+            ctx.lineWidth = 8;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = color;
+            ctx.stroke();
+        }
+    }
+
+    /**
+     * Get color based on percentage (green -> yellow -> red)
+     */
+    function getGaugeColor(percentage) {
+        if (percentage < 0.5) {
+            return '#39870c'; // Green
+        } else if (percentage < 0.75) {
+            return '#e17000'; // Orange
+        } else {
+            return '#d52b1e'; // Red
+        }
+    }
+
+    /**
+     * Initialize all gauge canvases
+     */
+    function initGauges() {
+        document.querySelectorAll('.gauge-canvas').forEach(canvas => {
+            const value = parseFloat(canvas.dataset.value) || 0;
+            const max = parseFloat(canvas.dataset.max) || 100;
+            const percentage = value / max;
+            const color = getGaugeColor(percentage);
+
+            // Set canvas size for retina displays
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * 2;
+            canvas.height = rect.height * 2;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            canvas.getContext('2d').scale(2, 2);
+
+            drawGauge(canvas, value, max, color);
+        });
+    }
+
+    // Initialize gauges when DOM is loaded
+    document.addEventListener('DOMContentLoaded', initGauges);
 
 </script>
 {% endblock %}

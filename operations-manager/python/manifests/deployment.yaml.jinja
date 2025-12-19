@@ -21,6 +21,10 @@ spec:
       annotations:
         # Timestamp to force pod restart when secrets are regenerated
         opi.rig.nl/generated-at: "{{ generated_at }}"
+        # Prometheus scraping annotations
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ metrics_port | default(application_port) }}"
+        prometheus.io/path: "{{ metrics_path | default('/metrics') }}"
       labels:
         app: "{{ name }}"
         project: "{{ project.name }}"
@@ -61,12 +65,20 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
-          {% if env_vars %}
+          {% if env_vars or (ca_config and ca_config.enabled and ca_config.env_vars) %}
           env:
+          {% if env_vars %}
           {% for env_name, env_value in env_vars.items() %}
             - name: {{ env_name }}
               value: "{{ env_value }}"
           {% endfor %}
+          {% endif %}
+          {% if ca_config and ca_config.enabled and ca_config.env_vars %}
+          {% for env_name, env_value in ca_config.env_vars.items() %}
+            - name: {{ env_name }}
+              value: "{{ env_value }}"
+          {% endfor %}
+          {% endif %}
           {% endif %}
           {% if env_from_secrets %}
           envFrom:
@@ -75,12 +87,24 @@ spec:
                 name: {{ secret_name }}
           {% endfor %}
           {% endif %}
-          {% if storage_configs %}
+          {% if storage_configs or (ca_config and ca_config.enabled) %}
           volumeMounts:
+          {% if storage_configs %}
           {% for storage in storage_configs %}
             - name: {{ storage.name }}
               mountPath: {{ storage['mount-path'] }}
           {% endfor %}
+          {% endif %}
+          {% if ca_config and ca_config.enabled %}
+            - name: ca-certificate
+              mountPath: {{ ca_config.container_path }}
+              readOnly: true
+          {% if ca_config.hash %}
+            - name: ca-certificate
+              mountPath: /etc/ssl/certs/{{ ca_config.hash }}.0
+              readOnly: true
+          {% endif %}
+          {% endif %}
           {% endif %}
           resources:
             requests:
@@ -107,8 +131,9 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 20
             failureThreshold: 3
-      {% if storage_configs %}
+      {% if storage_configs or (ca_config and ca_config.enabled) %}
       volumes:
+      {% if storage_configs %}
       {% for storage in storage_configs %}
         {% if storage.type == 'persistent' %}
         - name: {{ storage.name }}
@@ -120,4 +145,11 @@ spec:
             sizeLimit: {{ storage.size }}
         {% endif %}
       {% endfor %}
+      {% endif %}
+      {% if ca_config and ca_config.enabled %}
+        - name: ca-certificate
+          hostPath:
+            path: {{ ca_config.node_path }}
+            type: File
+      {% endif %}
       {% endif %}

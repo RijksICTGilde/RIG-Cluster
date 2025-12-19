@@ -38,3 +38,11 @@ nodes:
   - containerPort: 443
     hostPort: 443
     protocol: TCP
+
+  # Mount local CA certificate into node's trust store
+  # All pods inherit this CA automatically via containerd
+  # Generate CA first with: task generate-local-ca
+  extraMounts:
+  - hostPath: ./security/tls/ca.crt
+    containerPath: /etc/ssl/certs/kind-local-ca.crt
+    readOnly: true

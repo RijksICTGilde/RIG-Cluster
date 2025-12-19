@@ -204,40 +204,53 @@ async def refresh_projects_from_git() -> int:
     # Clear existing projects to reload fresh data
     project_service.clear_all_projects()
 
-    # Create a new Git connector to fetch the latest changes
+    # Create a shared Git connector that will be reused across all ProjectManagers
+    shared_git_connector = None
     try:
-        git_connector = await create_git_connector_for_project_files("refresh projects from git")
-        projects_repo_root_dir = await git_connector.get_working_dir()
+        shared_git_connector = await create_git_connector_for_project_files("refresh projects from git")
+        projects_repo_root_dir = await shared_git_connector.get_working_dir()
         project_files = await get_project_files(projects_repo_root_dir)
-        await git_connector.close()
     except Exception as e:
         logger.error(f"Failed to get project files from Git: {e}")
+        if shared_git_connector:
+            await shared_git_connector.close()
         raise
 
-    loaded_count = 0
-    for project_file in project_files:
-        project_manager = ProjectManager(project_file_relative_path=project_file)
-        try:
-            project_file_base_name = os.path.basename(project_file)
-            logger.debug(f"Refreshing project file: {project_file_base_name}")
-
-            # Load project data
-            api_key = await project_manager.get_api_key()
-            project_name = await project_manager.get_name()
-            project_data = await project_manager.get_contents()
-
-            # Register project with users and full project data
-            project_service.register(
-                project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
+    try:
+        loaded_count = 0
+        for project_file in project_files:
+            # Each ProjectManager shares the git connector for project files
+            # The connector ownership tracking ensures it won't be closed by individual managers
+            project_manager = ProjectManager(
+                project_file_relative_path=project_file,
+                git_connector_for_project_files=shared_git_connector,
             )
-            loaded_count += 1
-        except Exception as e:
-            logger.error(f"Error refreshing project file {project_file}: {e}")
-        finally:
-            await project_manager.close()
+            try:
+                project_file_base_name = os.path.basename(project_file)
+                logger.debug(f"Refreshing project file: {project_file_base_name}")
 
-    logger.info(f"Refreshed {loaded_count} projects from Git")
-    return loaded_count
+                # Load project data
+                api_key = await project_manager.get_api_key()
+                project_name = await project_manager.get_name()
+                project_data = await project_manager.get_contents()
+
+                # Register project with users and full project data
+                project_service.register(
+                    project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
+                )
+                loaded_count += 1
+            except Exception as e:
+                logger.error(f"Error refreshing project file {project_file}: {e}")
+            finally:
+                await project_manager.close()
+
+        logger.info(f"Refreshed {loaded_count} projects from Git")
+        return loaded_count
+    finally:
+        # Close the shared git connector now that all project managers are done
+        if shared_git_connector:
+            await shared_git_connector.close()
+            logger.debug("Shared git connector for project files closed")
 
 
 async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnector) -> bool:
@@ -431,8 +444,6 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             f"CRITICAL STARTUP FAILURE: Cannot initialize database pools. "
             f"Application requires database connectivity to function. Error: {e}"
         )
-        # DO NOT continue startup - the application cannot work without database pools
-        # The retry logic in initialize_database_pools() has already attempted multiple times
         raise RuntimeError(f"Database pool initialization failed: {e}") from e
 
     # Initialize the API key service for project API key registration
@@ -460,21 +471,27 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             logger.info(f"Added {len(env_emails)} allowed emails from ALLOWED_EMAILS environment variable")
 
     # Get the list of project files to process
+    # Create a shared git connector that will be reused across all ProjectManagers
+    shared_git_connector = None
     try:
-        # Create temporary git connector just to get the working directory
-        temp_git_connector = await create_git_connector_for_project_files("get project files list")
-        projects_repo_root_dir = await temp_git_connector.get_working_dir()
+        shared_git_connector = await create_git_connector_for_project_files("startup project files")
+        projects_repo_root_dir = await shared_git_connector.get_working_dir()
         project_files = await get_project_files(projects_repo_root_dir)
-        await temp_git_connector.close()
     except Exception as e:
         logger.error(f"Failed to get project files list: {e}")
+        if shared_git_connector:
+            await shared_git_connector.close()
         raise
 
     try:
         all_successful = True
         for project_file in project_files:
-            # Each ProjectManager gets its own git connector and all resources
-            project_manager = ProjectManager(project_file_relative_path=project_file)
+            # Each ProjectManager shares the git connector for project files
+            # The connector ownership tracking ensures it won't be closed by individual managers
+            project_manager = ProjectManager(
+                project_file_relative_path=project_file,
+                git_connector_for_project_files=shared_git_connector,
+            )
             try:
                 project_file_base_name = os.path.basename(project_file)
                 logger.info(f"Processing project file: {project_file_base_name}")
@@ -543,3 +560,8 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     except Exception as e:
         logger.error(f"Startup failed with error: {e}")
         raise
+    finally:
+        # Close the shared git connector now that all project managers are done
+        if shared_git_connector:
+            await shared_git_connector.close()
+            logger.debug("Shared git connector for project files closed")

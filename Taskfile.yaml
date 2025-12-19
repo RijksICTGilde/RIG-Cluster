@@ -265,6 +265,131 @@ tasks:
         echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a
     silent: true
 
+  generate-local-ca:
+    desc: "Generate root CA for local development HTTPS (one-time)"
+    cmds:
+      - |
+        mkdir -p security/tls
+
+        if [ -f security/tls/ca.crt ]; then
+          echo "CA already exists at security/tls/ca.crt"
+          echo "To regenerate, first remove security/tls/ca.crt and security/tls/ca.key"
+          exit 0
+        fi
+
+        echo "Generating root CA for local development..."
+        openssl genrsa -out security/tls/ca.key 4096
+
+        # Create CA with proper key usage extensions for modern OpenSSL/Python
+        openssl req -x509 -new -nodes -key security/tls/ca.key \
+          -sha256 -days 3650 -out security/tls/ca.crt \
+          -subj "/CN=Kind Local Development CA/O=RIG" \
+          -addext "basicConstraints=critical,CA:TRUE" \
+          -addext "keyUsage=critical,keyCertSign,cRLSign"
+
+        echo ""
+        echo "CA generated successfully:"
+        echo "  Certificate: security/tls/ca.crt"
+        echo "  Private key: security/tls/ca.key"
+        echo ""
+        echo "Next steps:"
+        echo "  1. Install CA in OS trust store: task install-local-ca"
+        echo "  2. (Re)create Kind cluster: task create-local-kind-cluster"
+        echo "  3. Import CA to cert-manager: task import-ca-to-cluster"
+    silent: false
+
+  install-local-ca:
+    desc: "Install CA in local OS trust store (browsers will trust it)"
+    cmds:
+      - |
+        if [ ! -f "security/tls/ca.crt" ]; then
+          echo "CA certificate not found. Please run 'task generate-local-ca' first."
+          exit 1
+        fi
+
+        echo "This will install the CA in your OS trust store."
+        echo "CA file: security/tls/ca.crt"
+        echo ""
+        printf "Continue? [y/N] "
+        read -r confirm
+        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+          echo "Cancelled."
+          exit 1
+        fi
+
+        if [ "$(uname)" = "Darwin" ]; then
+          echo "Installing CA in macOS Keychain..."
+          sudo security add-trusted-cert -d -r trustRoot \
+            -k /Library/Keychains/System.keychain security/tls/ca.crt
+          echo "CA installed in macOS Keychain"
+        elif [ -d /usr/local/share/ca-certificates ]; then
+          echo "Installing CA in Linux trust store..."
+          sudo cp security/tls/ca.crt /usr/local/share/ca-certificates/kind-local-ca.crt
+          sudo update-ca-certificates
+          echo "CA installed in Linux trust store"
+        else
+          echo "Unsupported OS. Please manually install security/tls/ca.crt in your trust store."
+          exit 1
+        fi
+    silent: false
+
+  import-ca-to-cluster:
+    desc: "Import CA into Kubernetes for cert-manager to use"
+    cmds:
+      - |
+        if [ ! -f "security/tls/ca.crt" ] || [ ! -f "security/tls/ca.key" ]; then
+          echo "CA files not found. Please run 'task generate-local-ca' first."
+          exit 1
+        fi
+
+        echo "Importing CA into cert-manager namespace..."
+        kubectl create secret tls kind-ca-secret \
+          --cert=security/tls/ca.crt \
+          --key=security/tls/ca.key \
+          -n cert-manager \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "CA imported to cluster as kind-ca-secret in cert-manager namespace"
+    silent: false
+
+  inject-ca-to-running-cluster:
+    desc: "Inject CA into all running Kind cluster nodes (alternative to recreating cluster)"
+    cmds:
+      - |
+        if [ ! -f "security/tls/ca.crt" ]; then
+          echo "CA certificate not found. Please run 'task generate-local-ca' first."
+          exit 1
+        fi
+
+        echo "Injecting CA into all Kind cluster nodes..."
+        echo ""
+
+        # Get all nodes in the Kind cluster
+        NODES=$(docker ps --filter "name={{.KIND_CLUSTER_NAME}}" --format "{{`{{.Names}}`}}")
+
+        if [ -z "$NODES" ]; then
+          echo "No running nodes found for cluster '{{.KIND_CLUSTER_NAME}}'"
+          exit 1
+        fi
+
+        for NODE_NAME in $NODES; do
+          echo "Injecting CA into node: $NODE_NAME"
+
+          # Copy CA certificate into the node's trust store
+          docker cp security/tls/ca.crt "$NODE_NAME:/etc/ssl/certs/kind-local-ca.crt"
+
+          # Update the CA certificates bundle inside the node
+          docker exec "$NODE_NAME" update-ca-certificates
+
+          echo "  Done: $NODE_NAME"
+        done
+
+        echo ""
+        echo "CA injected into all nodes."
+        echo "Note: Existing pods may need to be restarted to pick up the new CA."
+        echo "New pods will automatically trust the CA."
+    silent: false
+
   configure-coredns-kind-domains:
     desc: "Configure CoreDNS to resolve *.kind domains to ingress controller (re-runnable)"
     cmds:
@@ -465,37 +590,49 @@ tasks:
   setup-local-cluster:
     desc: "Complete setup: create cluster, install operators, and bootstrap infrastructure"
     cmds:
+      # Generate keys and certificates first (before cluster creation)
+      - task: generate-age-key
+      - task: generate-local-ca
+      # Create cluster (mounts CA via extraMounts)
       - task: create-local-kind-cluster
+      # Install cluster components
       - task: install-ingress-nginx
       - task: install-cnpg-operator
       - task: configure-coredns-kind-domains
       - task: prepare-argocd-operator
       - task: update-cmp-kustomize-sops
-      - task: generate-age-key
+      # Generate secrets
       - task: generate-bootstrap-secrets-for-cluster
       - task: generate-infrastructure-secrets-for-cluster
+      # Deploy operations manager
       - task: update-operations-manager
+      # Import CA to cert-manager (after cluster is ready)
+      - task: import-ca-to-cluster
       - |
         echo ""
         echo "========================================="
-        echo "✅ Local cluster setup complete!"
+        echo "Local cluster setup complete!"
         echo "========================================="
         echo ""
         echo "Next steps:"
-        echo "1. Start git daemon (for infrastructure repo):"
+        echo ""
+        echo "1. Install CA in your OS trust store (one-time, for browser HTTPS):"
+        echo "   task install-local-ca"
+        echo ""
+        echo "2. Start git daemon (for infrastructure repo):"
         echo "   git daemon --base-path=. --export-all --reuseaddr --informative-errors --verbose --enable=upload-pack --port=9090 --listen=0.0.0.0 --log-destination=stderr"
         echo ""
-        echo "2. Bootstrap ArgoCD:"
+        echo "3. Bootstrap ArgoCD:"
         echo "   task bootstrap-argo-system"
         echo ""
-        echo "3. Add to /etc/hosts:"
+        echo "4. Add to /etc/hosts:"
         echo "   127.0.0.1 argo.kind keycloak.kind minio.kind operations-manager.kind forgejo.kind"
         echo ""
-        echo "4. Access services:"
-        echo "   - ArgoCD: http://argo.kind (admin/admin)"
-        echo "   - Forgejo: http://forgejo.kind (admin/admin)"
-        echo "   - Keycloak: http://keycloak.kind"
-        echo "   - Operations Manager: http://operations-manager.kind"
+        echo "5. Access services:"
+        echo "   - ArgoCD: https://argo.kind (admin/admin)"
+        echo "   - Forgejo: https://forgejo.kind (admin/admin)"
+        echo "   - Keycloak: https://keycloak.kind"
+        echo "   - Operations Manager: https://operations-manager.kind"
     silent: false
 
   generate-env-secrets-for-operations-manager:

@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from opi.api.auth_routes import auth_router
+from opi.api.metrics_router import metrics_router
 from opi.api.router import api_router
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
@@ -143,9 +144,10 @@ def create_app() -> FastAPI:
     app.state.oauth = oauth
     logger.info("OAuth client initialized - registration will happen after Keycloak setup")
 
-    # Include routers - only API router will appear in OpenAPI docs
+    # Include routers - only API routers will appear in OpenAPI docs
     app.include_router(auth_router, include_in_schema=False)  # Exclude from OpenAPI docs
     app.include_router(api_router, include_in_schema=True)  # Include in OpenAPI docs
+    app.include_router(metrics_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs
 
     # Mount ROOS component assets - use a simpler approach

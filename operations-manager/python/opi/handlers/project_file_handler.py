@@ -669,6 +669,48 @@ class ProjectFileHandler:
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
 
+    def extract_component_metrics(
+        self, project_data: dict[str, Any], component_name: str
+    ) -> dict[str, int | str | None]:
+        """
+        Extract metrics configuration from a component definition by name.
+
+        The metrics configuration is used for Prometheus scraping annotations.
+
+        Args:
+            project_data: The parsed project data
+            component_name: Name of the component to find metrics for
+
+        Returns:
+            Dictionary with metrics configuration:
+            - port: Metrics port (or None if not specified)
+            - path: Metrics path (or None if not specified)
+
+        Example project.yaml:
+            components:
+              - name: my-app
+                metrics:
+                  port: 9090
+                  path: /metrics
+        """
+        # Extract metrics port
+        port_path = f"$.components[?(@.name='{component_name}')].metrics.port"
+        metrics_port = self.extract_value_by_path(project_data, port_path, None)
+
+        # Extract metrics path
+        path_path = f"$.components[?(@.name='{component_name}')].metrics.path"
+        metrics_path = self.extract_value_by_path(project_data, path_path, None)
+
+        if metrics_port or metrics_path:
+            logger.info(
+                f"Found metrics config for component '{component_name}': "
+                f"port={metrics_port}, path={metrics_path}"
+            )
+        else:
+            logger.debug(f"No metrics configuration found for component '{component_name}'")
+
+        return {"port": metrics_port, "path": metrics_path}
+
     def get_storage_generation(
         self, project_data: dict[str, Any], deployment_name: str, component_name: str, storage_name: str
     ) -> int:

@@ -27,6 +27,8 @@ from opi.connectors.git import (
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import (
     get_argo_namespace,
+    get_ca_certificate_config,
+    get_ingress_cluster_issuer,
     get_ingress_ip_whitelist,
     get_ingress_postfix,
     get_ingress_tls_enabled,
@@ -63,6 +65,7 @@ from opi.utils.naming import (
     generate_pvc_name,
     generate_registry_secret_name,
     generate_storage_name,
+    generate_tls_secret_name,
     generate_unique_name,
 )
 from opi.utils.secrets import BaseSecret, DatabaseSecret, KeycloakSecret, MinIOSecret, RegistrySecret, UserSecret
@@ -96,6 +99,8 @@ class ProjectManager:
         self._manifest_generator = ManifestGenerator()
         self._project_file_handler = ProjectFileHandler()
         self.__git_connector_for_project_files = git_connector_for_project_files
+        # Track ownership: if connector was injected, we don't own it and shouldn't close it
+        self.__owns_git_connector_for_project_files = git_connector_for_project_files is None
         self.__git_connector_for_argocd = None
         # each deployment has a repository, referenced by name
         self.__git_connectors_for_deployments: dict[str, GitConnector] = {}
@@ -295,9 +300,11 @@ class ProjectManager:
         if self.__git_connector_for_project_files:
             raise Exception("git_connector_for_projectfiles already set")
         self.__git_connector_for_project_files = git_connector
+        # Injected connector is not owned by this instance
+        self.__owns_git_connector_for_project_files = False
 
     async def close_git_connector_for_project_files(self) -> None:
-        if self.__git_connector_for_project_files:
+        if self.__git_connector_for_project_files and self.__owns_git_connector_for_project_files:
             await self.__git_connector_for_project_files.close()
             self.__git_connector_for_project_files = None
 
@@ -2440,6 +2447,9 @@ class ProjectManager:
                 project_data, component_reference
             )
 
+            # Extract metrics configuration from component (for Prometheus scraping)
+            metrics_config = self._project_file_handler.extract_component_metrics(project_data, component_reference)
+
             # Extract user environment variables from component definition
             user_env_vars = await self._project_file_handler.extract_component_user_env_vars(
                 project_data, component_reference
@@ -2659,6 +2669,11 @@ class ProjectManager:
                 "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
                 # Timestamp to force pod restart when secrets are regenerated
                 "generated_at": generated_at,
+                # CA certificate configuration for SSL/TLS
+                "ca_config": get_ca_certificate_config(cluster),
+                # Prometheus metrics configuration (port and path for scraping)
+                "metrics_port": metrics_config.get("port"),
+                "metrics_path": metrics_config.get("path"),
             }
 
             logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")
@@ -2754,6 +2769,8 @@ class ProjectManager:
                                     "service_name": unique_name,  # Service name stays the same
                                     "hostname": ingress_hostname,
                                     "path": path_value,  # Path for this specific ingress
+                                    "cluster_issuer": get_ingress_cluster_issuer(cluster),
+                                    "tls_secret_name": generate_tls_secret_name(ingress_name),
                                 }
                             )
 

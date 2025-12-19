@@ -276,4 +276,6 @@ task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/
 
 task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=frontend REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.11.21 DOCKERFILE_PATH=frontend/Dockerfile
 
+task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=frontend-beheer REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.12.08 DOCKERFILE_PATH=frontend-beheer/Dockerfile
+
 

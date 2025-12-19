@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  # Prometheus RBAC (namespace-scoped)
+  - role.yaml
+  - rolebinding.yaml
+  # kube-state-metrics RBAC (namespace-scoped)
+  - kube-state-metrics-role.yaml
+  - kube-state-metrics-rolebinding.yaml
+
+# Production may need a different configmap that doesn't try to scrape
+# kubelet cAdvisor (requires node-level access)
+# For now, using the same config - adjust as needed based on cluster permissions

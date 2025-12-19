@@ -156,7 +156,7 @@ Update your Operations Manager environment configuration:
 # OIDC Configuration
 OIDC_CLIENT_ID=rig-platform-operations-manager
 OIDC_CLIENT_SECRET=<your-client-secret>
-OIDC_DISCOVERY_URL=http://keycloak.kind/realms/rig-platform/.well-known/openid-configuration
+OIDC_DISCOVERY_URL=https://keycloak.kind/realms/rig-platform/.well-known/openid-configuration
 ```
 
 ## 5. Testing the Configuration
