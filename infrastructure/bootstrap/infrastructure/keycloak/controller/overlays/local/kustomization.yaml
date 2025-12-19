@@ -36,3 +36,9 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/memory
         value: "2Gi"
+      - op: test
+        path: /spec/template/spec/containers/0/env/5/name
+        value: "KC_HOSTNAME"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/5/value
+        value: "https://keycloak.kind"

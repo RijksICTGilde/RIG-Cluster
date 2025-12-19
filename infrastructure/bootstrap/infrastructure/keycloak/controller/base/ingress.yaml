@@ -5,8 +5,7 @@ metadata:
   namespace: rig-system
   annotations:
     nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    cert-manager.io/cluster-issuer: kind-ca-issuer
 spec:
   ingressClassName: nginx
   rules:
@@ -20,3 +19,7 @@ spec:
                   number: 8080
             path: /
             pathType: Prefix
+  tls:
+    - hosts:
+        - keycloak.kind
+      secretName: keycloak-tls

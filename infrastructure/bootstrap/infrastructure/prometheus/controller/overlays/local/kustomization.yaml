@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  # Prometheus RBAC (cluster-wide)
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  # kube-state-metrics RBAC (cluster-wide)
+  - kube-state-metrics-clusterrole.yaml
+  - kube-state-metrics-clusterrolebinding.yaml

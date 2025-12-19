@@ -963,6 +963,28 @@ def generate_registry_secret_name(deployment_name: str, registry_name: str) -> s
     return f"{deployment_name}-{normalized_registry}-secret"
 
 
+def generate_tls_secret_name(ingress_name: str) -> str:
+    """
+    Generate a consistent TLS secret name for an ingress resource.
+
+    The secret name follows the pattern {ingress_name}-tls, which cert-manager
+    uses to store the generated TLS certificate and key.
+
+    Args:
+        ingress_name: Name of the ingress resource
+
+    Returns:
+        TLS secret name string
+
+    Example:
+        >>> generate_tls_secret_name("main-webapp")
+        'main-webapp-tls'
+        >>> generate_tls_secret_name("frontend-api-v1users")
+        'frontend-api-v1users-tls'
+    """
+    return f"{ingress_name}-tls"
+
+
 def generate_ingress_name_from_path(base_name: str, path: str, max_length: int = 63) -> str:
     """
     Generate an ingress resource name that includes the path for uniqueness.

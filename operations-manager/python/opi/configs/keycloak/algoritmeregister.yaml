@@ -161,6 +161,29 @@ clients:
     authorizationServicesEnabled: true
     standardFlowEnabled: false
     directAccessGrantsEnabled: false
+    protocolMappers:
+      # Realm roles mapper - puts roles at root level of JWT token
+      - name: "app-realm-roles"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-realm-role-mapper"
+        config:
+          claim.name: "roles"
+          jsonType.label: "String"
+          multivalued: "true"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      # Groups mapper - puts groups at root level WITHOUT leading slashes
+      - name: "app-groups"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-group-membership-mapper"
+        config:
+          claim.name: "groups"
+          full.path: "false"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
 
     # Service account roles for user management
     serviceAccountClientRoles:

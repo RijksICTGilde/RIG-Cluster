@@ -2,6 +2,7 @@
 /CLAUDE.md
 /.claude/settings.local.json
 /security/key.txt
+/security/tls/
 /operations-manager/python/log*
 /operations-manager/python/.env.local
 /operations-manager/python/.env.secrets

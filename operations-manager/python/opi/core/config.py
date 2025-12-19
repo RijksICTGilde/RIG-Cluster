@@ -209,7 +209,7 @@ class Settings(BaseSettings):
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
 
     # Keycloak configuration
-    KEYCLOAK_URL: str = "http://keycloak.kind"
+    KEYCLOAK_URL: str = "https://keycloak.kind"
     KEYCLOAK_ADMIN_USERNAME: str = "admin"
     KEYCLOAK_ADMIN_PASSWORD: str = "changeMe123!"
 
@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     # Master OIDC provider configuration (to be added to shared realm)
     KEYCLOAK_MASTER_OIDC_CLIENT_ID: str = "dummy-client-id"
     KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: str = "dummy-client-secret-123"
-    KEYCLOAK_MASTER_OIDC_DISCOVERY_URL: str = "http://keycloak.kind/realms/master/.well-known/openid-configuration"
+    KEYCLOAK_MASTER_OIDC_DISCOVERY_URL: str = "https://keycloak.kind/realms/master/.well-known/openid-configuration"
 
     # Database configuration
     DATABASE_HOST: str = "postgresql.kind"
@@ -236,6 +236,9 @@ class Settings(BaseSettings):
 
     # MinIO client configuration
     MC_CONFIG_DIR: str = "/tmp/mc-config"  # Directory for mc CLI configuration files
+
+    # Prometheus configuration
+    PROMETHEUS_URL: str = "http://prometheus.rig-system:9090"
 
 
 def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:

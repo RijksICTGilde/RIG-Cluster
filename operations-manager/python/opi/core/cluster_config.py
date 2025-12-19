@@ -4,6 +4,9 @@ Cluster configuration for different environments.
 This module defines cluster-specific settings including ingress postfixes.
 """
 
+import subprocess
+from pathlib import Path
+
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
     "local": {
@@ -11,15 +14,28 @@ CLUSTER_CONFIG = {
         "namespace_prefix": "rig-",
         "argo_namespace": "rig-system",
         "namespace": "rig-system",
-        "keycloak_discovery_url": "http://keycloak.kind",  # For pods in cluster
+        "keycloak_discovery_url": "https://keycloak.kind",  # For pods in cluster
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
         "minio_server": "minio.rig-system.svc.cluster.local:9000",
-        "ingress": {"enable_tls": False, "ip_whitelist": "0.0.0.0"},
+        "ingress": {
+            "enable_tls": True,
+            "cluster_issuer": "kind-ca-issuer",
+            "ip_whitelist": "0.0.0.0",
+        },
         "storage": {"storage_class_name": "standard", "access_modes": ["ReadWriteOnce"]},
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
         },
         "uses_capsule": False,
+        "ca_certificate": {
+            "enabled": True,
+            "node_path": "/etc/ssl/certs/kind-local-ca.crt",
+            "container_path": "/etc/ssl/certs/custom-ca.crt",
+            "env_vars": {
+                "REQUESTS_CA_BUNDLE": "/etc/ssl/certs",
+                "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/custom-ca.crt",
+            },
+        },
     },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
@@ -31,6 +47,7 @@ CLUSTER_CONFIG = {
         "minio_server": "minio.rig-prd-operations.svc.cluster.local:9000",
         "ingress": {
             "enable_tls": True,
+            # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
             "ip_whitelist": "0.0.0.0/0",  # VPN only: "147.181.0.0/16"
         },
         "storage": {"storage_class_name": "ocs-storagecluster-ceph-rbd", "access_modes": ["ReadWriteOnce"]},
@@ -232,6 +249,23 @@ def get_ingress_ip_whitelist(cluster_name: str) -> str:
     return ingress_config["ip_whitelist"]
 
 
+def get_ingress_cluster_issuer(cluster_name: str) -> str | None:
+    """
+    Get the cert-manager ClusterIssuer name for TLS certificates.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        ClusterIssuer name string, or None if not configured
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    ingress_config = get_ingress_config(cluster_name)
+    return ingress_config.get("cluster_issuer")
+
+
 def get_keycloak_discovery_url(cluster_name: str) -> str:
     """
     Get the Keycloak discovery URL for pods in a specific cluster.
@@ -401,3 +435,72 @@ def uses_capsule(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("uses_capsule", False)
+
+
+def _compute_ca_hash(cert_path: str) -> str | None:
+    """
+    Compute the OpenSSL hash of a CA certificate.
+
+    This hash is used by OpenSSL for directory-based CA lookup.
+    The hash is computed using: openssl x509 -hash -noout -in <cert>
+
+    Args:
+        cert_path: Path to the CA certificate file
+
+    Returns:
+        The 8-character hash string, or None if computation fails
+    """
+    if not Path(cert_path).exists():
+        return None
+
+    try:
+        result = subprocess.run(
+            ["openssl", "x509", "-hash", "-noout", "-in", cert_path],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def get_ca_certificate_config(cluster_name: str) -> dict | None:
+    """
+    Get the CA certificate configuration for a specific cluster.
+
+    This function returns the CA certificate configuration enriched with
+    the computed OpenSSL hash for directory-based CA lookup.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Dictionary containing CA certificate configuration with keys:
+        - enabled: Whether CA certificate injection is enabled
+        - node_path: Path to the CA cert on the Kubernetes node
+        - container_path: Path where the CA cert is mounted in containers
+        - hash: OpenSSL hash for directory-based lookup (computed at runtime)
+        - env_vars: Environment variables to set for SSL libraries
+
+        Returns None if CA certificate is not configured for this cluster.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    ca_config = cluster_config.get("ca_certificate")
+
+    if ca_config is None or not ca_config.get("enabled", False):
+        return None
+
+    node_path = ca_config["node_path"]
+    ca_hash = _compute_ca_hash(node_path)
+
+    return {
+        "enabled": True,
+        "node_path": node_path,
+        "container_path": ca_config["container_path"],
+        "hash": ca_hash,
+        "env_vars": ca_config.get("env_vars", {}),
+    }

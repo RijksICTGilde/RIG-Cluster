@@ -35,10 +35,10 @@ spec:
           name: http
         resources:
           limits:
-            cpu: "250m"
+            cpu: "1"
             memory: 512Mi
           requests:
-            cpu: "100m"
+            cpu: "200m"
             memory: 256Mi
         volumeMounts:
         - name: kube-api-access
