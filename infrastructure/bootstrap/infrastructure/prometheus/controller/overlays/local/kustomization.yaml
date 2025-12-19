@@ -3,9 +3,9 @@ kind: Kustomization
 
 resources:
   - ../../base
-  # Prometheus RBAC (cluster-wide)
-  - clusterrole.yaml
-  - clusterrolebinding.yaml
-  # kube-state-metrics RBAC (cluster-wide)
-  - kube-state-metrics-clusterrole.yaml
-  - kube-state-metrics-clusterrolebinding.yaml
+  # Prometheus RBAC (namespace-scoped for ArgoCD namespaced mode)
+  - role.yaml
+  - rolebinding.yaml
+  # kube-state-metrics RBAC (namespace-scoped)
+  - kube-state-metrics-role.yaml
+  - kube-state-metrics-rolebinding.yaml
