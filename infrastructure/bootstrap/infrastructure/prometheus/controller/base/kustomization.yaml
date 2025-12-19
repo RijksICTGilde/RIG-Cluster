@@ -5,6 +5,7 @@ resources:
   # Prometheus
   - deployment.yaml
   - service.yaml
+  - ingress.yaml
   - configmap.yaml
   - pvc.yaml
   - serviceaccount.yaml
