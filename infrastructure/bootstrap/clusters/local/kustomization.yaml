@@ -3,7 +3,7 @@ kind: Kustomization
 
 resources:
   - ../../infrastructure/secrets/templates
-  - ../../infrastructure/cert-manager/config/overlays/local
+#  - ../../infrastructure/cert-manager/config/overlays/local  # Using existing cluster cert-manager
   - ../../infrastructure/postgresql/database/overlays/local
   - ../../infrastructure/forgejo/controller/base
   - ../../infrastructure/forgejo/config/base
