@@ -23,8 +23,8 @@ spec:
         opi.rig.nl/generated-at: "{{ generated_at }}"
         # Prometheus scraping annotations
         prometheus.io/scrape: "true"
-        prometheus.io/port: "{{ metrics_port | default(application_port) }}"
-        prometheus.io/path: "{{ metrics_path | default('/metrics') }}"
+        prometheus.io/port: "{{ metrics_port if metrics_port else application_port }}"
+        prometheus.io/path: "{{ metrics_path if metrics_path else '/metrics' }}"
       labels:
         app: "{{ name }}"
         project: "{{ project.name }}"

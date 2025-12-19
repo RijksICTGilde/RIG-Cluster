@@ -35,6 +35,19 @@ data:
       - job_name: 'kubernetes-pods'
         kubernetes_sd_configs:
           - role: pod
+            namespaces:
+              names:
+                - rig-system
+                - rig-algor-abc
+                - rig-algor-abc-infrastructure
+                - rig-algor-dev
+                - rig-amt-136
+                - rig-amt-dev
+                - rig-amt-ibd
+                - rig-amt2-dev
+                - rig-test-dev
+                - rig-tr-dev
+                - rig-wies
         relabel_configs:
           # Only scrape pods with prometheus.io/scrape=true
           - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]

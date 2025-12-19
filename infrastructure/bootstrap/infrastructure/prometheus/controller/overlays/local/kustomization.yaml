@@ -3,9 +3,5 @@ kind: Kustomization
 
 resources:
   - ../../base
-  # Prometheus RBAC (namespace-scoped for ArgoCD namespaced mode)
-  - role.yaml
-  - rolebinding.yaml
-  # kube-state-metrics RBAC (namespace-scoped)
-  - kube-state-metrics-role.yaml
-  - kube-state-metrics-rolebinding.yaml
+  # RBAC: Uses namespace-manager ClusterRole from operations-manager bootstrap
+  # No additional RBAC needed - namespace-manager has cluster-wide pod/service/endpoint read access
