@@ -22,10 +22,13 @@ rules:
       - list
       - patch
       - update
-  # Prometheus service discovery - read-only access to pods/services/endpoints
+  # Prometheus service discovery - read-only access to pods/services/endpoints/nodes
   - apiGroups:
       - ""
     resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
       - pods
       - services
       - endpoints
@@ -33,3 +36,9 @@ rules:
       - get
       - list
       - watch
+  # Prometheus metrics endpoints
+  - nonResourceURLs:
+      - /metrics
+      - /metrics/cadvisor
+    verbs:
+      - get
