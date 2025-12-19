@@ -15,7 +15,7 @@ spec:
       labels:
         app: prometheus
     spec:
-      serviceAccountName: prometheus
+      serviceAccountName: namespace-manager
       securityContext:
         runAsNonRoot: true
         fsGroup: 65534

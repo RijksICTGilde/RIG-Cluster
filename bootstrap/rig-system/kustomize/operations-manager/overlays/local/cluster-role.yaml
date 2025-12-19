@@ -22,3 +22,14 @@ rules:
       - list
       - patch
       - update
+  # Prometheus service discovery - read-only access to pods/services/endpoints
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - services
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
