@@ -265,6 +265,11 @@ class SelfServiceProjectRequest(BaseModel):
     domain_mode: str = "component-specific"  # "component-specific", "deployment-name", or "custom"
     subdomain: str | None = None  # Custom subdomain (required when domain_mode is "custom")
 
+    # External Domain Configuration (for public domains with Let's Encrypt)
+    base_domain: str | None = None  # Apex domain (e.g., "rijksapp.com")
+    issuer: str | None = None  # Certificate issuer: "letsencrypt", "letsencrypt-staging", or custom issuer name
+    contact_email: str | None = None  # Contact email for Let's Encrypt (overrides cluster default)
+
     # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
     user_role: list[str] | None = None  # Maps to name="user-role[]"

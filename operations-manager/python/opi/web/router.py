@@ -108,6 +108,11 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
         subdomain = str(form_data.get("subdomain", "")).strip() or None
         deployment_name = str(form_data.get("deployment-name", "main")).strip() or "main"
 
+        # Extract external domain configuration
+        base_domain = str(form_data.get("base-domain", "")).strip() or None
+        issuer = str(form_data.get("issuer", "")).strip() or None
+        contact_email = str(form_data.get("contact-email", "")).strip() or None
+
         if not display_name or not cluster:
             raise HTTPException(status_code=400, detail="Project name and cluster are required")
 
@@ -196,6 +201,9 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
             deployment_name=deployment_name,
             domain_mode=domain_mode,
             subdomain=subdomain,
+            base_domain=base_domain,
+            issuer=issuer,
+            contact_email=contact_email,
             user_email=user_emails or None,
             user_role=user_roles or None,
             services=services or None,
@@ -878,11 +886,12 @@ async def project_details(request: Request, project_name: str):
                                     f"Failed to generate ingress link for component {component_name} in deployment {deployment['name']}: {ingress_error}"
                                 )
 
-        # Fetch Prometheus metrics for each deployment's components
-        deployment_metrics: dict[str, dict[str, dict[str, float | None]]] = {}
+        # Fetch Prometheus time-series metrics for each deployment's components
+        deployment_metrics_timeseries: dict[str, dict[str, dict[str, list]]] = {}
         prometheus_available = False
         try:
             from opi.connectors.prometheus import PrometheusConnector
+            from opi.core.cluster_config import get_prefixed_namespace
 
             prom = PrometheusConnector()
             prometheus_available = prom.is_connected
@@ -890,20 +899,24 @@ async def project_details(request: Request, project_name: str):
             if prometheus_available:
                 for deployment in project_details["deployments"]:
                     deployment_name = deployment.get("name")
-                    namespace = deployment.get("namespace")
+                    base_namespace = deployment.get("namespace")
+                    cluster = deployment.get("cluster")
                     components = deployment.get("components", [])
 
-                    if deployment_name and namespace and components:
+                    if deployment_name and base_namespace and cluster and components:
+                        # Get the actual Kubernetes namespace with cluster prefix
+                        k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
                         component_names = [c.get("reference") for c in components if c.get("reference")]
                         if component_names:
-                            metrics = prom.get_deployment_component_metrics(
-                                namespace=namespace,
+                            metrics = prom.get_deployment_component_metrics_timeseries(
+                                namespace=k8s_namespace,
                                 components=component_names,
                                 deployment_name=deployment_name,
-                                time_range="6h",
+                                duration_minutes=60,
+                                step_minutes=5,
                             )
-                            deployment_metrics[deployment_name] = metrics
-                            logger.debug(f"Fetched metrics for deployment {deployment_name}: {metrics}")
+                            deployment_metrics_timeseries[deployment_name] = metrics
+                            logger.debug(f"Fetched time-series metrics for deployment {deployment_name}")
         except Exception as metrics_error:
             logger.warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
 
@@ -917,7 +930,7 @@ async def project_details(request: Request, project_name: str):
                 "user": user,
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
-                "deployment_metrics": deployment_metrics,
+                "deployment_metrics_timeseries": deployment_metrics_timeseries,
                 "prometheus_available": prometheus_available,
             },
         )

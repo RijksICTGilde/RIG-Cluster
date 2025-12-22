@@ -33,6 +33,7 @@ from opi.core.cluster_config import (
     get_ingress_postfix,
     get_ingress_tls_enabled,
     get_keycloak_discovery_url,
+    get_letsencrypt_contact_email,
     get_minio_server,
     get_prefixed_namespace,
     uses_capsule,
@@ -57,8 +58,12 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     generate_argocd_application_name,
+    generate_external_hostname,
     generate_ingress_map,
     generate_ingress_name_from_path,
+    generate_issuer_manifest_name,
+    generate_issuer_name,
+    generate_issuer_secret_name,
     generate_manifest_name,
     generate_project_realm_name,
     generate_public_url,
@@ -2406,6 +2411,9 @@ class ProjectManager:
                 if img_registry_name == registry_name:
                     image_pull_secrets_map[image_url] = secret_name
 
+        # Track created issuers to avoid duplicates (per base-domain/issuer combination)
+        created_issuers: set[str] = set()
+
         # Process each component within the deployment
         for component in components:
             # Get component reference and image from deployment
@@ -2504,13 +2512,26 @@ class ProjectManager:
             ingress_postfix = get_ingress_postfix(cluster)
             use_https = get_ingress_tls_enabled(cluster)
             subdomain = deployment.get("subdomain")
-            logger.info(f"Extracted subdomain for {component_name}: {subdomain}")
-            ingress_map = generate_ingress_map(
-                component_name, deployment_name, project_name, ingress_postfix, subdomain
-            )
+            base_domain = deployment.get("base-domain")
+            issuer_config = deployment.get("issuer")
+            logger.info(f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, issuer: {issuer_config}")
+
+            # Determine hostname based on whether external domain is configured
+            if base_domain and subdomain:
+                # External domain mode: use base-domain with subdomain
+                hostname = generate_external_hostname(subdomain, base_domain)
+                # Create ingress_map with the external hostname
+                base_name = generate_unique_name(deployment_name, component_name)
+                ingress_map = {base_name: hostname}
+                logger.info(f"Using external domain for {component_name}: {hostname}")
+            else:
+                # Standard mode: use cluster ingress_postfix
+                ingress_map = generate_ingress_map(
+                    component_name, deployment_name, project_name, ingress_postfix, subdomain
+                )
+                hostname = next(iter(ingress_map.values()))
+
             logger.info(f"Generated ingress_map for {component_name}: {ingress_map}")
-            # Use default hostname for backward compatibility
-            hostname = next(iter(ingress_map.values()))
             logger.info(f"Primary hostname for {component_name}: {hostname}")
 
             # Update component web address if progress manager is available and hostname exists
@@ -2763,13 +2784,31 @@ class ProjectManager:
 
                             # Create ingress-specific variables
                             ingress_variables = variables.copy()
+
+                            # Determine which issuer to use
+                            ingress_issuer_name = None
+                            ingress_cluster_issuer = None
+
+                            if base_domain and issuer_config:
+                                # External domain with specified issuer
+                                if issuer_config in ("letsencrypt", "letsencrypt-staging"):
+                                    # Auto-generated namespace Issuer for Let's Encrypt
+                                    ingress_issuer_name = generate_issuer_name(base_domain, issuer_config)
+                                else:
+                                    # Custom issuer name - use as namespace-scoped Issuer reference
+                                    ingress_issuer_name = issuer_config
+                            else:
+                                # Standard mode: use cluster's ClusterIssuer
+                                ingress_cluster_issuer = get_ingress_cluster_issuer(cluster)
+
                             ingress_variables.update(
                                 {
                                     "name": ingress_name,  # Unique ingress resource name (includes path)
                                     "service_name": unique_name,  # Service name stays the same
                                     "hostname": ingress_hostname,
                                     "path": path_value,  # Path for this specific ingress
-                                    "cluster_issuer": get_ingress_cluster_issuer(cluster),
+                                    "issuer_name": ingress_issuer_name,  # Namespace-scoped Issuer (for external domains)
+                                    "cluster_issuer": ingress_cluster_issuer,  # ClusterIssuer (for cluster domains)
                                     "tls_secret_name": generate_tls_secret_name(ingress_name),
                                 }
                             )
@@ -2948,6 +2987,53 @@ class ProjectManager:
                         created_files.append(sops_filename)
                         logger.info(f"Registry secret will be SOPS encrypted: {sops_filename}")
                         logger.info(f"Successfully created registry secret manifest: {registry_secret_path}")
+
+            # Create Let's Encrypt Issuer manifest if configured (once per unique base-domain/issuer combination)
+            if base_domain and issuer_config and issuer_config.startswith("letsencrypt"):
+                # Track created issuers to avoid duplicates within this deployment
+                issuer_key = f"{base_domain}:{issuer_config}"
+                if issuer_key not in created_issuers:
+                    created_issuers.add(issuer_key)
+
+                    # Determine contact email: project override or cluster default
+                    project_contact_email = project_data.get("config", {}).get("contact-email")
+                    cluster_contact_email = get_letsencrypt_contact_email(cluster)
+                    contact_email = project_contact_email or cluster_contact_email
+
+                    if contact_email:
+                        issuer_template_path = os.path.join(
+                            os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
+                        )
+
+                        issuer_name_generated = generate_issuer_name(base_domain, issuer_config)
+                        issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config)
+                        issuer_manifest_filename = generate_issuer_manifest_name(base_domain, issuer_config).replace(".yaml", "")
+
+                        issuer_variables = {
+                            "issuer_name": issuer_name_generated,
+                            "issuer_secret_name": issuer_secret_name,
+                            "contact_email": contact_email,
+                            "staging": issuer_config == "letsencrypt-staging",
+                            "namespace": namespace,
+                        }
+
+                        issuer_manifest_path = self._manifest_generator.create_manifest_file(
+                            template_path=issuer_template_path,
+                            values=issuer_variables,
+                            output_dir=full_output_dir,
+                            output_filename=issuer_manifest_filename,
+                            use_sops=False,
+                        )
+
+                        created_files.append(f"{issuer_manifest_filename}.yaml")
+                        logger.info(
+                            f"Successfully created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
+                            f"(set contact-email in project config or letsencrypt.contact_email in cluster config)"
+                        )
 
             # Create database secret if component uses PostgreSQL service
             if component_uses_postgresql:

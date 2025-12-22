@@ -985,6 +985,134 @@ def generate_tls_secret_name(ingress_name: str) -> str:
     return f"{ingress_name}-tls"
 
 
+def normalize_base_domain(base_domain: str, max_length: int = 50) -> str:
+    """
+    Normalize a base domain for use in Kubernetes resource names.
+
+    Converts domain names to valid Kubernetes name components by replacing
+    dots with hyphens and ensuring lowercase.
+
+    Args:
+        base_domain: The domain to normalize (e.g., "rijksapp.com")
+        max_length: Maximum length for the normalized string (default: 50 to leave room for prefixes)
+
+    Returns:
+        Normalized domain string suitable for Kubernetes names
+
+    Example:
+        >>> normalize_base_domain("rijksapp.com")
+        'rijksapp-com'
+        >>> normalize_base_domain("my.subdomain.example.org")
+        'my-subdomain-example-org'
+    """
+    if not base_domain:
+        return ""
+
+    # Replace dots with hyphens and lowercase
+    normalized = base_domain.lower().replace(".", "-")
+
+    # Remove any other invalid characters
+    normalized = re.sub(r"[^a-z0-9-]", "", normalized)
+
+    # Remove leading/trailing hyphens and consecutive hyphens
+    normalized = re.sub(r"^-+|-+$", "", normalized)
+    normalized = re.sub(r"-+", "-", normalized)
+
+    # Truncate if needed
+    if len(normalized) > max_length:
+        normalized = normalized[:max_length].rstrip("-")
+
+    return normalized
+
+
+def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+    """
+    Generate a consistent cert-manager Issuer name for a base domain.
+
+    The issuer name includes the issuer type prefix and normalized domain
+    to ensure uniqueness per domain within a namespace.
+
+    Args:
+        base_domain: The base domain (e.g., "rijksapp.com")
+        issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+
+    Returns:
+        Issuer name string
+
+    Example:
+        >>> generate_issuer_name("rijksapp.com")
+        'letsencrypt-rijksapp-com'
+        >>> generate_issuer_name("rijksapp.com", "letsencrypt-staging")
+        'letsencrypt-staging-rijksapp-com'
+    """
+    normalized = normalize_base_domain(base_domain)
+    return sanitize_kubernetes_name(f"{issuer_type}-{normalized}")
+
+
+def generate_issuer_secret_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+    """
+    Generate a consistent ACME account private key secret name for an Issuer.
+
+    This secret stores the Let's Encrypt account private key used for ACME challenges.
+
+    Args:
+        base_domain: The base domain (e.g., "rijksapp.com")
+        issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+
+    Returns:
+        Secret name string
+
+    Example:
+        >>> generate_issuer_secret_name("rijksapp.com")
+        'letsencrypt-rijksapp-com-key'
+        >>> generate_issuer_secret_name("rijksapp.com", "letsencrypt-staging")
+        'letsencrypt-staging-rijksapp-com-key'
+    """
+    issuer_name = generate_issuer_name(base_domain, issuer_type)
+    return f"{issuer_name}-key"
+
+
+def generate_issuer_manifest_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+    """
+    Generate a consistent filename for the Issuer manifest.
+
+    Args:
+        base_domain: The base domain (e.g., "rijksapp.com")
+        issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+
+    Returns:
+        Manifest filename string
+
+    Example:
+        >>> generate_issuer_manifest_name("rijksapp.com")
+        'issuer-letsencrypt-rijksapp-com.yaml'
+        >>> generate_issuer_manifest_name("rijksapp.com", "letsencrypt-staging")
+        'issuer-letsencrypt-staging-rijksapp-com.yaml'
+    """
+    issuer_name = generate_issuer_name(base_domain, issuer_type)
+    return f"issuer-{issuer_name}.yaml"
+
+
+def generate_external_hostname(subdomain: str, base_domain: str) -> str:
+    """
+    Generate a hostname for external domain access.
+
+    Combines subdomain and base domain to create the full hostname.
+
+    Args:
+        subdomain: The subdomain part (e.g., "myapp")
+        base_domain: The base domain (e.g., "rijksapp.com")
+
+    Returns:
+        Full hostname string
+
+    Example:
+        >>> generate_external_hostname("myapp", "rijksapp.com")
+        'myapp.rijksapp.com'
+    """
+    return f"{subdomain}.{base_domain}"
+
+
 def generate_ingress_name_from_path(base_name: str, path: str, max_length: int = 63) -> str:
     """
     Generate an ingress resource name that includes the path for uniqueness.
