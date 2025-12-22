@@ -185,6 +185,12 @@ dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
             deployment_config["subdomain"] = project_data.subdomain
         # For "component-specific" mode, don't add subdomain field
 
+        # Add external domain configuration if specified
+        if hasattr(project_data, "base_domain") and project_data.base_domain:
+            deployment_config["base-domain"] = project_data.base_domain
+        if hasattr(project_data, "issuer") and project_data.issuer:
+            deployment_config["issuer"] = project_data.issuer
+
         deployments_list.append(deployment_config)
     else:
         # Default deployment
@@ -205,7 +211,24 @@ dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
             deployment_config["subdomain"] = project_data.subdomain
         # For "component-specific" mode, don't add subdomain field
 
+        # Add external domain configuration if specified
+        if hasattr(project_data, "base_domain") and project_data.base_domain:
+            deployment_config["base-domain"] = project_data.base_domain
+        if hasattr(project_data, "issuer") and project_data.issuer:
+            deployment_config["issuer"] = project_data.issuer
+
         deployments_list.append(deployment_config)
+
+    # Build config section
+    config_section = {
+        "age-public-key": public_key,
+        "age-private-key": LiteralScalarString(encrypted_private_key),
+        "api-key": LiteralScalarString(encrypted_api_key),
+    }
+
+    # Add contact-email if specified (overrides cluster default for Let's Encrypt)
+    if hasattr(project_data, "contact_email") and project_data.contact_email:
+        config_section["contact-email"] = project_data.contact_email
 
     # Create project structure
     project_config = {
@@ -214,11 +237,7 @@ dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
         "description": project_data.project_description or "Project created via self-service portal",
         "clusters": [project_data.cluster],
         "services": [service.value for service in project_services],  # Project-level services
-        "config": {
-            "age-public-key": public_key,
-            "age-private-key": LiteralScalarString(encrypted_private_key),
-            "api-key": LiteralScalarString(encrypted_api_key),
-        },
+        "config": config_section,
         "repositories": [
             {
                 "name": "main-repo",

@@ -8,7 +8,9 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
     nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-{% if cluster_issuer %}
+{% if issuer_name %}
+    cert-manager.io/issuer: {{ issuer_name }}
+{% elif cluster_issuer %}
     cert-manager.io/cluster-issuer: {{ cluster_issuer }}
 {% endif %}
 spec:
@@ -25,7 +27,7 @@ spec:
                   number: {{ service_port | default(80) }}
 {% if enable_tls %}
   tls:
-{% if cluster_issuer %}
+{% if issuer_name or cluster_issuer %}
     - hosts:
         - {{ hostname }}
       secretName: {{ tls_secret_name }}

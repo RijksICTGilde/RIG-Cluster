@@ -5,6 +5,7 @@ This module handles startup tasks like ensuring namespaces exist from project fi
 setting up shared SOPS keys, and other initialization tasks.
 """
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -19,6 +20,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+from opi.connectors.prometheus import PrometheusConnector, create_prometheus_connector
 
 from opi.bootstrap.keycloak_setup import setup_keycloak
 from opi.connectors.git import (
@@ -142,6 +145,48 @@ async def keycloak_operation_with_retry(operation_func, *args, **kwargs):
         else:
             logger.warning(f"Keycloak operation {operation_func.__name__} failed, will retry: {e}")
         raise  # This will trigger the retry (or not, based on our custom retry logic)
+
+
+async def start_prometheus_reconnection_task() -> None:
+    """
+    Start a background task that attempts to reconnect to Prometheus.
+
+    This task runs with exponential backoff, attempting to connect to Prometheus
+    if the initial connection failed. Once connected, the task stops.
+    The application continues to function without Prometheus - metrics will
+    simply be unavailable until connection is established.
+    """
+    prometheus = create_prometheus_connector()
+
+    if PrometheusConnector.is_connected:
+        logger.info("Prometheus already connected, no background reconnection needed")
+        return
+
+    logger.info("Starting background Prometheus reconnection task")
+
+    # Retry parameters: 10 attempts with exponential backoff (4s, 8s, 16s, 32s, 60s max)
+    max_attempts = 10
+    base_delay = 4
+    max_delay = 60
+
+    for attempt in range(1, max_attempts + 1):
+        if PrometheusConnector.is_connected:
+            logger.info("Prometheus connected, stopping reconnection task")
+            return
+
+        delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+        logger.info(f"Prometheus reconnection attempt {attempt}/{max_attempts} in {delay}s")
+
+        await asyncio.sleep(delay)
+
+        if prometheus.reconnect():
+            logger.info("Prometheus reconnection successful")
+            return
+
+    logger.warning(
+        f"Prometheus reconnection failed after {max_attempts} attempts. "
+        "Metrics will be unavailable. Manual restart may be required."
+    )
 
 
 def print_boot_banner():
@@ -445,6 +490,17 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             f"Application requires database connectivity to function. Error: {e}"
         )
         raise RuntimeError(f"Database pool initialization failed: {e}") from e
+
+    # Initialize Prometheus connector (non-critical - metrics will be unavailable if it fails)
+    # If not connected, start a background task to retry
+    logger.info("Initializing Prometheus connector")
+    create_prometheus_connector()
+    if not PrometheusConnector.is_connected:
+        logger.warning("Prometheus not available at startup, starting background reconnection task")
+        # Store reference to prevent garbage collection of the background task
+        app.state.prometheus_reconnect_task = asyncio.create_task(start_prometheus_reconnection_task())
+    else:
+        logger.info("Prometheus connected successfully")
 
     # Initialize the API key service for project API key registration
     initialize_project_service()

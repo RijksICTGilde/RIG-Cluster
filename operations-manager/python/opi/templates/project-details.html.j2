@@ -42,61 +42,14 @@
         </div>
     </div>
 
-    {# Project Overview Cards #}
-    <div class="overview-grid">
-        <c-card outline="true" padding="lg" backgroundColor="wit">
-            <c-layout-flow gap="sm">
-                <div class="overview-icon">
-                    <c-icon icon="groep-3-personen" size="3xl" color="hemelblauw" />
-                </div>
-                <div class="overview-number">{{ project.users|length }}</div>
-                <div class="overview-label">Teamleden</div>
-                <div class="overview-detail">Uw rol: {{ user_role|title }}</div>
-            </c-layout-flow>
-        </c-card>
-        
-        <c-card outline="true" padding="lg" backgroundColor="wit">
-            <c-layout-flow gap="sm">
-                <div class="overview-icon">
-                    <c-icon icon="applicatie" size="3xl" color="groen" />
-                </div>
-                <div class="overview-number">{{ project.services|length }}</div>
-                <div class="overview-label">Services</div>
-                <div class="overview-detail">Geactiveerd</div>
-            </c-layout-flow>
-        </c-card>
-        
-        <c-card outline="true" padding="lg" backgroundColor="wit">
-            <c-layout-flow gap="sm">
-                <div class="overview-icon">
-                    <c-icon icon="server" size="3xl" color="oranje" />
-                </div>
-                <div class="overview-number">{{ project.deployments|length }}</div>
-                <div class="overview-label">Deployments</div>
-                <div class="overview-detail">{{ project.clusters|join(", ")|title }}</div>
-            </c-layout-flow>
-        </c-card>
-        
-        <c-card outline="true" padding="lg" backgroundColor="wit">
-            <c-layout-flow gap="sm">
-                <div class="overview-icon">
-                    <c-icon icon="puzzel" size="3xl" color="donkerblauw" />
-                </div>
-                <div class="overview-number">{{ project.components|length }}</div>
-                <div class="overview-label">Components</div>
-                <div class="overview-detail">Applicatie onderdelen</div>
-            </c-layout-flow>
-        </c-card>
-    </div>
-
     {# Metrics Section #}
     {% if prometheus_available and project.deployments %}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="grafiek-lijn" size="xl" color="groen" />Resource Metrics</c-heading>
-                    <p class="rvo-text--subtle">Live resource usage per component (laatste 6 uur)</p>
+                    <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="grafiek" size="xl" color="groen" />Resource Metrics</c-heading>
+                    <p class="rvo-text--subtle">Resource usage per component (laatste uur, 5 min intervallen)</p>
                 </div>
                 {% if project.deployments|length > 1 %}
                 <div>
@@ -115,7 +68,7 @@
                 <div class="metrics-grid">
                     {% for component in deployment.components %}
                     {% set component_name = component.reference %}
-                    {% set metrics = deployment_metrics.get(deployment.name, {}).get(component_name, {}) %}
+                    {% set metrics = deployment_metrics_timeseries.get(deployment.name, {}).get(component_name, {}) %}
                     <c-card class="metrics-component-card" padding="lg" backgroundColor="grijs-050" outline="true">
                         <c-layout-flow gap="md">
                             <div class="metrics-component-header">
@@ -123,62 +76,131 @@
                                 <c-heading type="h4" textContent="{{ component_name }}" />
                             </div>
 
-                            <div class="gauges-container">
-                                {# CPU Gauge #}
-                                <div class="gauge-item">
-                                    <div class="gauge-label">CPU</div>
-                                    <div class="gauge-wrapper">
-                                        <canvas id="cpu-gauge-{{ deployment.name }}-{{ component_name }}"
-                                                class="gauge-canvas"
-                                                data-value="{{ (metrics.cpu_cores or 0) * 1000 }}"
-                                                data-max="500"
-                                                data-unit="m"></canvas>
+                            <div class="charts-container">
+                                {# CPU Chart #}
+                                <div class="chart-item">
+                                    <div class="chart-label">CPU (millicores){% if metrics.cpu_limit %} - Limit: {{ metrics.cpu_limit|int }}m{% endif %}</div>
+                                    <div class="chart-wrapper">
+                                        <canvas id="cpu-chart-{{ deployment.name }}-{{ component_name }}"
+                                                class="metrics-chart"
+                                                data-timestamps='{{ metrics.cpu_timestamps | default([]) | tojson }}'
+                                                data-values='{{ metrics.cpu | default([]) | map(attribute="value") | list | tojson }}'
+                                                data-limit='{{ metrics.cpu_limit | default("null") }}'
+                                                data-color="#39870c"></canvas>
                                     </div>
-                                    <div class="gauge-value">
-                                        {% if metrics.cpu_cores is not none %}
-                                            {{ "%.1f"|format(metrics.cpu_cores * 1000) }}m
-                                        {% else %}
-                                            <span class="no-data">-</span>
-                                        {% endif %}
-                                    </div>
+                                    {% if metrics.cpu %}
+                                    <div class="chart-current">Current: {{ "%.1f"|format(metrics.cpu[-1].value) }}m{% if metrics.cpu_limit %} / {{ metrics.cpu_limit|int }}m ({{ "%.0f"|format(metrics.cpu[-1].value / metrics.cpu_limit * 100) }}%){% endif %}</div>
+                                    {% else %}
+                                    <div class="chart-current no-data">No data</div>
+                                    {% endif %}
                                 </div>
 
-                                {# Memory Gauge #}
-                                <div class="gauge-item">
-                                    <div class="gauge-label">Memory</div>
-                                    <div class="gauge-wrapper">
-                                        <canvas id="mem-gauge-{{ deployment.name }}-{{ component_name }}"
-                                                class="gauge-canvas"
-                                                data-value="{{ metrics.memory_mb or 0 }}"
-                                                data-max="512"
-                                                data-unit="MB"></canvas>
+                                {# Memory Chart #}
+                                <div class="chart-item">
+                                    <div class="chart-label">Memory (MB){% if metrics.memory_limit %} - Limit: {{ metrics.memory_limit|int }} MB{% endif %}</div>
+                                    <div class="chart-wrapper">
+                                        <canvas id="mem-chart-{{ deployment.name }}-{{ component_name }}"
+                                                class="metrics-chart"
+                                                data-timestamps='{{ metrics.memory_timestamps | default([]) | tojson }}'
+                                                data-values='{{ metrics.memory | default([]) | map(attribute="value") | list | tojson }}'
+                                                data-limit='{{ metrics.memory_limit | default("null") }}'
+                                                data-color="#007bc7"></canvas>
                                     </div>
-                                    <div class="gauge-value">
-                                        {% if metrics.memory_mb is not none %}
-                                            {{ "%.0f"|format(metrics.memory_mb) }} MB
-                                        {% else %}
-                                            <span class="no-data">-</span>
-                                        {% endif %}
-                                    </div>
+                                    {% if metrics.memory %}
+                                    <div class="chart-current">Current: {{ "%.0f"|format(metrics.memory[-1].value) }} MB{% if metrics.memory_limit %} / {{ metrics.memory_limit|int }} MB ({{ "%.0f"|format(metrics.memory[-1].value / metrics.memory_limit * 100) }}%){% endif %}</div>
+                                    {% else %}
+                                    <div class="chart-current no-data">No data</div>
+                                    {% endif %}
                                 </div>
 
-                                {# Requests/sec Gauge #}
-                                <div class="gauge-item">
-                                    <div class="gauge-label">Req/s</div>
-                                    <div class="gauge-wrapper">
-                                        <canvas id="req-gauge-{{ deployment.name }}-{{ component_name }}"
-                                                class="gauge-canvas"
-                                                data-value="{{ metrics.requests_per_second or 0 }}"
-                                                data-max="100"
-                                                data-unit="/s"></canvas>
+                                {# Requests Chart #}
+                                <div class="chart-item">
+                                    <div class="chart-label">HTTP Requests (req/min)</div>
+                                    <div class="chart-wrapper">
+                                        <canvas id="req-chart-{{ deployment.name }}-{{ component_name }}"
+                                                class="metrics-chart"
+                                                data-timestamps='{{ metrics.requests_timestamps | default([]) | tojson }}'
+                                                data-values='{{ metrics.requests | default([]) | map(attribute="value") | list | tojson }}'
+                                                data-limit='null'
+                                                data-color="#e17000"></canvas>
                                     </div>
-                                    <div class="gauge-value">
-                                        {% if metrics.requests_per_second is not none %}
-                                            {{ "%.1f"|format(metrics.requests_per_second) }}/s
-                                        {% else %}
-                                            <span class="no-data">-</span>
-                                        {% endif %}
+                                    {% if metrics.requests %}
+                                    <div class="chart-current">Current: {{ "%.1f"|format(metrics.requests[-1].value) }} req/min</div>
+                                    {% else %}
+                                    <div class="chart-current no-data">No HTTP metrics</div>
+                                    {% endif %}
+                                </div>
+
+                                {# Network In Chart #}
+                                <div class="chart-item">
+                                    <div class="chart-label">Network In (KB/s)</div>
+                                    <div class="chart-wrapper">
+                                        <canvas id="net-in-chart-{{ deployment.name }}-{{ component_name }}"
+                                                class="metrics-chart"
+                                                data-timestamps='{{ metrics.network_timestamps | default([]) | tojson }}'
+                                                data-values='{{ metrics.network_in | default([]) | map(attribute="value") | list | tojson }}'
+                                                data-limit='null'
+                                                data-color="#154273"></canvas>
                                     </div>
+                                    {% if metrics.network_in %}
+                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.network_in[-1].value) }} KB/s</div>
+                                    {% else %}
+                                    <div class="chart-current no-data">No data</div>
+                                    {% endif %}
+                                </div>
+
+                                {# Network Out Chart #}
+                                <div class="chart-item">
+                                    <div class="chart-label">Network Out (KB/s)</div>
+                                    <div class="chart-wrapper">
+                                        <canvas id="net-out-chart-{{ deployment.name }}-{{ component_name }}"
+                                                class="metrics-chart"
+                                                data-timestamps='{{ metrics.network_timestamps | default([]) | tojson }}'
+                                                data-values='{{ metrics.network_out | default([]) | map(attribute="value") | list | tojson }}'
+                                                data-limit='null'
+                                                data-color="#8fcae7"></canvas>
+                                    </div>
+                                    {% if metrics.network_out %}
+                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.network_out[-1].value) }} KB/s</div>
+                                    {% else %}
+                                    <div class="chart-current no-data">No data</div>
+                                    {% endif %}
+                                </div>
+
+                                {# Disk Read Chart #}
+                                <div class="chart-item">
+                                    <div class="chart-label">Disk Read (KB/s)</div>
+                                    <div class="chart-wrapper">
+                                        <canvas id="disk-read-chart-{{ deployment.name }}-{{ component_name }}"
+                                                class="metrics-chart"
+                                                data-timestamps='{{ metrics.disk_timestamps | default([]) | tojson }}'
+                                                data-values='{{ metrics.disk_read | default([]) | map(attribute="value") | list | tojson }}'
+                                                data-limit='null'
+                                                data-color="#673327"></canvas>
+                                    </div>
+                                    {% if metrics.disk_read %}
+                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.disk_read[-1].value) }} KB/s</div>
+                                    {% else %}
+                                    <div class="chart-current no-data">No data</div>
+                                    {% endif %}
+                                </div>
+
+                                {# Disk Write Chart #}
+                                <div class="chart-item">
+                                    <div class="chart-label">Disk Write (KB/s)</div>
+                                    <div class="chart-wrapper">
+                                        <canvas id="disk-write-chart-{{ deployment.name }}-{{ component_name }}"
+                                                class="metrics-chart"
+                                                data-timestamps='{{ metrics.disk_timestamps | default([]) | tojson }}'
+                                                data-values='{{ metrics.disk_write | default([]) | map(attribute="value") | list | tojson }}'
+                                                data-limit='null'
+                                                data-color="#c9742f"></canvas>
+                                    </div>
+                                    {% if metrics.disk_write %}
+                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.disk_write[-1].value) }} KB/s</div>
+                                    {% else %}
+                                    <div class="chart-current no-data">No data</div>
+                                    {% endif %}
                                 </div>
                             </div>
                         </c-layout-flow>
@@ -885,8 +907,8 @@
     }
 
     .metrics-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        display: flex;
+        flex-direction: column;
         gap: var(--rvo-space-lg);
     }
 
@@ -900,48 +922,59 @@
         gap: var(--rvo-space-sm);
     }
 
-    .gauges-container {
-        display: flex;
-        justify-content: space-around;
+    .charts-container {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
         gap: var(--rvo-space-md);
-        flex-wrap: wrap;
     }
 
-    .gauge-item {
+    @media (max-width: 1024px) {
+        .charts-container {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @media (max-width: 640px) {
+        .charts-container {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .chart-item {
         display: flex;
         flex-direction: column;
-        align-items: center;
-        min-width: 80px;
+        gap: var(--rvo-space-xs);
+        min-width: 0;
     }
 
-    .gauge-label {
+    .chart-label {
         font-size: 0.75rem;
         font-weight: 600;
         color: var(--rvo-color-grijs-600);
         text-transform: uppercase;
-        margin-bottom: var(--rvo-space-xs);
     }
 
-    .gauge-wrapper {
-        width: 80px;
-        height: 50px;
+    .chart-wrapper {
+        width: 100%;
+        height: 100px;
         position: relative;
     }
 
-    .gauge-canvas {
+    .metrics-chart {
         width: 100%;
         height: 100%;
     }
 
-    .gauge-value {
+    .chart-current {
         font-size: 0.875rem;
         font-weight: 600;
         color: var(--rvo-color-grijs-800);
-        margin-top: var(--rvo-space-xs);
+        text-align: right;
     }
 
-    .gauge-value .no-data {
+    .chart-current.no-data {
         color: var(--rvo-color-grijs-400);
+        font-style: italic;
     }
 
     /* Services Grid */
@@ -1368,80 +1401,141 @@
             selectedSection.style.display = 'block';
         }
     }
+</script>
+{% endblock %}
 
+{% block additional_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+<script>
     /**
-     * Draw a semi-circular gauge on a canvas
+     * Convert Unix timestamps to local time labels (HH:MM format)
      */
-    function drawGauge(canvas, value, max, color) {
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
-        const centerX = width / 2;
-        const centerY = height - 5;
-        const radius = Math.min(centerX, centerY) - 5;
-
-        // Clear canvas
-        ctx.clearRect(0, 0, width, height);
-
-        // Draw background arc (gray)
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, Math.PI, 0, false);
-        ctx.lineWidth = 8;
-        ctx.strokeStyle = '#e5e5e5';
-        ctx.stroke();
-
-        // Calculate percentage and angle
-        const percentage = Math.min(value / max, 1);
-        const endAngle = Math.PI + (percentage * Math.PI);
-
-        // Draw value arc
-        if (percentage > 0) {
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, radius, Math.PI, endAngle, false);
-            ctx.lineWidth = 8;
-            ctx.lineCap = 'round';
-            ctx.strokeStyle = color;
-            ctx.stroke();
-        }
-    }
-
-    /**
-     * Get color based on percentage (green -> yellow -> red)
-     */
-    function getGaugeColor(percentage) {
-        if (percentage < 0.5) {
-            return '#39870c'; // Green
-        } else if (percentage < 0.75) {
-            return '#e17000'; // Orange
-        } else {
-            return '#d52b1e'; // Red
-        }
-    }
-
-    /**
-     * Initialize all gauge canvases
-     */
-    function initGauges() {
-        document.querySelectorAll('.gauge-canvas').forEach(canvas => {
-            const value = parseFloat(canvas.dataset.value) || 0;
-            const max = parseFloat(canvas.dataset.max) || 100;
-            const percentage = value / max;
-            const color = getGaugeColor(percentage);
-
-            // Set canvas size for retina displays
-            const rect = canvas.getBoundingClientRect();
-            canvas.width = rect.width * 2;
-            canvas.height = rect.height * 2;
-            canvas.style.width = rect.width + 'px';
-            canvas.style.height = rect.height + 'px';
-            canvas.getContext('2d').scale(2, 2);
-
-            drawGauge(canvas, value, max, color);
+    function timestampsToLocalLabels(timestamps) {
+        return timestamps.map(ts => {
+            const date = new Date(ts * 1000);  // Convert seconds to milliseconds
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
         });
     }
 
-    // Initialize gauges when DOM is loaded
-    document.addEventListener('DOMContentLoaded', initGauges);
+    /**
+     * Initialize all line charts for metrics with limit annotations
+     */
+    function initMetricsCharts() {
+        document.querySelectorAll('.metrics-chart').forEach(canvas => {
+            const timestamps = JSON.parse(canvas.dataset.timestamps || '[]');
+            const labels = timestampsToLocalLabels(timestamps);
+            const values = JSON.parse(canvas.dataset.values || '[]');
+            const color = canvas.dataset.color || '#39870c';
+            const limitStr = canvas.dataset.limit;
+            const limit = (limitStr && limitStr !== 'null' && limitStr !== 'None') ? parseFloat(limitStr) : null;
 
+            if (timestamps.length === 0 || values.length === 0) {
+                // Draw "no data" message
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#999';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('No data available', canvas.width / 2, canvas.height / 2);
+                return;
+            }
+
+            // Build annotation config for limit line
+            const annotations = {};
+            if (limit !== null) {
+                annotations.limitLine = {
+                    type: 'line',
+                    yMin: limit,
+                    yMax: limit,
+                    borderColor: '#d52b1e',
+                    borderWidth: 2,
+                    borderDash: [6, 4],
+                    label: {
+                        display: true,
+                        content: 'Limit',
+                        position: 'end',
+                        backgroundColor: '#d52b1e',
+                        color: '#fff',
+                        font: { size: 10 }
+                    }
+                };
+            }
+
+            // Calculate y-axis max to include limit if present
+            const maxValue = Math.max(...values);
+            const yMax = limit ? Math.max(maxValue * 1.1, limit * 1.1) : maxValue * 1.1;
+
+            new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        borderColor: color,
+                        backgroundColor: color + '20',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 2,
+                        pointHoverRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.parsed.y.toFixed(1);
+                                    if (limit) {
+                                        const pct = ((context.parsed.y / limit) * 100).toFixed(0);
+                                        label += ` (${pct}% of limit)`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        },
+                        annotation: {
+                            annotations: annotations
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                font: {
+                                    size: 10
+                                },
+                                maxRotation: 0
+                            }
+                        },
+                        y: {
+                            display: true,
+                            beginAtZero: true,
+                            max: yMax,
+                            grid: {
+                                color: '#e5e5e5'
+                            },
+                            ticks: {
+                                font: {
+                                    size: 10
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    // Initialize charts when DOM is loaded
+    document.addEventListener('DOMContentLoaded', initMetricsCharts);
 </script>
 {% endblock %}

@@ -36,6 +36,9 @@ CLUSTER_CONFIG = {
                 "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/custom-ca.crt",
             },
         },
+        "letsencrypt": {
+            "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
+        },
     },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
@@ -55,6 +58,9 @@ CLUSTER_CONFIG = {
             "support_http": False,  # Only generate HTTPS redirect URIs in production
         },
         "uses_capsule": True,
+        "letsencrypt": {
+            "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
+        },
     },
 }
 
@@ -435,6 +441,27 @@ def uses_capsule(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("uses_capsule", False)
+
+
+def get_letsencrypt_contact_email(cluster_name: str) -> str | None:
+    """
+    Get the default Let's Encrypt contact email for a specific cluster.
+
+    This email is used for ACME account registration and certificate expiry notifications.
+    Projects can override this with their own contact-email in the project config.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Contact email string, or None if not configured
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    letsencrypt_config = cluster_config.get("letsencrypt", {})
+    return letsencrypt_config.get("contact_email")
 
 
 def _compute_ca_hash(cert_path: str) -> str | None:
