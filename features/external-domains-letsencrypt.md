@@ -92,6 +92,7 @@ spec:
     - http01:
         ingress:
           ingressClassName: nginx
+          serviceType: ClusterIP
 ```
 
 ### Ingress with Issuer Annotation

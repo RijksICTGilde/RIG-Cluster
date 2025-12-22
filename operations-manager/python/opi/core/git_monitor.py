@@ -74,23 +74,37 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
             # Check if namespace already exists
             namespace_exists = await kubectl.namespace_exists(namespace)
             if namespace_exists:
-                logger.info(f"Namespace {namespace} already exists, no action needed")
-                continue
-
-            logger.info(f"Namespace {namespace} does not exist, creating it...")
-
-            # Create the namespace using the manifest template
-            manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
-
-            # Template variables
-            variables = {"namespace": namespace, "manager": get_argo_namespace(configured_cluster)}
-
-            result = await kubectl.apply_manifest(manifest_path, variables)
-
-            if result:
-                logger.info(f"Successfully created namespace: {namespace}")
+                logger.info(f"Namespace {namespace} already exists")
             else:
-                logger.error(f"Failed to create namespace: {namespace}")
+                logger.info(f"Namespace {namespace} does not exist, creating it...")
+
+                # Create the namespace using the manifest template
+                manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
+
+                # Template variables
+                variables = {"namespace": namespace, "manager": get_argo_namespace(configured_cluster)}
+
+                result = await kubectl.apply_manifest(manifest_path, variables)
+
+                if result:
+                    logger.info(f"Successfully created namespace: {namespace}")
+                else:
+                    logger.error(f"Failed to create namespace: {namespace}")
+                    all_succeeded = False
+                    continue
+
+            # Always ensure ArgoCD managed-by label exists (idempotent)
+            manager_value = get_argo_namespace(configured_cluster)
+            label_result = await kubectl.apply_label_to_resource(
+                resource_type="namespace",
+                resource_name=namespace,
+                label_key="argocd.argoproj.io/managed-by",
+                label_value=manager_value,
+            )
+            if label_result:
+                logger.info(f"Ensured ArgoCD managed-by label on namespace: {namespace}")
+            else:
+                logger.error(f"Failed to apply ArgoCD managed-by label to namespace: {namespace}")
                 all_succeeded = False
 
         return all_succeeded
@@ -121,7 +135,7 @@ async def file_change_handler(file_path: str, content: dict) -> None:
         project_manager = ProjectManager()
         try:
             if not project_manager.has_deployments_for_current_cluster(content):
-                logger.info(f"Project '{project_name}' cluster validation failed - skipping processing")
+                logger.info(f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster")
                 return
 
             # Task 1: Check and create namespaces for deployments

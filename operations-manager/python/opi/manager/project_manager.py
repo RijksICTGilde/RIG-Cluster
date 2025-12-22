@@ -1145,17 +1145,15 @@ class ProjectManager:
                 logger.info(
                     f"Namespace '{namespace}' already exists for deployment '{deployment['name']}' for project '{project_data['name']}'"
                 )
-                # Set namespace for monitoring even if it already exists
-                if progress_manager:
-                    progress_manager.set_namespace(namespace)
-                continue
+            else:
+                logger.info(
+                    f"Creating namespace '{namespace}' for deployment '{deployment['name']}' for project '{project_data['name']}':"
+                )
+                # Create the namespace using shared function
+                await self._create_namespace_with_argocd_label(namespace)
 
-            logger.info(
-                f"Creating namespace '{namespace}' for deployment '{deployment['name']}' for project '{project_data['name']}':"
-            )
-
-            # Create the namespace using shared function
-            await self._create_namespace_with_argocd_label(namespace)
+            # Always ensure ArgoCD managed-by label exists (idempotent)
+            await self._ensure_argocd_managed_by_label(namespace)
 
             if progress_manager:
                 progress_manager.set_namespace(namespace)
@@ -1214,6 +1212,28 @@ class ProjectManager:
         )
 
         logger.info(f"Successfully created namespace '{namespace}' with ArgoCD managed-by label")
+
+    async def _ensure_argocd_managed_by_label(self, namespace: str) -> None:
+        """
+        Ensure the ArgoCD managed-by label exists on a namespace (idempotent).
+
+        This applies the label regardless of whether it already exists,
+        ensuring namespaces are always properly configured for ArgoCD management.
+
+        Args:
+            namespace: Full namespace name (with cluster prefix already applied)
+        """
+        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
+        label_result = await self._kubectl_connector.apply_label_to_resource(
+            resource_type="namespace",
+            resource_name=namespace,
+            label_key="argocd.argoproj.io/managed-by",
+            label_value=manager_value,
+        )
+        if label_result:
+            logger.info(f"Ensured ArgoCD managed-by label on namespace: {namespace}")
+        else:
+            logger.warning(f"Failed to ensure ArgoCD managed-by label on namespace: {namespace}")
 
     async def _ensure_sops_secret_in_namespace(self, namespace: str, project_data: dict[str, Any]) -> None:
         """
@@ -2171,7 +2191,7 @@ class ProjectManager:
             )
 
             if not await self.has_deployments_for_current_cluster():
-                logger.info(f"Project '{project_name}' cluster validation failed - skipping processing")
+                logger.info(f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster")
                 return False
 
             # # 1.5. Create configuration handler to collect deployment info
