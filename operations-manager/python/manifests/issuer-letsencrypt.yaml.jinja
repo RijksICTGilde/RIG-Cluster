@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ issuer_name }}
+spec:
+  acme:
+    email: {{ contact_email }}
+{% if staging %}
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+{% else %}
+    server: https://acme-v02.api.letsencrypt.org/directory
+{% endif %}
+    privateKeySecretRef:
+      name: {{ issuer_secret_name }}
+    solvers:
+    - http01:
+        ingress:
+          ingressClassName: nginx
