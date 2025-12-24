@@ -6,6 +6,7 @@ Processing means it can create, update, or delete any resources defined in a pro
 import glob
 import logging
 import os
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypeVar, cast
 from warnings import deprecated
@@ -87,6 +88,18 @@ T = TypeVar("T", bound=BaseSecret)
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class DeploymentResult:
+    """Result information for a processed deployment."""
+
+    deployment_name: str
+    cluster: str
+    namespace: str
+    urls: dict[str, str] = field(default_factory=dict)  # component_name -> public_url
+    status: str = "success"
+    errors: list[str] = field(default_factory=list)
+
+
 class ProjectManager:
     """Manager for project resources and deployments."""
 
@@ -125,6 +138,11 @@ class ProjectManager:
         # Structure: {deployment_name: {source_type: {service_category: {alias_name: alias_template}}}}
         # Example: {"dev": {"secret": {"database": {"DATABASE_URL": "$HOST:$PORT"}}, "direct": {"web": {"PREVIEW_URL": "https://$PUBLIC_HOST"}}}}
         self._deployment_aliases: dict[str, dict[str, dict[str, dict[str, str]]]] = {}
+
+        # Deployment results collected during processing
+        # Structure: {deployment_name: DeploymentResult}
+        # Contains URLs, status, and errors for each processed deployment
+        self._deployment_results: dict[str, DeploymentResult] = {}
 
         # Service managers for handling service-specific operations
         # Import here to avoid circular dependencies
@@ -274,6 +292,25 @@ class ProjectManager:
         """
         deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
         return deployments[0] if deployments else None
+
+    def get_deployment_results(self, deployment_name: str | None = None) -> dict[str, DeploymentResult]:
+        """
+        Get deployment results collected during processing.
+
+        Results include URLs, cluster info, and status for each processed deployment.
+        Call this after process_project() or process_project_from_git() to get the results.
+
+        Args:
+            deployment_name: Optional specific deployment name to filter results
+
+        Returns:
+            Dictionary mapping deployment names to DeploymentResult objects
+        """
+        if deployment_name:
+            if deployment_name in self._deployment_results:
+                return {deployment_name: self._deployment_results[deployment_name]}
+            return {}
+        return self._deployment_results
 
     async def get_repositories(self) -> list[dict[str, Any]]:
         """
@@ -2191,7 +2228,9 @@ class ProjectManager:
             )
 
             if not await self.has_deployments_for_current_cluster():
-                logger.info(f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster")
+                logger.info(
+                    f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
+                )
                 return False
 
             # # 1.5. Create configuration handler to collect deployment info
@@ -2353,6 +2392,14 @@ class ProjectManager:
         deployment_name = deployment["name"]
         cluster = deployment["cluster"]
         namespace = get_prefixed_namespace(cluster, deployment["namespace"])
+
+        # Initialize deployment result tracking
+        if deployment_name not in self._deployment_results:
+            self._deployment_results[deployment_name] = DeploymentResult(
+                deployment_name=deployment_name,
+                cluster=cluster,
+                namespace=namespace,
+            )
 
         logger.info(f"Processing deployment: {deployment_name} in prefixed namespace: {namespace}")
 
@@ -2534,7 +2581,9 @@ class ProjectManager:
             subdomain = deployment.get("subdomain")
             base_domain = deployment.get("base-domain")
             issuer_config = deployment.get("issuer")
-            logger.info(f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, issuer: {issuer_config}")
+            logger.info(
+                f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, issuer: {issuer_config}"
+            )
 
             # Determine hostname based on whether external domain is configured
             if base_domain and subdomain:
@@ -2554,12 +2603,15 @@ class ProjectManager:
             logger.info(f"Generated ingress_map for {component_name}: {ingress_map}")
             logger.info(f"Primary hostname for {component_name}: {hostname}")
 
-            # Update component web address if progress manager is available and hostname exists
-            if progress_manager and hostname:
-                # Construct full URL using proper naming function (respects cluster TLS config)
+            # Track component URL in deployment results
+            if hostname:
                 web_address = generate_public_url(hostname, use_https)
-                progress_manager.update_component_web_address(component_name, web_address)
-                logger.debug(f"Updated component {component_name} web address to {web_address}")
+                self._deployment_results[deployment_name].urls[component_name] = web_address
+                logger.debug(f"Tracked component {component_name} URL: {web_address}")
+
+                # Also update progress manager if available (for background task UI)
+                if progress_manager:
+                    progress_manager.update_component_web_address(component_name, web_address)
 
             # Generate environment variables using service-based registration pattern
             env_vars = {}
@@ -3027,7 +3079,9 @@ class ProjectManager:
 
                         issuer_name_generated = generate_issuer_name(base_domain, issuer_config)
                         issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config)
-                        issuer_manifest_filename = generate_issuer_manifest_name(base_domain, issuer_config).replace(".yaml", "")
+                        issuer_manifest_filename = generate_issuer_manifest_name(base_domain, issuer_config).replace(
+                            ".yaml", ""
+                        )
 
                         issuer_variables = {
                             "issuer_name": issuer_name_generated,

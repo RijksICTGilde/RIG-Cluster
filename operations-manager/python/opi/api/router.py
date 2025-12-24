@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -91,6 +92,138 @@ class UpsertDeploymentRequest(BaseModel):
 
 class StorageAction(BaseModel):
     action: str = Field(..., description="Action to perform on the storage (recreate, keep)", example="recreate")
+
+
+# Response Models
+
+
+class DeploymentUrls(BaseModel):
+    """URLs for a single deployment."""
+
+    cluster: str = Field(..., description="Cluster where the deployment runs", example="local")
+    urls: dict[str, str] = Field(
+        ...,
+        description="Component URLs (component name -> public URL)",
+        example={"frontend": "https://frontend-main-myproject.rig.dev.local"},
+    )
+
+
+class DeploymentInfo(BaseModel):
+    """Information about a deployment."""
+
+    name: str = Field(..., description="Deployment name", example="main")
+    project: str = Field(..., description="Project name", example="myproject")
+    components: list[ComponentReference] = Field(..., description="Components in this deployment")
+    forceClone: bool = Field(..., description="Whether force clone was used")
+    created: bool = Field(..., description="True if deployment was newly created, False if updated")
+
+
+class ProcessingStatus(BaseModel):
+    """Processing status information."""
+
+    status: str = Field(..., description="Processing status", example="completed")
+    message: str | None = Field(None, description="Status message")
+    result: Any | None = Field(None, description="Processing result details")
+
+
+class UpsertDeploymentResponse(BaseModel):
+    """Response for upsert deployment endpoint."""
+
+    status: str = Field(..., description="Operation status", example="success")
+    message: str = Field(..., description="Human-readable message", example="Deployment 'main' created successfully")
+    deployment: DeploymentInfo = Field(..., description="Deployment information")
+    urls: dict[str, DeploymentUrls] = Field(
+        default_factory=dict,
+        description="Public URLs per deployment",
+        example={
+            "main": {
+                "cluster": "local",
+                "urls": {"frontend": "https://frontend-main-myproject.rig.dev.local"},
+            }
+        },
+    )
+    processing: ProcessingStatus = Field(..., description="Processing status")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "status": "success",
+                "message": "Deployment 'main' created successfully",
+                "deployment": {
+                    "name": "main",
+                    "project": "myproject",
+                    "components": [{"reference": "frontend", "image": "nginx:latest"}],
+                    "forceClone": False,
+                    "created": True,
+                },
+                "urls": {
+                    "main": {
+                        "cluster": "local",
+                        "urls": {"frontend": "https://frontend-main-myproject.rig.dev.local"},
+                    }
+                },
+                "processing": {"status": "completed"},
+            }
+        }
+    }
+
+
+class ProjectInfo(BaseModel):
+    """Project information."""
+
+    name: str = Field(..., description="Project name", example="myproject")
+    file_path: str = Field(..., description="Path to project YAML file", example="projects/myproject.yaml")
+
+
+class RefreshProjectResponse(BaseModel):
+    """Response for refresh project endpoint."""
+
+    status: str = Field(..., description="Operation status", example="success")
+    message: str = Field(
+        ..., description="Human-readable message", example="Project 'myproject' refreshed and processed successfully"
+    )
+    project: ProjectInfo = Field(..., description="Project information")
+    urls: dict[str, DeploymentUrls] = Field(
+        default_factory=dict,
+        description="Public URLs per deployment",
+        example={
+            "main": {
+                "cluster": "local",
+                "urls": {
+                    "frontend": "https://frontend-main-myproject.rig.dev.local",
+                    "api": "https://api-main-myproject.rig.dev.local",
+                },
+            },
+            "staging": {
+                "cluster": "staging",
+                "urls": {"frontend": "https://frontend-staging-myproject.rig.dev.local"},
+            },
+        },
+    )
+    processing: ProcessingStatus = Field(..., description="Processing status")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "status": "success",
+                "message": "Project 'myproject' refreshed and processed successfully",
+                "project": {"name": "myproject", "file_path": "projects/myproject.yaml"},
+                "urls": {
+                    "main": {
+                        "cluster": "local",
+                        "urls": {
+                            "frontend": "https://frontend-main-myproject.rig.dev.local",
+                            "api": "https://api-main-myproject.rig.dev.local",
+                        },
+                    }
+                },
+                "processing": {
+                    "status": "completed",
+                    "message": "All project resources processed successfully",
+                },
+            }
+        }
+    }
 
 
 class ServiceReference(BaseModel):
@@ -288,7 +421,13 @@ api_router: APIRouter = APIRouter(
 )
 
 
-@api_router.post("/projects/{project_name}/:upsert-deployment")
+@api_router.post(
+    "/projects/{project_name}/:upsert-deployment",
+    responses={
+        200: {"model": UpsertDeploymentResponse, "description": "Deployment updated successfully"},
+        201: {"model": UpsertDeploymentResponse, "description": "Deployment created successfully"},
+    },
+)
 @validate_api_token
 async def upsert_deployment(
     request: Request, project_name: str, deployment_data: UpsertDeploymentRequest = Body(...)
@@ -353,6 +492,15 @@ async def upsert_deployment(
             status_code = 201 if result.get("created") else 200
             action = "created" if result.get("created") else "updated"
 
+            # Get URLs from deployment results collected during processing
+            urls: dict[str, dict[str, Any]] = {}
+            deployment_results = project_manager.get_deployment_results(deployment_data.deploymentName)
+            for dep_name, dep_result in deployment_results.items():
+                urls[dep_name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
+
             content = {
                 "status": "success",
                 "message": f"Deployment '{deployment_data.deploymentName}' {action} successfully",
@@ -363,6 +511,7 @@ async def upsert_deployment(
                     "forceClone": deployment_data.forceClone,
                     "created": result.get("created", False),
                 },
+                "urls": urls,
                 "processing": {"status": "completed" if processing_result else "failed"},
             }
             return JSONResponse(content=content, status_code=status_code)
@@ -507,7 +656,12 @@ async def update_deployment_image(
 #     return await create_self_service_project(request, project_data)
 
 
-@api_router.get("/projects/{project_name}/:refresh")
+@api_router.get(
+    "/projects/{project_name}/:refresh",
+    responses={
+        200: {"model": RefreshProjectResponse, "description": "Project refreshed successfully"},
+    },
+)
 @validate_api_token
 async def refresh_project(request: Request, project_name: str, force_clone: bool = False) -> JSONResponse:
     """
@@ -551,10 +705,20 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
         if processing_result:
             logger.info(f"Project refresh completed successfully: {project_name}")
 
+            # Get URLs from deployment results collected during processing
+            urls: dict[str, dict[str, Any]] = {}
+            deployment_results = project_manager.get_deployment_results()
+            for dep_name, dep_result in deployment_results.items():
+                urls[dep_name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
+
             content = {
                 "status": "success",
                 "message": f"Project '{project_name}' refreshed and processed successfully",
                 "project": {"name": project_name, "file_path": project_file_path},
+                "urls": urls,
                 "processing": {
                     "status": "completed",
                     "message": "All project resources processed successfully",
