@@ -8,6 +8,7 @@ setting up shared SOPS keys, and other initialization tasks.
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -21,14 +22,13 @@ from tenacity import (
     wait_exponential,
 )
 
-from opi.connectors.prometheus import PrometheusConnector, create_prometheus_connector
-
 from opi.bootstrap.keycloak_setup import setup_keycloak
 from opi.connectors.git import (
     create_git_connector_for_project_files,
 )
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
+from opi.connectors.prometheus import PrometheusConnector, create_prometheus_connector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
@@ -227,6 +227,67 @@ async def get_project_files(repo_root_folder: str) -> list[str]:
 
     logger.info(f"Found {len(project_files)} project files to process")
     return project_files
+
+
+class ProjectRefreshState:
+    """
+    Global state manager for project refresh operations.
+
+    Ensures that:
+    - Projects are refreshed from Git at most once every REFRESH_TTL_SECONDS
+    - Concurrent refresh requests wait for an in-progress refresh instead of triggering multiple
+    """
+
+    REFRESH_TTL_SECONDS = 30
+
+    _instance: "ProjectRefreshState | None" = None
+
+    def __init__(self) -> None:
+        self.last_refresh_time: float = 0.0
+        self.refresh_lock = asyncio.Lock()
+
+    @classmethod
+    def get_instance(cls) -> "ProjectRefreshState":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def is_stale(self) -> bool:
+        return (time.time() - self.last_refresh_time) > self.REFRESH_TTL_SECONDS
+
+    def mark_refreshed(self) -> None:
+        self.last_refresh_time = time.time()
+
+
+def get_project_refresh_state() -> ProjectRefreshState:
+    return ProjectRefreshState.get_instance()
+
+
+async def ensure_projects_fresh() -> None:
+    """
+    Ensure project data is fresh, refreshing from Git if stale.
+
+    This function:
+    - Returns immediately if data was refreshed within the last 30 seconds
+    - Acquires a lock to prevent concurrent refresh operations
+    - Refreshes from Git if data is stale
+    - Other concurrent requests wait for the refresh to complete
+    """
+    state = get_project_refresh_state()
+
+    if not state.is_stale():
+        logger.debug("Project data is fresh, skipping refresh")
+        return
+
+    async with state.refresh_lock:
+        # Double-check after acquiring lock (another request may have refreshed)
+        if not state.is_stale():
+            logger.debug("Project data was refreshed while waiting for lock")
+            return
+
+        logger.info("Project data is stale, refreshing from Git")
+        await refresh_projects_from_git()
+        state.mark_refreshed()
 
 
 async def refresh_projects_from_git() -> int:

@@ -920,6 +920,85 @@ async def project_details(request: Request, project_name: str):
         except Exception as metrics_error:
             logger.warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
 
+        # Fetch ArgoCD status for each deployment
+        from typing import Any
+        argocd_status: dict[str, dict[str, Any]] = {}
+        argocd_available = False
+        try:
+            from opi.connectors.argo import create_argo_connector
+            from opi.utils.naming import generate_argocd_application_name
+
+            argo_connector = create_argo_connector()
+            argocd_available = argo_connector.auth_token is not None
+
+            if argocd_available:
+                for deployment in project_details["deployments"]:
+                    deployment_name = deployment.get("name")
+                    if deployment_name:
+                        app_name = generate_argocd_application_name(project_name, deployment_name)
+                        try:
+                            status_data = await argo_connector.get_application_status(app_name)
+                            if status_data:
+                                # Extract relevant status information
+                                status = status_data.get("status", {})
+                                health = status.get("health", {})
+                                sync = status.get("sync", {})
+                                operation_state = status.get("operationState", {})
+
+                                # Extract errors from resources and conditions
+                                errors = []
+                                for resource in status.get("resources", []):
+                                    resource_health = resource.get("health", {})
+                                    if resource_health.get("status") in ["Degraded", "Missing"]:
+                                        error_msg = resource_health.get("message", "Unknown error")
+                                        resource_name = f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                        errors.append({"resource": resource_name, "message": error_msg})
+
+                                # Check for sync errors
+                                if operation_state.get("phase") == "Failed":
+                                    op_message = operation_state.get("message", "Sync operation failed")
+                                    errors.append({"resource": "SyncOperation", "message": op_message})
+
+                                # Get last sync time
+                                last_sync = None
+                                if operation_state.get("finishedAt"):
+                                    last_sync = operation_state.get("finishedAt")
+                                elif sync.get("status") == "Synced":
+                                    last_sync = status.get("reconciledAt")
+
+                                argocd_status[deployment_name] = {
+                                    "app_name": app_name,
+                                    "available": True,
+                                    "health": health.get("status", "Unknown"),
+                                    "health_message": health.get("message"),
+                                    "sync": sync.get("status", "Unknown"),
+                                    "revision": sync.get("revision", "")[:7] if sync.get("revision") else None,
+                                    "last_sync": last_sync,
+                                    "operation_phase": operation_state.get("phase"),
+                                    "operation_message": operation_state.get("message"),
+                                    "errors": errors,
+                                }
+                                logger.debug(f"Fetched ArgoCD status for {app_name}: health={health.get('status')}, sync={sync.get('status')}")
+                            else:
+                                argocd_status[deployment_name] = {
+                                    "app_name": app_name,
+                                    "available": False,
+                                    "health": "Unknown",
+                                    "sync": "Unknown",
+                                    "errors": [{"resource": "Application", "message": "Application not found in ArgoCD"}],
+                                }
+                        except Exception as app_error:
+                            logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
+                            argocd_status[deployment_name] = {
+                                "app_name": app_name,
+                                "available": False,
+                                "health": "Unknown",
+                                "sync": "Unknown",
+                                "errors": [{"resource": "API", "message": str(app_error)}],
+                            }
+        except Exception as argo_error:
+            logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
+
         return templates.TemplateResponse(
             "project-details.html.j2",
             {
@@ -932,6 +1011,8 @@ async def project_details(request: Request, project_name: str):
                 "ServiceAdapter": ServiceAdapter,
                 "deployment_metrics_timeseries": deployment_metrics_timeseries,
                 "prometheus_available": prometheus_available,
+                "argocd_status": argocd_status,
+                "argocd_available": argocd_available,
             },
         )
 
@@ -1060,30 +1141,29 @@ async def project_details(request: Request, project_name: str):
 
 @web_router.get("/projects", response_class=HTMLResponse)
 @requires_sso
-async def projects_overview(request: Request, refresh: bool = False):
+async def projects_overview(request: Request):
     """
     Serve the projects overview page with table layout.
     Shows only projects where the current user's email is in the users list.
 
+    Project data is automatically refreshed from Git if stale (older than 30 seconds).
+
     Args:
         request: The HTTP request
-        refresh: If True, refresh project data from Git before rendering
 
     Returns:
         HTML response with a table showing user's projects and their status
     """
     try:
-        from opi.core.startup import refresh_projects_from_git
+        from opi.core.startup import ensure_projects_fresh
         from opi.services.project_service import get_project_service
 
         templates = get_templates()
         user = get_current_user(request)
         user_email = "robbert.uittenbroek@rijksoverheid.nl"  # user.get("email", "").lower()
 
-        # Refresh projects from Git if requested
-        if refresh:
-            logger.info("Refreshing projects from Git (user requested)")
-            await refresh_projects_from_git()
+        # Ensure project data is fresh (refreshes from Git if stale)
+        await ensure_projects_fresh()
 
         # Get project service to filter by user access
         project_service = get_project_service()
