@@ -15,5 +15,8 @@ spec:
     solvers:
     - http01:
         ingress:
-          ingressClassName: nginx
           serviceType: ClusterIP
+          ingressTemplate:
+            metadata:
+              annotations:
+                haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0"
