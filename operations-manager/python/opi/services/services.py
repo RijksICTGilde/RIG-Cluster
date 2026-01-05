@@ -293,7 +293,7 @@ class ServiceAdapter:
             name="Permanente opslag",
             description="Gegevens blijven bewaard tijdens de levenscyclus van de applicatie",
             icon="server",
-            color="paars",
+            color="grijs-600",
             scope="component",
             storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
             variables=[var.value for var in StorageVariables if var.value.name == "DATA_PATH"],
