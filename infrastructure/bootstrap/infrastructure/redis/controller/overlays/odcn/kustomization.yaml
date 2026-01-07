@@ -12,3 +12,14 @@ patches:
       - op: replace
         path: /spec/storageClassName
         value: ocs-storagecluster-ceph-rbd
+  # Remove hardcoded UID/GID to let OpenShift assign from allowed range
+  - target:
+      kind: Deployment
+      name: rig-redis
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsGroup
+      - op: remove
+        path: /spec/template/spec/securityContext/fsGroup
