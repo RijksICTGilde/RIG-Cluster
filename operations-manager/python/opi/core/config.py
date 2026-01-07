@@ -237,6 +237,11 @@ class Settings(BaseSettings):
     # MinIO client configuration
     MC_CONFIG_DIR: str = "/tmp/mc-config"  # Directory for mc CLI configuration files
 
+    # Redis configuration
+    REDIS_HOST: str = "rig-redis.rig-system.svc.cluster.local"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = "changeMe123!"
+
     # Prometheus configuration
     PROMETHEUS_URL: str = "http://prometheus.rig-system:9090"
 

@@ -14,6 +14,7 @@ resources:
   - ../../infrastructure/keycloak/config/overlays/local
   - ../../infrastructure/minio/controller/overlays/local
   - ../../infrastructure/prometheus/controller/overlays/local
+  - ../../infrastructure/redis/controller/overlays/local
 #  - ../../infrastructure/pgadmin/controller/overlays/local
 #  - ../../infrastructure/pgadmin/config/overlays/local
 #  - ../../infrastructure/minio/controller/overlays/local

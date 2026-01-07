@@ -42,3 +42,32 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/5/value
         value: "https://keycloak.kind"
+      # Add local CA certificate for Java truststore (needed for inter-realm HTTPS calls)
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: local-ca
+          hostPath:
+            path: /etc/ssl/certs/kind-local-ca.crt
+            type: File
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: local-ca
+          mountPath: /opt/keycloak/conf/truststores/kind-local-ca.crt
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: KC_TRUSTSTORE_PATHS
+          value: "/opt/keycloak/conf/truststores/kind-local-ca.crt"
+      # DEV ONLY: Pull theme from local HTTP server (run: cd keycloak-theme/output && python3 -m http.server 8888)
+      - op: replace
+        path: /spec/template/spec/initContainers/0/command
+        value:
+          - sh
+          - -c
+          - |
+            cd /tmp
+            wget http://host.docker.internal:8888/keycloak-nl-design-system.jar
+            cp keycloak-nl-design-system.jar /opt/keycloak/providers/

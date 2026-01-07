@@ -18,3 +18,7 @@ class ServiceType(Enum):
 
     # Object storage services
     MINIO_STORAGE = "minio-storage"
+
+    # Cache services
+    REDIS = "redis"
+    NAMESPACE_REDIS = "namespace-redis"

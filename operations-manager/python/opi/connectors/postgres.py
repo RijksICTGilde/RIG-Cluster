@@ -548,6 +548,64 @@ class PostgresConnector:
             logger.exception(f"Failed to update password for user {username} on {self._host}")
             raise PostgresExecutionError(f"Password update failed: {e}") from e
 
+    async def update_user_privileges(
+        self, username: str, database_privileges: list[str]
+    ) -> dict[str, Any]:
+        """Update user privileges using the bound admin credentials.
+
+        This method ensures the user has the specified privileges. It applies
+        each privilege via ALTER USER, making it idempotent (safe to call
+        multiple times with the same privileges).
+
+        Args:
+            username: Username to update
+            database_privileges: List of privileges to apply (e.g., ["SUPERUSER", "CREATEDB"])
+
+        Returns:
+            Dictionary with operation status and details
+
+        Raises:
+            PostgresExecutionError: If privilege update fails
+            PostgresValidationError: If input validation fails
+        """
+        try:
+            # Validate inputs
+            validated_username = self._validate_identifier(username, "username")
+            validated_privileges = [self._validate_privilege(priv) for priv in database_privileges]
+
+            if not validated_privileges:
+                return {"status": "success", "message": "No privileges to apply"}
+
+            # Get connection to postgres database
+            conn = await self._get_or_create_connection("postgres")
+
+            user_exists = await conn.fetchval("SELECT 1 FROM pg_user WHERE usename = $1", validated_username)
+
+            if not user_exists:
+                logger.warning(f"User {validated_username} does not exist on {self._host}")
+                return {"status": "not_found", "message": f"User {validated_username} does not exist"}
+
+            quoted_username = self._quote_identifier(validated_username)
+
+            # Apply each privilege
+            for privilege in validated_privileges:
+                alter_sql = f"ALTER USER {quoted_username} {privilege}"
+                await conn.execute(alter_sql)
+
+            logger.info(f"Privileges {validated_privileges} applied to user {validated_username} on {self._host}")
+            return {
+                "status": "success",
+                "message": f"Privileges updated for user {validated_username}",
+                "privileges": validated_privileges,
+            }
+
+        except PostgresValidationError:
+            logger.exception("Validation failed for privilege update")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to update privileges for user {username} on {self._host}")
+            raise PostgresExecutionError(f"Privilege update failed: {e}") from e
+
     # Database Management Operations
 
     async def create_database(self, database_name: str, owner: str | None = None) -> dict[str, Any]:

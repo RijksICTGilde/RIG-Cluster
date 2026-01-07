@@ -48,6 +48,7 @@ data:
                 - rig-test-dev
                 - rig-tr-dev
                 - rig-wies
+                - rig-mijn-bureau-docs
         relabel_configs:
           # Only scrape pods with prometheus.io/scrape=true
           - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]

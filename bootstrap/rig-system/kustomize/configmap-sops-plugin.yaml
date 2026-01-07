@@ -54,23 +54,92 @@ data:
               exit 1
             fi
             
+            # Function to build Helm chart dependencies
+            # Finds Chart.yaml files with dependencies and runs helm dependency build
+            build_helm_dependencies() {
+              local folder="$1"
+              local chart_file
+              local chart_dir
+              local dep_count
+
+              echo "DEBUG: Searching for Chart.yaml files in: $folder" >&2
+
+              # Find all Chart.yaml files and build dependencies
+              while IFS= read -r chart_file; do
+                echo "DEBUG: Found Chart.yaml: $chart_file" >&2
+                chart_dir=$(dirname "$chart_file")
+
+                # Check if chart has dependencies
+                dep_count=$(yq eval '.dependencies // [] | length' "$chart_file")
+                echo "DEBUG: Chart $chart_file has $dep_count dependencies" >&2
+
+                if [ "$dep_count" -gt 0 ] 2>/dev/null; then
+                  echo "Updating Helm dependencies for: $chart_dir" >&2
+                  # Use 'helm dependency update' to handle out-of-sync Chart.lock files
+                  if ! helm dependency update "$chart_dir" 2>&1 | sed 's/^/  /' >&2; then
+                    echo "ERROR: helm dependency update failed for $chart_dir" >&2
+                  fi
+                fi
+              done < <(find "$folder" -name "Chart.yaml" -type f 2>/dev/null)
+
+              echo "DEBUG: Finished building Helm dependencies" >&2
+            }
+
+            # Function to decrypt SOPS-encrypted Helm values files
+            # Files matching *-helm-values.sops.yaml are decrypted to *-helm-values.yaml
+            decrypt_helm_values() {
+              local folder="$1"
+
+              # Find all helm values files matching the naming convention
+              for sops_file in "$folder"/*-helm-values.sops.yaml; do
+                if [ -f "$sops_file" ]; then
+                  local decrypted_file="${sops_file%.sops.yaml}.yaml"
+                  echo "Decrypting Helm values: $(basename "$sops_file") -> $(basename "$decrypted_file")" >&2
+
+                  # Decrypt to plain file
+                  SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --decrypt "$sops_file" > "$decrypted_file"
+
+                  # Update kustomization.yaml to reference decrypted file
+                  local kust_file=""
+                  if [ -f "$folder/kustomization.yaml" ]; then
+                    kust_file="$folder/kustomization.yaml"
+                  elif [ -f "$folder/kustomization.yml" ]; then
+                    kust_file="$folder/kustomization.yml"
+                  fi
+
+                  if [ -n "$kust_file" ]; then
+                    local sops_basename=$(basename "$sops_file")
+                    local decrypted_basename=$(basename "$decrypted_file")
+                    # Replace the encrypted filename with decrypted filename in valuesFile references
+                    yq eval -i "(.helmCharts[].valuesFile | select(. == \"$sops_basename\")) = \"$decrypted_basename\"" "$kust_file"
+                  fi
+                fi
+              done
+            }
+
             # Function to process a single folder
             process_folder() {
               local folder="$1"
               local output_file="$2"
-              
+
               echo "Processing folder: $folder" >&2
-              
+
               # Inject namespace into kustomization.yaml
               if [ -f "$folder/kustomization.yaml" ]; then
               yq eval ".namespace = \"${ARGOCD_APP_NAMESPACE}\"" -i "$folder/kustomization.yaml"
               elif [ -f "$folder/kustomization.yml" ]; then
               yq eval ".namespace = \"${ARGOCD_APP_NAMESPACE}\"" -i "$folder/kustomization.yml"
               fi
-              
-              # Generate manifests for this folder
+
+              # Build Helm chart dependencies before kustomize build
+              build_helm_dependencies "$folder"
+
+              # Decrypt SOPS-encrypted Helm values files before kustomize build
+              decrypt_helm_values "$folder"
+
+              # Generate manifests for this folder (with Helm support)
               echo "---" >> "$output_file"
-              SOPS_AGE_KEY="$SOPS_AGE_KEY" kustomize build --enable-alpha-plugins --enable-exec "$folder" >> "$output_file"
+              SOPS_AGE_KEY="$SOPS_AGE_KEY" kustomize build --enable-alpha-plugins --enable-exec --enable-helm "$folder" >> "$output_file"
             }
             
             # Determine folders to process

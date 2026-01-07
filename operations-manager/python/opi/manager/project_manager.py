@@ -35,7 +35,8 @@ from opi.core.cluster_config import (
     get_ingress_tls_enabled,
     get_keycloak_discovery_url,
     get_letsencrypt_contact_email,
-    get_minio_server,
+    get_minio_host,
+    get_minio_port,
     get_prefixed_namespace,
     uses_capsule,
 )
@@ -60,6 +61,7 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_external_hostname,
+    generate_helm_values_filename,
     generate_ingress_map,
     generate_ingress_name_from_path,
     generate_issuer_manifest_name,
@@ -74,7 +76,15 @@ from opi.utils.naming import (
     generate_tls_secret_name,
     generate_unique_name,
 )
-from opi.utils.secrets import BaseSecret, DatabaseSecret, KeycloakSecret, MinIOSecret, RegistrySecret, UserSecret
+from opi.utils.secrets import (
+    BaseSecret,
+    DatabaseSecret,
+    KeycloakSecret,
+    MinIOSecret,
+    RedisSecret,
+    RegistrySecret,
+    UserSecret,
+)
 from opi.utils.sops import encrypt_to_sops_files
 from opi.utils.yaml_util import (
     dump_yaml_to_string,
@@ -154,12 +164,14 @@ class ProjectManager:
         from opi.manager.keycloak_manager import KeycloakManager
         from opi.manager.minio_manager import MinioManager
         from opi.manager.pvc_manager import PVCManager
+        from opi.manager.redis_manager import RedisManager
 
         # DatabaseManager will be lazily initialized on first access
         # This allows us to determine the correct database host based on project services
         self._database_manager: DatabaseManager | None = None
         self._minio_manager = MinioManager(self)
         self._keycloak_manager = KeycloakManager(self)
+        self._redis_manager = RedisManager(self)
         self._argo_manager = ArgoManager(self)
         self._bootstrap_manager = BootstrapManager(self)
         self._delete_project_manager = DeleteProjectManager(self)
@@ -2132,6 +2144,10 @@ class ProjectManager:
         """
         Process manifests for a specific deployment.
 
+        Supports two deployment types:
+        1. Component-based deployments: Traditional OPI components with deployment/service/ingress manifests
+        2. Helm chart deployments: External Helm charts rendered via Kustomize helmCharts
+
         Args:
             deployment: Deployment configuration
             git_connector: GitConnector for the repository
@@ -2151,8 +2167,20 @@ class ProjectManager:
             deployment_path = f"{cluster_name}/{project_name}/{deployment_name}"
 
         prefixed_namespace = get_prefixed_namespace(cluster_name, deployment["namespace"])
+        target_path = os.path.join(await git_connector.get_working_dir(), deployment_path)
 
         logger.info(f"Processing deployment: {deployment_name} at path: {deployment_path}")
+
+        # Check if this is a helm chart deployment or component deployment
+        if self._deployment_uses_helm_charts(deployment):
+            # Process helm chart deployment (no component manifests, uses Kustomize helmCharts)
+            logger.info(f"Deployment '{deployment_name}' uses helm-charts - processing as helm deployment")
+            await self._process_helm_chart_deployment(deployment, git_connector, target_path)
+            # Note: SOPS encryption is handled inside _process_helm_chart_deployment
+            return
+
+        # Standard component-based deployment processing
+        logger.info(f"Deployment '{deployment_name}' uses components - processing as standard deployment")
 
         # Pre-scan: Collect all aliases from components before creating any manifests
         # This allows deployment-level secrets to include aliases from all components
@@ -2164,7 +2192,6 @@ class ProjectManager:
 
         # Create a kustomization file BEFORE encrypting .to-sops.yaml files
         # This ensures kustomization and decrypt-sops.yaml can see all .to-sops.yaml files
-        target_path = os.path.join(await git_connector.get_working_dir(), deployment_path)
         sops_files, regular_files = self._manifest_generator.collect_manifest_files(
             target_path, include_subfolders=False
         )
@@ -2199,6 +2226,572 @@ class ProjectManager:
                 logger.warning(f"  - UNENCRYPTED: {os.path.basename(file_path)}")
         else:
             logger.info("All .to-sops.yaml files successfully encrypted")
+
+    # ==========================================================================
+    # Helm Chart Processing Methods
+    # ==========================================================================
+
+    def _deployment_uses_helm_charts(self, deployment: dict[str, Any]) -> bool:
+        """
+        Check if a deployment uses helm-charts instead of components.
+
+        Args:
+            deployment: Deployment configuration
+
+        Returns:
+            True if deployment has helm-charts defined
+        """
+        helm_charts = deployment.get("helm-charts", [])
+        return len(helm_charts) > 0
+
+    async def _get_helm_values_context(self, deployment_name: str) -> dict[str, str]:
+        """
+        Build a context dictionary with all service credentials for alias resolution.
+
+        This collects credentials from all service managers (database, minio, keycloak, redis)
+        and deployment-level variables (hostname, subdomain, base-domain, issuer).
+
+        Args:
+            deployment_name: Name of the deployment
+
+        Returns:
+            Dictionary mapping alias names to resolved values
+        """
+        context: dict[str, str] = {}
+
+        # Get deployment for cluster info
+        deployment = await self.get_deployment_by_name(deployment_name)
+        if not deployment:
+            logger.warning(f"Deployment '{deployment_name}' not found")
+            return context
+
+        # Add deployment-level variables for hostname, subdomain, base-domain, issuer
+        cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
+        subdomain = deployment.get("subdomain")
+        base_domain = deployment.get("base-domain")
+        issuer_config = deployment.get("issuer")
+        use_https = get_ingress_tls_enabled(cluster_name)
+
+        # Calculate hostname based on configuration
+        if base_domain and subdomain:
+            # External domain mode: subdomain.base-domain
+            hostname = generate_external_hostname(subdomain, base_domain)
+        elif subdomain:
+            # Subdomain with cluster domain
+            ingress_postfix = get_ingress_postfix(cluster_name)
+            hostname = f"{subdomain}.{ingress_postfix}"
+        else:
+            # Fallback: use deployment name with cluster domain
+            ingress_postfix = get_ingress_postfix(cluster_name)
+            hostname = f"{deployment_name}.{ingress_postfix}"
+
+        # Determine issuer name
+        if issuer_config:
+            # Use configured issuer
+            context["ISSUER"] = issuer_config
+        else:
+            # Use cluster's default ClusterIssuer
+            cluster_issuer = get_ingress_cluster_issuer(cluster_name)
+            if cluster_issuer:
+                context["ISSUER"] = cluster_issuer
+
+        # Add hostname-related variables
+        public_url = generate_public_url(hostname, use_https)
+        context["PUBLIC_HOST"] = public_url
+        context["HOSTNAME"] = hostname
+        if subdomain:
+            context["SUBDOMAIN"] = subdomain
+        if base_domain:
+            context["BASE_DOMAIN"] = base_domain
+
+        logger.debug(f"Added deployment variables: PUBLIC_HOST={public_url}, HOSTNAME={hostname}")
+
+        # Get database credentials if available
+        db_secret = self._get_secret_from_map(deployment_name, "database", DatabaseSecret)
+        if db_secret:
+            context["DATABASE_SERVER_HOST"] = db_secret.host
+            context["DATABASE_SERVER_PORT"] = str(db_secret.port)
+            context["DATABASE_SERVER_USER"] = db_secret.username
+            context["DATABASE_PASSWORD"] = db_secret.password
+            context["DATABASE_DB"] = db_secret.database
+            context["DATABASE_SCHEMA"] = db_secret.schema
+
+        # Get MinIO credentials if available
+        minio_secret = self._get_secret_from_map(deployment_name, "minio", MinIOSecret)
+        if minio_secret:
+            context["OBJECT_STORE_HOST"] = minio_secret.host
+            context["OBJECT_STORE_PORT"] = str(minio_secret.port)
+            context["OBJECT_STORE_URL"] = minio_secret.url
+            context["OBJECT_STORE_ENDPOINT_URL"] = minio_secret.endpoint_url
+            context["OBJECT_STORE_USER"] = minio_secret.access_key
+            context["OBJECT_STORE_PASSWORD"] = minio_secret.secret_key
+            context["OBJECT_STORE_BUCKET_NAME"] = minio_secret.bucket_name
+            context["OBJECT_STORE_REGION"] = minio_secret.region
+
+        # Get Keycloak credentials if available
+        keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
+        if keycloak_secret:
+            context["OIDC_DISCOVERY_URL"] = keycloak_secret.discovery_url
+            context["OIDC_CLIENT_ID"] = keycloak_secret.client_id
+            context["OIDC_CLIENT_SECRET"] = keycloak_secret.client_secret
+            context["KEYCLOAK_BASE_URL"] = keycloak_secret.base_url
+            context["KEYCLOAK_REALM"] = keycloak_secret.realm
+
+        # Get Redis credentials if available
+        redis_secret = self._get_secret_from_map(deployment_name, "redis", RedisSecret)
+        if redis_secret:
+            context["REDIS_HOST"] = redis_secret.host
+            context["REDIS_PORT"] = str(redis_secret.port)
+            context["REDIS_PASSWORD"] = redis_secret.password
+            context["REDIS_URL"] = redis_secret.url
+
+        logger.debug(f"Built helm values context with {len(context)} variables for deployment '{deployment_name}'")
+        return context
+
+    def _resolve_nested_aliases(self, obj: Any, context: dict[str, str]) -> Any:
+        """
+        Recursively resolve $ALIAS references in a nested YAML structure.
+
+        Supports both $VAR and ${VAR} syntax for variable substitution.
+
+        Args:
+            obj: The object to process (can be dict, list, or scalar)
+            context: Dictionary of alias_name -> value for substitution
+
+        Returns:
+            The object with all aliases resolved
+        """
+        if isinstance(obj, str):
+            result = obj
+            for key, value in context.items():
+                result = result.replace(f"${key}", str(value))
+                result = result.replace(f"${{{key}}}", str(value))
+            return result
+        elif isinstance(obj, dict):
+            return {k: self._resolve_nested_aliases(v, context) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._resolve_nested_aliases(item, context) for item in obj]
+        return obj
+
+    def _deep_merge_dicts(self, base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+        """
+        Deep merge two dictionaries, with override values taking precedence.
+
+        Args:
+            base: Base dictionary
+            override: Override dictionary (values take precedence)
+
+        Returns:
+            Merged dictionary
+        """
+        result = base.copy()
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge_dicts(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    async def _clone_helm_chart(
+        self,
+        helm_chart: dict[str, Any],
+        target_dir: str,
+    ) -> str:
+        """
+        Clone a Helm chart from git and return the path to the chart.
+
+        Args:
+            helm_chart: Helm chart configuration from project
+            target_dir: Directory where chart should be cloned
+
+        Returns:
+            Path to the chart directory
+        """
+        source_type = helm_chart.get("source-type", "git-clone")
+
+        if source_type != "git-clone":
+            raise ValueError(f"Unsupported helm chart source-type: {source_type}")
+
+        git_url = helm_chart.get("git-url")
+        git_ref = helm_chart.get("git-ref", "main")
+        chart_path = helm_chart.get("chart-path", ".")
+        chart_name = helm_chart.get("name")
+
+        if not git_url:
+            raise ValueError(f"Helm chart '{chart_name}' missing git-url")
+        if not chart_name:
+            raise ValueError("Helm chart missing required 'name' field")
+
+        logger.info(f"Cloning helm chart '{chart_name}' from {git_url}#{git_ref}")
+
+        # Create a temporary git connector to clone the chart repo
+        import shutil
+        import tempfile
+
+        dest_chart_path = ""  # Will be set inside the temp directory context
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Clone the repository
+            from opi.connectors.git import GitConnector
+
+            git_connector = GitConnector(
+                repo_url=git_url,
+                branch=git_ref,
+                working_dir=temp_dir,
+            )
+
+            await git_connector.clone()
+
+            # Get the chart source path
+            source_chart_path = os.path.join(temp_dir, chart_path)
+
+            if not os.path.exists(source_chart_path):
+                raise FileNotFoundError(f"Chart path not found: {chart_path} in {git_url}")
+
+            # Create charts directory in target
+            charts_dir = os.path.join(target_dir, "charts")
+            os.makedirs(charts_dir, exist_ok=True)
+
+            # Copy chart to target directory
+            dest_chart_path = os.path.join(charts_dir, chart_name)
+            if os.path.exists(dest_chart_path):
+                shutil.rmtree(dest_chart_path)
+            shutil.copytree(source_chart_path, dest_chart_path)
+
+            logger.info(f"Copied helm chart '{chart_name}' to {dest_chart_path}")
+
+            # Check for chart dependencies (common chart)
+            chart_yaml_path = os.path.join(dest_chart_path, "Chart.yaml")
+            if os.path.exists(chart_yaml_path):
+                yaml = YAML()
+                with open(chart_yaml_path) as f:
+                    chart_data = yaml.load(f)
+
+                dependencies = chart_data.get("dependencies", [])
+                for dep in dependencies:
+                    dep_name = dep.get("name")
+                    dep_repo = dep.get("repository", "")
+
+                    # Handle local file:// dependencies
+                    if dep_repo.startswith("file://"):
+                        rel_path = dep_repo.replace("file://", "")
+                        dep_source = os.path.join(temp_dir, chart_path, rel_path)
+
+                        if os.path.exists(dep_source):
+                            dep_dest = os.path.join(charts_dir, dep_name)
+                            if os.path.exists(dep_dest):
+                                shutil.rmtree(dep_dest)
+                            shutil.copytree(dep_source, dep_dest)
+
+                            # Update the dependency path in Chart.yaml
+                            dep["repository"] = f"file://../{dep_name}"
+                            logger.info(f"Copied dependency chart '{dep_name}' to {dep_dest}")
+
+                # Write updated Chart.yaml if dependencies were modified
+                with open(chart_yaml_path, "w") as f:
+                    yaml.dump(chart_data, f)
+
+            await git_connector.close()
+
+        return dest_chart_path
+
+    async def _process_helm_chart_deployment(
+        self,
+        deployment: dict[str, Any],
+        git_connector: GitConnector,
+        target_path: str,
+    ) -> None:
+        """
+        Process a deployment that uses helm-charts instead of components.
+
+        This method:
+        1. Clones the helm chart(s) from git
+        2. Extracts and merges helm-values (base + deployment-specific)
+        3. Resolves $ALIAS references using service credentials
+        4. Creates values.yaml with resolved values
+        5. Generates kustomization.yaml with helmCharts section
+
+        Args:
+            deployment: Deployment configuration
+            git_connector: Git connector for the target repository
+            target_path: Full path to the deployment directory
+        """
+        project_data = await self.get_contents()
+        deployment_name = deployment.get("name")
+        if not deployment_name:
+            raise ValueError("Deployment missing required 'name' field")
+
+        cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
+        prefixed_namespace = get_prefixed_namespace(cluster_name, deployment["namespace"])
+
+        logger.info(f"Processing helm chart deployment: {deployment_name}")
+
+        # Ensure target directory exists
+        os.makedirs(target_path, exist_ok=True)
+
+        # Get helm charts from deployment
+        helm_chart_refs = deployment.get("helm-charts", [])
+
+        # Build the credentials context for alias resolution
+        context = await self._get_helm_values_context(deployment_name)
+
+        # Process each helm chart reference
+        helm_charts_config: list[dict[str, Any]] = []  # For kustomization.yaml helmCharts section
+
+        for helm_chart_ref in helm_chart_refs:
+            chart_reference = helm_chart_ref.get("reference")
+            if not chart_reference:
+                raise ValueError("Helm chart reference missing required 'reference' field")
+
+            release_name = helm_chart_ref.get("release-name", chart_reference)
+
+            logger.info(f"Processing helm chart reference: {chart_reference}")
+
+            # Find the helm-chart definition in project
+            helm_chart_def = self._project_file_handler.get_helm_chart_by_name(project_data, chart_reference)
+            if not helm_chart_def:
+                raise ValueError(f"Helm chart '{chart_reference}' not found in project definition")
+
+            # Clone the chart to target directory
+            chart_path = await self._clone_helm_chart(helm_chart_def, target_path)
+
+            # Extract base helm-values from helm-chart definition
+            base_values = await self._project_file_handler.extract_helm_chart_values(project_data, chart_reference)
+
+            # Extract deployment-level helm-values
+            deployment_values = await self._project_file_handler.extract_deployment_helm_chart_values(
+                project_data, deployment_name, chart_reference
+            )
+
+            # Deep merge values (deployment overrides base)
+            merged_values = self._deep_merge_dicts(base_values, deployment_values)
+
+            # Resolve $ALIAS references in the merged values
+            resolved_values = self._resolve_nested_aliases(merged_values, context)
+
+            # Write values as .to-sops.yaml (will be encrypted later)
+            # Use naming convention that matches CMP plugin pattern: *-helm-values.sops.yaml
+            values_file_sops = generate_helm_values_filename(deployment_name, chart_reference, encrypted=True)
+            values_file_to_sops = values_file_sops.replace(".sops.yaml", ".to-sops.yaml")
+            values_path = os.path.join(target_path, values_file_to_sops)
+
+            yaml = YAML()
+            yaml.default_flow_style = False
+            with open(values_path, "w") as f:
+                yaml.dump(resolved_values, f)
+
+            logger.info(f"Created helm values file (to be encrypted): {values_path}")
+
+            # Add to helmCharts config for kustomization.yaml
+            # Reference the final .sops.yaml name (after encryption)
+            helm_charts_config.append(
+                {
+                    "name": chart_reference,
+                    "releaseName": release_name,
+                    "namespace": prefixed_namespace,
+                    "valuesFile": values_file_sops,
+                    "repo": f"file://./charts/{chart_reference}",
+                }
+            )
+
+        # Create service secret manifests (database, minio, redis, keycloak)
+        secret_files = await self._create_deployment_secrets(
+            deployment_name,
+            target_path,
+            prefixed_namespace,
+            cluster_name,
+        )
+        logger.info(f"Created {len(secret_files)} service secret manifests for helm deployment")
+
+        # Create kustomization.yaml with helmCharts section and secret resources
+        await self._create_helm_kustomization(
+            target_path,
+            prefixed_namespace,
+            helm_charts_config,
+            secret_files,
+        )
+
+        # Encrypt .to-sops.yaml files to .sops.yaml
+        public_key = get_project_public_key(project_data)
+        if not public_key:
+            raise ValueError(
+                f"No public key found for project, cannot encrypt helm values for deployment: {deployment_name}. "
+                "This would commit secrets in plain text to git!"
+            )
+
+        logger.info(f"Encrypting helm values files for deployment: {deployment_name}")
+
+        # List .to-sops.yaml files before encryption for debugging
+        to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
+        to_sops_files = glob.glob(to_sops_pattern)
+        logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
+        for file_path in to_sops_files:
+            logger.info(f"  - {os.path.basename(file_path)}")
+
+        encryption_success = encrypt_to_sops_files(target_path, public_key)
+        if not encryption_success:
+            raise RuntimeError(
+                f"Failed to encrypt helm values files for deployment: {deployment_name}. "
+                "This would commit secrets in plain text to git!"
+            )
+
+        # Verify all files were encrypted
+        remaining_to_sops_files = glob.glob(to_sops_pattern)
+        if remaining_to_sops_files:
+            file_names = [os.path.basename(f) for f in remaining_to_sops_files]
+            raise RuntimeError(
+                f"Found {len(remaining_to_sops_files)} .to-sops.yaml files that were NOT encrypted: "
+                f"{', '.join(file_names)}. This would commit secrets in plain text to git!"
+            )
+
+        logger.info("All helm values files successfully encrypted")
+        logger.info(f"Helm chart deployment processing complete for: {deployment_name}")
+
+    async def _create_deployment_secrets(
+        self,
+        deployment_name: str,
+        target_path: str,
+        namespace: str,
+        cluster: str,
+    ) -> list[str]:
+        """
+        Create Kubernetes Secret manifests for all services used by a deployment.
+
+        This method creates secret manifests based on what's stored in self._secrets_to_create.
+        It's used by both component-based and helm-chart-based deployments.
+
+        Args:
+            deployment_name: Name of the deployment
+            target_path: Directory where secret manifests should be created
+            namespace: Target namespace for the secrets
+            cluster: Cluster name for cluster-specific configurations
+
+        Returns:
+            List of created secret filenames (*.to-sops.yaml)
+        """
+        created_files: list[str] = []
+
+        secret_template_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
+        )
+
+        # Create Keycloak/SSO secret if available
+        keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
+        if keycloak_secret:
+            keycloak_secret_data = keycloak_secret.to_k8s_secret_data()
+            secret_vars = {
+                "name": KeycloakSecret.get_secret_name(deployment_name),
+                "namespace": namespace,
+                "secret_pairs": keycloak_secret_data,
+            }
+            manifest_name = f"{KeycloakSecret.get_secret_name(deployment_name)}-secret"
+            self._manifest_generator.create_manifest_file(
+                template_path=secret_template_path,
+                values=secret_vars,
+                output_dir=target_path,
+                output_filename=manifest_name,
+                use_sops=True,
+            )
+            created_files.append(f"{manifest_name}.to-sops.yaml")
+            logger.info(f"Created Keycloak secret manifest: {manifest_name}")
+
+        # Create Database secret if available
+        db_secret = self._get_secret_from_map(deployment_name, "database", DatabaseSecret)
+        if db_secret:
+            db_secret_data = db_secret.to_k8s_secret_data()
+            secret_vars = {
+                "name": DatabaseSecret.get_secret_name(deployment_name),
+                "namespace": namespace,
+                "secret_pairs": db_secret_data,
+            }
+            manifest_name = f"{DatabaseSecret.get_secret_name(deployment_name)}-secret"
+            self._manifest_generator.create_manifest_file(
+                template_path=secret_template_path,
+                values=secret_vars,
+                output_dir=target_path,
+                output_filename=manifest_name,
+                use_sops=True,
+            )
+            created_files.append(f"{manifest_name}.to-sops.yaml")
+            logger.info(f"Created Database secret manifest: {manifest_name}")
+
+        # Create MinIO secret if available
+        minio_secret = self._get_secret_from_map(deployment_name, "minio", MinIOSecret)
+        if minio_secret:
+            minio_secret_data = minio_secret.to_k8s_secret_data()
+            secret_vars = {
+                "name": MinIOSecret.get_secret_name(deployment_name),
+                "namespace": namespace,
+                "secret_pairs": minio_secret_data,
+            }
+            manifest_name = f"{MinIOSecret.get_secret_name(deployment_name)}-secret"
+            self._manifest_generator.create_manifest_file(
+                template_path=secret_template_path,
+                values=secret_vars,
+                output_dir=target_path,
+                output_filename=manifest_name,
+                use_sops=True,
+            )
+            created_files.append(f"{manifest_name}.to-sops.yaml")
+            logger.info(f"Created MinIO secret manifest: {manifest_name}")
+
+        # Create Redis secret if available
+        redis_secret = self._get_secret_from_map(deployment_name, "redis", RedisSecret)
+        if redis_secret:
+            redis_secret_data = redis_secret.to_k8s_secret_data()
+            secret_vars = {
+                "name": RedisSecret.get_secret_name(deployment_name),
+                "namespace": namespace,
+                "secret_pairs": redis_secret_data,
+            }
+            manifest_name = f"{RedisSecret.get_secret_name(deployment_name)}-secret"
+            self._manifest_generator.create_manifest_file(
+                template_path=secret_template_path,
+                values=secret_vars,
+                output_dir=target_path,
+                output_filename=manifest_name,
+                use_sops=True,
+            )
+            created_files.append(f"{manifest_name}.to-sops.yaml")
+            logger.info(f"Created Redis secret manifest: {manifest_name}")
+
+        return created_files
+
+    async def _create_helm_kustomization(
+        self,
+        target_path: str,
+        namespace: str,
+        helm_charts: list[dict[str, Any]],
+        secret_files: list[str] | None = None,
+    ) -> None:
+        """
+        Create kustomization.yaml and decrypt-sops.yaml files for helm chart deployment.
+
+        Uses the shared create_kustomization_files method from ManifestGenerator.
+
+        Args:
+            target_path: Directory where kustomization files should be created
+            namespace: Target namespace
+            helm_charts: List of helm chart configurations
+            secret_files: Optional list of secret manifest files (.to-sops.yaml) to include
+        """
+        # Collect SOPS files for decryption (Secret manifests only)
+        # NOTE: Helm values files are NOT included here - they are decrypted by the
+        # CMP plugin's decrypt_helm_values function, not by KSOPS. KSOPS only handles
+        # Kubernetes Secret manifests that need to be decrypted and applied as resources.
+        all_sops_files: list[str] = []
+
+        if secret_files:
+            all_sops_files.extend(secret_files)
+
+        # Use the shared manifest generator method
+        self._manifest_generator.create_kustomization_files(
+            output_dir=target_path,
+            namespace=namespace,
+            sops_files=all_sops_files if all_sops_files else None,
+            regular_files=[],  # No regular files for helm deployments
+            helm_charts=helm_charts,
+        )
 
     async def close(self) -> None:
         await self.close_git_connector_for_project_files()
@@ -2302,6 +2895,7 @@ class ProjectManager:
                     await db_manager.create_resources_for_deployment(project_data, deployment, force_clone)
                     await self._minio_manager.create_resources_for_deployment(project_data, deployment, force_clone)
                     await self._keycloak_manager.create_resources_for_deployment(project_data, deployment)
+                    await self._redis_manager.create_resources_for_deployment(project_data, deployment)
 
             await self._process_application_manifests(deployment_name)
 
@@ -3183,11 +3777,10 @@ class ProjectManager:
                 if minio_credentials:
                     logger.debug(f"Creating MinIO secret for {component_name} with object storage credentials")
 
-                    minio_server_host = get_minio_server(cluster)
-
-                    # Create typed MinIO secret with cluster-specific host
+                    # Create typed MinIO secret with cluster-specific host and port
                     minio_secret = MinIOSecret(
-                        host=minio_server_host,  # Use cluster-specific host
+                        host=get_minio_host(cluster),
+                        port=get_minio_port(cluster),
                         access_key=minio_credentials.access_key,
                         secret_key=minio_credentials.secret_key,
                         bucket_name=minio_credentials.bucket_name,

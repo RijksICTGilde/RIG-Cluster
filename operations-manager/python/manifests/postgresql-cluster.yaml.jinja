@@ -51,6 +51,11 @@ spec:
         name: {{ project_name }}-postgres-superuser
       postInitApplicationSQL:
         - CREATE EXTENSION IF NOT EXISTS vector;
+{% if database_config.postInitSQL %}
+{% for sql in database_config.postInitSQL %}
+        - {{ sql }}
+{% endfor %}
+{% endif %}
 
   # Enable monitoring
   monitoring:

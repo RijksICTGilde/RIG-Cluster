@@ -149,26 +149,48 @@ class KeycloakVariables(Enum):
 class MinIOVariables(Enum):
     """MinIO/Object Storage service variable definitions - single source of truth."""
 
-    URL = VariableDefinition(
-        name="OBJECT_STORE_URL", description="MinIO server URL/endpoint", source="secret", secret_key="host"
+    HOST = VariableDefinition(
+        name="OBJECT_STORE_HOST",
+        description="MinIO server hostname",
+        source="secret",
+        secret_key="host",
+        aliases=["APP_OBJECT_STORE_HOST"],
     )
+    PORT = VariableDefinition(
+        name="OBJECT_STORE_PORT",
+        description="MinIO server port",
+        source="secret",
+        secret_key="port",
+        aliases=["APP_OBJECT_STORE_PORT"],
+    )
+    # URL and ENDPOINT_URL are computed in MinIOSecret._get_additional_keys()
     USER = VariableDefinition(
         name="OBJECT_STORE_USER",
         description="MinIO toegangssleutel/gebruikersnaam",
         source="secret",
         secret_key="access_key",
+        aliases=["APP_OBJECT_STORE_USER"],
     )
     PASSWORD = VariableDefinition(
         name="OBJECT_STORE_PASSWORD",
         description="MinIO geheime sleutel/wachtwoord",
         source="secret",
         secret_key="secret_key",
+        aliases=["APP_OBJECT_STORE_PASSWORD"],
     )
     BUCKET_NAME = VariableDefinition(
-        name="OBJECT_STORE_BUCKET_NAME", description="MinIO bucket naam", source="secret", secret_key="bucket_name"
+        name="OBJECT_STORE_BUCKET_NAME",
+        description="MinIO bucket naam",
+        source="secret",
+        secret_key="bucket_name",
+        aliases=["APP_OBJECT_STORE_BUCKET_NAME"],
     )
     REGION = VariableDefinition(
-        name="OBJECT_STORE_REGION", description="MinIO regio configuratie", source="secret", secret_key="region"
+        name="OBJECT_STORE_REGION",
+        description="MinIO regio configuratie",
+        source="secret",
+        secret_key="region",
+        aliases=["APP_OBJECT_STORE_REGION"],
     )
 
 
@@ -180,6 +202,39 @@ class StorageVariables(Enum):
     )
     TEMP_PATH = VariableDefinition(
         name="TEMP_PATH", description="Mount pad voor tijdelijke/tijdelijke opslag (/tmp)", source="direct"
+    )
+
+
+class RedisVariables(Enum):
+    """Redis cache service variable definitions - single source of truth."""
+
+    HOST = VariableDefinition(
+        name="REDIS_HOST",
+        description="Redis server hostname",
+        source="secret",
+        secret_key="host",
+        aliases=["APP_REDIS_HOST"],
+    )
+    PORT = VariableDefinition(
+        name="REDIS_PORT",
+        description="Redis server port",
+        source="secret",
+        secret_key="port",
+        aliases=["APP_REDIS_PORT"],
+    )
+    PASSWORD = VariableDefinition(
+        name="REDIS_PASSWORD",
+        description="Redis password",
+        source="secret",
+        secret_key="password",
+        aliases=["APP_REDIS_PASSWORD"],
+    )
+    URL = VariableDefinition(
+        name="REDIS_URL",
+        description="Full Redis connection URL",
+        source="secret",
+        secret_key="url",
+        aliases=["APP_REDIS_URL"],
     )
 
 
@@ -264,6 +319,24 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="MinIOSecret",
             variables=[var.value for var in MinIOVariables],
+        ),
+        ServiceType.REDIS: ServiceDefinition(
+            name="Redis Cache",
+            description="Shared Redis cache en message broker voor caching en Celery task queues",
+            icon="zandloper",
+            color="rood",
+            scope="deployment",
+            secret_class="RedisSecret",
+            variables=[var.value for var in RedisVariables],
+        ),
+        ServiceType.NAMESPACE_REDIS: ServiceDefinition(
+            name="Namespace Redis Cache",
+            description="Dedicated Redis instance per namespace voor caching en Celery task queues",
+            icon="zandloper",
+            color="rood",
+            scope="deployment",
+            secret_class="RedisSecret",
+            variables=[var.value for var in RedisVariables],
         ),
     }
 
@@ -416,6 +489,11 @@ class ServiceAdapter:
     def needs_object_storage(cls, services: list[ServiceType]) -> bool:
         """Check if any service requires object storage."""
         return ServiceType.MINIO_STORAGE in services
+
+    @classmethod
+    def needs_redis(cls, services: list[ServiceType]) -> bool:
+        """Check if any service requires Redis cache."""
+        return ServiceType.REDIS in services or ServiceType.NAMESPACE_REDIS in services
 
     @classmethod
     def get_variables(cls, service: ServiceType) -> list[VariableDefinition]:

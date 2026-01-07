@@ -729,6 +729,169 @@ class PrometheusConnector:
 
         return result
 
+    def discover_workloads_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
+        """
+        Discover workloads (deployments/statefulsets) in a namespace via Prometheus metrics.
+
+        Uses kube_pod_info to find pods and groups them by their owner (deployment/statefulset).
+        Filters out Jobs as they are typically short-lived and don't need ongoing monitoring.
+        This is useful for helm-based deployments where we don't know the component structure upfront.
+
+        Args:
+            namespace: The Kubernetes namespace to discover workloads in
+
+        Returns:
+            List of workload dictionaries with:
+            - name: Workload name (deployment/statefulset name)
+            - pod_count: Number of pods for this workload
+            - pods: List of pod names
+            - workload_type: Type of workload (Deployment, StatefulSet)
+        """
+        if not PrometheusConnector.is_connected:
+            logger.warning("Prometheus not connected, cannot discover workloads")
+            return []
+
+        workloads: dict[str, dict[str, Any]] = {}
+
+        try:
+            # Query kube_pod_info to get all pods in the namespace
+            # The created_by_kind label tells us if it's a ReplicaSet (Deployment), StatefulSet, or Job
+            query = f'kube_pod_info{{namespace="{namespace}"}}'
+            logger.debug(f"Discovering workloads with query: {query}")
+
+            result: list[dict[str, Any]] = self.prom.custom_query(query)
+
+            for item in result:
+                metric = item.get("metric", {})
+                pod_name = metric.get("pod", "")
+                created_by_kind = metric.get("created_by_kind", "")
+
+                if not pod_name:
+                    continue
+
+                # Skip Jobs - they are short-lived and don't need ongoing monitoring
+                if created_by_kind == "Job":
+                    continue
+
+                # Determine workload type
+                if created_by_kind == "StatefulSet":
+                    workload_type = "StatefulSet"
+                elif created_by_kind == "ReplicaSet":
+                    workload_type = "Deployment"
+                elif created_by_kind == "DaemonSet":
+                    workload_type = "DaemonSet"
+                else:
+                    # Unknown type, skip to be safe (could be a Job without label)
+                    workload_type = created_by_kind or "Unknown"
+                    # If no created_by_kind, try to infer from pod name pattern
+                    if not created_by_kind:
+                        # Skip if it looks like a job pod (single hash suffix)
+                        parts = pod_name.split("-")
+                        if len(parts) >= 2 and len(parts[-1]) >= 5 and parts[-1].isalnum():
+                            # Check if second-to-last is NOT a hash (StatefulSet ordinal or Deployment pattern)
+                            if not (parts[-1].isdigit() or (len(parts) >= 3 and len(parts[-2]) >= 5)):
+                                continue
+
+                # Extract workload name from pod name
+                workload_name = self._extract_workload_name_from_pod(pod_name)
+
+                if workload_name not in workloads:
+                    workloads[workload_name] = {
+                        "name": workload_name,
+                        "pod_count": 0,
+                        "pods": [],
+                        "workload_type": workload_type,
+                    }
+
+                workloads[workload_name]["pod_count"] += 1
+                workloads[workload_name]["pods"].append(pod_name)
+
+            # Sort by workload name for consistent ordering
+            return sorted(workloads.values(), key=lambda w: w["name"])
+
+        except Exception as e:
+            logger.warning(f"Failed to discover workloads in namespace {namespace}: {e}")
+            return []
+
+    def _extract_workload_name_from_pod(self, pod_name: str) -> str:
+        """
+        Extract the workload name from a pod name.
+
+        Handles common Kubernetes pod naming patterns:
+        - Deployment pods: {deployment}-{replicaset-hash}-{pod-hash}
+        - StatefulSet pods: {statefulset}-{ordinal}
+        - Job pods: {job}-{hash}
+
+        Args:
+            pod_name: The full pod name
+
+        Returns:
+            The extracted workload name
+        """
+        parts = pod_name.split("-")
+
+        if len(parts) < 2:
+            return pod_name
+
+        # Check if last part is a number (StatefulSet ordinal)
+        if parts[-1].isdigit():
+            # StatefulSet: name-0, name-1, etc.
+            return "-".join(parts[:-1])
+
+        # Check for deployment pattern: name-replicaset-hash-pod-hash
+        # ReplicaSet hash is typically 9-10 alphanumeric chars
+        # Pod hash is typically 5 alphanumeric chars
+        if len(parts) >= 3:
+            last_part = parts[-1]
+            second_last = parts[-2]
+
+            # Deployment pattern: last two parts are hashes
+            if (len(last_part) == 5 and last_part.isalnum() and
+                len(second_last) >= 5 and second_last.isalnum()):
+                return "-".join(parts[:-2])
+
+        # Job pattern or unknown: just remove last hash-like part
+        if len(parts[-1]) >= 5 and parts[-1].isalnum():
+            return "-".join(parts[:-1])
+
+        return pod_name
+
+    def get_discovered_workload_metrics_timeseries(
+        self,
+        namespace: str,
+        workloads: list[dict[str, Any]],
+        duration_minutes: int = 60,
+        step_minutes: int = 5,
+    ) -> dict[str, dict[str, Any]]:
+        """
+        Get time-series metrics for discovered workloads in a namespace.
+
+        Similar to get_deployment_component_metrics_timeseries but works with
+        dynamically discovered workloads instead of predefined components.
+
+        Args:
+            namespace: The Kubernetes namespace
+            workloads: List of workload dicts from discover_workloads_in_namespace()
+            duration_minutes: How far back to query (default: 60 minutes)
+            step_minutes: Interval between data points (default: 5 minutes)
+
+        Returns:
+            Dictionary mapping workload names to their time-series metrics
+        """
+        result: dict[str, dict[str, Any]] = {}
+
+        for workload in workloads:
+            workload_name = workload.get("name", "")
+            if not workload_name:
+                continue
+
+            # Use workload name as pod prefix for metrics queries
+            result[workload_name] = self.get_component_metrics_timeseries(
+                namespace, workload_name, duration_minutes, step_minutes
+            )
+
+        return result
+
 
 def create_prometheus_connector() -> PrometheusConnector:
     """

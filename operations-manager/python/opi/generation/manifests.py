@@ -339,6 +339,7 @@ class ManifestGenerator:
         include_subfolders: bool = False,
         project_name: str | None = None,
         deployment: dict[str, Any] | None = None,
+        helm_charts: list[dict[str, Any]] | None = None,
     ) -> bool:
         """
         Create kustomization.yaml and decrypt-sops.yaml files using YAML templates.
@@ -351,6 +352,7 @@ class ManifestGenerator:
             include_subfolders: If True, recursively scan subfolders when auto-detecting files
             project_name: If provided, removes this project directory from file paths
             deployment: Optional deployment data containing cluster information for namespace prefixing
+            helm_charts: Optional list of helm chart configurations for helmCharts section
 
         Returns:
             True if files were created successfully, False otherwise
@@ -404,6 +406,11 @@ class ManifestGenerator:
             else:
                 # Remove generators if no SOPS files
                 kustomization_data.pop("generators", None)
+
+            # Add helmCharts section if provided
+            if helm_charts:
+                kustomization_data["helmCharts"] = helm_charts
+                logger.info(f"Added {len(helm_charts)} helm charts to kustomization")
 
             # Write kustomization.yaml
             kustomization_path = os.path.join(output_dir, "kustomization.yaml")
