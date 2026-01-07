@@ -3,10 +3,8 @@
 import logging
 from typing import Any
 
-from jsonpath_ng.ext import parse as jsonpath_parse
-
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
-from opi.core.cluster_config import get_minio_server
+from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.services import ServiceType
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
@@ -264,11 +262,12 @@ class MinioManager:
 
                 logger.info(f"Granted full access on bucket {bucket_name} to user {minio_username}")
 
-            minio_server_host = get_minio_server(deployment["cluster"])
+            cluster = deployment["cluster"]
 
             # Store MinIO credentials in private secrets map instead of project data
             minio_secret = MinIOSecret(
-                host=minio_server_host,
+                host=get_minio_host(cluster),
+                port=get_minio_port(cluster),
                 access_key=access_key,
                 secret_key=secret_key,
                 bucket_name=bucket_name,
@@ -503,26 +502,11 @@ class MinioManager:
         Returns:
             True if deployment uses MinIO service, False otherwise
         """
-        # First get component references for this deployment
-        component_refs_query = jsonpath_parse(f"$.deployments[?@.name=='{deployment_name}'].components[*].reference")
-        component_refs = [match.value for match in component_refs_query.find(project_data)]
-
-        # Then check if any of these components use MinIO service
-        for component_ref in component_refs:
-            component_query = jsonpath_parse(f"$.components[?@.name=='{component_ref}']['uses-services']")
-            component_services = [match.value for match in component_query.find(project_data)]
-            # Flatten the services list (in case it's nested)
-            all_services = []
-            for services in component_services:
-                if isinstance(services, list):
-                    all_services.extend(services)
-                else:
-                    all_services.append(services)
-
-            if ServiceType.MINIO_STORAGE.value in all_services:
-                return True
-
-        return False
+        return self.project_manager._project_file_handler.deployment_uses_service(
+            project_data,
+            deployment_name,
+            [ServiceType.MINIO_STORAGE.value],
+        )
 
     async def _get_existing_minio_credentials_from_k8s(
         self, deployment_name: str, deployment: dict[str, Any]
@@ -710,11 +694,12 @@ class MinioManager:
             else:
                 logger.info(f"Skipping data copy - source bucket {source_bucket} does not exist")
 
-        minio_server_host = get_minio_server(target_deployment["cluster"])
+        cluster = target_deployment["cluster"]
 
         # Store credentials using existing secret logic
         minio_secret = MinIOSecret(
-            host=minio_server_host,
+            host=get_minio_host(cluster),
+            port=get_minio_port(cluster),
             access_key=target_username_final,
             secret_key=target_password,
             bucket_name=target_bucket,
@@ -1523,9 +1508,10 @@ class MinioManager:
             if credentials_are_new:
                 try:
                     logger.info(f"Storing NEW credentials for {deployment_name} (will sync to Git)")
-                    minio_server_host = get_minio_server(deployment["cluster"])
+                    cluster = deployment["cluster"]
                     minio_secret = MinIOSecret(
-                        host=minio_server_host,
+                        host=get_minio_host(cluster),
+                        port=get_minio_port(cluster),
                         access_key=target_username_final,
                         secret_key=target_password,
                         bucket_name=target_bucket,

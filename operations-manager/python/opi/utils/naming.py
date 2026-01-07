@@ -1093,6 +1093,34 @@ def generate_issuer_manifest_name(base_domain: str, issuer_type: str = "letsencr
     return f"issuer-{issuer_name}.yaml"
 
 
+def resolve_effective_base_domain(base_domain: str | None, ingress_postfix: str) -> str:
+    """
+    Resolve the effective base domain, falling back to cluster ingress postfix.
+
+    When a deployment specifies a base-domain, use it. Otherwise, fall back to
+    the cluster's ingress_postfix (stripped of leading dot).
+
+    Args:
+        base_domain: Optional explicit base domain from deployment config
+        ingress_postfix: Cluster's ingress postfix (e.g., ".kind", ".local")
+
+    Returns:
+        Effective base domain to use for hostname generation
+
+    Example:
+        >>> resolve_effective_base_domain("rijksapp.com", ".kind")
+        'rijksapp.com'
+        >>> resolve_effective_base_domain(None, ".kind")
+        'kind'
+        >>> resolve_effective_base_domain("", ".local")
+        'local'
+    """
+    if base_domain:
+        return base_domain
+    # Strip leading dot from ingress_postfix
+    return ingress_postfix.lstrip(".")
+
+
 def generate_external_hostname(subdomain: str, base_domain: str) -> str:
     """
     Generate a hostname for external domain access.
@@ -1111,6 +1139,34 @@ def generate_external_hostname(subdomain: str, base_domain: str) -> str:
         'myapp.rijksapp.com'
     """
     return f"{subdomain}.{base_domain}"
+
+
+def generate_helm_values_filename(deployment_name: str, chart_name: str, encrypted: bool = True) -> str:
+    """
+    Generate a consistent filename for Helm values files.
+
+    The naming convention allows the CMP to identify and decrypt SOPS-encrypted
+    Helm values files before passing them to kustomize build. The filename includes
+    both deployment and chart name since values are merged per deployment.
+
+    Args:
+        deployment_name: Name of the deployment
+        chart_name: Name of the helm chart
+        encrypted: Whether to generate the encrypted (.sops.yaml) or decrypted (.yaml) filename
+
+    Returns:
+        Helm values filename string
+
+    Examples:
+        >>> generate_helm_values_filename("local-deployment", "docs")
+        'local-deployment-docs-helm-values.sops.yaml'
+        >>> generate_helm_values_filename("local-deployment", "docs", encrypted=False)
+        'local-deployment-docs-helm-values.yaml'
+    """
+    extension = ".sops.yaml" if encrypted else ".yaml"
+    deployment_clean = _sanitize_for_lowercase(deployment_name)
+    chart_clean = _sanitize_for_lowercase(chart_name)
+    return f"{deployment_clean}-{chart_clean}-helm-values{extension}"
 
 
 def generate_ingress_name_from_path(base_name: str, path: str, max_length: int = 63) -> str:

@@ -16,7 +16,9 @@ CLUSTER_CONFIG = {
         "namespace": "rig-system",
         "keycloak_discovery_url": "https://keycloak.kind",  # For pods in cluster
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
-        "minio_server": "minio.rig-system.svc.cluster.local:9000",
+        "minio_host": "minio.rig-system.svc.cluster.local",
+        "minio_port": 9000,
+        "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "ingress": {
             "enable_tls": True,
             "cluster_issuer": "kind-ca-issuer",
@@ -47,7 +49,9 @@ CLUSTER_CONFIG = {
         "argo_namespace": "rig-prd-operations",
         "keycloak_discovery_url": "https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl",  # For pods in cluster
         "database_server": "rig-db-rw.rig-prd-operations.svc.cluster.local",  # Assuming production DB is in operations namespace
-        "minio_server": "minio.rig-prd-operations.svc.cluster.local:9000",
+        "minio_host": "minio.rig-prd-operations.svc.cluster.local",
+        "minio_port": 9000,
+        "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "ingress": {
             "enable_tls": True,
             # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
@@ -344,11 +348,9 @@ def get_database_server(cluster_name: str) -> str:
     return cluster_config["database_server"]
 
 
-def get_minio_server(cluster_name: str) -> str:
+def get_minio_host(cluster_name: str) -> str:
     """
     Get the minio server hostname for pods in a specific cluster.
-
-    This is the hostname that pods will use to connect to the minio internally.
 
     Args:
         cluster_name: Name of the cluster
@@ -360,12 +362,67 @@ def get_minio_server(cluster_name: str) -> str:
         ValueError: If cluster is not found in configuration
     """
     cluster_config = get_cluster_config(cluster_name)
-    return cluster_config["minio_server"]
+    return cluster_config["minio_host"]
+
+
+def get_minio_port(cluster_name: str) -> int:
+    """
+    Get the minio server port for pods in a specific cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        minio server port integer for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["minio_port"]
+
+
+def get_minio_server(cluster_name: str) -> str:
+    """
+    Get the minio server address (host:port) for pods in a specific cluster.
+
+    This is the hostname:port that pods will use to connect to the minio internally.
+    For separate host and port values, use get_minio_host() and get_minio_port().
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        minio server address string (host:port) for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    return f"{get_minio_host(cluster_name)}:{get_minio_port(cluster_name)}"
 
 
 def get_namespace(cluster_name: str) -> str:
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["namespace"]
+
+
+def get_redis_server(cluster_name: str) -> str:
+    """
+    Get the Redis server hostname for pods in a specific cluster.
+
+    This is the hostname that pods will use to connect to Redis internally.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Redis server hostname string for internal pod use
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["redis_server"]
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:

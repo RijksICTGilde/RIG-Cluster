@@ -227,11 +227,17 @@ class DatabaseManager:
         )
 
         if create_result["status"] == "exists":
-            # User already exists, update password instead
+            # User already exists, update password and privileges
             update_result = await postgres_conn.update_user_password(
                 username=db_username,
                 new_password=db_password,
             )
+            # Also ensure privileges are applied (idempotent)
+            if database_privileges:
+                await postgres_conn.update_user_privileges(
+                    username=db_username,
+                    database_privileges=database_privileges,
+                )
             return db_password, update_result
         else:
             # User was created (or error occurred)
@@ -293,6 +299,13 @@ class DatabaseManager:
 
             if credentials_valid:
                 logger.info(f"Existing database credentials are valid for {project_name}/{deployment_name}")
+                # Ensure privileges are up-to-date (idempotent)
+                if database_privileges:
+                    logger.info(f"Ensuring database privileges for {db_username}: {database_privileges}")
+                    await self.postgres_connector.update_user_privileges(
+                        username=db_username,
+                        database_privileges=database_privileges,
+                    )
                 return db_password
             else:
                 # Step 3a: Handle invalid existing credentials
@@ -805,7 +818,7 @@ class DatabaseManager:
         services:
           - namespace-postgresql-database:
               config:
-                image: postgres:17
+                image: ghcr.io/cloudnative-pg/postgresql:17
                 instances: 2
                 storage: 20Gi
                 privileges:
@@ -816,7 +829,7 @@ class DatabaseManager:
         Configuration is merged with hardcoded defaults. All fields are required in final config.
 
         Required config keys:
-        - image: PostgreSQL image (e.g., "postgres:17")
+        - image: PostgreSQL CNPG image (e.g., "ghcr.io/cloudnative-pg/postgresql:17")
         - instances: Number of database instances (e.g., 1, 2, 3)
         - storage: Storage size (e.g., "10Gi", "20Gi")
         - resources: Resource limits and requests (nested dict)
@@ -824,6 +837,8 @@ class DatabaseManager:
         Optional config keys:
         - privileges: List of PostgreSQL privileges for created users
           (e.g., ["SUPERUSER"], ["CREATEDB", "CREATEROLE"])
+        - postInitSQL: List of SQL statements to run after database initialization
+          (e.g., ["CREATE EXTENSION IF NOT EXISTS unaccent;"])
         - registry: Name of the registry to use for pulling PostgreSQL image
           (e.g., "github-packages", "docker-hub")
 
@@ -837,11 +852,13 @@ class DatabaseManager:
             ValueError: If service configuration is invalid or missing required fields
         """
         # Hardcoded defaults
+        # Note: Must use CNPG-compatible image (has postgres user with UID 26)
         DEFAULT_CONFIG = {
-            "image": "postgres:17",
+            "image": "ghcr.io/cloudnative-pg/postgresql:17",
             "instances": 1,
             "storage": "10Gi",
             "privileges": [],  # Default: no extra privileges (regular user)
+            "postInitSQL": [],  # Default: no custom init SQL (only vector extension)
             "resources": {
                 "requests": {
                     "memory": "256Mi",
@@ -892,7 +909,7 @@ class DatabaseManager:
         merged_config = DEFAULT_CONFIG.copy()
 
         # Merge top-level fields
-        for key in ["image", "instances", "storage", "privileges", "registry"]:
+        for key in ["image", "instances", "storage", "privileges", "postInitSQL", "registry"]:
             if key in user_config:
                 merged_config[key] = user_config[key]
 
@@ -960,6 +977,15 @@ class DatabaseManager:
                         f"Invalid database privilege '{priv}'. Valid privileges: {', '.join(sorted(valid_privileges))}"
                     )
 
+        # Validate postInitSQL if specified
+        if "postInitSQL" in merged_config:
+            post_init_sql = merged_config["postInitSQL"]
+            if not isinstance(post_init_sql, list):
+                raise ValueError(f"Service config 'postInitSQL' must be a list, got {type(post_init_sql)}")
+            for idx, sql in enumerate(post_init_sql):
+                if not isinstance(sql, str):
+                    raise ValueError(f"postInitSQL[{idx}] must be a string, got {type(sql)}: {sql}")
+
         logger.debug(f"Database config (merged with defaults): {merged_config}")
         return merged_config
 
@@ -987,7 +1013,7 @@ class DatabaseManager:
 
         Example:
             {
-                "database_config": {"image": "postgres:17", "instances": 2, "storage": "20Gi"},
+                "database_config": {"image": "ghcr.io/cloudnative-pg/postgresql:17", "instances": 2, "storage": "20Gi"},
                 "infrastructure_namespace": "rig-myproject-infrastructure",
                 "service_endpoint": "myproject-db-rw.rig-myproject-infrastructure.svc.cluster.local",
                 "storage_class": "standard",
@@ -1099,30 +1125,11 @@ class DatabaseManager:
         Returns:
             True if deployment uses PostgreSQL service, False otherwise
         """
-        # First get component references for this deployment
-        component_refs_query = jsonpath_parse(f"$.deployments[?@.name=='{deployment_name}'].components[*].reference")
-        component_refs = [match.value for match in component_refs_query.find(project_data)]
-
-        # Then check if any of these components use PostgreSQL service
-        for component_ref in component_refs:
-            component_query = jsonpath_parse(f"$.components[?@.name=='{component_ref}']['uses-services']")
-            component_services = [match.value for match in component_query.find(project_data)]
-            # Flatten the services list (in case it's nested)
-            all_services = []
-            for services in component_services:
-                if isinstance(services, list):
-                    all_services.extend(services)
-                else:
-                    all_services.append(services)
-
-            # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
-            if (
-                ServiceType.POSTGRESQL_DATABASE.value in all_services
-                or ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in all_services
-            ):
-                return True
-
-        return False
+        return self.project_manager._project_file_handler.deployment_uses_service(
+            project_data,
+            deployment_name,
+            [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value],
+        )
 
     def _get_remote_source_config(self, project_data: dict[str, Any], remote_source_name: str) -> dict[str, Any] | None:
         """

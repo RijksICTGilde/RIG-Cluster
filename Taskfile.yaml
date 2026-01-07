@@ -575,6 +575,15 @@ tasks:
         kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 
         echo ""
+        echo "🔧 Patching ingress controller to run on control-plane node..."
+        # The upstream manifest only has tolerations but not a nodeSelector for ingress-ready.
+        # KIND clusters have port mappings (80/443) only on the control-plane node which has
+        # the ingress-ready=true label. Without this patch, the pod may schedule on a worker
+        # node and external access will break.
+        kubectl patch deployment -n ingress-nginx ingress-nginx-controller --type=json \
+          -p='[{"op": "replace", "path": "/spec/template/spec/nodeSelector", "value": {"ingress-ready": "true", "kubernetes.io/os": "linux"}}]'
+
+        echo ""
         echo "⏳ Waiting for ingress controller to be ready..."
         kubectl wait --namespace ingress-nginx \
           --for=condition=ready pod \
@@ -583,8 +592,9 @@ tasks:
 
         echo ""
         echo "✅ NGINX Ingress Controller installed successfully!"
+        echo "   Configured to run on control-plane node (ingress-ready=true)"
         echo ""
-        echo "Verify with: kubectl get pods -n ingress-nginx"
+        echo "Verify with: kubectl get pods -n ingress-nginx -o wide"
     silent: false
 
   setup-local-cluster:

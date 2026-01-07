@@ -198,6 +198,35 @@ clients:
         - "manage-clients"
 ```
 
+### Client Roles and Access Restriction
+
+Create client roles and restrict access to users with specific roles:
+
+```yaml
+clients:
+  - clientId: "restricted-app"
+    publicClient: true
+    redirectUris:
+      - "https://app.example.com/*"
+
+    # Define client roles
+    clientRoles:
+      - name: "allowed-user"
+        description: "Users allowed to access this application"
+
+    # Restrict access to users with the role
+    restrictAccess:
+      enabled: true
+      role: "allowed-user"
+      errorMessage: "accessDeniedNoPermission"  # Theme message key
+```
+
+This creates a custom authentication flow that:
+1. Checks if the user has the specified client role
+2. Denies access with a custom error message if they don't
+
+**Note:** Users must be manually assigned the role after their first SSO login. See [Client Access Restriction](/features/client-access-restriction.md) for details.
+
 ## Configuration Examples
 
 ### Example 1: SSO-Only Realm

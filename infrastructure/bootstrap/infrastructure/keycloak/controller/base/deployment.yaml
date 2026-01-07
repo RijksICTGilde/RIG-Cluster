@@ -25,7 +25,7 @@ spec:
             - -c
             - |
               cd /tmp
-              wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.2.1/keycloak-nl-design-system.jar
+              wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.4.1/keycloak-nl-design-system.jar
               cp keycloak-nl-design-system.jar /opt/keycloak/providers/
           image: busybox:1.37.0
           securityContext:

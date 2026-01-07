@@ -888,6 +888,8 @@ async def project_details(request: Request, project_name: str):
 
         # Fetch Prometheus time-series metrics for each deployment's components
         deployment_metrics_timeseries: dict[str, dict[str, dict[str, list]]] = {}
+        # Track discovered workloads for helm-based deployments (for template display)
+        discovered_workloads: dict[str, list[dict[str, Any]]] = {}
         prometheus_available = False
         try:
             from opi.connectors.prometheus import PrometheusConnector
@@ -902,10 +904,16 @@ async def project_details(request: Request, project_name: str):
                     base_namespace = deployment.get("namespace")
                     cluster = deployment.get("cluster")
                     components = deployment.get("components", [])
+                    helm_charts = deployment.get("helm-charts", [])
 
-                    if deployment_name and base_namespace and cluster and components:
-                        # Get the actual Kubernetes namespace with cluster prefix
-                        k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
+                    if not deployment_name or not base_namespace or not cluster:
+                        continue
+
+                    # Get the actual Kubernetes namespace with cluster prefix
+                    k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
+
+                    if components:
+                        # Component-based deployment: use predefined components
                         component_names = [c.get("reference") for c in components if c.get("reference")]
                         if component_names:
                             metrics = prom.get_deployment_component_metrics_timeseries(
@@ -917,6 +925,23 @@ async def project_details(request: Request, project_name: str):
                             )
                             deployment_metrics_timeseries[deployment_name] = metrics
                             logger.debug(f"Fetched time-series metrics for deployment {deployment_name}")
+
+                    elif helm_charts:
+                        # Helm-based deployment: discover workloads dynamically
+                        workloads = prom.discover_workloads_in_namespace(k8s_namespace)
+                        if workloads:
+                            discovered_workloads[deployment_name] = workloads
+                            metrics = prom.get_discovered_workload_metrics_timeseries(
+                                namespace=k8s_namespace,
+                                workloads=workloads,
+                                duration_minutes=60,
+                                step_minutes=5,
+                            )
+                            deployment_metrics_timeseries[deployment_name] = metrics
+                            logger.debug(
+                                f"Discovered {len(workloads)} workloads and fetched metrics for helm deployment {deployment_name}"
+                            )
+
         except Exception as metrics_error:
             logger.warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
 
@@ -1010,6 +1035,7 @@ async def project_details(request: Request, project_name: str):
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
                 "deployment_metrics_timeseries": deployment_metrics_timeseries,
+                "discovered_workloads": discovered_workloads,
                 "prometheus_available": prometheus_available,
                 "argocd_status": argocd_status,
                 "argocd_available": argocd_available,

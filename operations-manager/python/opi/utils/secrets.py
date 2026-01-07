@@ -205,6 +205,7 @@ class MinIOSecret(BaseSecret):
     """MinIO/Object Store secret configuration using service definitions."""
 
     host: str
+    port: int
     access_key: str
     secret_key: str
     bucket_name: str
@@ -216,6 +217,32 @@ class MinIOSecret(BaseSecret):
     def __post_init__(self) -> None:
         """Validate MinIO secret data."""
         super().__post_init__()  # Call parent's default implementation
+
+    @property
+    def url(self) -> str:
+        """Generate MinIO endpoint URL (host:port)."""
+        return f"{self.host}:{self.port}"
+
+    @property
+    def endpoint_url(self) -> str:
+        """Generate full MinIO endpoint URL with http:// prefix."""
+        return f"http://{self.host}:{self.port}"
+
+    def _get_additional_keys(self) -> dict[str, str]:
+        """Add computed keys like OBJECT_STORE_URL and OBJECT_STORE_ENDPOINT_URL."""
+        return {
+            "OBJECT_STORE_URL": self.url,
+            "APP_OBJECT_STORE_URL": self.url,
+            "OBJECT_STORE_ENDPOINT_URL": self.endpoint_url,
+            "APP_OBJECT_STORE_ENDPOINT_URL": self.endpoint_url,
+        }
+
+    @classmethod
+    def _convert_field_value(cls, field_name: str, value: str) -> str | int:
+        """Convert port to integer."""
+        if field_name == "port":
+            return int(value)
+        return value
 
 
 @dataclass
@@ -234,6 +261,41 @@ class KeycloakSecret(BaseSecret):
     def __post_init__(self) -> None:
         """Validate Keycloak secret data."""
         super().__post_init__()  # Call parent's default implementation
+
+
+@dataclass
+class RedisSecret(BaseSecret):
+    """Redis cache secret configuration using service definitions."""
+
+    host: str
+    port: int
+    password: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-redis"
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.REDIS
+
+    def __post_init__(self) -> None:
+        """Validate Redis secret data."""
+        super().__post_init__()
+
+    @property
+    def url(self) -> str:
+        """Generate Redis connection URL."""
+        return f"redis://:{self.password}@{self.host}:{self.port}/0"
+
+    def _get_additional_keys(self) -> dict[str, str]:
+        """Add computed keys like REDIS_URL."""
+        return {
+            "REDIS_URL": self.url,
+            "APP_REDIS_URL": self.url,
+        }
+
+    @classmethod
+    def _convert_field_value(cls, field_name: str, value: str) -> str | int:
+        """Convert port to integer."""
+        if field_name == "port":
+            return int(value)
+        return value
 
 
 @dataclass

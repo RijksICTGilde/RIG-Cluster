@@ -13,3 +13,4 @@ resources:
   - ../../infrastructure/minio/controller/overlays/odcn
 #  - ../../infrastructure/minio/config/overlays/odcn
 #  - ../../infrastructure/prometheus/controller/overlays/odcn
+  - ../../infrastructure/redis/controller/overlays/odcn

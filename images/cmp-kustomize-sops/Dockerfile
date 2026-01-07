@@ -22,6 +22,12 @@ RUN curl -Lo sops https://github.com/mozilla/sops/releases/download/v3.8.1/sops-
 RUN curl -Lo yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && \
     chmod +x yq
 
+# Download helm
+RUN curl -fsSL https://get.helm.sh/helm-v3.19.4-linux-amd64.tar.gz | tar xz && \
+    mv linux-amd64/helm . && \
+    rm -rf linux-amd64 && \
+    chmod +x helm
+
 # Download KSOPS plugin using the official install script
 RUN echo "Downloading KSOPS using official install script..." && \
     curl -s https://raw.githubusercontent.com/viaduct-ai/kustomize-sops/master/scripts/install-ksops-archive.sh | bash && \
@@ -40,6 +46,7 @@ RUN echo "=== Downloaded tools verification ===" && \
     echo "kustomize test:" && ./kustomize version && \
     echo "sops test:" && ./sops --version && \
     echo "yq test:" && ./yq --version && \
+    echo "helm test:" && ./helm version && \
     echo "" && \
     echo "=== KSOPS detailed check ===" && \
     echo "KSOPS file info:" && ls -la ./ksops && \
@@ -65,6 +72,7 @@ COPY --from=tools-downloader /tools/kubectl /usr/local/bin/kubectl
 COPY --from=tools-downloader /tools/kustomize /usr/local/bin/kustomize
 COPY --from=tools-downloader /tools/sops /usr/local/bin/sops
 COPY --from=tools-downloader /tools/yq /usr/local/bin/yq
+COPY --from=tools-downloader /tools/helm /usr/local/bin/helm
 COPY --from=tools-downloader /tools/ksops /usr/local/bin/ksops
 
 # Create kustomize plugin directory structure for KSOPS
@@ -99,6 +107,7 @@ RUN echo "=== Final tool verification ===" && \
     echo "kustomize:" && (kustomize version || echo "kustomize FAILED") && \
     echo "sops:" && (sops --version || echo "sops FAILED") && \
     echo "yq:" && (yq --version || echo "yq FAILED") && \
+    echo "helm:" && (helm version || echo "helm FAILED") && \
     echo "jq:" && (jq --version || echo "jq FAILED") && \
     echo "" && \
     echo "=== KSOPS specific checks ===" && \

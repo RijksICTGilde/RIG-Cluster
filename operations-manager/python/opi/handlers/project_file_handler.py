@@ -914,6 +914,249 @@ class ProjectFileHandler:
         logger.warning(f"Component '{component_name}' references registry '{registry_ref}' which does not exist")
         return None
 
+    def extract_helm_charts(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Extract helm-charts definitions from project data.
+
+        Args:
+            project_data: The parsed project data
+
+        Returns:
+            List of helm-chart configurations
+        """
+        helm_charts = project_data.get("helm-charts", [])
+        logger.debug(f"Found {len(helm_charts)} helm chart(s)")
+        return helm_charts
+
+    def get_helm_chart_by_name(self, project_data: dict[str, Any], name: str) -> dict[str, Any] | None:
+        """
+        Get a specific helm-chart by name.
+
+        Args:
+            project_data: The parsed project data
+            name: Name of the helm-chart to find
+
+        Returns:
+            Helm-chart configuration or None if not found
+        """
+        helm_charts = self.extract_helm_charts(project_data)
+        for chart in helm_charts:
+            if chart.get("name") == name:
+                logger.debug(f"Found helm chart: {name}")
+                return chart
+
+        logger.warning(f"Helm chart '{name}' not found")
+        return None
+
+    async def extract_helm_chart_values(
+        self, project_data: dict[str, Any], chart_name: str
+    ) -> dict[str, Any]:
+        """
+        Extract helm-values from a helm-chart definition by name (base values).
+
+        The values are AGE-encrypted in the project file and are decrypted here.
+
+        Args:
+            project_data: The parsed project data
+            chart_name: Name of the helm-chart to extract values for
+
+        Returns:
+            Dictionary of helm values or empty dict if none found
+        """
+        private_key = await get_decoded_project_private_key(project_data)
+
+        # Use JSONPath to find the helm-chart by name and extract its helm-values
+        path = f"$.helm-charts[?(@.name=='{chart_name}')].helm-values"
+        helm_values_str = self.extract_value_by_path(project_data, path, None, private_key)
+
+        if helm_values_str and isinstance(helm_values_str, dict):
+            logger.info(f"Found {len(helm_values_str)} helm value(s) for chart '{chart_name}'")
+            return helm_values_str
+        elif helm_values_str and isinstance(helm_values_str, str):
+            # Try parsing as YAML if it's a string
+            try:
+                yaml = YAML()
+                parsed_values = yaml.load(helm_values_str)
+                if isinstance(parsed_values, dict):
+                    logger.info(f"Parsed helm values for chart '{chart_name}'")
+                    return parsed_values
+            except Exception as e:
+                logger.warning(f"Could not parse helm values as YAML for chart '{chart_name}': {e}")
+
+        logger.debug(f"No helm-values found for chart '{chart_name}'")
+        return {}
+
+    async def extract_deployment_helm_chart_values(
+        self, project_data: dict[str, Any], deployment_name: str, chart_reference: str
+    ) -> dict[str, Any]:
+        """
+        Extract helm-values from a deployment's helm-chart reference (deployment-specific overrides).
+
+        The values are AGE-encrypted in the project file and are decrypted here.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            chart_reference: Reference name of the helm-chart in the deployment
+
+        Returns:
+            Dictionary of helm values or empty dict if none found
+        """
+        private_key = await get_decoded_project_private_key(project_data)
+
+        # Use JSONPath to find the deployment helm-chart reference and extract its helm-values
+        path = (
+            f"$.deployments[?(@.name=='{deployment_name}')]"
+            f".helm-charts[?(@.reference=='{chart_reference}')].helm-values"
+        )
+        helm_values_str = self.extract_value_by_path(project_data, path, None, private_key)
+
+        if helm_values_str and isinstance(helm_values_str, dict):
+            logger.info(
+                f"Found {len(helm_values_str)} deployment-level helm value(s) "
+                f"for chart '{chart_reference}' in deployment '{deployment_name}'"
+            )
+            return helm_values_str
+        elif helm_values_str and isinstance(helm_values_str, str):
+            # Try parsing as YAML if it's a string
+            try:
+                yaml = YAML()
+                parsed_values = yaml.load(helm_values_str)
+                if isinstance(parsed_values, dict):
+                    logger.info(
+                        f"Parsed deployment-level helm values for chart '{chart_reference}' "
+                        f"in deployment '{deployment_name}'"
+                    )
+                    return parsed_values
+            except Exception as e:
+                logger.warning(
+                    f"Could not parse helm values as YAML for chart '{chart_reference}' "
+                    f"in deployment '{deployment_name}': {e}"
+                )
+
+        logger.debug(
+            f"No deployment-level helm-values found for chart '{chart_reference}' "
+            f"in deployment '{deployment_name}'"
+        )
+        return {}
+
+    def extract_deployment_components(
+        self, project_data: dict[str, Any], deployment_name: str
+    ) -> list[dict[str, Any]]:
+        """
+        Extract component references from a deployment.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            List of component references with their deployment-specific config
+        """
+        path = f"$.deployments[?(@.name=='{deployment_name}')].components"
+        components = self.extract_value_by_path(project_data, path, [])
+
+        if components:
+            logger.debug(f"Found {len(components)} component reference(s) in deployment '{deployment_name}'")
+            return components if isinstance(components, list) else [components]
+
+        logger.debug(f"No components found in deployment '{deployment_name}'")
+        return []
+
+    def extract_deployment_helm_charts(
+        self, project_data: dict[str, Any], deployment_name: str
+    ) -> list[dict[str, Any]]:
+        """
+        Extract helm-chart references from a deployment.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            List of helm-chart references with their deployment-specific config
+        """
+        path = f"$.deployments[?(@.name=='{deployment_name}')].helm-charts"
+        helm_charts = self.extract_value_by_path(project_data, path, [])
+
+        if helm_charts:
+            logger.info(f"Found {len(helm_charts)} helm chart reference(s) in deployment '{deployment_name}'")
+            return helm_charts if isinstance(helm_charts, list) else [helm_charts]
+
+        logger.debug(f"No helm-charts found in deployment '{deployment_name}'")
+        return []
+
+    def extract_helm_chart_uses_services(
+        self, project_data: dict[str, Any], chart_name: str
+    ) -> list[str]:
+        """
+        Extract uses-services from a helm-chart definition.
+
+        Args:
+            project_data: The parsed project data
+            chart_name: Name of the helm-chart
+
+        Returns:
+            List of service names the helm chart uses
+        """
+        path = f"$.helm-charts[?(@.name=='{chart_name}')].uses-services"
+        services = self.extract_value_by_path(project_data, path, [])
+
+        if services:
+            logger.info(f"Helm chart '{chart_name}' uses services: {services}")
+            return services if isinstance(services, list) else [services]
+
+        logger.debug(f"No uses-services found for helm chart '{chart_name}'")
+        return []
+
+    def deployment_uses_service(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        service_types: list[str],
+    ) -> bool:
+        """
+        Check if a deployment uses any of the specified services.
+
+        This checks both:
+        1. Components referenced by the deployment and their uses-services
+        2. Helm-charts referenced by the deployment and their uses-services
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment to check
+            service_types: List of service type values to check for (e.g., ["postgresql-database", "namespace-postgresql-database"])
+
+        Returns:
+            True if deployment uses any of the specified services, False otherwise
+        """
+        # Check components
+        component_refs = self.extract_deployment_components(project_data, deployment_name)
+        for component_ref in component_refs:
+            ref_name = component_ref.get("reference") if isinstance(component_ref, dict) else component_ref
+            if ref_name:
+                path = f"$.components[?(@.name=='{ref_name}')].uses-services"
+                services = self.extract_value_by_path(project_data, path, [])
+                if services:
+                    service_list = services if isinstance(services, list) else [services]
+                    for service in service_list:
+                        service_name = service if isinstance(service, str) else list(service.keys())[0] if isinstance(service, dict) else str(service)
+                        if service_name in service_types:
+                            return True
+
+        # Check helm-charts
+        helm_chart_refs = self.extract_deployment_helm_charts(project_data, deployment_name)
+        for helm_chart_ref in helm_chart_refs:
+            ref_name = helm_chart_ref.get("reference") if isinstance(helm_chart_ref, dict) else helm_chart_ref
+            if ref_name:
+                services = self.extract_helm_chart_uses_services(project_data, ref_name)
+                for service in services:
+                    service_name = service if isinstance(service, str) else list(service.keys())[0] if isinstance(service, dict) else str(service)
+                    if service_name in service_types:
+                        return True
+
+        return False
+
 
 def create_project_file_handler() -> ProjectFileHandler:
     """

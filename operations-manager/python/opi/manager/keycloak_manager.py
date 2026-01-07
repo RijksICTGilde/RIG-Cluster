@@ -15,10 +15,12 @@ from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
 from opi.utils.age import encrypt_age_content, get_project_public_key
 from opi.utils.naming import (
+    generate_external_hostname,
     generate_ingress_map,
     generate_project_admin_username,
     generate_project_platform_client_id,
     generate_project_realm_name,
+    resolve_effective_base_domain,
 )
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import KeycloakSecret
@@ -45,6 +47,8 @@ class KeycloakManager:
         """
         Create Keycloak SSO resources for a deployment that has SSO service enabled.
 
+        Supports both component-based and helm-chart-based deployments.
+
         Args:
             project_data: The project configuration data
             deployment: The specific deployment configuration
@@ -55,12 +59,21 @@ class KeycloakManager:
 
         # Check if any components in this deployment use SSO service
         sso_components = await self._get_sso_components_for_deployment(project_data, deployment_name)
-        if not sso_components:
-            logger.debug(f"Deployment {deployment_name} has no components using SSO service, skipping")
+
+        # Check if any helm-charts in this deployment use keycloak service
+        uses_keycloak_via_helm = self._deployment_uses_keycloak_via_helm_charts(project_data, deployment_name)
+
+        if not sso_components and not uses_keycloak_via_helm:
+            logger.debug(
+                f"Deployment {deployment_name} has no components or helm-charts using Keycloak service, skipping"
+            )
             return
 
         logger.info(f"Processing Keycloak SSO resources for project: {project_name}, deployment: {deployment_name}")
-        logger.info(f"Found {len(sso_components)} components using SSO: {', '.join(sso_components)}")
+        if sso_components:
+            logger.info(f"Found {len(sso_components)} components using SSO: {', '.join(sso_components)}")
+        if uses_keycloak_via_helm:
+            logger.info(f"Deployment {deployment_name} uses Keycloak via helm-charts")
 
         # Extract and validate Keycloak configuration
         # This will raise ValueError/FileNotFoundError on invalid config
@@ -72,16 +85,18 @@ class KeycloakManager:
             keycloak_task = progress_manager.add_task("Creating Keycloak SSO resources")
 
         try:
-            # Collect all hostnames from all SSO components in this deployment
+            # Collect all hostnames from all SSO components/helm-charts in this deployment
             all_ingress_hosts = []
             ingress_postfix = get_ingress_postfix(cluster)
             subdomain = deployment.get("subdomain")
+            base_domain = deployment.get("base-domain")
 
             if subdomain:
                 logger.info(f"Using subdomain mode for deployment {deployment_name}: subdomain={subdomain}")
             else:
                 logger.info(f"Using component-specific mode for deployment {deployment_name}")
 
+            # Process component-based SSO (existing logic)
             for component_name in sso_components:
                 # Check if we should process SSO for this component
                 should_process = await self._should_process_sso_rijk(project_data, component_name)
@@ -97,8 +112,21 @@ class KeycloakManager:
                 all_ingress_hosts.append(hostname)
                 logger.debug(f"Added hostname for component {component_name}: {hostname}")
 
+            # Process helm-chart-based SSO (new logic)
+            if uses_keycloak_via_helm:
+                if not subdomain:
+                    raise ValueError(
+                        f"Helm-chart deployment {deployment_name} uses Keycloak but is missing required 'subdomain' field"
+                    )
+                # For helm-chart deployments, construct hostname from subdomain + base-domain
+                effective_base_domain = resolve_effective_base_domain(base_domain, ingress_postfix)
+                helm_hostname = generate_external_hostname(subdomain, effective_base_domain)
+                if helm_hostname not in all_ingress_hosts:
+                    all_ingress_hosts.append(helm_hostname)
+                    logger.info(f"Added hostname for helm-chart deployment: {helm_hostname}")
+
             if not all_ingress_hosts:
-                logger.info(f"No SSO-enabled components found in deployment {deployment_name}, skipping")
+                logger.info(f"No SSO-enabled components or helm-charts found in deployment {deployment_name}, skipping")
                 return
 
             logger.info(
@@ -302,6 +330,11 @@ class KeycloakManager:
                 "template": "sso-only",  # Template filename (without .yaml)
                 "variables": {...},       # Template-specific variables
                 "additional_redirect_uris": [...]  # Optional additional redirect URIs
+                "restrict_access": {       # Optional access restriction config
+                    "enabled": True,
+                    "role": "allowed-user",
+                    "error_message": "accessDeniedNoPermission"
+                }
             }
 
         Raises:
@@ -309,10 +342,11 @@ class KeycloakManager:
             FileNotFoundError: If specified template file doesn't exist
         """
         # Default configuration
-        DEFAULT_CONFIG = {
+        DEFAULT_CONFIG: dict[str, Any] = {
             "template": "sso-only",
             "variables": {},
             "additional_redirect_uris": [],
+            "restrict_access": None,
         }
 
         project_services = project_data.get("services", [])
@@ -381,6 +415,31 @@ class KeycloakManager:
                     raise ValueError(f"All additional_redirect_uris must be strings, got {type(uri).__name__}: {uri}")
             merged_config["additional_redirect_uris"] = additional_uris
             logger.info(f"Found {len(additional_uris)} additional redirect URIs in config")
+
+        # Extract and validate restrict_access
+        if "restrict_access" in user_config:
+            restrict_access = user_config["restrict_access"]
+            if not isinstance(restrict_access, dict):
+                raise ValueError(f"restrict_access must be a dict, got {type(restrict_access).__name__}")
+
+            # Validate required fields if enabled
+            if restrict_access.get("enabled", False):
+                if "role" not in restrict_access:
+                    raise ValueError("restrict_access.role is required when restrict_access.enabled is True")
+                if not isinstance(restrict_access["role"], str):
+                    raise ValueError(
+                        f"restrict_access.role must be a string, got {type(restrict_access['role']).__name__}"
+                    )
+
+            merged_config["restrict_access"] = {
+                "enabled": restrict_access.get("enabled", False),
+                "role": restrict_access.get("role", "allowed-user"),
+                "error_message": restrict_access.get("error_message", "accessDeniedNoPermission"),
+            }
+            logger.info(
+                f"Access restriction configured: enabled={merged_config['restrict_access']['enabled']}, "
+                f"role={merged_config['restrict_access']['role']}"
+            )
 
         # CRITICAL: Validate template file exists
         template_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{merged_config['template']}.yaml"
@@ -473,6 +532,50 @@ class KeycloakManager:
             logger.exception(f"Error checking Keycloak service for component {component_reference}: {e}")
             return False
 
+    def _deployment_uses_keycloak_via_helm_charts(
+        self, project_data: dict[str, Any], deployment_name: str
+    ) -> bool:
+        """
+        Check if a deployment uses Keycloak service via helm-charts.
+
+        Uses the shared utility method in project_file_handler.
+
+        Args:
+            project_data: The project configuration data
+            deployment_name: Name of the deployment to check
+
+        Returns:
+            True if deployment uses Keycloak via helm-charts, False otherwise
+        """
+        # Get helm-chart references from the deployment
+        helm_chart_refs = self.project_manager._project_file_handler.extract_deployment_helm_charts(
+            project_data, deployment_name
+        )
+
+        if not helm_chart_refs:
+            return False
+
+        # Check each helm-chart reference for keycloak service
+        for helm_chart_ref in helm_chart_refs:
+            chart_reference = helm_chart_ref.get("reference")
+            if not chart_reference:
+                continue
+
+            # Find the helm-chart definition
+            helm_chart_def = self.project_manager._project_file_handler.get_helm_chart_by_name(
+                project_data, chart_reference
+            )
+            if not helm_chart_def:
+                continue
+
+            # Check uses-services in the helm-chart definition
+            uses_services = helm_chart_def.get("uses-services", [])
+            chart_services = ServiceAdapter.parse_services_from_strings(uses_services)
+            if ServiceType.KEYCLOAK in chart_services:
+                return True
+
+        return False
+
     # Hostname calculation moved to centralized naming.py
 
     async def _setup_sso_rijk_integration(
@@ -552,6 +655,22 @@ class KeycloakManager:
 
             if existing_credentials:
                 logger.info(f"Using existing Keycloak credentials for {project_name}/{deployment_name}")
+
+                # Always check and apply access restriction even for existing clients
+                restrict_access = config.get("restrict_access")
+                if restrict_access and restrict_access.get("enabled", False):
+                    keycloak = await create_keycloak_connector(
+                        keycloak_url=keycloak_host,
+                        admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+                        admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+                    )
+                    await self._apply_access_restriction(
+                        keycloak=keycloak,
+                        realm_name=realm_name,
+                        client_id=existing_credentials.client_id,
+                        restrict_access=restrict_access,
+                    )
+
                 return {
                     "client_id": existing_credentials.client_id,
                     "client_secret": existing_credentials.client_secret,
@@ -588,6 +707,16 @@ class KeycloakManager:
                 additional_redirect_uris=additional_redirect_uris if additional_redirect_uris else None,
             )
 
+            # Apply access restriction if configured
+            restrict_access = config.get("restrict_access")
+            if restrict_access and restrict_access.get("enabled", False):
+                await self._apply_access_restriction(
+                    keycloak=keycloak,
+                    realm_name=realm_name,
+                    client_id=client_info["client_id"],
+                    restrict_access=restrict_access,
+                )
+
             # Get cluster-specific discovery URL for the project realm
             cluster_discovery_url = get_keycloak_discovery_url(cluster)
             realm_discovery_url = f"{cluster_discovery_url}/realms/{realm_name}/.well-known/openid-configuration"
@@ -616,6 +745,142 @@ class KeycloakManager:
         except Exception:
             logger.exception(f"Error setting up SSO-Rijk integration for {deployment_name}")
             raise
+
+    async def _apply_access_restriction(
+        self,
+        keycloak: Any,
+        realm_name: str,
+        client_id: str,
+        restrict_access: dict[str, Any],
+    ) -> None:
+        """
+        Apply access restriction to a client using client roles and conditional authentication flow.
+
+        This creates:
+        1. A client role that users need to access the application
+        2. A restricted browser flow that checks for the role (for direct logins)
+        3. Sets the flow as an authentication override on the client
+        4. A post-broker login flow for SSO/IdP authentication (if IdPs are configured)
+        5. Sets the post-broker login flow on all identity providers in the realm
+
+        Args:
+            keycloak: KeycloakConnector instance
+            realm_name: Name of the realm
+            client_id: Client ID (not UUID)
+            restrict_access: Access restriction configuration with:
+                - enabled: bool
+                - role: str (role name)
+                - error_message: str (theme message key)
+        """
+        role_name = restrict_access.get("role", "allowed-user")
+        error_message = restrict_access.get("error_message", "accessDeniedNoPermission")
+        browser_flow_alias = f"browser-restricted-{client_id}"
+        post_broker_flow_alias = f"post-broker-restricted-{client_id}"
+
+        logger.info(f"Applying access restriction to client '{client_id}' in realm '{realm_name}'")
+        logger.info(f"  - Role: {role_name}")
+        logger.info(f"  - Error message: {error_message}")
+        logger.info(f"  - Browser flow alias: {browser_flow_alias}")
+        logger.info(f"  - Post-broker flow alias: {post_broker_flow_alias}")
+
+        try:
+            # Step 1: Create the client role
+            logger.info(f"Creating client role '{role_name}' for client '{client_id}'")
+            await keycloak.create_client_role(
+                realm_name=realm_name,
+                client_id=client_id,
+                role_name=role_name,
+                description=f"Users with this role can access {client_id}",
+            )
+
+            # Step 2: Create the restricted browser flow (for direct logins)
+            logger.info(f"Creating restricted browser flow '{browser_flow_alias}'")
+            await keycloak.create_restricted_browser_flow(
+                realm_name=realm_name,
+                flow_alias=browser_flow_alias,
+                client_id=client_id,
+                role_name=role_name,
+                error_message=error_message,
+            )
+
+            # Step 3: Set the browser flow as an authentication override on the client
+            logger.info(f"Setting authentication flow override on client '{client_id}'")
+            await keycloak.set_client_authentication_flow_override(
+                realm_name=realm_name,
+                client_id=client_id,
+                browser_flow_alias=browser_flow_alias,
+            )
+
+            # Step 4: Check for identity providers and set up post-broker login flow
+            # This ensures SSO users are also checked for the required role
+            await self._apply_post_broker_login_restriction(
+                keycloak=keycloak,
+                realm_name=realm_name,
+                client_id=client_id,
+                role_name=role_name,
+                error_message=error_message,
+                post_broker_flow_alias=post_broker_flow_alias,
+            )
+
+            logger.info(f"Access restriction successfully applied to client '{client_id}'")
+
+        except Exception as e:
+            logger.exception(f"Error applying access restriction to client '{client_id}': {e}")
+            raise
+
+    async def _apply_post_broker_login_restriction(
+        self,
+        keycloak: Any,
+        realm_name: str,
+        client_id: str,
+        role_name: str,
+        error_message: str,
+        post_broker_flow_alias: str,
+    ) -> None:
+        """
+        Apply post-broker login restriction to all identity providers in the realm.
+
+        This ensures that users authenticating via SSO/IdP are also checked for the required role.
+
+        Args:
+            keycloak: KeycloakConnector instance
+            realm_name: Name of the realm
+            client_id: Client ID for the role check
+            role_name: Client role name that grants access
+            error_message: Error message key from theme
+            post_broker_flow_alias: Alias for the post-broker login flow
+        """
+        # Get all identity providers in the realm
+        identity_providers = await keycloak.get_identity_providers(realm_name)
+
+        if not identity_providers:
+            logger.debug(f"No identity providers found in realm '{realm_name}', skipping post-broker flow setup")
+            return
+
+        logger.info(
+            f"Found {len(identity_providers)} identity provider(s) in realm '{realm_name}', "
+            f"setting up post-broker login flow"
+        )
+
+        # Create the post-broker login flow
+        await keycloak.create_post_broker_login_flow(
+            realm_name=realm_name,
+            flow_alias=post_broker_flow_alias,
+            client_id=client_id,
+            role_name=role_name,
+            error_message=error_message,
+        )
+
+        # Set the post-broker login flow on each identity provider
+        for idp in identity_providers:
+            idp_alias = idp.get("alias")
+            if idp_alias:
+                logger.info(f"Setting post-broker login flow on IdP '{idp_alias}'")
+                await keycloak.set_identity_provider_post_broker_login_flow(
+                    realm_name=realm_name,
+                    provider_alias=idp_alias,
+                    flow_alias=post_broker_flow_alias,
+                )
 
     async def _get_keycloak_credentials_from_config(
         self, project_data: dict[str, Any], deployment_name: str, project_name: str
@@ -795,18 +1060,27 @@ class KeycloakManager:
         await handler.execute_config(yaml_path, context)
         logger.info(f"Executed YAML configuration ({template_name}) for realm {realm_name}")
 
-        # Create admin user in the project realm itself (not master realm)
-        logger.info(f"Creating admin user {admin_username} in project realm {realm_name}")
+        # Create admin user in master realm with delegated access to the project realm
+        # This allows the user to login at /admin/ and manage only the project realm
+        admin_email = f"{admin_username}@local.invalid"
+        logger.info(f"Creating realm admin user {admin_username} in master realm for {realm_name}")
         user_info = await keycloak.create_user(
-            realm_name=realm_name, username=admin_username, password=admin_password, enabled=True
+            realm_name="master",
+            username=admin_username,
+            password=admin_password,
+            email=admin_email,
+            first_name="Realm",
+            last_name="Administrator",
+            enabled=True,
         )
-        logger.info(f"Created admin user {admin_username} in realm {realm_name}")
+        logger.info(f"Created admin user {admin_username} in master realm")
 
-        # Assign realm-admin role (built-in composite role that grants full realm management)
-        await keycloak.assign_realm_roles_to_user(
-            realm_name=realm_name, user_id=user_info["id"], role_names=["realm-admin"]
+        # Assign realm management permissions for the project realm
+        # This grants full admin access to the specific realm via the {realm}-realm client in master
+        await keycloak.assign_realm_admin_from_master(
+            target_realm_name=realm_name, user_id=user_info["id"]
         )
-        logger.info(f"Assigned realm-admin role to {admin_username} in realm {realm_name}")
+        logger.info(f"Assigned realm management permissions for {realm_name} to {admin_username}")
 
         # Store in project config
         if "config" not in project_data:

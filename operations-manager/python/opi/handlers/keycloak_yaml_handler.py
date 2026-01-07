@@ -502,6 +502,14 @@ class KeycloakYamlHandler:
 
                 self.keycloak.admin.change_current_realm("master")
 
+                # Handle client roles
+                if "clientRoles" in item:
+                    await self._process_client_roles(realm_name, client_id, item["clientRoles"])
+
+                # Handle access restriction
+                if "restrictAccess" in item:
+                    await self._process_restrict_access(realm_name, client_id, item["restrictAccess"])
+
             except Exception as e:
                 logger.error(f"Failed to create client '{client_id}': {e}")
                 self.keycloak.admin.change_current_realm("master")
@@ -687,3 +695,71 @@ class KeycloakYamlHandler:
                         await self.keycloak.join_user_to_group(realm_name, user_id, group_name)
                 else:
                     logger.warning(f"groups for user {username} is not a list, skipping")
+
+    async def _process_client_roles(self, realm_name: str, client_id: str, client_roles: list[dict[str, Any]]) -> None:
+        """Process client roles for a client.
+
+        Args:
+            realm_name: Realm name
+            client_id: Client ID
+            client_roles: List of client role definitions
+        """
+        for role_def in client_roles:
+            role_name = role_def.get("name")
+            if not role_name:
+                logger.warning(f"Client role missing 'name' for client '{client_id}', skipping")
+                continue
+
+            description = role_def.get("description", "")
+            logger.info(f"Creating client role '{role_name}' for client '{client_id}'")
+            await self.keycloak.create_client_role(
+                realm_name=realm_name,
+                client_id=client_id,
+                role_name=role_name,
+                description=description,
+            )
+
+    async def _process_restrict_access(self, realm_name: str, client_id: str, restrict_access: dict[str, Any]) -> None:
+        """Process access restriction configuration for a client.
+
+        This creates a restricted browser flow and sets it as the client's
+        authentication flow override.
+
+        Args:
+            realm_name: Realm name
+            client_id: Client ID
+            restrict_access: Access restriction configuration
+        """
+        if not restrict_access.get("enabled", False):
+            logger.debug(f"Access restriction not enabled for client '{client_id}'")
+            return
+
+        role_name = restrict_access.get("role")
+        if not role_name:
+            logger.warning(f"Access restriction for client '{client_id}' missing 'role', skipping")
+            return
+
+        error_message = restrict_access.get("errorMessage", "accessDeniedNoPermission")
+
+        # Generate a flow alias based on the client ID
+        flow_alias = f"browser-restricted-{client_id}"
+
+        logger.info(f"Setting up access restriction for client '{client_id}' with role '{role_name}'")
+
+        # Step 1: Create the restricted browser flow
+        await self.keycloak.create_restricted_browser_flow(
+            realm_name=realm_name,
+            flow_alias=flow_alias,
+            client_id=client_id,
+            role_name=role_name,
+            error_message=error_message,
+        )
+
+        # Step 2: Set the flow override on the client
+        await self.keycloak.set_client_authentication_flow_override(
+            realm_name=realm_name,
+            client_id=client_id,
+            browser_flow_alias=flow_alias,
+        )
+
+        logger.info(f"Access restriction configured for client '{client_id}'")

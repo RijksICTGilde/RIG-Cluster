@@ -33,7 +33,7 @@ realms:
 
 identityProviders:
   - alias: "rig-platform-oidc"
-    displayName: "RIG Platform"
+    displayName: "SSO Rijk"
     providerId: "oidc"
     enabled: true
     authenticateByDefault: true

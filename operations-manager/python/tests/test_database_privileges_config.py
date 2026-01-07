@@ -12,7 +12,7 @@ def test_get_database_service_config_with_superuser_privilege(mocker):
             {
                 "namespace-postgresql-database": {
                     "config": {
-                        "image": "postgres:17",
+                        "image": "ghcr.io/cloudnative-pg/postgresql:17",
                         "instances": 1,
                         "storage": "10Gi",
                         "privileges": ["SUPERUSER"],
@@ -64,7 +64,7 @@ def test_get_database_service_config_default_privileges(mocker):
             {
                 "namespace-postgresql-database": {
                     "config": {
-                        "image": "postgres:17",
+                        "image": "ghcr.io/cloudnative-pg/postgresql:17",
                     }
                 }
             }
