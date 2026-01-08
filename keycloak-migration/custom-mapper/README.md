@@ -1,4 +1,15 @@
-# Keycloak Unrestricted XPath Attribute Mapper
+# Keycloak Custom Extensions
+
+This JAR contains custom Keycloak extensions for the RIG Cluster platform.
+
+## Contents
+
+1. **Unrestricted XPath Attribute Mapper** - Extract ANY value from SAML assertions
+2. **Require Client Role Authenticator** - Restrict access based on client roles in authentication flows
+
+---
+
+# Unrestricted XPath Attribute Mapper
 
 Custom Keycloak IDP mapper that allows extracting ANY value from a SAML assertion using XPath on the full XML document.
 
@@ -230,3 +241,91 @@ Verify JAR is loaded:
 ```bash
 kubectl exec deployment/keycloak-dpl -- ls -la /opt/keycloak/providers/
 ```
+
+---
+
+# Require Client Role Authenticator
+
+Custom Keycloak authenticator that restricts access based on client roles. Designed specifically for post-broker login flows.
+
+## Problem
+
+Keycloak's built-in conditional sub-flows don't work correctly for post-broker login flows. When using a conditional flow like:
+
+```
+Post-Broker Login Flow
+└── Deny If No Role [CONDITIONAL]
+    ├── Condition - User Role [REQUIRED] (negated)
+    └── Deny Access [REQUIRED]
+```
+
+The flow fails with "Invalid username or password" when the user HAS the role. This happens because:
+1. The condition evaluates to false (user has the role)
+2. The conditional sub-flow is skipped
+3. The post-broker login flow has nothing left to execute
+4. Keycloak treats this as a flow failure
+
+This is a known Keycloak limitation documented in [GitHub issue #14591](https://github.com/keycloak/keycloak/discussions/14591).
+
+## Solution
+
+The `RequireClientRoleAuthenticator` is a custom authenticator that explicitly handles both cases:
+- **User HAS the role**: Calls `context.success()` to complete the flow
+- **User LACKS the role**: Calls `context.failure()` with a custom error page
+
+This ensures the authentication flow always completes properly.
+
+## Configuration
+
+### Provider ID
+`require-client-role-authenticator`
+
+### Configuration Properties
+
+| Property | Label | Description |
+|----------|-------|-------------|
+| `clientId` | Client ID | The client to check the role against. If empty, uses the current authentication client. |
+| `roleName` | Role Name | The client role name that the user must have to be allowed access. |
+| `errorMessage` | Error Message | The error message to display when access is denied. Use `${messageKey}` format for theme messages (default: `${accessDeniedNoPermission}`). |
+
+## Usage in Authentication Flows
+
+### Post-Broker Login Flow (recommended)
+
+```
+Post-Broker Login Flow
+└── Require Client Role [REQUIRED]
+```
+
+Configure the authenticator with:
+- **Client ID**: Your application's client ID (e.g., `my-app`)
+- **Role Name**: The role that grants access (e.g., `allowed-user`)
+- **Error Message**: `${accessDeniedNoPermission}` (or custom theme message key)
+
+### Important: Session Behavior
+
+The post-broker login flow only runs when the user authenticates through the IdP, NOT on every request. This means:
+- If you remove a user's role while they have an active session, they can still access until the session expires
+- To immediately revoke access, invalidate their session in Keycloak Admin Console
+
+## Verification
+
+After configuration, check Keycloak logs:
+```bash
+kubectl logs deployment/keycloak -n rig-system | grep -i "RequireClientRole"
+```
+
+Successful role check:
+```
+DEBUG User 'john.doe' has required role 'my-app.allowed-user' - allowing access
+```
+
+Access denied:
+```
+INFO User 'jane.doe' does not have required role 'my-app.allowed-user' - denying access
+```
+
+## Related Documentation
+
+- [Client Access Restriction Feature](/features/client-access-restriction.md)
+- [Keycloak YAML Configuration](/docs/keycloak-yaml-configuration.md)

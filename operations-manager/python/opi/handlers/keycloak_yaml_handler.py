@@ -739,7 +739,7 @@ class KeycloakYamlHandler:
             logger.warning(f"Access restriction for client '{client_id}' missing 'role', skipping")
             return
 
-        error_message = restrict_access.get("errorMessage", "accessDeniedNoPermission")
+        error_message = restrict_access.get("errorMessage", "${accessDeniedNoPermission}")
 
         # Generate a flow alias based on the client ID
         flow_alias = f"browser-restricted-{client_id}"

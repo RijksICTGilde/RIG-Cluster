@@ -32,16 +32,31 @@ Browser Flow (restricted)
 
 ### Post-Broker Login Flow (for SSO logins)
 
-This flow runs after every successful SSO authentication and ensures SSO users are also checked for the required role:
+This flow runs after SSO authentication through an identity provider and checks if the user has the required role:
 
 ```
 Post-Broker Login Flow (restricted)
-└── Deny If No Access [CONDITIONAL]
-    ├── Condition - User Role [REQUIRED] (negated)
-    └── Deny Access [REQUIRED]
+└── Require Client Role [REQUIRED]
+    (Custom authenticator that checks role and returns success/failure)
 ```
 
+The post-broker login flow uses a custom `RequireClientRoleAuthenticator` SPI instead of conditional sub-flows. This is necessary because Keycloak's built-in conditional flows don't work correctly for post-broker flows - when the condition is skipped (user has the role), the flow has nothing to complete and fails with a generic error.
+
 This dual-flow approach ensures that both direct logins and SSO logins are subject to the same role-based access restriction.
+
+### Important: Session Behavior
+
+The post-broker login flow **only runs when the user authenticates through the IdP**. It does NOT run on every access attempt. This means:
+
+- **First SSO login**: Post-broker flow runs, role is checked
+- **Subsequent requests with valid session**: User is already authenticated, no role check occurs
+- **After session expires**: User re-authenticates via IdP, post-broker flow runs again
+
+**Implication**: If you remove a user's role while they have an active session, they can continue to access the application until their session expires. To immediately revoke access:
+
+1. Remove the user's role
+2. Invalidate their session(s) in Keycloak Admin Console (Users > Sessions > Sign out)
+3. Or wait for the session to expire naturally (configurable in realm settings)
 
 ## How to Use
 
@@ -65,7 +80,7 @@ clients:
     restrictAccess:
       enabled: true
       role: "allowed-user"
-      errorMessage: "accessDeniedNoPermission"
+      errorMessage: "${accessDeniedNoPermission}"
 ```
 
 ### Configuration Options
@@ -87,7 +102,7 @@ Configuration for access restriction.
 |-------|------|----------|---------|-------------|
 | `enabled` | boolean | Yes | - | Enable/disable access restriction |
 | `role` | string | Yes (if enabled) | - | Client role name that grants access |
-| `errorMessage` | string | No | `accessDeniedNoPermission` | Theme message key for denial message |
+| `errorMessage` | string | No | `${accessDeniedNoPermission}` | Theme message key in ${} format for Keycloak resolution |
 
 ### Granting Access to Users
 
@@ -128,7 +143,7 @@ The error message shown to denied users is controlled by the `errorMessage` fiel
 
 ### Default Message Key
 
-The default key is `accessDeniedNoPermission`. To use a custom message, you need to add it to the nl-design-system theme.
+The default error message is `${accessDeniedNoPermission}`. The `${...}` syntax is required for Keycloak to resolve the message key from the theme's properties files. To use a custom message, add the key to the nl-design-system theme and reference it with `${yourCustomKey}`.
 
 ### Adding Custom Messages to Theme
 
@@ -192,18 +207,17 @@ spec:
             restrictAccess:
               enabled: true
               role: "app-user"
-              errorMessage: "accessDeniedNoPermission"
+              errorMessage: "${accessDeniedNoPermission}"
 ```
 
 ## Troubleshooting
 
 ### User sees "Invalid username or password" instead of access denied message
 
-This can happen if:
-- The authentication flow was not properly configured
-- The conditional sub-flow is not set to CONDITIONAL requirement
-
-Check the authentication flow in Keycloak Admin Console under Authentication > Flows.
+This indicates the custom RequireClientRoleAuthenticator SPI is not installed. Ensure:
+- The `keycloak-saml-nameid-mapper-*.jar` is present in `/opt/keycloak/providers/`
+- Keycloak was restarted after adding the JAR
+- Check Keycloak logs for any SPI loading errors
 
 ### Role is not being checked (direct login)
 
@@ -218,16 +232,37 @@ If users can bypass the role check when using SSO but not when using direct logi
 - Verify the post-broker login flow exists (check Authentication > Flows for `post-broker-restricted-<client-id>`)
 - Verify the identity provider has the post-broker login flow set (check Identity Providers > your IdP > Post Broker Login Flow)
 - Ensure there are identity providers configured in the realm before enabling `restrictAccess`
+- Verify the RequireClientRoleAuthenticator is configured with the correct client ID and role name
+
+### User can still access after role removal
+
+This is expected behavior. The post-broker login flow only runs when the user authenticates through the IdP, not on every request. If the user already has an active session:
+- Their session remains valid until it expires
+- To immediately revoke access: go to Users > [user] > Sessions and click "Sign out" to invalidate their sessions
+- Alternatively, configure shorter session timeouts in realm settings
 
 ### Custom error message not showing
 
-- Verify the message key exists in the theme
+- Verify the message key exists in the theme's `messages_*.properties` files
 - Check that the theme is properly deployed to Keycloak
-- The error message format should be `${messageKey}` in the Deny Access authenticator config
+- The error message must use `${messageKey}` format (e.g., `${accessDeniedNoPermission}`)
+- Check the authenticator config in Authentication > Flows > your flow > RequireClientRoleAuthenticator config
+
+## Technical Implementation
+
+### Custom Authenticator SPI
+
+The access restriction uses a custom Keycloak authenticator SPI (`require-client-role-authenticator`) that:
+1. Checks if the authenticated user has a specific client role
+2. Calls `success()` if the user has the role (allowing the flow to complete)
+3. Calls `failure()` with a custom error page if the user lacks the role
+
+This approach was chosen because Keycloak's built-in conditional sub-flows don't work correctly for post-broker login flows - when a condition is skipped, the flow has nothing to complete and fails with a generic error.
 
 ## Dependencies
 
-- Keycloak 21.0.0+ (for fixed Deny Access authenticator)
+- Keycloak 21.0.0+
+- Custom RequireClientRoleAuthenticator SPI (included in keycloak-saml-nameid-mapper JAR)
 - nl-design-system theme with custom error messages
 
 ## Related Documentation
