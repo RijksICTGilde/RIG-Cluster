@@ -333,7 +333,7 @@ class KeycloakManager:
                 "restrict_access": {       # Optional access restriction config
                     "enabled": True,
                     "role": "allowed-user",
-                    "error_message": "accessDeniedNoPermission"
+                    "error_message": "${accessDeniedNoPermission}"
                 }
             }
 
@@ -434,7 +434,7 @@ class KeycloakManager:
             merged_config["restrict_access"] = {
                 "enabled": restrict_access.get("enabled", False),
                 "role": restrict_access.get("role", "allowed-user"),
-                "error_message": restrict_access.get("error_message", "accessDeniedNoPermission"),
+                "error_message": restrict_access.get("error_message", "${accessDeniedNoPermission}"),
             }
             logger.info(
                 f"Access restriction configured: enabled={merged_config['restrict_access']['enabled']}, "
@@ -773,7 +773,7 @@ class KeycloakManager:
                 - error_message: str (theme message key)
         """
         role_name = restrict_access.get("role", "allowed-user")
-        error_message = restrict_access.get("error_message", "accessDeniedNoPermission")
+        error_message = restrict_access.get("error_message", "${accessDeniedNoPermission}")
         browser_flow_alias = f"browser-restricted-{client_id}"
         post_broker_flow_alias = f"post-broker-restricted-{client_id}"
 

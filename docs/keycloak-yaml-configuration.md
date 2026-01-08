@@ -218,7 +218,7 @@ clients:
     restrictAccess:
       enabled: true
       role: "allowed-user"
-      errorMessage: "accessDeniedNoPermission"  # Theme message key
+      errorMessage: "${accessDeniedNoPermission}"  # Theme message key in ${} format
 ```
 
 This creates a custom authentication flow that:
