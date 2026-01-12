@@ -11,6 +11,10 @@ from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
     generate_argocd_repository_secret_name,
+    generate_infrastructure_application_name,
+    generate_infrastructure_argocd_application_filename,
+    generate_infrastructure_argocd_appproject_filename,
+    generate_infrastructure_argocd_folder_path,
     get_output_filename_from_template,
     make_argocd_repository_url_unique,
 )
@@ -598,13 +602,14 @@ class ArgoManager:
             # Create directory for infrastructure ArgoCD resources
             # Path: {cluster}/{project_name}-infrastructure/
             # This follows the App-of-Apps pattern where each subfolder becomes an app
-            infra_argo_dir = os.path.join(str(working_dir), str(cluster_name), f"{project_name}-infrastructure")
+            infra_folder_relative = generate_infrastructure_argocd_folder_path(cluster_name, project_name)
+            infra_argo_dir = os.path.join(str(working_dir), infra_folder_relative)
             os.makedirs(infra_argo_dir, exist_ok=True)
 
             logger.info(f"Creating ArgoCD infrastructure resources in: {infra_argo_dir}")
 
             # Create infrastructure AppProject
-            appproject_name = f"{project_name}-infrastructure"
+            appproject_name = generate_infrastructure_application_name(project_name)
             appproject_content = self.generate_appproject_manifest(
                 name=appproject_name,
                 namespace=get_argo_namespace(cluster_name),
@@ -613,7 +618,7 @@ class ArgoManager:
             )
 
             # Write AppProject
-            appproject_filename = f"{project_name}-infrastructure-argocd-appproject.yaml"
+            appproject_filename = generate_infrastructure_argocd_appproject_filename(project_name)
             appproject_file_path = os.path.join(infra_argo_dir, appproject_filename)
             with open(appproject_file_path, "w") as f:
                 f.write(appproject_content)
@@ -671,7 +676,7 @@ class ArgoManager:
             )
 
             # Write Application
-            app_filename = f"{project_name}-infrastructure-argocd-application.yaml"
+            app_filename = generate_infrastructure_argocd_application_filename(project_name)
             app_file_path = os.path.join(infra_argo_dir, app_filename)
 
             with open(app_file_path, "w") as f:
@@ -874,5 +879,9 @@ class ArgoManager:
         # Timeout reached
         error_msg = f"Timeout waiting for infrastructure application '{app_name}' to be ready after {timeout}s"
         logger.error(error_msg)
-        logger.error(f"ArgoCD dashboard: {settings.ARGOCD_SERVER_URL}/applications/{app_name}")
+        # Construct ArgoCD dashboard URL from settings
+        protocol = "https" if settings.ARGOCD_USE_TLS else "http"
+        port_suffix = "" if settings.ARGOCD_PORT in (80, 443) else f":{settings.ARGOCD_PORT}"
+        argocd_url = f"{protocol}://{settings.ARGOCD_HOST}{port_suffix}"
+        logger.error(f"ArgoCD dashboard: {argocd_url}/applications/{app_name}")
         raise TimeoutError(error_msg)

@@ -18,6 +18,8 @@ from opi.utils.naming import (
     generate_argocd_appproject_prefix,
     generate_deployment_manifest_path,
     generate_gitops_argocd_application_path,
+    generate_infrastructure_application_name,
+    generate_infrastructure_argocd_folder_path,
     get_output_filename_from_template,
 )
 
@@ -77,6 +79,108 @@ class DeleteProjectManager:
         """
         deployments = project_data.get("deployments", [])
         return sum(1 for d in deployments if d.get("cluster") == cluster)
+
+    async def _cleanup_orphaned_argocd_resources(
+        self, project_name: str, deletion_results: dict[str, Any]
+    ) -> None:
+        """
+        Clean up orphaned ArgoCD Applications and AppProjects for a project.
+
+        This method checks for ArgoCD resources that match the project name pattern
+        but are not tracked in the project YAML file. This handles cases where:
+        - Deployments were removed from YAML but ArgoCD resources remain
+        - Previous deployment operations failed partway through
+        - Manual edits to the project file removed deployments
+
+        Args:
+            project_name: Name of the project
+            deletion_results: Dictionary to append operation results to
+        """
+        logger.info(f"Checking for orphaned ArgoCD resources for project '{project_name}'")
+
+        try:
+            argo_connector = create_argo_connector()
+
+            # List all applications and find ones matching this project
+            all_applications = await argo_connector.list_applications()
+            orphaned_apps = [
+                app for app in all_applications
+                if app.get("metadata", {}).get("name", "").startswith(f"{project_name}-")
+            ]
+
+            if orphaned_apps:
+                logger.warning(
+                    f"Found {len(orphaned_apps)} orphaned ArgoCD application(s) for project '{project_name}'"
+                )
+
+                for app in orphaned_apps:
+                    app_name = app.get("metadata", {}).get("name")
+                    logger.info(f"Deleting orphaned ArgoCD application: {app_name}")
+
+                    try:
+                        delete_success = await argo_connector.delete_application(app_name)
+                        if delete_success:
+                            deletion_results["operations"].append({
+                                "type": "orphaned_argocd_application_cleanup",
+                                "target": app_name,
+                                "status": "success",
+                                "message": f"Deleted orphaned ArgoCD application '{app_name}'",
+                            })
+                            logger.info(f"Successfully deleted orphaned application: {app_name}")
+                        else:
+                            deletion_results["operations"].append({
+                                "type": "orphaned_argocd_application_cleanup",
+                                "target": app_name,
+                                "status": "failed",
+                                "message": f"Failed to delete orphaned ArgoCD application '{app_name}'",
+                            })
+                            logger.error(f"Failed to delete orphaned application: {app_name}")
+                    except Exception as e:
+                        logger.exception(f"Error deleting orphaned application {app_name}")
+                        deletion_results["errors"].append(f"Failed to delete orphaned application {app_name}: {e}")
+            else:
+                logger.info(f"No orphaned ArgoCD applications found for project '{project_name}'")
+
+            # Also check for orphaned AppProjects
+            # AppProjects typically follow pattern: {project_name}-{deployment_name} or {project_name}-infrastructure
+            appproject_prefix = generate_argocd_appproject_prefix(project_name)
+            argo_namespace = get_argo_namespace(settings.CLUSTER_MANAGER)
+
+            # Use kubectl to list AppProjects matching the pattern
+            kubectl = self.project_manager._kubectl_connector
+            stdout, stderr, code = await kubectl._run_kubectl_command(
+                ["get", "appproject", "-n", argo_namespace, "-o", "name"]
+            )
+
+            if code == 0 and stdout:
+                appproject_names = [
+                    line.replace("appproject.argoproj.io/", "")
+                    for line in stdout.strip().split("\n")
+                    if line.startswith("appproject.argoproj.io/") and project_name in line
+                ]
+
+                for appproject_name in appproject_names:
+                    logger.info(f"Deleting orphaned ArgoCD AppProject: {appproject_name}")
+                    try:
+                        _, stderr, del_code = await kubectl._run_kubectl_command(
+                            ["delete", "appproject", appproject_name, "-n", argo_namespace]
+                        )
+                        if del_code == 0:
+                            deletion_results["operations"].append({
+                                "type": "orphaned_argocd_appproject_cleanup",
+                                "target": appproject_name,
+                                "status": "success",
+                                "message": f"Deleted orphaned ArgoCD AppProject '{appproject_name}'",
+                            })
+                            logger.info(f"Successfully deleted orphaned AppProject: {appproject_name}")
+                        else:
+                            logger.error(f"Failed to delete AppProject {appproject_name}: {stderr}")
+                    except Exception as e:
+                        logger.exception(f"Error deleting orphaned AppProject {appproject_name}")
+
+        except Exception as e:
+            logger.exception("Error during orphaned ArgoCD resource cleanup")
+            deletion_results["errors"].append(f"Orphaned ArgoCD cleanup error: {e}")
 
     async def _cleanup_project_keycloak_realm(
         self, project_name: str, cluster: str, kc_config: dict[str, Any], deletion_results: dict[str, Any]
@@ -293,7 +397,7 @@ class DeleteProjectManager:
 
         return deletion_results
 
-    async def delete_project(self, project_name: str) -> dict[str, Any]:
+    async def delete_project(self, project_name: str, force: bool = False) -> dict[str, Any]:
         """
         Delete a project by first deleting all deployments on the current cluster.
 
@@ -304,12 +408,15 @@ class DeleteProjectManager:
 
         Args:
             project_name: Name of the project to delete
+            force: If True, continues on errors and cleans up stuck resources.
+                   Use when a previous deletion failed partially.
 
         Returns:
             Dictionary containing deletion results and status
 
         Raises:
             HTTPException: If critical operations fail or deployments exist on other clusters
+                          (unless force=True, which continues on most errors)
         """
         deletion_results = {
             "project": project_name,
@@ -318,9 +425,19 @@ class DeleteProjectManager:
             "errors": [],
             "deployment_deletions": {},
             "remaining_deployments": [],
+            "force_mode": force,
         }
 
-        self.project_manager._project_file_relative_path = f"projects/{project_name}.yaml"
+        if force:
+            logger.info(f"Force mode enabled for project deletion: {project_name}")
+
+        # Look up actual filename from project service (filename may differ from project name)
+        project = get_project_service().get_project(project_name)
+        if not project:
+            raise HTTPException(
+                status_code=404, detail=f"Project '{project_name}' not found in project service"
+            )
+        self.project_manager._project_file_relative_path = f"projects/{project.filename}"
 
         try:
             # Step 1: Read project configuration
@@ -370,7 +487,9 @@ class DeleteProjectManager:
                 logger.info(f"Deleting deployment {deployment_name} from project {project_name}")
 
                 try:
-                    deployment_deletion_result = await self.delete_deployment(project_name, deployment_name)
+                    deployment_deletion_result = await self.delete_deployment(
+                        project_name, deployment_name, force=force
+                    )
                     deletion_results["deployment_deletions"][deployment_name] = deployment_deletion_result
                     deletion_results["operations"].extend(deployment_deletion_result["operations"])
 
@@ -391,11 +510,12 @@ class DeleteProjectManager:
                                 "type": "deployment_deletion",
                                 "deployment": deployment_name,
                                 "cluster": current_cluster,
-                                "status": "failed",
+                                "status": "partial" if force else "failed",
                                 "errors": deployment_deletion_result["errors"],
                             }
                         )
-                        deletion_results["success"] = False
+                        if not force:
+                            deletion_results["success"] = False
                         logger.error(
                             f"Failed to delete deployment {deployment_name}: {deployment_deletion_result['errors']}"
                         )
@@ -412,12 +532,17 @@ class DeleteProjectManager:
                             "error": str(e),
                         }
                     )
-                    deletion_results["success"] = False
+                    if not force:
+                        deletion_results["success"] = False
                     logger.exception(error_msg)
 
-            # Step 5: Delete the project file if all deployment deletions succeeded
-            if deletion_results["success"] and len(current_cluster_deployments) > 0:
-                logger.info(f"All deployments deleted successfully, now deleting project file for {project_name}")
+            # Step 5: Delete the project file if all deployment deletions succeeded (or in force mode)
+            should_delete_project_file = deletion_results["success"] or force
+            if should_delete_project_file and len(current_cluster_deployments) > 0:
+                if force and not deletion_results["success"]:
+                    logger.info(f"Force mode: deleting project file despite errors for {project_name}")
+                else:
+                    logger.info(f"All deployments deleted successfully, now deleting project file for {project_name}")
 
                 commit_message = f"Delete project '{project_name}' - removed project file after deployment cleanup"
                 delete_result = await self._delete_project_file(project_name, commit_message)
@@ -436,6 +561,9 @@ class DeleteProjectManager:
                         "message": f"Project has no deployments on current cluster '{current_cluster}'",
                     }
                 )
+
+                # Clean up any orphaned ArgoCD resources that may exist despite no deployments in YAML
+                await self._cleanup_orphaned_argocd_resources(project_name, deletion_results)
 
                 commit_message = f"Delete project '{project_name}' - no deployments remaining"
                 delete_result = await self._delete_project_file(project_name, commit_message)
@@ -503,7 +631,14 @@ class DeleteProjectManager:
 
         try:
             git_connector = await self.project_manager.get_git_connector_for_project_files()
-            project_file_path = f"projects/{project_name}.yaml"
+
+            # Look up actual filename from project service (filename may differ from project name)
+            project = get_project_service().get_project(project_name)
+            if not project:
+                result["errors"].append(f"Project '{project_name}' not found in project service")
+                result["success"] = False
+                return result
+            project_file_path = f"projects/{project.filename}"
 
             await git_connector.ensure_repo_cloned()
             project_file_exists = await git_connector.file_exists(project_file_path)
@@ -547,7 +682,9 @@ class DeleteProjectManager:
 
         return result
 
-    async def delete_deployment(self, project_name: str, deployment_name: str) -> dict[str, Any]:
+    async def delete_deployment(
+        self, project_name: str, deployment_name: str, force: bool = False
+    ) -> dict[str, Any]:
         """
         Delete all resources associated with a specific deployment.
 
@@ -560,12 +697,17 @@ class DeleteProjectManager:
         Args:
             project_name: Name of the project
             deployment_name: Name of the deployment to delete
+            force: If True, continues on errors and cleans up stuck resources.
+                   In force mode:
+                   - Removes ArgoCD finalizers if app deletion times out
+                   - Skips database cleanup if secrets are inaccessible
+                   - Only deletes namespace after ArgoCD app is confirmed deleted
 
         Returns:
             Dictionary containing deletion results and status
 
         Raises:
-            HTTPException: If critical operations fail
+            HTTPException: If critical operations fail (unless force=True)
         """
 
         deletion_results = {
@@ -575,9 +717,19 @@ class DeleteProjectManager:
             "success": True,
             "errors": [],
             "service_results": {},
+            "force_mode": force,
         }
 
-        self.project_manager._project_file_relative_path = f"projects/{project_name}.yaml"
+        if force:
+            logger.info(f"Force mode enabled for deployment deletion: {project_name}/{deployment_name}")
+
+        # Look up actual filename from project service (filename may differ from project name)
+        project = get_project_service().get_project(project_name)
+        if not project:
+            raise HTTPException(
+                status_code=404, detail=f"Project '{project_name}' not found in project service"
+            )
+        self.project_manager._project_file_relative_path = f"projects/{project.filename}"
 
         try:
             # Step 1: Read project configuration
@@ -757,9 +909,10 @@ class DeleteProjectManager:
                 logger.warning(f"Error refreshing user-applications: {refresh_error} - continuing anyway")
 
             # Step 4: Wait for ArgoCD application deletion
-            try:
-                app_name = generate_argocd_application_name(project_name, deployment_name)
+            argocd_app_deleted = False  # Track if app was confirmed deleted
+            app_name = generate_argocd_application_name(project_name, deployment_name)
 
+            try:
                 app_exists = await argo_connector.application_exists(app_name)
                 if app_exists:
                     logger.info(f"Waiting for ArgoCD application {app_name} to be deleted via GitOps")
@@ -776,7 +929,38 @@ class DeleteProjectManager:
                             }
                         )
                         logger.info(f"ArgoCD application {app_name} successfully deleted via GitOps")
+                        argocd_app_deleted = True
                     else:
+                        # Timeout - in force mode, try to remove finalizers
+                        if force:
+                            logger.warning(
+                                f"ArgoCD application {app_name} deletion timed out - "
+                                "force mode: attempting to remove finalizers"
+                            )
+                            finalizer_removed = await self.project_manager._kubectl_connector.remove_argocd_application_finalizers(
+                                app_name
+                            )
+                            if finalizer_removed:
+                                deletion_results["operations"].append(
+                                    {
+                                        "type": "argocd_app_finalizer_removal",
+                                        "target": app_name,
+                                        "status": "success",
+                                    }
+                                )
+                                # Wait for the app to be garbage collected using proper retry logic
+                                argocd_app_deleted = await argo_connector.wait_for_application_deletion(
+                                    app_name, max_retries=10
+                                )
+                            else:
+                                deletion_results["operations"].append(
+                                    {
+                                        "type": "argocd_app_finalizer_removal",
+                                        "target": app_name,
+                                        "status": "failed",
+                                    }
+                                )
+
                         deletion_results["operations"].append(
                             {
                                 "type": "argocd_app_gitops_deletion",
@@ -784,10 +968,12 @@ class DeleteProjectManager:
                                 "cluster": cluster,
                                 "deployment": deployment_name,
                                 "status": "timeout",
-                                "error": "Application deletion via GitOps timed out after 5 retries",
+                                "error": "Application deletion via GitOps timed out",
+                                "finalizer_removed": force and finalizer_removed if force else False,
                             }
                         )
-                        logger.warning(f"ArgoCD application {app_name} deletion timed out - continuing anyway")
+                        if not force:
+                            logger.warning(f"ArgoCD application {app_name} deletion timed out - continuing anyway")
                 else:
                     deletion_results["operations"].append(
                         {
@@ -799,12 +985,32 @@ class DeleteProjectManager:
                         }
                     )
                     logger.info(f"ArgoCD application {app_name} was not found (already deleted or never existed)")
+                    argocd_app_deleted = True  # Consider it deleted if not found
+
+            except PermissionError as e:
+                # In force mode, we can't check app status - assume we need to try cleanup
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_app_gitops_deletion",
+                        "target": app_name,
+                        "cluster": cluster,
+                        "deployment": deployment_name,
+                        "status": "permission_denied",
+                        "error": str(e),
+                    }
+                )
+                if force:
+                    logger.warning("Permission denied checking ArgoCD app - force mode: attempting finalizer removal")
+                    await self.project_manager._kubectl_connector.remove_argocd_application_finalizers(app_name)
+                    argocd_app_deleted = True  # Assume deleted in force mode after finalizer removal
+                else:
+                    logger.error(f"Permission denied checking ArgoCD application status: {e}")
 
             except Exception as e:
                 deletion_results["operations"].append(
                     {
                         "type": "argocd_app_gitops_deletion",
-                        "target": generate_argocd_application_name(project_name, deployment_name),
+                        "target": app_name,
                         "cluster": cluster,
                         "deployment": deployment_name,
                         "status": "error",
@@ -812,8 +1018,10 @@ class DeleteProjectManager:
                     }
                 )
                 logger.exception("Error monitoring ArgoCD application deletion")
+                if force:
+                    argocd_app_deleted = True  # In force mode, continue anyway
 
-            # Step 5: Delete Kubernetes namespace
+            # Step 5: Delete Kubernetes namespace (only if ArgoCD app was confirmed deleted)
             try:
                 base_namespace = deployment.get("namespace", project_name)
                 namespace = get_prefixed_namespace(cluster, base_namespace)
@@ -825,7 +1033,33 @@ class DeleteProjectManager:
                     for other_dep in project_data.get("deployments", [])
                 )
 
-                if not namespace_used_by_others:
+                # Only delete namespace if ArgoCD app was confirmed deleted
+                # This prevents orphaning ArgoCD apps that can't clean up their resources
+                if not argocd_app_deleted and not force:
+                    deletion_results["operations"].append(
+                        {
+                            "type": "namespace_deletion",
+                            "target": namespace,
+                            "cluster": cluster,
+                            "deployment": deployment_name,
+                            "status": "skipped",
+                            "reason": "ArgoCD application not confirmed deleted - skipping to prevent orphaned app",
+                        }
+                    )
+                    deletion_results["errors"].append(
+                        f"Namespace '{namespace}' not deleted: ArgoCD application '{app_name}' was not confirmed deleted. "
+                        "Use force=true to override."
+                    )
+                    deletion_results["success"] = False
+                    logger.warning(
+                        f"Skipping namespace deletion - ArgoCD app {app_name} not confirmed deleted. "
+                        "This prevents orphaning the ArgoCD application."
+                    )
+                elif not namespace_used_by_others:
+                    if not argocd_app_deleted:
+                        logger.warning(
+                            f"Force mode: deleting namespace {namespace} even though ArgoCD app status is uncertain"
+                        )
                     logger.info(f"Deleting Kubernetes namespace: {namespace}")
                     namespace_deleted = await self.project_manager._kubectl_connector.delete_namespace(namespace)
 
@@ -878,19 +1112,40 @@ class DeleteProjectManager:
                 deletion_results["errors"].append(f"Error deleting namespace {namespace}: {e}")
                 logger.exception(f"Error deleting namespace {namespace}")
 
-            # Step 5.5: Delete infrastructure if this was the last deployment using namespace-specific PostgreSQL
+            # Step 5.5: Delete infrastructure if this was the last deployment using namespace-specific services
             try:
                 from opi.core.cluster_config import get_infrastructure_namespace
-                from opi.utils.naming import (
-                    generate_infrastructure_application_name,
-                    generate_infrastructure_manifest_path,
+                from opi.utils.naming import generate_infrastructure_manifest_path
+                from opi.services.services import ServiceType
+
+                # Services that require dedicated infrastructure namespace
+                NAMESPACE_SERVICES = {
+                    ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
+                    ServiceType.NAMESPACE_REDIS.value,
+                }
+
+                # Check if project uses any namespace-specific service by reading project data directly
+                # This doesn't require database/redis manager initialization
+                def project_uses_namespace_infrastructure(proj_data: dict) -> bool:
+                    """Check if project uses any service that requires infrastructure namespace."""
+                    project_services = proj_data.get("services", [])
+                    for service_item in project_services:
+                        if isinstance(service_item, str):
+                            if service_item in NAMESPACE_SERVICES:
+                                return True
+                        elif isinstance(service_item, dict):
+                            if any(svc in service_item for svc in NAMESPACE_SERVICES):
+                                return True
+                    return False
+
+                uses_namespace_infrastructure = project_uses_namespace_infrastructure(project_data)
+                logger.debug(
+                    f"Project '{project_name}' uses namespace-specific infrastructure: {uses_namespace_infrastructure}"
                 )
 
-                # Check if project uses namespace-specific PostgreSQL
-                db_manager = await self.project_manager._ensure_database_manager()
-                uses_namespace_db = db_manager._project_uses_namespace_postgresql(project_data)
+                should_delete_infrastructure = uses_namespace_infrastructure
 
-                if uses_namespace_db:
+                if should_delete_infrastructure:
                     # Check if any other deployments in this project still exist
                     remaining_deployments = [
                         d for d in project_data.get("deployments", []) if d.get("name") != deployment_name
@@ -902,45 +1157,28 @@ class DeleteProjectManager:
                             f"Last deployment deleted - cleaning up infrastructure for project '{project_name}'"
                         )
 
-                        # 5.5.1: Delete infrastructure ArgoCD application file from GitOps
+                        # 5.5.1: Delete infrastructure ArgoCD folder from GitOps
+                        # The folder contains the ArgoCD Application yaml and kustomization
                         infra_app_name = generate_infrastructure_application_name(project_name)
-                        infra_app_file_path = generate_gitops_argocd_application_path(cluster, infra_app_name, "")
-                        logger.info(f"Deleting infrastructure ArgoCD application file: {infra_app_file_path}")
+                        infra_argocd_folder_rel = generate_infrastructure_argocd_folder_path(cluster, project_name)
+                        logger.info(f"Deleting infrastructure ArgoCD folder: {infra_argocd_folder_rel}")
 
                         gitops_connector = await self.project_manager.get_git_connector_for_argocd()
                         await gitops_connector.ensure_repo_cloned()
-                        infra_file_full_path = os.path.join(
-                            await gitops_connector.get_working_dir(), infra_app_file_path
-                        )
+                        working_dir = await gitops_connector.get_working_dir()
+                        infra_argocd_folder = os.path.join(working_dir, infra_argocd_folder_rel)
 
-                        if os.path.exists(infra_file_full_path):
-                            os.remove(infra_file_full_path)
+                        if os.path.exists(infra_argocd_folder):
+                            # Delete the entire infrastructure ArgoCD folder
+                            shutil.rmtree(infra_argocd_folder)
                             deletion_results["operations"].append(
                                 {
-                                    "type": "infrastructure_argocd_app_deletion",
-                                    "target": infra_app_file_path,
+                                    "type": "infrastructure_argocd_folder_deletion",
+                                    "target": infra_argocd_folder_rel,
                                     "status": "success",
                                 }
                             )
-                            logger.info(f"Deleted infrastructure ArgoCD application file: {infra_app_file_path}")
-
-                            # 5.5.2: Rebuild kustomization and commit
-                            working_dir = await gitops_connector.get_working_dir()
-                            project_dir = os.path.join(working_dir, cluster, project_name)
-
-                            kustomization_success = self.project_manager._manifest_generator.create_kustomization_files(
-                                output_dir=project_dir,
-                                namespace=get_argo_namespace(cluster),
-                            )
-
-                            if kustomization_success:
-                                deletion_results["operations"].append(
-                                    {
-                                        "type": "infrastructure_kustomization_rebuild",
-                                        "target": project_dir,
-                                        "status": "success",
-                                    }
-                                )
+                            logger.info(f"Deleted infrastructure ArgoCD folder: {infra_argocd_folder_rel}")
 
                             commit_message = f"Delete infrastructure ArgoCD application for project '{project_name}'"
                             await gitops_connector.commit_and_push(commit_message)
@@ -950,8 +1188,8 @@ class DeleteProjectManager:
                         else:
                             deletion_results["operations"].append(
                                 {
-                                    "type": "infrastructure_argocd_app_deletion",
-                                    "target": infra_app_file_path,
+                                    "type": "infrastructure_argocd_folder_deletion",
+                                    "target": infra_argocd_folder_rel,
                                     "status": "not_found",
                                 }
                             )
@@ -970,6 +1208,7 @@ class DeleteProjectManager:
                             logger.info("Refreshed user-applications after infrastructure GitOps deletion")
 
                         # 5.5.4: Wait for infrastructure Application deletion
+                        infra_app_deleted = False  # Track if infrastructure app was confirmed deleted
                         infra_app_exists = await argo_connector.application_exists(infra_app_name)
                         if infra_app_exists:
                             logger.info(f"Waiting for infrastructure Application {infra_app_name} to be deleted")
@@ -986,12 +1225,45 @@ class DeleteProjectManager:
                                     }
                                 )
                                 logger.info(f"Infrastructure Application {infra_app_name} successfully deleted")
+                                infra_app_deleted = True
                             else:
+                                # Timeout - in force mode, try to remove finalizers
+                                if force:
+                                    logger.warning(
+                                        f"Infrastructure Application {infra_app_name} deletion timed out - "
+                                        "force mode: attempting to remove finalizers"
+                                    )
+                                    kubectl = self.project_manager._kubectl_connector
+                                    finalizer_removed = await kubectl.remove_argocd_application_finalizers(
+                                        infra_app_name
+                                    )
+                                    if finalizer_removed:
+                                        deletion_results["operations"].append(
+                                            {
+                                                "type": "infrastructure_app_finalizer_removal",
+                                                "target": infra_app_name,
+                                                "status": "success",
+                                            }
+                                        )
+                                        # Wait for the app to be garbage collected using proper retry logic
+                                        infra_app_deleted = await argo_connector.wait_for_application_deletion(
+                                            infra_app_name, max_retries=10
+                                        )
+                                    else:
+                                        deletion_results["operations"].append(
+                                            {
+                                                "type": "infrastructure_app_finalizer_removal",
+                                                "target": infra_app_name,
+                                                "status": "failed",
+                                            }
+                                        )
+
                                 deletion_results["operations"].append(
                                     {
                                         "type": "infrastructure_app_deletion_wait",
                                         "target": infra_app_name,
                                         "status": "timeout",
+                                        "finalizer_removed": force and finalizer_removed if force else False,
                                     }
                                 )
                                 logger.warning(f"Infrastructure Application {infra_app_name} deletion timed out")
@@ -1003,31 +1275,58 @@ class DeleteProjectManager:
                                     "status": "not_found",
                                 }
                             )
+                            infra_app_deleted = True  # Consider it deleted if not found
 
-                        # 5.5.5: Delete infrastructure namespace
+                        # 5.5.5: Delete infrastructure namespace (only if app was confirmed deleted)
                         infra_namespace = get_infrastructure_namespace(cluster, project_name)
-                        logger.info(f"Deleting infrastructure namespace: {infra_namespace}")
-                        infra_namespace_deleted = await self.project_manager._kubectl_connector.delete_namespace(
-                            infra_namespace
-                        )
 
-                        if infra_namespace_deleted:
+                        # Only delete namespace if ArgoCD app was confirmed deleted
+                        # This prevents orphaning ArgoCD apps that can't clean up their resources
+                        if not infra_app_deleted and not force:
                             deletion_results["operations"].append(
                                 {
                                     "type": "infrastructure_namespace_deletion",
                                     "target": infra_namespace,
-                                    "status": "success",
+                                    "status": "skipped",
+                                    "reason": "Infrastructure ArgoCD app not confirmed deleted",
                                 }
                             )
-                            logger.info(f"Successfully deleted infrastructure namespace: {infra_namespace}")
+                            deletion_results["errors"].append(
+                                f"Infrastructure namespace '{infra_namespace}' not deleted: "
+                                f"ArgoCD app '{infra_app_name}' not confirmed deleted. Use force=true."
+                            )
+                            logger.warning(
+                                f"Skipping infrastructure namespace deletion - "
+                                f"ArgoCD app {infra_app_name} not confirmed deleted"
+                            )
                         else:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "infrastructure_namespace_deletion",
-                                    "target": infra_namespace,
-                                    "status": "not_found",
-                                }
+                            if not infra_app_deleted:
+                                logger.warning(
+                                    f"Force mode: deleting infrastructure namespace {infra_namespace} "
+                                    "even though ArgoCD app status is uncertain"
+                                )
+                            logger.info(f"Deleting infrastructure namespace: {infra_namespace}")
+                            infra_namespace_deleted = await self.project_manager._kubectl_connector.delete_namespace(
+                                infra_namespace
                             )
+
+                            if infra_namespace_deleted:
+                                deletion_results["operations"].append(
+                                    {
+                                        "type": "infrastructure_namespace_deletion",
+                                        "target": infra_namespace,
+                                        "status": "success",
+                                    }
+                                )
+                                logger.info(f"Successfully deleted infrastructure namespace: {infra_namespace}")
+                            else:
+                                deletion_results["operations"].append(
+                                    {
+                                        "type": "infrastructure_namespace_deletion",
+                                        "target": infra_namespace,
+                                        "status": "not_found",
+                                    }
+                                )
 
                         # 5.5.6: Delete infrastructure manifests folder from deployment git repo
                         repositories = project_data.get("repositories", [])
@@ -1086,7 +1385,8 @@ class DeleteProjectManager:
                         )
                 else:
                     logger.debug(
-                        f"Project '{project_name}' does not use namespace-specific PostgreSQL - skipping infrastructure deletion"
+                        f"Project '{project_name}' does not use namespace-specific services, "
+                        "skipping infrastructure deletion"
                     )
 
             except Exception as e:
@@ -1113,12 +1413,34 @@ class DeleteProjectManager:
                 deletion_results["errors"].extend(keycloak_results["errors"])
 
             # Delete database resources (using lazy-initialized manager with correct database)
-            db_manager = await self.project_manager._ensure_database_manager()
-            database_results = await db_manager.delete_resources_for_deployment(project_data, deployment)
-            deletion_results["service_results"]["database"] = database_results
-            deletion_results["operations"].extend(database_results["operations"])
-            if database_results["errors"]:
-                deletion_results["errors"].extend(database_results["errors"])
+            try:
+                db_manager = await self.project_manager._ensure_database_manager()
+                database_results = await db_manager.delete_resources_for_deployment(project_data, deployment)
+                deletion_results["service_results"]["database"] = database_results
+                deletion_results["operations"].extend(database_results["operations"])
+                if database_results["errors"]:
+                    deletion_results["errors"].extend(database_results["errors"])
+            except Exception as db_error:
+                if force:
+                    logger.warning(
+                        f"Force mode: could not delete database resources ({db_error}), skipping"
+                    )
+                    deletion_results["service_results"]["database"] = {
+                        "operations": [],
+                        "errors": [str(db_error)],
+                        "skipped": True,
+                        "force_mode": True,
+                    }
+                    deletion_results["operations"].append(
+                        {
+                            "type": "database_resource_deletion",
+                            "status": "skipped",
+                            "reason": str(db_error),
+                            "force_mode": True,
+                        }
+                    )
+                else:
+                    raise
 
             # Delete MinIO resources
             minio_results = await self.project_manager._minio_manager.delete_resources_for_deployment(
@@ -1254,18 +1576,38 @@ class DeleteProjectManager:
                 deletion_results["errors"].append(f"Error removing deployment from project file: {e}")
                 logger.exception(f"Error removing deployment '{deployment_name}' from project file")
 
-            # Update success status
-            deletion_results["success"] = len(deletion_results["errors"]) == 0
+            # Update success status - in force mode, we may still have errors but continue
+            if force:
+                # In force mode, mark as partial success if there were some errors but we continued
+                deletion_results["success"] = True  # Force mode completes even with errors
+                if deletion_results["errors"]:
+                    logger.info(
+                        f"Force mode completed with {len(deletion_results['errors'])} error(s) for "
+                        f"{project_name}/{deployment_name}"
+                    )
+            else:
+                deletion_results["success"] = len(deletion_results["errors"]) == 0
 
             logger.info(
-                f"Deployment deletion completed for {project_name}/{deployment_name} - Success: {deletion_results['success']}"
+                f"Deployment deletion completed for {project_name}/{deployment_name} - "
+                f"Success: {deletion_results['success']}, Force: {force}, Errors: {len(deletion_results['errors'])}"
             )
             return deletion_results
 
-        except HTTPException:
+        except HTTPException as http_error:
+            if force:
+                # In force mode, convert HTTPException to error in results and continue
+                deletion_results["success"] = False
+                deletion_results["errors"].append(f"HTTP error during deployment deletion (force mode): {http_error}")
+                logger.warning(f"HTTP error during force deletion for {project_name}/{deployment_name}, continuing")
+                return deletion_results
             raise
         except Exception as e:
             deletion_results["success"] = False
             deletion_results["errors"].append(f"Critical error during deployment deletion: {e}")
             logger.exception(f"Critical error during deployment deletion for {project_name}/{deployment_name}")
+            if force:
+                # In force mode, return results with error instead of raising
+                logger.warning("Force mode: returning results with critical error instead of raising")
+                return deletion_results
             raise HTTPException(status_code=500, detail=f"Critical error during deployment deletion: {e!s}")

@@ -375,17 +375,47 @@ class KeycloakConnector:
             self.admin.change_current_realm(realm_name)
 
             # Try to create the client
+            updated = False
             try:
                 self.admin.create_client(payload=client_data)
                 created = True
                 logger.info(f"Successfully created client '{client_id}' for deployment '{deployment_name}'")
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
-                    logger.info(f"Client '{client_id}' already exists, retrieving existing credentials")
+                    logger.info(f"Client '{client_id}' already exists, checking if update needed")
                     # Find existing client and get secret
+                    # Note: find_client_by_client_id switches back to master realm
                     existing_client = await self.find_client_by_client_id(client_id, realm_name)
                     if existing_client:
                         client_secret = await self.get_client_secret(existing_client["id"], realm_name)
+
+                        # Check if redirect URIs need updating
+                        existing_redirect_uris = set(existing_client.get("redirectUris", []))
+                        existing_web_origins = set(existing_client.get("webOrigins", []))
+                        expected_redirect_uris = set(redirect_uris)
+                        expected_web_origins = set(web_origins)
+
+                        uris_differ = existing_redirect_uris != expected_redirect_uris
+                        origins_differ = existing_web_origins != expected_web_origins
+
+                        if uris_differ or origins_differ:
+                            logger.info(
+                                f"Client '{client_id}' redirect URIs need updating. "
+                                f"Current: {existing_redirect_uris}, Expected: {expected_redirect_uris}"
+                            )
+                            # Switch back to target realm for update
+                            self.admin.change_current_realm(realm_name)
+                            # Update the client with new redirect URIs
+                            update_data = {
+                                "redirectUris": redirect_uris,
+                                "webOrigins": web_origins,
+                            }
+                            self.admin.update_client(client_id=existing_client["id"], payload=update_data)
+                            logger.info(f"Successfully updated redirect URIs for client '{client_id}'")
+                            updated = True
+                        else:
+                            logger.info(f"Client '{client_id}' redirect URIs are already correct")
+
                     created = False
                 else:
                     raise
@@ -406,6 +436,7 @@ class KeycloakConnector:
                 "project_name": project_name,
                 "ingress_hosts": ingress_hosts,
                 "created": created,
+                "updated": updated,
             }
 
             # Assign custom client scope to the newly created client
@@ -1832,7 +1863,7 @@ class KeycloakConnector:
             else:
                 raise
 
-        # Step 2: Set the sub-flow to CONDITIONAL requirement
+        # Step 2: Set the sub-flow to CONDITIONAL requirement (if not already)
         executions = self.admin.get_authentication_flow_executions(flow_alias=forms_flow_alias)
         subflow_execution = None
         for execution in executions:
@@ -1841,17 +1872,21 @@ class KeycloakConnector:
                 break
 
         if subflow_execution:
-            update_data = {
-                "id": subflow_execution.get("id"),
-                "requirement": "CONDITIONAL",
-                "displayName": subflow_alias,
-                "level": subflow_execution.get("level", 1),
-                "index": subflow_execution.get("index", 0),
-                "configurable": False,
-                "authenticationFlow": True,
-            }
-            self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=forms_flow_alias)
-            logger.debug(f"Set sub-flow '{subflow_alias}' to CONDITIONAL")
+            current_requirement = subflow_execution.get("requirement")
+            if current_requirement == "CONDITIONAL":
+                logger.debug(f"Sub-flow '{subflow_alias}' is already CONDITIONAL, skipping update")
+            else:
+                update_data = {
+                    "id": subflow_execution.get("id"),
+                    "requirement": "CONDITIONAL",
+                    "displayName": subflow_alias,
+                    "level": subflow_execution.get("level", 1),
+                    "index": subflow_execution.get("index", 0),
+                    "configurable": False,
+                    "authenticationFlow": True,
+                }
+                self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=forms_flow_alias)
+                logger.debug(f"Set sub-flow '{subflow_alias}' to CONDITIONAL")
 
         # Step 3: Add "Condition - User Role" execution (negated - check if user does NOT have role)
         await self._add_condition_user_role(
@@ -1875,37 +1910,50 @@ class KeycloakConnector:
         """
         logger.debug(f"Adding Condition - User Role to sub-flow '{subflow_alias}'")
 
-        # Add the execution
-        execution_data = {"provider": "conditional-user-role"}
-        try:
-            self.admin.create_authentication_flow_execution(payload=execution_data, flow_alias=subflow_alias)
-        except KeycloakPostError as e:
-            if "409" not in str(e) and "Conflict" not in str(e):
-                raise
-
-        # Get the execution to configure it
+        # First check if execution already exists (idempotency)
         executions = self.admin.get_authentication_flow_executions(flow_alias=subflow_alias)
         condition_execution = None
         for execution in executions:
             if execution.get("providerId") == "conditional-user-role":
                 condition_execution = execution
+                logger.debug(f"Condition - User Role execution already exists in '{subflow_alias}'")
                 break
+
+        # Only create if it doesn't exist
+        if not condition_execution:
+            execution_data = {"provider": "conditional-user-role"}
+            try:
+                self.admin.create_authentication_flow_execution(payload=execution_data, flow_alias=subflow_alias)
+            except KeycloakPostError as e:
+                if "409" not in str(e) and "Conflict" not in str(e):
+                    raise
+
+            # Re-fetch executions to get the newly created one
+            executions = self.admin.get_authentication_flow_executions(flow_alias=subflow_alias)
+            for execution in executions:
+                if execution.get("providerId") == "conditional-user-role":
+                    condition_execution = execution
+                    break
 
         if not condition_execution:
             raise KeycloakError("Could not find conditional-user-role execution")
 
-        # Set requirement to REQUIRED
-        update_data = {
-            "id": condition_execution.get("id"),
-            "requirement": "REQUIRED",
-            "displayName": condition_execution.get("displayName"),
-            "providerId": "conditional-user-role",
-            "level": condition_execution.get("level", 0),
-            "index": condition_execution.get("index", 0),
-            "configurable": True,
-            "authenticationFlow": False,
-        }
-        self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=subflow_alias)
+        # Set requirement to REQUIRED (if not already)
+        current_requirement = condition_execution.get("requirement")
+        if current_requirement == "REQUIRED":
+            logger.debug(f"Condition - User Role is already REQUIRED in '{subflow_alias}'")
+        else:
+            update_data = {
+                "id": condition_execution.get("id"),
+                "requirement": "REQUIRED",
+                "displayName": condition_execution.get("displayName"),
+                "providerId": "conditional-user-role",
+                "level": condition_execution.get("level", 0),
+                "index": condition_execution.get("index", 0),
+                "configurable": True,
+                "authenticationFlow": False,
+            }
+            self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=subflow_alias)
 
         # Configure the condition
         config_data = {
@@ -1939,37 +1987,50 @@ class KeycloakConnector:
         """
         logger.debug(f"Adding Deny Access to sub-flow '{subflow_alias}'")
 
-        # Add the execution
-        execution_data = {"provider": "deny-access-authenticator"}
-        try:
-            self.admin.create_authentication_flow_execution(payload=execution_data, flow_alias=subflow_alias)
-        except KeycloakPostError as e:
-            if "409" not in str(e) and "Conflict" not in str(e):
-                raise
-
-        # Get the execution to configure it
+        # First check if execution already exists (idempotency)
         executions = self.admin.get_authentication_flow_executions(flow_alias=subflow_alias)
         deny_execution = None
         for execution in executions:
             if execution.get("providerId") == "deny-access-authenticator":
                 deny_execution = execution
+                logger.debug(f"Deny Access execution already exists in '{subflow_alias}'")
                 break
+
+        # Only create if it doesn't exist
+        if not deny_execution:
+            execution_data = {"provider": "deny-access-authenticator"}
+            try:
+                self.admin.create_authentication_flow_execution(payload=execution_data, flow_alias=subflow_alias)
+            except KeycloakPostError as e:
+                if "409" not in str(e) and "Conflict" not in str(e):
+                    raise
+
+            # Re-fetch executions to get the newly created one
+            executions = self.admin.get_authentication_flow_executions(flow_alias=subflow_alias)
+            for execution in executions:
+                if execution.get("providerId") == "deny-access-authenticator":
+                    deny_execution = execution
+                    break
 
         if not deny_execution:
             raise KeycloakError("Could not find deny-access-authenticator execution")
 
-        # Set requirement to REQUIRED
-        update_data = {
-            "id": deny_execution.get("id"),
-            "requirement": "REQUIRED",
-            "displayName": deny_execution.get("displayName"),
-            "providerId": "deny-access-authenticator",
-            "level": deny_execution.get("level", 0),
-            "index": deny_execution.get("index", 0),
-            "configurable": True,
-            "authenticationFlow": False,
-        }
-        self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=subflow_alias)
+        # Set requirement to REQUIRED (if not already)
+        current_requirement = deny_execution.get("requirement")
+        if current_requirement == "REQUIRED":
+            logger.debug(f"Deny Access is already REQUIRED in '{subflow_alias}'")
+        else:
+            update_data = {
+                "id": deny_execution.get("id"),
+                "requirement": "REQUIRED",
+                "displayName": deny_execution.get("displayName"),
+                "providerId": "deny-access-authenticator",
+                "level": deny_execution.get("level", 0),
+                "index": deny_execution.get("index", 0),
+                "configurable": True,
+                "authenticationFlow": False,
+            }
+            self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=subflow_alias)
 
         # Configure the error message (already wrapped in ${} above if needed)
         config_data = {
@@ -2212,39 +2273,53 @@ class KeycloakConnector:
         """
         logger.debug(f"Adding RequireClientRoleAuthenticator to flow '{flow_alias}'")
 
-        # Step 1: Add the authenticator execution to the flow
-        execution_data = {"provider": "require-client-role-authenticator"}
-        self.admin.create_authentication_flow_execution(
-            payload=execution_data, flow_alias=flow_alias
-        )
-        logger.debug("Added RequireClientRoleAuthenticator execution")
-
-        # Step 2: Find the execution and set it to REQUIRED
+        # Step 1: Check if execution already exists (idempotency)
         executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
         authenticator_execution = None
         for execution in executions:
             if execution.get("providerId") == "require-client-role-authenticator":
                 authenticator_execution = execution
+                logger.debug(f"RequireClientRoleAuthenticator already exists in flow '{flow_alias}'")
                 break
+
+        # Only create if it doesn't exist
+        if not authenticator_execution:
+            execution_data = {"provider": "require-client-role-authenticator"}
+            self.admin.create_authentication_flow_execution(
+                payload=execution_data, flow_alias=flow_alias
+            )
+            logger.debug("Added RequireClientRoleAuthenticator execution")
+
+            # Re-fetch executions to get the newly created one
+            executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
+            for execution in executions:
+                if execution.get("providerId") == "require-client-role-authenticator":
+                    authenticator_execution = execution
+                    break
 
         if not authenticator_execution:
             raise KeycloakError("Failed to find RequireClientRoleAuthenticator execution after creation")
 
-        # Set requirement to REQUIRED
-        update_data = {
-            "id": authenticator_execution.get("id"),
-            "requirement": "REQUIRED",
-            "displayName": authenticator_execution.get("displayName", "Require Client Role"),
-            "level": authenticator_execution.get("level", 0),
-            "index": authenticator_execution.get("index", 0),
-            "configurable": True,
-            "authenticationFlow": False,
-        }
-        self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=flow_alias)
-        logger.debug("Set RequireClientRoleAuthenticator to REQUIRED")
+        # Step 2: Set requirement to REQUIRED (if not already)
+        current_requirement = authenticator_execution.get("requirement")
+        if current_requirement == "REQUIRED":
+            logger.debug(f"RequireClientRoleAuthenticator is already REQUIRED in flow '{flow_alias}'")
+        else:
+            update_data = {
+                "id": authenticator_execution.get("id"),
+                "requirement": "REQUIRED",
+                "displayName": authenticator_execution.get("displayName", "Require Client Role"),
+                "level": authenticator_execution.get("level", 0),
+                "index": authenticator_execution.get("index", 0),
+                "configurable": True,
+                "authenticationFlow": False,
+            }
+            self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=flow_alias)
+            logger.debug("Set RequireClientRoleAuthenticator to REQUIRED")
 
         # Step 3: Configure the authenticator with client ID, role name, and error message
         execution_id = authenticator_execution.get("id")
+        existing_config_id = authenticator_execution.get("authenticationConfig")
         config_alias = f"require-role-{client_id}-{role_name}"
         config_data = {
             "alias": config_alias,
@@ -2255,10 +2330,16 @@ class KeycloakConnector:
             },
         }
 
-        # Use the raw connection to create the authenticator config
-        url = f"admin/realms/{self.admin.connection.realm_name}/authentication/executions/{execution_id}/config"
-        self.admin.connection.raw_post(url, data=json.dumps(config_data))
-        logger.debug(f"Configured RequireClientRoleAuthenticator: client={client_id}, role={role_name}")
+        if existing_config_id:
+            # Update existing config
+            config_data["id"] = existing_config_id
+            self.admin.update_authenticator_config(payload=config_data, config_id=existing_config_id)
+            logger.debug(f"Updated RequireClientRoleAuthenticator config: client={client_id}, role={role_name}")
+        else:
+            # Create new config
+            url = f"admin/realms/{self.admin.connection.realm_name}/authentication/executions/{execution_id}/config"
+            self.admin.connection.raw_post(url, data=json.dumps(config_data))
+            logger.debug(f"Created RequireClientRoleAuthenticator config: client={client_id}, role={role_name}")
 
     async def set_identity_provider_post_broker_login_flow(
         self, realm_name: str, provider_alias: str, flow_alias: str

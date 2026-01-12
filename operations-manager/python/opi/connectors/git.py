@@ -765,6 +765,54 @@ class GitConnector:
             logger.error(f"Failed to pull latest changes from {server_info}: {e}")
             raise
 
+    async def _rebase_on_remote(self, branch: str | None = None) -> bool:
+        """
+        Rebase local commits on top of remote branch.
+
+        This is used to handle non-fast-forward push rejections by rebasing
+        local commits on top of any new remote commits.
+
+        Args:
+            branch: Branch to rebase on (defaults to configured branch)
+
+        Returns:
+            True if rebase succeeded, False if there were conflicts
+
+        Raises:
+            RuntimeError: If rebase fails for reasons other than conflicts
+        """
+        target_branch = branch or self.branch
+        logger.info(f"Rebasing local commits on origin/{target_branch}")
+
+        try:
+            # First fetch the latest from remote
+            fetch_cmd = ["fetch", "origin", target_branch]
+            stdout, stderr, code = await self._run_git_command(fetch_cmd, cwd=self.__working_dir)
+            self._check_git_command_result(code, stderr, f"fetch origin/{target_branch}")
+
+            # Rebase on the remote branch
+            rebase_cmd = ["rebase", f"origin/{target_branch}"]
+            stdout, stderr, code = await self._run_git_command(rebase_cmd, cwd=self.__working_dir)
+
+            if code != 0:
+                # Check if this is a conflict
+                if "CONFLICT" in stderr or "conflict" in stderr.lower():
+                    logger.error(f"Rebase conflict detected: {stderr}")
+                    # Abort the rebase to leave repo in clean state
+                    abort_cmd = ["rebase", "--abort"]
+                    await self._run_git_command(abort_cmd, cwd=self.__working_dir)
+                    return False
+                else:
+                    self._check_git_command_result(code, stderr, f"rebase on origin/{target_branch}")
+
+            logger.info(f"Successfully rebased on origin/{target_branch}")
+            return True
+
+        except Exception as e:
+            server_info = self._get_server_context()
+            logger.error(f"Failed to rebase on {server_info}: {e}")
+            raise
+
     async def file_changed_between_commits(self, file_path: str, old_commit: str, new_commit: str) -> bool:
         """
         Check if a specific file was changed between commits using git diff.
@@ -1232,24 +1280,68 @@ class GitConnector:
         logger.debug(f"Successfully committed changes: {message}")
 
     # TODO: update push changes to handle rebase, and if rebase fails, commit and push to temporary branch
-    async def push_changes(self, branch: str | None = None) -> None:
+    async def push_changes(self, branch: str | None = None, max_retries: int = 3) -> None:
         """
         Push committed changes to remote repository.
 
+        If the push fails due to non-fast-forward (remote has newer commits),
+        this method will automatically fetch, rebase, and retry the push.
+
         Args:
             branch: Branch to push to (defaults to configured branch)
+            max_retries: Maximum number of push attempts after rebase (default: 3)
 
         Raises:
-            RuntimeError: If push fails
+            RuntimeError: If push fails after all retries or if rebase has conflicts
         """
         await self.ensure_repo_cloned()
 
         target_branch = branch or self.branch
-        push_cmd = ["push", "origin", target_branch]
-        stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
-        self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
 
-        logger.debug(f"Successfully pushed changes to {target_branch}")
+        for attempt in range(max_retries):
+            push_cmd = ["push", "origin", target_branch]
+            stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
+
+            if code == 0:
+                logger.debug(f"Successfully pushed changes to {target_branch}")
+                return
+
+            # Check if this is a non-fast-forward error (remote has newer commits)
+            is_non_fast_forward = (
+                "non-fast-forward" in stderr.lower()
+                or "failed to push some refs" in stderr.lower()
+                or "fetch first" in stderr.lower()
+                or "git pull" in stderr.lower()
+            )
+
+            if not is_non_fast_forward:
+                # Some other error, fail immediately
+                self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
+
+            # Non-fast-forward error - try to rebase and retry
+            if attempt < max_retries - 1:
+                logger.warning(
+                    f"Push rejected (non-fast-forward), attempting rebase and retry "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+
+                rebase_success = await self._rebase_on_remote(target_branch)
+                if not rebase_success:
+                    server_info = self._get_server_context()
+                    raise RuntimeError(
+                        f"Cannot push to {target_branch} on {server_info}: "
+                        f"Remote has conflicting changes that cannot be automatically merged. "
+                        f"Manual intervention required."
+                    )
+
+                logger.info("Rebase successful, retrying push...")
+            else:
+                # Last attempt failed
+                server_info = self._get_server_context()
+                raise RuntimeError(
+                    f"Failed to push changes to {target_branch} on {server_info} "
+                    f"after {max_retries} attempts: {stderr}"
+                )
 
     async def commit_and_push_changes(
         self, message: str, files_or_paths: list[str] | None = None, branch: str | None = None

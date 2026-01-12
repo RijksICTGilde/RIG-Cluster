@@ -63,9 +63,12 @@ class KeycloakManager:
         # Check if any helm-charts in this deployment use keycloak service
         uses_keycloak_via_helm = self._deployment_uses_keycloak_via_helm_charts(project_data, deployment_name)
 
-        if not sso_components and not uses_keycloak_via_helm:
+        # Check if any helmfiles in this deployment use keycloak service
+        uses_keycloak_via_helmfile = self._deployment_uses_keycloak_via_helmfile(project_data, deployment_name)
+
+        if not sso_components and not uses_keycloak_via_helm and not uses_keycloak_via_helmfile:
             logger.debug(
-                f"Deployment {deployment_name} has no components or helm-charts using Keycloak service, skipping"
+                f"Deployment {deployment_name} has no components, helm-charts, or helmfiles using Keycloak service, skipping"
             )
             return
 
@@ -74,6 +77,8 @@ class KeycloakManager:
             logger.info(f"Found {len(sso_components)} components using SSO: {', '.join(sso_components)}")
         if uses_keycloak_via_helm:
             logger.info(f"Deployment {deployment_name} uses Keycloak via helm-charts")
+        if uses_keycloak_via_helmfile:
+            logger.info(f"Deployment {deployment_name} uses Keycloak via helmfile")
 
         # Extract and validate Keycloak configuration
         # This will raise ValueError/FileNotFoundError on invalid config
@@ -125,8 +130,21 @@ class KeycloakManager:
                     all_ingress_hosts.append(helm_hostname)
                     logger.info(f"Added hostname for helm-chart deployment: {helm_hostname}")
 
+            # Process helmfile-based SSO
+            if uses_keycloak_via_helmfile:
+                if not subdomain:
+                    raise ValueError(
+                        f"Helmfile deployment {deployment_name} uses Keycloak but is missing required 'subdomain' field"
+                    )
+                # For helmfile deployments, construct hostname from subdomain + base-domain
+                effective_base_domain = resolve_effective_base_domain(base_domain, ingress_postfix)
+                helmfile_hostname = generate_external_hostname(subdomain, effective_base_domain)
+                if helmfile_hostname not in all_ingress_hosts:
+                    all_ingress_hosts.append(helmfile_hostname)
+                    logger.info(f"Added hostname for helmfile deployment: {helmfile_hostname}")
+
             if not all_ingress_hosts:
-                logger.info(f"No SSO-enabled components or helm-charts found in deployment {deployment_name}, skipping")
+                logger.info(f"No SSO-enabled components, helm-charts, or helmfiles found in deployment {deployment_name}, skipping")
                 return
 
             logger.info(
@@ -572,6 +590,48 @@ class KeycloakManager:
             uses_services = helm_chart_def.get("uses-services", [])
             chart_services = ServiceAdapter.parse_services_from_strings(uses_services)
             if ServiceType.KEYCLOAK in chart_services:
+                return True
+
+        return False
+
+    def _deployment_uses_keycloak_via_helmfile(
+        self, project_data: dict[str, Any], deployment_name: str
+    ) -> bool:
+        """
+        Check if a deployment uses Keycloak service via helmfile.
+
+        Args:
+            project_data: The project configuration data
+            deployment_name: Name of the deployment to check
+
+        Returns:
+            True if deployment uses Keycloak via helmfile, False otherwise
+        """
+        # Get helmfile references from the deployment
+        helmfile_refs = self.project_manager._project_file_handler.extract_deployment_helmfiles(
+            project_data, deployment_name
+        )
+
+        if not helmfile_refs:
+            return False
+
+        # Check each helmfile reference for keycloak service
+        for helmfile_ref in helmfile_refs:
+            helmfile_reference = helmfile_ref.get("reference")
+            if not helmfile_reference:
+                continue
+
+            # Find the helmfile definition
+            helmfile_def = self.project_manager._project_file_handler.get_helmfile_by_name(
+                project_data, helmfile_reference
+            )
+            if not helmfile_def:
+                continue
+
+            # Check uses-services in the helmfile definition
+            uses_services = helmfile_def.get("uses-services", [])
+            helmfile_services = ServiceAdapter.parse_services_from_strings(uses_services)
+            if ServiceType.KEYCLOAK in helmfile_services:
                 return True
 
         return False

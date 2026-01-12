@@ -257,8 +257,14 @@ class UpdateImageRequest(BaseModel):
 
 class ProjectDeleteRequest(BaseModel):
     confirmDeletion: bool = Field(False, description="Safety flag - must be true to confirm deletion", example=True)
+    force: bool = Field(
+        False,
+        description="Force deletion mode - continues on errors and cleans up stuck resources. "
+        "Use when a previous deletion failed partially or resources are in an inconsistent state.",
+        example=False,
+    )
 
-    model_config = {"json_schema_extra": {"example": {"confirmDeletion": True}}}
+    model_config = {"json_schema_extra": {"example": {"confirmDeletion": True, "force": False}}}
 
 
 class ChiselTunnelConfig(BaseModel):
@@ -772,9 +778,16 @@ async def delete_project(
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-api-key-here" \
       -d '{
-        "confirmDeletion": true
+        "confirmDeletion": true,
+        "force": false
       }'
     ```
+
+    Force mode (force: true):
+    - Continues deletion even when some operations fail
+    - Removes ArgoCD application finalizers if apps are stuck
+    - Skips database cleanup if secrets are inaccessible
+    - Use when a previous deletion failed partially
 
     Args:
         request: The FastAPI request object
@@ -786,7 +799,8 @@ async def delete_project(
     """
     project_manager = None
     try:
-        logger.info(f"Project deletion request for: {project_name}")
+        force_mode = delete_data.force
+        logger.info(f"Project deletion request for: {project_name} (force={force_mode})")
 
         # Safety check: require explicit confirmation
         if not delete_data.confirmDeletion:
@@ -801,7 +815,7 @@ async def delete_project(
         project_manager = create_project_manager()
 
         # Perform the deletion
-        deletion_results = await project_manager.delete_project(project_name)
+        deletion_results = await project_manager.delete_project(project_name, force=force_mode)
 
         # Determine response status code based on results
         if deletion_results["success"]:

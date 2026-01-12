@@ -6,6 +6,7 @@ Processing means it can create, update, or delete any resources defined in a pro
 import glob
 import logging
 import os
+import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypeVar, cast
@@ -68,6 +69,8 @@ from opi.utils.naming import (
     generate_issuer_name,
     generate_issuer_secret_name,
     generate_manifest_name,
+    generate_network_policy_manifest_name,
+    generate_network_policy_name,
     generate_project_realm_name,
     generate_public_url,
     generate_pvc_name,
@@ -1253,12 +1256,18 @@ class ProjectManager:
 
         # Apply the argocd.argoproj.io/managed-by label after creating the namespace
         manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
-        await self._kubectl_connector.apply_label_to_resource(
+        label_result = await self._kubectl_connector.apply_label_to_resource(
             resource_type="namespace",
             resource_name=namespace,
             label_key="argocd.argoproj.io/managed-by",
             label_value=manager_value,
         )
+
+        if not label_result:
+            raise RuntimeError(
+                f"Failed to apply ArgoCD managed-by label to namespace '{namespace}'. "
+                "ArgoCD will not be able to manage resources in this namespace."
+            )
 
         logger.info(f"Successfully created namespace '{namespace}' with ArgoCD managed-by label")
 
@@ -1271,6 +1280,9 @@ class ProjectManager:
 
         Args:
             namespace: Full namespace name (with cluster prefix already applied)
+
+        Raises:
+            RuntimeError: If the label cannot be applied
         """
         manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
         label_result = await self._kubectl_connector.apply_label_to_resource(
@@ -1282,7 +1294,10 @@ class ProjectManager:
         if label_result:
             logger.info(f"Ensured ArgoCD managed-by label on namespace: {namespace}")
         else:
-            logger.warning(f"Failed to ensure ArgoCD managed-by label on namespace: {namespace}")
+            raise RuntimeError(
+                f"Failed to apply ArgoCD managed-by label to namespace '{namespace}'. "
+                "ArgoCD will not be able to manage resources in this namespace."
+            )
 
     async def _ensure_sops_secret_in_namespace(self, namespace: str, project_data: dict[str, Any]) -> None:
         """
@@ -1421,6 +1436,9 @@ class ProjectManager:
                 logger.info(
                     f"Infrastructure namespace '{infrastructure_namespace}' already exists for project '{project_name}'"
                 )
+
+            # Always ensure ArgoCD managed-by label exists (idempotent)
+            await self._ensure_argocd_managed_by_label(infrastructure_namespace)
 
             # Create SOPS secret in the infrastructure namespace (using shared function)
             await self._ensure_sops_secret_in_namespace(infrastructure_namespace, project_data)
@@ -2171,7 +2189,14 @@ class ProjectManager:
 
         logger.info(f"Processing deployment: {deployment_name} at path: {deployment_path}")
 
-        # Check if this is a helm chart deployment or component deployment
+        # Check if this is a helmfile deployment, helm chart deployment, or component deployment
+        if self._deployment_uses_helmfile(deployment):
+            # Process helmfile deployment (ArgoCD CMP runs helmfile template)
+            logger.info(f"Deployment '{deployment_name}' uses helmfile - processing as helmfile deployment")
+            await self._process_helmfile_deployment(deployment, git_connector, target_path)
+            # Note: SOPS encryption is handled inside _process_helmfile_deployment
+            return
+
         if self._deployment_uses_helm_charts(deployment):
             # Process helm chart deployment (no component manifests, uses Kustomize helmCharts)
             logger.info(f"Deployment '{deployment_name}' uses helm-charts - processing as helm deployment")
@@ -2244,7 +2269,20 @@ class ProjectManager:
         helm_charts = deployment.get("helm-charts", [])
         return len(helm_charts) > 0
 
-    async def _get_helm_values_context(self, deployment_name: str) -> dict[str, str]:
+    def _deployment_uses_helmfile(self, deployment: dict[str, Any]) -> bool:
+        """
+        Check if a deployment uses helmfile instead of components or helm-charts.
+
+        Args:
+            deployment: Deployment configuration
+
+        Returns:
+            True if deployment has helmfile defined
+        """
+        helmfiles = deployment.get("helmfile", [])
+        return len(helmfiles) > 0
+
+    async def _get_helm_values_context(self, deployment_name: str) -> dict[str, Any]:
         """
         Build a context dictionary with all service credentials for alias resolution.
 
@@ -2255,9 +2293,9 @@ class ProjectManager:
             deployment_name: Name of the deployment
 
         Returns:
-            Dictionary mapping alias names to resolved values
+            Dictionary mapping alias names to resolved values (preserving types for integers)
         """
-        context: dict[str, str] = {}
+        context: dict[str, Any] = {}
 
         # Get deployment for cluster info
         deployment = await self.get_deployment_by_name(deployment_name)
@@ -2287,8 +2325,11 @@ class ProjectManager:
 
         # Determine issuer name
         if issuer_config:
-            # Use configured issuer
-            context["ISSUER"] = issuer_config
+            if issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
+                # Generate full issuer name to match the Issuer resource we create
+                context["ISSUER"] = generate_issuer_name(base_domain, issuer_config)
+            else:
+                context["ISSUER"] = issuer_config
         else:
             # Use cluster's default ClusterIssuer
             cluster_issuer = get_ingress_cluster_issuer(cluster_name)
@@ -2310,7 +2351,7 @@ class ProjectManager:
         db_secret = self._get_secret_from_map(deployment_name, "database", DatabaseSecret)
         if db_secret:
             context["DATABASE_SERVER_HOST"] = db_secret.host
-            context["DATABASE_SERVER_PORT"] = str(db_secret.port)
+            context["DATABASE_SERVER_PORT"] = db_secret.port  # Keep as int for YAML type preservation
             context["DATABASE_SERVER_USER"] = db_secret.username
             context["DATABASE_PASSWORD"] = db_secret.password
             context["DATABASE_DB"] = db_secret.database
@@ -2320,7 +2361,7 @@ class ProjectManager:
         minio_secret = self._get_secret_from_map(deployment_name, "minio", MinIOSecret)
         if minio_secret:
             context["OBJECT_STORE_HOST"] = minio_secret.host
-            context["OBJECT_STORE_PORT"] = str(minio_secret.port)
+            context["OBJECT_STORE_PORT"] = minio_secret.port  # Keep as int for YAML type preservation
             context["OBJECT_STORE_URL"] = minio_secret.url
             context["OBJECT_STORE_ENDPOINT_URL"] = minio_secret.endpoint_url
             context["OBJECT_STORE_USER"] = minio_secret.access_key
@@ -2341,18 +2382,19 @@ class ProjectManager:
         redis_secret = self._get_secret_from_map(deployment_name, "redis", RedisSecret)
         if redis_secret:
             context["REDIS_HOST"] = redis_secret.host
-            context["REDIS_PORT"] = str(redis_secret.port)
+            context["REDIS_PORT"] = redis_secret.port  # Keep as int for YAML type preservation
             context["REDIS_PASSWORD"] = redis_secret.password
             context["REDIS_URL"] = redis_secret.url
 
         logger.debug(f"Built helm values context with {len(context)} variables for deployment '{deployment_name}'")
         return context
 
-    def _resolve_nested_aliases(self, obj: Any, context: dict[str, str]) -> Any:
+    def _resolve_nested_aliases(self, obj: Any, context: dict[str, Any]) -> Any:
         """
         Recursively resolve $ALIAS references in a nested YAML structure.
 
         Supports both $VAR and ${VAR} syntax for variable substitution.
+        Preserves types (int, bool) when the entire value is a single variable reference.
 
         Args:
             obj: The object to process (can be dict, list, or scalar)
@@ -2362,6 +2404,12 @@ class ProjectManager:
             The object with all aliases resolved
         """
         if isinstance(obj, str):
+            # Check if entire string is exactly a single variable reference
+            # This preserves types (e.g., integers) instead of converting to string
+            for key, value in context.items():
+                if obj == f"${key}" or obj == f"${{{key}}}":
+                    return value  # Return raw value, preserving original type
+            # Otherwise do string replacement (for partial matches or multiple variables)
             result = obj
             for key, value in context.items():
                 result = result.replace(f"${key}", str(value))
@@ -2603,12 +2651,85 @@ class ProjectManager:
         )
         logger.info(f"Created {len(secret_files)} service secret manifests for helm deployment")
 
+        # Create Let's Encrypt Issuer manifest if configured
+        regular_files: list[str] = []
+        issuer_config = deployment.get("issuer")
+        base_domain = deployment.get("base-domain")
+
+        # Only auto-generate issuer if issuer_config is exactly "letsencrypt" or "letsencrypt-staging"
+        # If issuer_config already contains a domain suffix, use it as-is (no generation needed)
+        if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
+            # Determine contact email: project override or cluster default
+            project_contact_email = project_data.get("config", {}).get("contact-email")
+            cluster_contact_email = get_letsencrypt_contact_email(cluster_name)
+            contact_email = project_contact_email or cluster_contact_email
+
+            if contact_email:
+                issuer_template_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
+                )
+
+                issuer_name_generated = generate_issuer_name(base_domain, issuer_config)
+                issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config)
+                issuer_manifest_filename = generate_issuer_manifest_name(base_domain, issuer_config).replace(
+                    ".yaml", ""
+                )
+
+                issuer_variables = {
+                    "issuer_name": issuer_name_generated,
+                    "issuer_secret_name": issuer_secret_name,
+                    "contact_email": contact_email,
+                    "staging": issuer_config == "letsencrypt-staging",
+                    "namespace": prefixed_namespace,
+                }
+
+                issuer_manifest_path = self._manifest_generator.create_manifest_file(
+                    template_path=issuer_template_path,
+                    values=issuer_variables,
+                    output_dir=target_path,
+                    output_filename=issuer_manifest_filename,
+                    use_sops=False,
+                )
+
+                regular_files.append(f"{issuer_manifest_filename}.yaml")
+                logger.info(
+                    f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
+                )
+
+                # Create network policy for ACME HTTP-01 challenge
+                # This allows ingress on port 80 to all pods, required for the ACME solver
+                network_policy_template_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                )
+                network_policy_filename = generate_network_policy_manifest_name("acme-http")
+                network_policy_variables = {
+                    "name": generate_network_policy_name("acme-http"),
+                    "namespace": prefixed_namespace,
+                    "pod_selector": None,  # Match all pods
+                    "ports": [80],
+                }
+                network_policy_path = self._manifest_generator.create_manifest_file(
+                    template_path=network_policy_template_path,
+                    values=network_policy_variables,
+                    output_dir=target_path,
+                    output_filename=network_policy_filename,
+                    use_sops=False,
+                )
+                regular_files.append(f"{network_policy_filename}.yaml")
+                logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
+            else:
+                logger.warning(
+                    f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
+                    f"(set contact-email in project config or letsencrypt.contact_email in cluster config)"
+                )
+
         # Create kustomization.yaml with helmCharts section and secret resources
         await self._create_helm_kustomization(
             target_path,
             prefixed_namespace,
             helm_charts_config,
             secret_files,
+            regular_files,
         )
 
         # Encrypt .to-sops.yaml files to .sops.yaml
@@ -2646,6 +2767,405 @@ class ProjectManager:
 
         logger.info("All helm values files successfully encrypted")
         logger.info(f"Helm chart deployment processing complete for: {deployment_name}")
+
+    # ==========================================================================
+    # Helmfile Processing Methods
+    # ==========================================================================
+
+    def _write_helmfile_custom_files(
+        self,
+        helmfile_def: dict[str, Any],
+        helmfile_ref: dict[str, Any],
+        target_path: str,
+    ) -> list[str]:
+        """
+        Write custom files defined in helmfile definition and deployment reference.
+
+        Files can be defined at two levels:
+        1. helmfile.files - base files that apply to all deployments
+        2. deployment.helmfile[].files - deployment-specific files (override base)
+
+        Args:
+            helmfile_def: Helmfile definition from project (contains base files)
+            helmfile_ref: Helmfile reference from deployment (contains override files)
+            target_path: Directory where files should be written
+
+        Returns:
+            List of filenames that were written
+        """
+        written_files: list[str] = []
+
+        # Merge files: base files first, then deployment files override
+        base_files = helmfile_def.get("files", {}) or {}
+        deployment_files = helmfile_ref.get("files", {}) or {}
+
+        # Combine with deployment files taking precedence
+        all_files = {**base_files, **deployment_files}
+
+        if not all_files:
+            return written_files
+
+        logger.info(f"Writing {len(all_files)} custom file(s) to {target_path}")
+
+        for filename, content in all_files.items():
+            if not isinstance(content, str):
+                logger.warning(f"Skipping file '{filename}': content must be a string")
+                continue
+
+            # Security: prevent path traversal
+            if ".." in filename or filename.startswith("/"):
+                logger.warning(f"Skipping file '{filename}': path traversal not allowed")
+                continue
+
+            file_path = os.path.join(target_path, filename)
+
+            # Create parent directories if needed
+            file_dir = os.path.dirname(file_path)
+            if file_dir and file_dir != target_path:
+                os.makedirs(file_dir, exist_ok=True)
+
+            with open(file_path, "w") as f:
+                f.write(content)
+
+            written_files.append(filename)
+            logger.info(f"  Created custom file: {filename}")
+
+        return written_files
+
+    async def _clone_helmfile_source(
+        self,
+        helmfile_def: dict[str, Any],
+        target_path: str,
+    ) -> tuple[str, str]:
+        """
+        Clone a helmfile source repository to the target directory.
+
+        Args:
+            helmfile_def: Helmfile definition containing url, ref, path, and entry
+            target_path: Directory where the helmfile should be placed
+
+        Returns:
+            Tuple of (path to cloned directory, entry point relative path)
+            The entry point is the subdirectory containing the helmfile to execute.
+        """
+        import tempfile
+
+        helmfile_name = helmfile_def.get("name", "unknown")
+        source_url = helmfile_def.get("url")
+        source_ref = helmfile_def.get("ref", "main")
+        source_path = helmfile_def.get("path", "")
+        entry_path = helmfile_def.get("entry", "")  # Subdirectory containing the helmfile
+
+        if not source_url:
+            raise ValueError(f"Helmfile '{helmfile_name}' missing required 'url' field")
+
+        # Create a temporary directory for cloning the source
+        with tempfile.TemporaryDirectory() as temp_dir:
+            git_connector = GitConnector(
+                repo_url=source_url,
+                branch=source_ref,
+                working_dir=temp_dir,
+            )
+            await git_connector.clone()
+
+            # Determine source path within the cloned repo
+            full_source_path = os.path.join(temp_dir, source_path) if source_path else temp_dir
+
+            if not os.path.exists(full_source_path):
+                await git_connector.close()
+                raise ValueError(f"Helmfile path '{source_path}' not found in repository for '{helmfile_name}'")
+
+            # If entry is specified, verify it exists within the source path
+            if entry_path:
+                full_entry_path = os.path.join(full_source_path, entry_path)
+                if not os.path.exists(full_entry_path):
+                    await git_connector.close()
+                    raise ValueError(
+                        f"Helmfile entry '{entry_path}' not found within path '{source_path}' for '{helmfile_name}'"
+                    )
+
+            # Copy helmfile content to target directory
+            # This includes the helmfile.yaml and all related files (charts, values, etc.)
+            dest_helmfile_path = target_path
+            os.makedirs(dest_helmfile_path, exist_ok=True)
+
+            # Copy all files from source to destination
+            for item in os.listdir(full_source_path):
+                src_item = os.path.join(full_source_path, item)
+                dst_item = os.path.join(dest_helmfile_path, item)
+                if os.path.isdir(src_item):
+                    shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src_item, dst_item)
+
+            logger.info(f"Copied helmfile source from {full_source_path} to {dest_helmfile_path}")
+            if entry_path:
+                logger.info(f"Helmfile entry point: {entry_path}")
+
+            await git_connector.close()
+
+        return dest_helmfile_path, entry_path
+
+    async def _process_helmfile_deployment(
+        self,
+        deployment: dict[str, Any],
+        git_connector: GitConnector,
+        target_path: str,
+    ) -> None:
+        """
+        Process a deployment that uses helmfile instead of components or helm-charts.
+
+        This method:
+        1. Clones the helmfile source from git
+        2. Extracts and merges helm-values (base + deployment-specific)
+        3. Resolves $ALIAS references using service credentials
+        4. Creates values.sops.yaml with resolved values (CMP decrypts at runtime)
+        5. Creates service secret manifests (database, minio, redis, keycloak)
+
+        The CMP plugin will:
+        - Detect helmfile.yaml in the directory
+        - Decrypt values.sops.yaml -> values.yaml
+        - Run: helmfile template --values values.yaml
+        - Output rendered manifests to ArgoCD
+
+        Args:
+            deployment: Deployment configuration
+            git_connector: Git connector for the target repository
+            target_path: Full path to the deployment directory
+        """
+        project_data = await self.get_contents()
+        deployment_name = deployment.get("name")
+        if not deployment_name:
+            raise ValueError("Deployment missing required 'name' field")
+
+        cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
+        prefixed_namespace = get_prefixed_namespace(cluster_name, deployment["namespace"])
+
+        logger.info(f"Processing helmfile deployment: {deployment_name}")
+
+        # Ensure target directory exists
+        os.makedirs(target_path, exist_ok=True)
+
+        # Get helmfile references from deployment
+        helmfile_refs = deployment.get("helmfile", [])
+
+        # Build the credentials context for alias resolution
+        context = await self._get_helm_values_context(deployment_name)
+
+        # Add namespace to context for alias resolution
+        context["NAMESPACE"] = prefixed_namespace
+
+        # Process each helmfile reference
+        for helmfile_ref in helmfile_refs:
+            helmfile_reference = helmfile_ref.get("reference")
+            if not helmfile_reference:
+                raise ValueError("Helmfile reference missing required 'reference' field")
+
+            logger.info(f"Processing helmfile reference: {helmfile_reference}")
+
+            # Find the helmfile definition in project
+            helmfile_def = self._project_file_handler.get_helmfile_by_name(project_data, helmfile_reference)
+            if not helmfile_def:
+                raise ValueError(f"Helmfile '{helmfile_reference}' not found in project definition")
+
+            # Clone the helmfile source to target directory
+            _, entry_path = await self._clone_helmfile_source(helmfile_def, target_path)
+
+            # Write helmfile entry config for CMP to use
+            if entry_path:
+                helmfile_config_path = os.path.join(target_path, ".helmfile-entry")
+                with open(helmfile_config_path, "w") as f:
+                    f.write(entry_path)
+                logger.info(f"Created helmfile entry config: {helmfile_config_path} -> {entry_path}")
+
+            # Write .cmp-env file with environment variables for the CMP
+            cmp_env_path = os.path.join(target_path, ".cmp-env")
+            cmp_env_vars: list[str] = []
+
+            # Add env-vars from the deployment's helmfile reference
+            # These can be plain text or AGE-encrypted values
+            env_vars = helmfile_ref.get("env-vars", {})
+            if env_vars and isinstance(env_vars, dict):
+                for key, value in env_vars.items():
+                    # Decrypt if value is AGE-encrypted
+                    if isinstance(value, str) and "-----BEGIN AGE ENCRYPTED FILE-----" in value:
+                        decrypted_value = decrypt_age_content(value, private_key)
+                        cmp_env_vars.append(f"{key}={decrypted_value}")
+                    else:
+                        cmp_env_vars.append(f"{key}={value}")
+
+            if cmp_env_vars:
+                with open(cmp_env_path, "w") as f:
+                    f.write("\n".join(cmp_env_vars) + "\n")
+                logger.info(f"Created CMP environment file: {cmp_env_path}")
+
+            # Extract base helm-values from helmfile definition
+            base_values = await self._project_file_handler.extract_helmfile_values(
+                project_data, helmfile_reference
+            )
+
+            # Extract deployment-level helm-values
+            deployment_values = await self._project_file_handler.extract_deployment_helmfile_values(
+                project_data, deployment_name, helmfile_reference
+            )
+
+            # Deep merge values (deployment overrides base)
+            merged_values = self._deep_merge_dicts(base_values, deployment_values)
+
+            # Resolve $ALIAS references in the merged values
+            resolved_values = self._resolve_nested_aliases(merged_values, context)
+
+            # Write values as .to-sops.yaml (will be encrypted later)
+            # CMP plugin looks for values.sops.yaml in helmfile directories
+            values_file_to_sops = "values.to-sops.yaml"
+            values_path = os.path.join(target_path, values_file_to_sops)
+
+            yaml = YAML()
+            yaml.default_flow_style = False
+            with open(values_path, "w") as f:
+                yaml.dump(resolved_values, f)
+
+            logger.info(f"Created helmfile values file (to be encrypted): {values_path}")
+
+            # Write custom files defined in project (base) and deployment (override)
+            # This allows users to override helmfile.yaml.gotmpl or add other files
+            custom_files = self._write_helmfile_custom_files(helmfile_def, helmfile_ref, target_path)
+            if custom_files:
+                logger.info(f"Wrote {len(custom_files)} custom file(s) for helmfile deployment")
+
+        # Create service secret manifests (database, minio, redis, keycloak)
+        secret_files = await self._create_deployment_secrets(
+            deployment_name,
+            target_path,
+            prefixed_namespace,
+            cluster_name,
+        )
+        logger.info(f"Created {len(secret_files)} service secret manifests for helmfile deployment")
+
+        # Create Let's Encrypt Issuer manifest if configured
+        regular_files: list[str] = []
+        issuer_config = deployment.get("issuer")
+        base_domain = deployment.get("base-domain")
+
+        if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
+            project_contact_email = project_data.get("config", {}).get("contact-email")
+            cluster_contact_email = get_letsencrypt_contact_email(cluster_name)
+            contact_email = project_contact_email or cluster_contact_email
+
+            if contact_email:
+                issuer_template_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
+                )
+
+                issuer_name_generated = generate_issuer_name(base_domain, issuer_config)
+                issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config)
+                issuer_manifest_filename = generate_issuer_manifest_name(base_domain, issuer_config).replace(
+                    ".yaml", ""
+                )
+
+                issuer_variables = {
+                    "issuer_name": issuer_name_generated,
+                    "issuer_secret_name": issuer_secret_name,
+                    "contact_email": contact_email,
+                    "staging": issuer_config == "letsencrypt-staging",
+                    "namespace": prefixed_namespace,
+                }
+
+                issuer_manifest_path = self._manifest_generator.create_manifest_file(
+                    template_path=issuer_template_path,
+                    values=issuer_variables,
+                    output_dir=target_path,
+                    output_filename=issuer_manifest_filename,
+                    use_sops=False,
+                )
+
+                regular_files.append(f"{issuer_manifest_filename}.yaml")
+                logger.info(
+                    f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
+                )
+
+                # Create network policy for ACME HTTP-01 challenge
+                network_policy_template_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                )
+                network_policy_filename = generate_network_policy_manifest_name("acme-http")
+                network_policy_variables = {
+                    "name": generate_network_policy_name("acme-http"),
+                    "namespace": prefixed_namespace,
+                    "pod_selector": None,
+                    "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
+                }
+                network_policy_path = self._manifest_generator.create_manifest_file(
+                    template_path=network_policy_template_path,
+                    values=network_policy_variables,
+                    output_dir=target_path,
+                    output_filename=network_policy_filename,
+                    use_sops=False,
+                )
+                regular_files.append(f"{network_policy_filename}.yaml")
+                logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
+            else:
+                logger.warning(
+                    f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured"
+                )
+
+        # Create kustomization.yaml for additional resources (Issuer, NetworkPolicy, Secrets)
+        # The CMP plugin will run BOTH kustomize build AND helmfile template
+        # This ensures Let's Encrypt Issuer, secrets, and other resources are applied alongside helmfile output
+        # Convert .to-sops.yaml filenames to .sops.yaml (they get encrypted below)
+        sops_files = [f.replace(".to-sops.yaml", ".sops.yaml") for f in secret_files]
+
+        if regular_files or sops_files:
+            logger.info(
+                f"Creating kustomization.yaml for helmfile deployment with "
+                f"{len(regular_files)} resources and {len(sops_files)} SOPS files"
+            )
+            self._manifest_generator.create_kustomization_files(
+                output_dir=target_path,
+                namespace=prefixed_namespace,
+                sops_files=sops_files,  # Include secret SOPS files
+                regular_files=regular_files,
+                helm_charts=[],  # No helm charts - helmfile handles this
+            )
+            logger.info(f"Created kustomization.yaml with resources: {regular_files}, sops: {sops_files}")
+        else:
+            logger.debug("No additional resources for kustomization.yaml, skipping creation")
+
+        # Encrypt .to-sops.yaml files to .sops.yaml
+        public_key = get_project_public_key(project_data)
+        if not public_key:
+            raise ValueError(
+                f"No public key found for project, cannot encrypt helm values for deployment: {deployment_name}. "
+                "This would commit secrets in plain text to git!"
+            )
+
+        logger.info(f"Encrypting helmfile values files for deployment: {deployment_name}")
+
+        # List .to-sops.yaml files before encryption for debugging
+        to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
+        to_sops_files = glob.glob(to_sops_pattern)
+        logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
+        for file_path in to_sops_files:
+            logger.info(f"  - {os.path.basename(file_path)}")
+
+        encryption_success = encrypt_to_sops_files(target_path, public_key)
+        if not encryption_success:
+            raise RuntimeError(
+                f"Failed to encrypt helmfile values files for deployment: {deployment_name}. "
+                "This would commit secrets in plain text to git!"
+            )
+
+        # Verify all files were encrypted
+        remaining_to_sops_files = glob.glob(to_sops_pattern)
+        if remaining_to_sops_files:
+            file_names = [os.path.basename(f) for f in remaining_to_sops_files]
+            raise RuntimeError(
+                f"Found {len(remaining_to_sops_files)} .to-sops.yaml files that were NOT encrypted: "
+                f"{', '.join(file_names)}. This would commit secrets in plain text to git!"
+            )
+
+        logger.info("All helmfile values files successfully encrypted")
+        logger.info(f"Helmfile deployment processing complete for: {deployment_name}")
 
     async def _create_deployment_secrets(
         self,
@@ -2763,6 +3283,7 @@ class ProjectManager:
         namespace: str,
         helm_charts: list[dict[str, Any]],
         secret_files: list[str] | None = None,
+        regular_files: list[str] | None = None,
     ) -> None:
         """
         Create kustomization.yaml and decrypt-sops.yaml files for helm chart deployment.
@@ -2774,6 +3295,7 @@ class ProjectManager:
             namespace: Target namespace
             helm_charts: List of helm chart configurations
             secret_files: Optional list of secret manifest files (.to-sops.yaml) to include
+            regular_files: Optional list of regular manifest files (e.g., Issuer) to include
         """
         # Collect SOPS files for decryption (Secret manifests only)
         # NOTE: Helm values files are NOT included here - they are decrypted by the
@@ -2789,7 +3311,7 @@ class ProjectManager:
             output_dir=target_path,
             namespace=namespace,
             sops_files=all_sops_files if all_sops_files else None,
-            regular_files=[],  # No regular files for helm deployments
+            regular_files=regular_files if regular_files else [],
             helm_charts=helm_charts,
         )
 
@@ -3697,6 +4219,28 @@ class ProjectManager:
                         logger.info(
                             f"Successfully created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
                         )
+
+                        # Create network policy for ACME HTTP-01 challenge
+                        # This allows ingress on port 80 to all pods, required for the ACME solver
+                        network_policy_template_path = os.path.join(
+                            os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                        )
+                        network_policy_filename = generate_network_policy_manifest_name("acme-http")
+                        network_policy_variables = {
+                            "name": generate_network_policy_name("acme-http"),
+                            "namespace": namespace,
+                            "pod_selector": None,  # Match all pods
+                            "ports": [80],
+                        }
+                        network_policy_path = self._manifest_generator.create_manifest_file(
+                            template_path=network_policy_template_path,
+                            values=network_policy_variables,
+                            output_dir=full_output_dir,
+                            output_filename=network_policy_filename,
+                            use_sops=False,
+                        )
+                        created_files.append(f"{network_policy_filename}.yaml")
+                        logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
                     else:
                         logger.warning(
                             f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
@@ -4761,13 +5305,32 @@ class ProjectManager:
         return result
 
     # Delegation methods for project deletion - delegated to DeleteProjectManager
-    async def delete_deployment(self, project_name: str, deployment_name: str) -> dict[str, Any]:
-        """Delete all resources associated with a specific deployment."""
-        return await self._delete_project_manager.delete_deployment(project_name, deployment_name)
+    async def delete_deployment(self, project_name: str, deployment_name: str, force: bool = False) -> dict[str, Any]:
+        """
+        Delete all resources associated with a specific deployment.
 
-    async def delete_project(self, project_name: str) -> dict[str, Any]:
-        """Delete a project by first deleting all deployments on the current cluster."""
-        return await self._delete_project_manager.delete_project(project_name)
+        Args:
+            project_name: Name of the project
+            deployment_name: Name of the deployment to delete
+            force: If True, continues on errors and cleans up stuck resources
+
+        Returns:
+            Dictionary containing deletion results
+        """
+        return await self._delete_project_manager.delete_deployment(project_name, deployment_name, force=force)
+
+    async def delete_project(self, project_name: str, force: bool = False) -> dict[str, Any]:
+        """
+        Delete a project by first deleting all deployments on the current cluster.
+
+        Args:
+            project_name: Name of the project to delete
+            force: If True, continues on errors and cleans up stuck resources
+
+        Returns:
+            Dictionary containing deletion results
+        """
+        return await self._delete_project_manager.delete_project(project_name, force=force)
 
     async def delete_deployment_resources(self, project_name: str, deployment_name: str) -> dict[str, Any]:
         """Delete resources for a specific deployment."""

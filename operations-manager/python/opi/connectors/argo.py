@@ -269,7 +269,11 @@ class ArgoConnector:
             app_name: Name of the application. If None, uses default_app_name
 
         Returns:
-            Application status dictionary if successful, None otherwise
+            Application status dictionary if successful, None if application doesn't exist (404)
+
+        Raises:
+            PermissionError: If access to the application is denied (403)
+            RuntimeError: If an unexpected error occurs
         """
         app_name = app_name or self.default_app_name
         logger.info(f"Getting status for application: {app_name}")
@@ -283,13 +287,23 @@ class ArgoConnector:
                 status_data = json.loads(response_text)
                 logger.info(f"Successfully retrieved status for application: {app_name}")
                 return status_data
+            elif status_code == 404:
+                logger.info(f"Application {app_name} not found (404)")
+                return None
+            elif status_code == 403:
+                logger.error(f"Permission denied accessing application {app_name}: {response_text}")
+                raise PermissionError(f"Permission denied accessing application '{app_name}'")
             else:
                 logger.error(f"Status request failed with status {status_code}: {response_text}")
-                return None
+                raise RuntimeError(f"Failed to get application status: HTTP {status_code}")
 
+        except PermissionError:
+            raise
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Error getting application status: {e}")
-            return None
+            raise RuntimeError(f"Error getting application status: {e}")
 
     async def list_applications(self) -> list[dict[str, Any]]:
         """
@@ -388,18 +402,18 @@ class ArgoConnector:
             app_name: Name of the application to check
 
         Returns:
-            True if application exists, False otherwise
+            True if application exists, False if it doesn't exist (404)
+
+        Raises:
+            PermissionError: If access to the application is denied (403)
+            RuntimeError: If an unexpected error occurs
         """
         logger.debug(f"Checking if application exists: {app_name}")
 
-        try:
-            status_data = await self.get_application_status(app_name)
-            exists = status_data is not None
-            logger.debug(f"Application {app_name} exists: {exists}")
-            return exists
-        except Exception as e:
-            logger.error(f"Error checking if application exists: {e}")
-            return False
+        status_data = await self.get_application_status(app_name)
+        exists = status_data is not None
+        logger.debug(f"Application {app_name} exists: {exists}")
+        return exists
 
     async def wait_for_application_deletion(self, app_name: str, max_retries: int = 5, retry_delay: int = 3) -> bool:
         """
@@ -412,6 +426,9 @@ class ArgoConnector:
 
         Returns:
             True if application was deleted, False if it still exists after max retries
+
+        Raises:
+            PermissionError: If access to the application is denied (403)
         """
         import asyncio
 
@@ -428,6 +445,9 @@ class ArgoConnector:
                 if attempt < max_retries - 1:  # Don't sleep on the last attempt
                     await asyncio.sleep(retry_delay)
 
+            except PermissionError:
+                # Permission denied - propagate this error as we can't determine state
+                raise
             except Exception as e:
                 logger.error(f"Error checking application deletion status: {e}")
                 if attempt < max_retries - 1:

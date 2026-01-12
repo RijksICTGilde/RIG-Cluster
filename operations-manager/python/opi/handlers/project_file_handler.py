@@ -349,22 +349,32 @@ class ProjectFileHandler:
         # This ensures consistent return types for array queries
         if "[*]" in path:
             if private_key:
-                return [self._decrypt_with_private_key(match.value, private_key) for match in matches]
+                return [
+                    self._decrypt_with_private_key(match.value, private_key)
+                    if isinstance(match.value, str) else match.value
+                    for match in matches
+                ]
             else:
                 return [match.value for match in matches]
 
         # If multiple matches (but not explicitly using [*]), return all values as a list
         if len(matches) > 1:
             if private_key:
-                return [self._decrypt_with_private_key(match.value, private_key) for match in matches]
+                return [
+                    self._decrypt_with_private_key(match.value, private_key)
+                    if isinstance(match.value, str) else match.value
+                    for match in matches
+                ]
             else:
                 return [match.value for match in matches]
 
         # Single match - return the value directly
-        if private_key:
-            return self._decrypt_with_private_key(matches[0].value, private_key)
+        # Only decrypt if value is a string (not already a dict/list)
+        value = matches[0].value
+        if private_key and isinstance(value, str):
+            return self._decrypt_with_private_key(value, private_key)
         else:
-            return matches[0].value
+            return value
 
     def extract_component_port(self, project_data: dict[str, Any], component_name: str, default_port: int = 80) -> int:
         """
@@ -1109,6 +1119,182 @@ class ProjectFileHandler:
         logger.debug(f"No uses-services found for helm chart '{chart_name}'")
         return []
 
+    # ========================================================================
+    # Helmfile Methods
+    # ========================================================================
+
+    def extract_helmfiles(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Extract helmfile definitions from project data.
+
+        Args:
+            project_data: The parsed project data
+
+        Returns:
+            List of helmfile configurations
+        """
+        helmfiles = project_data.get("helmfile", [])
+        logger.debug(f"Found {len(helmfiles)} helmfile(s)")
+        return helmfiles
+
+    def get_helmfile_by_name(self, project_data: dict[str, Any], name: str) -> dict[str, Any] | None:
+        """
+        Get a specific helmfile by name.
+
+        Args:
+            project_data: The parsed project data
+            name: Name of the helmfile to find
+
+        Returns:
+            Helmfile configuration or None if not found
+        """
+        helmfiles = self.extract_helmfiles(project_data)
+        for helmfile in helmfiles:
+            if helmfile.get("name") == name:
+                logger.debug(f"Found helmfile: {name}")
+                return helmfile
+
+        logger.warning(f"Helmfile '{name}' not found")
+        return None
+
+    async def extract_helmfile_values(
+        self, project_data: dict[str, Any], helmfile_name: str
+    ) -> dict[str, Any]:
+        """
+        Extract helm-values from a helmfile definition by name (base values).
+
+        The values are AGE-encrypted in the project file and are decrypted here.
+
+        Args:
+            project_data: The parsed project data
+            helmfile_name: Name of the helmfile to extract values for
+
+        Returns:
+            Dictionary of helm values or empty dict if none found
+        """
+        private_key = await get_decoded_project_private_key(project_data)
+
+        # Use JSONPath to find the helmfile by name and extract its helm-values
+        path = f"$.helmfile[?(@.name=='{helmfile_name}')].helm-values"
+        helm_values_str = self.extract_value_by_path(project_data, path, None, private_key)
+
+        if helm_values_str and isinstance(helm_values_str, dict):
+            logger.info(f"Found {len(helm_values_str)} helm value(s) for helmfile '{helmfile_name}'")
+            return helm_values_str
+        elif helm_values_str and isinstance(helm_values_str, str):
+            # Try parsing as YAML if it's a string
+            try:
+                yaml = YAML()
+                parsed_values = yaml.load(helm_values_str)
+                if isinstance(parsed_values, dict):
+                    logger.info(f"Parsed helm values for helmfile '{helmfile_name}'")
+                    return parsed_values
+            except Exception as e:
+                logger.warning(f"Could not parse helm values as YAML for helmfile '{helmfile_name}': {e}")
+
+        logger.debug(f"No helm-values found for helmfile '{helmfile_name}'")
+        return {}
+
+    async def extract_deployment_helmfile_values(
+        self, project_data: dict[str, Any], deployment_name: str, helmfile_reference: str
+    ) -> dict[str, Any]:
+        """
+        Extract helm-values from a deployment's helmfile reference (deployment-specific overrides).
+
+        The values are AGE-encrypted in the project file and are decrypted here.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            helmfile_reference: Reference name of the helmfile in the deployment
+
+        Returns:
+            Dictionary of helm values or empty dict if none found
+        """
+        private_key = await get_decoded_project_private_key(project_data)
+
+        # Use JSONPath to find the deployment helmfile reference and extract its helm-values
+        path = (
+            f"$.deployments[?(@.name=='{deployment_name}')]"
+            f".helmfile[?(@.reference=='{helmfile_reference}')].helm-values"
+        )
+        helm_values_str = self.extract_value_by_path(project_data, path, None, private_key)
+
+        if helm_values_str and isinstance(helm_values_str, dict):
+            logger.info(
+                f"Found {len(helm_values_str)} deployment-level helm value(s) "
+                f"for helmfile '{helmfile_reference}' in deployment '{deployment_name}'"
+            )
+            return helm_values_str
+        elif helm_values_str and isinstance(helm_values_str, str):
+            # Try parsing as YAML if it's a string
+            try:
+                yaml = YAML()
+                parsed_values = yaml.load(helm_values_str)
+                if isinstance(parsed_values, dict):
+                    logger.info(
+                        f"Parsed deployment-level helm values for helmfile '{helmfile_reference}' "
+                        f"in deployment '{deployment_name}'"
+                    )
+                    return parsed_values
+            except Exception as e:
+                logger.warning(
+                    f"Could not parse helm values as YAML for helmfile '{helmfile_reference}' "
+                    f"in deployment '{deployment_name}': {e}"
+                )
+
+        logger.debug(
+            f"No deployment-level helm-values found for helmfile '{helmfile_reference}' "
+            f"in deployment '{deployment_name}'"
+        )
+        return {}
+
+    def extract_deployment_helmfiles(
+        self, project_data: dict[str, Any], deployment_name: str
+    ) -> list[dict[str, Any]]:
+        """
+        Extract helmfile references from a deployment.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            List of helmfile references with their deployment-specific config
+        """
+        path = f"$.deployments[?(@.name=='{deployment_name}')].helmfile"
+        helmfiles = self.extract_value_by_path(project_data, path, [])
+
+        if helmfiles:
+            logger.info(f"Found {len(helmfiles)} helmfile reference(s) in deployment '{deployment_name}'")
+            return helmfiles if isinstance(helmfiles, list) else [helmfiles]
+
+        logger.debug(f"No helmfiles found in deployment '{deployment_name}'")
+        return []
+
+    def extract_helmfile_uses_services(
+        self, project_data: dict[str, Any], helmfile_name: str
+    ) -> list[str]:
+        """
+        Extract uses-services from a helmfile definition.
+
+        Args:
+            project_data: The parsed project data
+            helmfile_name: Name of the helmfile
+
+        Returns:
+            List of service names the helmfile uses
+        """
+        path = f"$.helmfile[?(@.name=='{helmfile_name}')].uses-services"
+        services = self.extract_value_by_path(project_data, path, [])
+
+        if services:
+            logger.info(f"Helmfile '{helmfile_name}' uses services: {services}")
+            return services if isinstance(services, list) else [services]
+
+        logger.debug(f"No uses-services found for helmfile '{helmfile_name}'")
+        return []
+
     def deployment_uses_service(
         self,
         project_data: dict[str, Any],
@@ -1150,6 +1336,17 @@ class ProjectFileHandler:
             ref_name = helm_chart_ref.get("reference") if isinstance(helm_chart_ref, dict) else helm_chart_ref
             if ref_name:
                 services = self.extract_helm_chart_uses_services(project_data, ref_name)
+                for service in services:
+                    service_name = service if isinstance(service, str) else list(service.keys())[0] if isinstance(service, dict) else str(service)
+                    if service_name in service_types:
+                        return True
+
+        # Check helmfiles
+        helmfile_refs = self.extract_deployment_helmfiles(project_data, deployment_name)
+        for helmfile_ref in helmfile_refs:
+            ref_name = helmfile_ref.get("reference") if isinstance(helmfile_ref, dict) else helmfile_ref
+            if ref_name:
+                services = self.extract_helmfile_uses_services(project_data, ref_name)
                 for service in services:
                     service_name = service if isinstance(service, str) else list(service.keys())[0] if isinstance(service, dict) else str(service)
                     if service_name in service_types:

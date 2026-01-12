@@ -944,6 +944,90 @@ def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_
     return f"{cluster_clean}/{project_clean}/infrastructure"
 
 
+def generate_infrastructure_argocd_application_filename(project_name: str) -> str:
+    """
+    Generate the ArgoCD application filename for project infrastructure.
+
+    Format: {project}-infrastructure-argocd-application.yaml
+
+    Args:
+        project_name: Name of the project
+
+    Returns:
+        Infrastructure ArgoCD application filename
+
+    Example:
+        generate_infrastructure_argocd_application_filename("myproject")
+        -> "myproject-infrastructure-argocd-application.yaml"
+    """
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{project_clean}-infrastructure-argocd-application.yaml"
+
+
+def generate_infrastructure_argocd_appproject_filename(project_name: str) -> str:
+    """
+    Generate the ArgoCD AppProject filename for project infrastructure.
+
+    Format: {project}-infrastructure-argocd-appproject.yaml
+
+    Args:
+        project_name: Name of the project
+
+    Returns:
+        Infrastructure ArgoCD AppProject filename
+
+    Example:
+        generate_infrastructure_argocd_appproject_filename("myproject")
+        -> "myproject-infrastructure-argocd-appproject.yaml"
+    """
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{project_clean}-infrastructure-argocd-appproject.yaml"
+
+
+def generate_infrastructure_argocd_folder_path(cluster: str, project_name: str) -> str:
+    """
+    Generate the folder path for infrastructure ArgoCD resources in the GitOps repository.
+
+    Format: {cluster}/{project}-infrastructure/
+
+    Args:
+        cluster: Name of the cluster
+        project_name: Name of the project
+
+    Returns:
+        Infrastructure ArgoCD folder path
+
+    Example:
+        generate_infrastructure_argocd_folder_path("production", "myproject")
+        -> "production/myproject-infrastructure"
+    """
+    cluster_clean = _sanitize_for_lowercase(cluster)
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{cluster_clean}/{project_clean}-infrastructure"
+
+
+def generate_infrastructure_argocd_application_path(cluster: str, project_name: str) -> str:
+    """
+    Generate the full path to the infrastructure ArgoCD application file in the GitOps repository.
+
+    Format: {cluster}/{project}-infrastructure/{project}-infrastructure-argocd-application.yaml
+
+    Args:
+        cluster: Name of the cluster
+        project_name: Name of the project
+
+    Returns:
+        Full path to the infrastructure ArgoCD application file
+
+    Example:
+        generate_infrastructure_argocd_application_path("production", "myproject")
+        -> "production/myproject-infrastructure/myproject-infrastructure-argocd-application.yaml"
+    """
+    folder_path = generate_infrastructure_argocd_folder_path(cluster, project_name)
+    filename = generate_infrastructure_argocd_application_filename(project_name)
+    return f"{folder_path}/{filename}"
+
+
 def generate_registry_secret_name(deployment_name: str, registry_name: str) -> str:
     """
     Generate registry secret name for a deployment and registry combination.
@@ -1091,6 +1175,40 @@ def generate_issuer_manifest_name(base_domain: str, issuer_type: str = "letsencr
     """
     issuer_name = generate_issuer_name(base_domain, issuer_type)
     return f"issuer-{issuer_name}.yaml"
+
+
+def generate_network_policy_name(purpose: str) -> str:
+    """
+    Generate a consistent name for a NetworkPolicy.
+
+    Args:
+        purpose: The purpose of the network policy (e.g., "acme-http")
+
+    Returns:
+        NetworkPolicy name string
+
+    Example:
+        >>> generate_network_policy_name("acme-http")
+        'acme-http-network-policy'
+    """
+    return f"{purpose}-network-policy"
+
+
+def generate_network_policy_manifest_name(purpose: str) -> str:
+    """
+    Generate a consistent filename for a NetworkPolicy manifest.
+
+    Args:
+        purpose: The purpose of the network policy (e.g., "acme-http")
+
+    Returns:
+        Manifest filename string (without .yaml extension)
+
+    Example:
+        >>> generate_network_policy_manifest_name("acme-http")
+        'acme-http-network-policy'
+    """
+    return generate_network_policy_name(purpose)
 
 
 def resolve_effective_base_domain(base_domain: str | None, ingress_postfix: str) -> str:

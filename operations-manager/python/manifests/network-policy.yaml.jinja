@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ name }}
+  namespace: {{ namespace }}
+spec:
+{% if pod_selector %}
+  podSelector:
+    matchLabels:
+{{ pod_selector | indent(6, first=True) }}
+{% else %}
+  podSelector: {}
+{% endif %}
+  ingress:
+    - ports:
+{% for port in ports %}
+        - port: {{ port }}
+          protocol: TCP
+{% endfor %}
+  policyTypes:
+    - Ingress

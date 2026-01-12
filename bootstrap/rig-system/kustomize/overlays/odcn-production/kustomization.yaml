@@ -18,6 +18,20 @@ components:
 - ../../components/sops-plugin
 
 patches:
+  # Set ARGOCD_EXEC_TIMEOUT on repo-server to allow longer manifest generation
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/env
+        value:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180"
+        - name: ARGOCD_GIT_ATTEMPTS_COUNT
+          value: "3"
+        - name: ARGOCD_HELM_ALLOW_CONCURRENCY
+          value: "true"
   - target:
       kind: ArgoCD
       name: argocd
@@ -40,5 +54,26 @@ patches:
       - op: add
         path: /spec/repo/sidecarContainers/0/env
         value:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180"
+        - name: KUSTOMIZE_PLUGIN_HOME
+          value: /etc/kustomize/plugin
         - name: KUBERNETES_SERVICE_HOST
           value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl
+        - name: HELM_CONFIG_HOME
+          value: /tmp/.helm/config
+        - name: HELM_CACHE_HOME
+          value: /tmp/.helm/cache
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/sidecarContainers/0/resources
+        value:
+          limits:
+            cpu: "1"
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
