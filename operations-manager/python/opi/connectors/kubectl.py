@@ -395,6 +395,74 @@ class KubectlConnector:
             logger.error(f"Failed to delete namespace {namespace}: {stderr}")
             return False
 
+    async def remove_argocd_application_finalizers(self, app_name: str, namespace: str = "rig-prd-operations") -> bool:
+        """
+        Remove all finalizers from an ArgoCD Application resource.
+
+        This is useful when an ArgoCD Application is stuck because its managed resources
+        (e.g., the target namespace) have been deleted out-of-band. Removing the finalizers
+        allows the Application to be garbage collected.
+
+        Args:
+            app_name: The name of the ArgoCD Application
+            namespace: The namespace where the Application exists (default: rig-prd-operations)
+
+        Returns:
+            True if finalizers were successfully removed or app doesn't exist, False on error
+        """
+        logger.info(f"Removing finalizers from ArgoCD Application '{app_name}' in namespace '{namespace}'")
+
+        # Use merge patch to set finalizers to empty array - this won't fail if finalizers don't exist
+        patch_args = [
+            "patch", "application", app_name,
+            "-n", namespace,
+            "--type", "merge",
+            "-p", '{"metadata":{"finalizers":[]}}'
+        ]
+
+        stdout, stderr, code = await self._run_kubectl_command(patch_args)
+
+        if code == 0:
+            logger.info(f"Successfully removed finalizers from ArgoCD Application '{app_name}'")
+            return True
+        elif "not found" in stderr.lower():
+            # Application doesn't exist - consider this success
+            logger.info(f"ArgoCD Application '{app_name}' does not exist")
+            return True
+        else:
+            logger.error(f"Failed to remove finalizers from ArgoCD Application '{app_name}': {stderr}")
+            return False
+
+    async def delete_argocd_application(self, app_name: str, namespace: str = "rig-prd-operations") -> bool:
+        """
+        Delete an ArgoCD Application directly using kubectl.
+
+        This is a fallback when GitOps-based deletion doesn't work (e.g., parent app not syncing).
+
+        Args:
+            app_name: The name of the ArgoCD Application
+            namespace: The namespace where the Application exists (default: rig-prd-operations)
+
+        Returns:
+            True if successfully deleted or app doesn't exist, False on error
+        """
+        logger.info(f"Deleting ArgoCD Application '{app_name}' in namespace '{namespace}'")
+
+        delete_args = [
+            "delete", "application", app_name,
+            "-n", namespace,
+            "--ignore-not-found=true"
+        ]
+
+        stdout, stderr, code = await self._run_kubectl_command(delete_args)
+
+        if code == 0:
+            logger.info(f"Successfully deleted ArgoCD Application '{app_name}'")
+            return True
+        else:
+            logger.error(f"Failed to delete ArgoCD Application '{app_name}': {stderr}")
+            return False
+
     async def wait_for_capsule_tenant_label(self, namespace: str, timeout: int = 30) -> bool:
         """
         Wait for Capsule to assign the tenant label to a namespace.
@@ -497,8 +565,8 @@ class KubectlConnector:
         logger.debug(f"Applying label {label_key}={label_value} to {resource_type}/{resource_name}")
 
         try:
-            # Build the kubectl label command
-            args = ["label", resource_type, resource_name, f"{label_key}={label_value}"]
+            # Build the kubectl label command with --overwrite to handle existing labels
+            args = ["label", resource_type, resource_name, f"{label_key}={label_value}", "--overwrite"]
 
             # Add namespace flag if provided and not a cluster-scoped resource
             if namespace and resource_type.lower() != "namespace":

@@ -8,6 +8,7 @@ spec:
     timeout.reconciliation: "6m"
     timeout.hard.reconciliation: "0s"
     server.repo.server.timeout.seconds: "180"
+    controller.sync.timeout.seconds: "300"
     controller.status.processors: "40"
     controller.operation.processors: "20"
     controller.repo.server.timeout.seconds: "180"
@@ -15,6 +16,8 @@ spec:
     controller.sharding.algorithm: "round-robin"
     reposerver.parallelism.limit: "15"
   server:
+    extraCommandArgs:
+      - --repo-server-timeout-seconds=180
     host: argocd.rig.prd1.gn2.quattro.rijksapps.nl
     autoscale:
       enabled: false
@@ -117,8 +120,17 @@ spec:
         image: rig-cmp-argo-kustomize-sops:latest
         imagePullPolicy: IfNotPresent
         env:
+          - name: ARGOCD_EXEC_TIMEOUT
+            value: "180"
           - name: KUSTOMIZE_PLUGIN_HOME
             value: /etc/kustomize/plugin
+        resources:
+          limits:
+            cpu: "1"
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
         securityContext:
           runAsNonRoot: true
           runAsUser: 999
@@ -176,7 +188,11 @@ spec:
         cpu: "250m"
         memory: 64Mi
   controller:
+    extraCommandArgs:
+      - --repo-server-timeout-seconds=180
     env:
+      - name: ARGOCD_REPO_SERVER_TIMEOUT_SECONDS
+        value: "180"
       - name: ARGOCD_K8S_CLIENT_QPS
         value: "150"
       - name: ARGOCD_K8S_CLIENT_BURST

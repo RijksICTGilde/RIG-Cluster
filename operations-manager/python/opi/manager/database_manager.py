@@ -493,6 +493,22 @@ class DatabaseManager:
                 else:
                     logger.info(f"Database already exists for cloning: {db_database}")
 
+            # Always execute postInitSQL before clone (idempotent - uses IF NOT EXISTS)
+            # Extensions must exist before schema clone to avoid dependency issues
+            if project_data:
+                service_config = self._get_database_service_config(project_data)
+                post_init_sql = service_config.get("postInitSQL", [])
+                if post_init_sql:
+                    logger.info(f"Ensuring {len(post_init_sql)} postInitSQL statement(s) on {db_database}")
+                    init_result = await self.postgres_connector.execute_init_sql(
+                        database_name=db_database,
+                        sql_statements=post_init_sql,
+                    )
+                    if init_result["status"] == "success":
+                        logger.info(f"PostInitSQL executed successfully on {db_database}")
+                    else:
+                        logger.warning(f"PostInitSQL execution issue: {init_result}")
+
             # STEP 2: Perform the clone operation using database template
             clone_result = await self.postgres_connector.clone_schema(
                 source_database=source_database,
@@ -524,6 +540,22 @@ class DatabaseManager:
                 logger.info(f"Created database: {db_database}")
             else:
                 logger.info(f"Database already exists: {db_database}")
+
+            # Always execute postInitSQL if configured (idempotent - uses IF NOT EXISTS)
+            # This ensures extensions are present even on existing databases during refresh
+            if project_data:
+                service_config = self._get_database_service_config(project_data)
+                post_init_sql = service_config.get("postInitSQL", [])
+                if post_init_sql:
+                    logger.info(f"Ensuring {len(post_init_sql)} postInitSQL statement(s) on {db_database}")
+                    init_result = await self.postgres_connector.execute_init_sql(
+                        database_name=db_database,
+                        sql_statements=post_init_sql,
+                    )
+                    if init_result["status"] == "success":
+                        logger.info(f"PostInitSQL executed successfully on {db_database}")
+                    else:
+                        logger.warning(f"PostInitSQL execution issue: {init_result}")
 
             # Create or verify schema exists
             schema_result = await self.postgres_connector.create_schema(

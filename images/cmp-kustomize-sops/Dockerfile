@@ -1,8 +1,8 @@
 # Multi-stage build to download tools
 FROM alpine:3.19 AS tools-downloader
 
-# Install curl and bash for downloading tools
-RUN apk add --no-cache curl bash tar file
+# Install curl, bash, git and other tools for downloading
+RUN apk add --no-cache curl bash tar file git
 
 # Download all tools
 WORKDIR /tools
@@ -28,6 +28,20 @@ RUN curl -fsSL https://get.helm.sh/helm-v3.19.4-linux-amd64.tar.gz | tar xz && \
     rm -rf linux-amd64 && \
     chmod +x helm
 
+# Download helmfile
+RUN curl -fsSL https://github.com/helmfile/helmfile/releases/download/v0.169.2/helmfile_0.169.2_linux_amd64.tar.gz | tar xz && \
+    chmod +x helmfile
+
+# Install helm-diff plugin (required by helmfile)
+# Download pre-built release directly instead of using helm plugin install (faster)
+# The tarball extracts to diff/, so we extract to plugins/ and rename
+ENV HELM_DATA_HOME=/tools/helm-data
+RUN mkdir -p $HELM_DATA_HOME/plugins && \
+    curl -fsSL https://github.com/databus23/helm-diff/releases/download/v3.9.12/helm-diff-linux-amd64.tgz | \
+    tar xz -C $HELM_DATA_HOME/plugins && \
+    mv $HELM_DATA_HOME/plugins/diff $HELM_DATA_HOME/plugins/helm-diff && \
+    ls -la $HELM_DATA_HOME/plugins/helm-diff/
+
 # Download KSOPS plugin using the official install script
 RUN echo "Downloading KSOPS using official install script..." && \
     curl -s https://raw.githubusercontent.com/viaduct-ai/kustomize-sops/master/scripts/install-ksops-archive.sh | bash && \
@@ -47,6 +61,7 @@ RUN echo "=== Downloaded tools verification ===" && \
     echo "sops test:" && ./sops --version && \
     echo "yq test:" && ./yq --version && \
     echo "helm test:" && ./helm version && \
+    echo "helmfile test:" && ./helmfile --version && \
     echo "" && \
     echo "=== KSOPS detailed check ===" && \
     echo "KSOPS file info:" && ls -la ./ksops && \
@@ -73,7 +88,11 @@ COPY --from=tools-downloader /tools/kustomize /usr/local/bin/kustomize
 COPY --from=tools-downloader /tools/sops /usr/local/bin/sops
 COPY --from=tools-downloader /tools/yq /usr/local/bin/yq
 COPY --from=tools-downloader /tools/helm /usr/local/bin/helm
+COPY --from=tools-downloader /tools/helmfile /usr/local/bin/helmfile
 COPY --from=tools-downloader /tools/ksops /usr/local/bin/ksops
+
+# Copy helm plugins (including helm-diff required by helmfile)
+COPY --from=tools-downloader /tools/helm-data /home/argocd/.local/share/helm
 
 # Create kustomize plugin directory structure for KSOPS
 RUN mkdir -p /home/argocd/.config/kustomize/plugin/viaduct.ai/v1/ksops
@@ -82,15 +101,16 @@ RUN mkdir -p /home/argocd/.config/kustomize/plugin/viaduct.ai/v1/ksops
 RUN cp /usr/local/bin/ksops /home/argocd/.config/kustomize/plugin/viaduct.ai/v1/ksops/ksops
 
 # Set proper ownership for argocd user
-RUN chown -R 999:999 /home/argocd/.config
+RUN chown -R 999:999 /home/argocd/.config /home/argocd/.local
 
 # Create build info file
 RUN echo "Image built on: $(date)" > /info.txt && \
     echo "KSOPS version: $(ksops --version 2>/dev/null || echo 'unknown')" >> /info.txt
 
-# Set environment variables for KSOPS and kustomize plugins
+# Set environment variables for KSOPS, kustomize plugins, and helm
 ENV XDG_CONFIG_HOME=/home/argocd/.config
 ENV KUSTOMIZE_PLUGIN_HOME=/home/argocd/.config/kustomize/plugin
+ENV HELM_DATA_HOME=/home/argocd/.local/share/helm
 ENV PATH=/usr/local/bin:$PATH
 
 # Switch back to argocd user
@@ -108,7 +128,11 @@ RUN echo "=== Final tool verification ===" && \
     echo "sops:" && (sops --version || echo "sops FAILED") && \
     echo "yq:" && (yq --version || echo "yq FAILED") && \
     echo "helm:" && (helm version || echo "helm FAILED") && \
+    echo "helmfile:" && (helmfile --version || echo "helmfile FAILED") && \
     echo "jq:" && (jq --version || echo "jq FAILED") && \
+    echo "" && \
+    echo "=== Helm plugins ===" && \
+    echo "helm plugin list:" && (helm plugin list || echo "helm plugin list FAILED") && \
     echo "" && \
     echo "=== KSOPS specific checks ===" && \
     echo "ksops binary location:" && ls -la /usr/local/bin/ksops && \
@@ -122,6 +146,7 @@ RUN echo "=== Final tool verification ===" && \
     echo "=== Environment variables ===" && \
     echo "  XDG_CONFIG_HOME=$XDG_CONFIG_HOME" && \
     echo "  KUSTOMIZE_PLUGIN_HOME=$KUSTOMIZE_PLUGIN_HOME" && \
+    echo "  HELM_DATA_HOME=$HELM_DATA_HOME" && \
     echo "  PATH=$PATH" && \
     echo "=== Verification complete ==="
 

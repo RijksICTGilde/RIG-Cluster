@@ -660,6 +660,64 @@ class PostgresConnector:
             logger.exception(f"Failed to create database {database_name} on {self._host}")
             raise PostgresExecutionError(f"Database creation failed: {e}") from e
 
+    async def execute_init_sql(
+        self, database_name: str, sql_statements: list[str]
+    ) -> dict[str, Any]:
+        """Execute initialization SQL statements on a specific database.
+
+        This is typically used to create extensions or run other setup SQL
+        after a database has been created.
+
+        Args:
+            database_name: Name of database to connect to
+            sql_statements: List of SQL statements to execute
+
+        Returns:
+            Dictionary with operation status and details
+
+        Raises:
+            PostgresExecutionError: If SQL execution fails
+            PostgresValidationError: If input validation fails
+        """
+        if not sql_statements:
+            return {"status": "skipped", "message": "No SQL statements to execute"}
+
+        try:
+            validated_database_name = self._validate_identifier(database_name, "database name")
+
+            # Connect to the target database (not postgres)
+            conn = await self._get_or_create_connection(validated_database_name)
+
+            executed = []
+            for sql in sql_statements:
+                try:
+                    await conn.execute(sql)
+                    executed.append(sql)
+                    logger.debug(f"Executed init SQL on {validated_database_name}: {sql[:100]}...")
+                except Exception as e:
+                    logger.error(f"Failed to execute init SQL on {validated_database_name}: {sql[:100]}... - {e}")
+                    raise PostgresExecutionError(
+                        f"Init SQL failed on {validated_database_name}: {e}"
+                    ) from e
+
+            logger.info(
+                f"Executed {len(executed)} init SQL statement(s) on database {validated_database_name}"
+            )
+            return {
+                "status": "success",
+                "message": f"Executed {len(executed)} SQL statement(s)",
+                "executed_count": len(executed),
+            }
+
+        except PostgresValidationError:
+            logger.exception("Validation failed for init SQL execution")
+            raise
+        except PostgresExecutionError:
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to execute init SQL on {database_name}")
+            raise PostgresExecutionError(f"Init SQL execution failed: {e}") from e
+
     async def delete_database(self, database_name: str) -> dict[str, Any]:
         """Delete a database using the bound admin credentials.
 

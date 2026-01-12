@@ -795,7 +795,7 @@ tasks:
 
       # Optional parameters (with defaults)
       IMAGE_TAG: '{{.IMAGE_TAG | default "latest"}}'
-      PLATFORMS: '{{.PLATFORMS | default "linux/amd64,linux/arm64"}}'
+      PLATFORMS: '{{.PLATFORMS | default "linux/amd64"}}'
       BUILD_TARGET: '{{.BUILD_TARGET | default ""}}'
       CACHE_IMAGE: '{{.CACHE_IMAGE | default ""}}'
       SKIP_VALIDATION: '{{.SKIP_VALIDATION | default "false"}}'
@@ -817,7 +817,7 @@ tasks:
           Optional parameters:
             IMAGE_TAG        - Image tag (default: "latest")
             DOCKERFILE_PATH  - Dockerfile path relative to BUILD_CONTEXT (default: "Dockerfile")
-            PLATFORMS        - Target platforms (default: "linux/amd64,linux/arm64")
+            PLATFORMS        - Target platforms (default: "linux/amd64")
             BUILD_TARGET     - Docker build target stage (default: none)
             CACHE_IMAGE      - Additional cache image (default: none)
             SKIP_VALIDATION  - Skip local validation build (default: "false")
@@ -970,7 +970,7 @@ tasks:
     #   IMAGE_NAME       - Local test image name (required)
     #   REGISTRY_IMAGE   - Full registry path without tag (required)
     #   IMAGE_TAG        - Image tag (default: "latest")
-    #   PLATFORMS        - Target platforms (default: "linux/amd64,linux/arm64")
+    #   PLATFORMS        - Target platforms (default: "linux/amd64")
     #   BUILD_TARGET     - Multi-stage build target (optional)
     #   CACHE_IMAGE      - Registry cache location (optional)
     #   SKIP_VALIDATION  - Skip local build validation (default: "false")
@@ -1011,36 +1011,13 @@ tasks:
     desc: "Build and publish the cmp-kustomize-sops image to GitHub Container Registry"
     deps: [requirements-check]
     cmds:
-      - |
-        echo "Building cmp-kustomize-sops locally for validation..."
-        docker build --no-cache -t rig-cmp-argo-kustomize-sops:test -f images/cmp-kustomize-sops/Dockerfile .
-        echo "✅ Local build successful"
-        echo ""
-      - |
-        echo "Publishing cmp-kustomize-sops to GHCR..."
-        echo "Registry: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest"
-        echo ""
-        echo "Prerequisites:"
-        echo "- Docker buildx installed"
-        echo "- Authenticated with GHCR: docker login ghcr.io"
-        echo "- Push permissions to minbzk/base-images repository"
-        echo ""
-        printf "Continue with publishing? [y/N]: "
-        read -r REPLY
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-          echo "Building multi-platform image and pushing to GHCR..."
-          # Disable provenance and SBOM to avoid unknown/unknown platform entries in GHCR
-          # See: https://github.com/orgs/community/discussions/45969
-          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --sbom=false -f images/cmp-kustomize-sops/Dockerfile -t ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest --push .
-          echo "✅ CMP kustomize-sops image published successfully to GHCR!"
-          echo "Cleaning up local test image..."
-          docker rmi rig-cmp-argo-kustomize-sops:test || true
-        else
-          echo "Publishing cancelled."
-          docker rmi rig-cmp-argo-kustomize-sops:test || true
-          exit 1
-        fi
-    silent: true
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: .
+          DOCKERFILE_PATH: images/cmp-kustomize-sops/Dockerfile
+          IMAGE_NAME: rig-cmp-argo-kustomize-sops
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          BUILDER_NAME: operations-manager-builder
 
   build-postgresql-image:
     desc: "Build and load PostgreSQL image with dictionary files into kind cluster"

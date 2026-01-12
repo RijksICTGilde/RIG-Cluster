@@ -76,6 +76,8 @@ spec:
         image: rig-cmp-argo-kustomize-sops:latest
         imagePullPolicy: Never
         env:
+          - name: ARGOCD_EXEC_TIMEOUT
+            value: "180"
           - name: KUSTOMIZE_PLUGIN_HOME
             value: /etc/kustomize/plugin
         securityContext:

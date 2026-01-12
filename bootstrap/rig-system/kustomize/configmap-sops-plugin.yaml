@@ -18,7 +18,21 @@ data:
           - |
             set -e  # Exit on any error
             set -o pipefail
-            
+
+            # Source environment variables from .cmp-env if it exists
+            # This allows deployments to pass configuration to the CMP
+            # Use set -a to auto-export all variables for child processes (like helmfile)
+            if [ -f ".cmp-env" ]; then
+              echo "Sourcing environment variables from .cmp-env" >&2
+              echo "DEBUG: .cmp-env contents:" >&2
+              cat .cmp-env >&2
+              set -a
+              source .cmp-env
+              set +a
+              echo "DEBUG: ENVIRONMENT=$ENVIRONMENT" >&2
+              echo "DEBUG: MIJNBUREAU_MASTER_PASSWORD length: ${#MIJNBUREAU_MASTER_PASSWORD}" >&2
+            fi
+
             SOPS_KEY_SECRET="${ARGOCD_ENV_SOPS_KEY_SECRET:-sops-age-key}"
             KUSTOMIZE_FOLDERS="${ARGOCD_ENV_KUSTOMIZE_FOLDERS:-current}"
             
@@ -80,7 +94,7 @@ data:
                     echo "ERROR: helm dependency update failed for $chart_dir" >&2
                   fi
                 fi
-              done < <(find "$folder" -name "Chart.yaml" -type f 2>/dev/null)
+              done < <(find "$folder" -name "Chart.yaml" -type f -not -path "*/template/*" -not -path "*/templates/*" 2>/dev/null)
 
               echo "DEBUG: Finished building Helm dependencies" >&2
             }
@@ -117,6 +131,139 @@ data:
               done
             }
 
+            # Function to decrypt SOPS-encrypted helmfile values
+            # Files matching values.sops.yaml or *-values.sops.yaml are decrypted
+            decrypt_helmfile_values() {
+              local folder="$1"
+
+              # Decrypt values.sops.yaml if it exists
+              # Use --config /dev/null to ignore any .sops.yaml from cloned repos
+              if [ -f "$folder/values.sops.yaml" ]; then
+                echo "Decrypting helmfile values: values.sops.yaml -> values.yaml" >&2
+                SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "$folder/values.sops.yaml" > "$folder/values.yaml"
+              fi
+
+              # Also decrypt any *-values.sops.yaml files
+              for sops_file in "$folder"/*-values.sops.yaml; do
+                if [ -f "$sops_file" ]; then
+                  local decrypted_file="${sops_file%.sops.yaml}.yaml"
+                  echo "Decrypting helmfile values: $(basename "$sops_file") -> $(basename "$decrypted_file")" >&2
+                  SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "$sops_file" > "$decrypted_file"
+                fi
+              done
+            }
+
+            # Function to process a helmfile folder
+            process_helmfile_folder() {
+              local folder="$1"
+              local output_file="$2"
+              local helmfile_path="$3"
+
+              echo "Processing helmfile: $folder/$helmfile_path" >&2
+
+              # Get absolute paths before changing directories
+              local abs_folder=$(cd "$folder" && pwd)
+              local helmfile_dir=$(dirname "$helmfile_path")
+              local helmfile_name=$(basename "$helmfile_path")
+
+              # Decrypt SOPS-encrypted values files (in the root folder)
+              decrypt_helmfile_values "$folder"
+
+              # Build optional helmfile arguments
+              local helmfile_args=""
+
+              # Only add environment flag if ENVIRONMENT is explicitly set
+              # This allows simpler helmfile projects without environments to work
+              if [ -n "${ENVIRONMENT:-}" ]; then
+                helmfile_args="$helmfile_args -e $ENVIRONMENT"
+                echo "DEBUG: Using helmfile environment: $ENVIRONMENT" >&2
+              else
+                echo "DEBUG: No ENVIRONMENT set, using helmfile default" >&2
+              fi
+
+              # Only add state values file if values.yaml exists
+              # Use --state-values-file for .gotmpl template values (not --values which is for helm charts)
+              # Path must be absolute since helmfile resolves relative to helmfile location, not cwd
+              if [ -f "$folder/values.yaml" ]; then
+                helmfile_args="$helmfile_args --state-values-file $abs_folder/values.yaml"
+                echo "DEBUG: Using state values file: $abs_folder/values.yaml" >&2
+              fi
+
+              # Run helmfile template
+              echo "---" >> "$output_file"
+
+              # CD into the helmfile's directory so relative chart paths work correctly
+              # e.g., if helmfile is apps/docs/helmfile-child.yaml.gotmpl with chart: ../common/charts/nginx
+              # we need to be in apps/docs/ for ../common to resolve correctly
+              local work_dir="$abs_folder"
+              if [ "$helmfile_dir" != "." ]; then
+                work_dir="$abs_folder/$helmfile_dir"
+                echo "DEBUG: Changing to helmfile directory: $work_dir" >&2
+              fi
+              cd "$work_dir"
+
+              # Set namespace for helmfile
+              export HELMFILE_NAMESPACE="${ARGOCD_APP_NAMESPACE}"
+
+              # Ensure HELM_DATA_HOME is set (plugins are pre-installed in the image)
+              export HELM_DATA_HOME="${HELM_DATA_HOME:-/home/argocd/.local/share/helm}"
+
+              # Only run helmfile init if helm-diff plugin is not installed
+              # The plugin should be pre-installed in the Docker image
+              if ! helm plugin list | grep -q "^diff"; then
+                echo "Running helmfile init (helm-diff not found)..." >&2
+                helmfile init --force 2>&2
+              else
+                echo "DEBUG: helm-diff plugin already installed, skipping helmfile init" >&2
+              fi
+
+              # Run helmfile template with conditional arguments
+              # Use just the filename since we're now in the helmfile's directory
+              echo "DEBUG: Running helmfile from $(pwd) with file $helmfile_name" >&2
+              helmfile --file "$helmfile_name" $helmfile_args template --include-crds 2>&2 >> "$output_file"
+
+              cd - > /dev/null
+            }
+
+            # Function to find helmfile in a folder (checks .helmfile-entry FIRST, then root)
+            # .helmfile-entry takes priority to allow selecting a specific sub-helmfile
+            find_helmfile_path() {
+              local folder="$1"
+              local entry_file="$folder/.helmfile-entry"
+              local entry_path=""
+
+              # Check .helmfile-entry FIRST - this takes priority over root helmfile
+              if [ -f "$entry_file" ]; then
+                entry_path=$(cat "$entry_file")
+                echo "DEBUG: Found .helmfile-entry config: $entry_path" >&2
+
+                local search_folder="$folder/$entry_path"
+
+                # Search for helmfile in entry subfolder
+                if [ -f "$search_folder/helmfile.yaml" ]; then
+                  echo "$entry_path/helmfile.yaml"
+                  return
+                elif [ -f "$search_folder/helmfile.yaml.gotmpl" ]; then
+                  echo "$entry_path/helmfile.yaml.gotmpl"
+                  return
+                elif [ -f "$search_folder/helmfile-child.yaml.gotmpl" ]; then
+                  echo "$entry_path/helmfile-child.yaml.gotmpl"
+                  return
+                fi
+              fi
+
+              # Fall back to root level helmfile if no .helmfile-entry or entry path not found
+              if [ -f "$folder/helmfile.yaml" ]; then
+                echo "helmfile.yaml"
+                return
+              elif [ -f "$folder/helmfile.yaml.gotmpl" ]; then
+                echo "helmfile.yaml.gotmpl"
+                return
+              fi
+
+              echo ""
+            }
+
             # Function to process a single folder
             process_folder() {
               local folder="$1"
@@ -131,10 +278,18 @@ data:
               yq eval ".namespace = \"${ARGOCD_APP_NAMESPACE}\"" -i "$folder/kustomization.yml"
               fi
 
-              # Build Helm chart dependencies before kustomize build
-              build_helm_dependencies "$folder"
+              # Build Helm chart dependencies before kustomize build (only if kustomization has helmCharts)
+              local kustomize_file="$folder/kustomization.yaml"
+              [ ! -f "$kustomize_file" ] && kustomize_file="$folder/kustomization.yml"
+              local helm_chart_count=$(yq eval '.helmCharts // [] | length' "$kustomize_file" 2>/dev/null || echo "0")
+              if [ "$helm_chart_count" -gt 0 ]; then
+                echo "DEBUG: Kustomization has $helm_chart_count helmCharts, building dependencies" >&2
+                build_helm_dependencies "$folder"
+              else
+                echo "DEBUG: Kustomization has no helmCharts, skipping dependency build" >&2
+              fi
 
-              # Decrypt SOPS-encrypted Helm values files before kustomize build
+              # Decrypt SOPS-encrypted Helm values files before kustomize/helmfile build
               decrypt_helm_values "$folder"
 
               # Generate manifests for this folder (with Helm support)
@@ -180,13 +335,31 @@ data:
             
             for folder in "${FOLDERS[@]}"; do
               echo "DEBUG: Checking folder: '$folder'" >&2
+              FOUND_SOMETHING=false
+
+              # Check for kustomization first (for Issuer, NetworkPolicy, etc.)
+              # This runs BEFORE helmfile so additional resources are included
               if [ -f "$folder/kustomization.yaml" ] || [ -f "$folder/kustomization.yml" ]; then
                 echo "DEBUG: Found kustomization file in folder: '$folder'" >&2
                 echo "DEBUG: Calling process_folder with folder: '$folder'" >&2
                 process_folder "$folder" "$TEMP_OUTPUT"
-                PROCESSED_FOLDERS="$PROCESSED_FOLDERS $folder"
-              else
-                echo "WARNING: No kustomization file found in folder: $folder" >&2
+                PROCESSED_FOLDERS="$PROCESSED_FOLDERS $folder(kustomize)"
+                FOUND_SOMETHING=true
+              fi
+
+              # Also check for helmfile (can run alongside kustomization)
+              # Uses find_helmfile_path which checks .helmfile-entry config and standard locations
+              helmfile_path=$(find_helmfile_path "$folder")
+
+              if [ -n "$helmfile_path" ]; then
+                echo "DEBUG: Found helmfile at: '$folder/$helmfile_path'" >&2
+                process_helmfile_folder "$folder" "$TEMP_OUTPUT" "$helmfile_path"
+                PROCESSED_FOLDERS="$PROCESSED_FOLDERS $folder(helmfile)"
+                FOUND_SOMETHING=true
+              fi
+
+              if [ "$FOUND_SOMETHING" = false ]; then
+                echo "WARNING: No helmfile or kustomization file found in folder: $folder" >&2
               fi
             done
             

@@ -294,7 +294,94 @@ Then in the deployment:
 
 ---
 
-## Issue 6: External Services Configuration Not Streamlined
+## Issue 6: Media Ingress Points to Non-Existent Service (BUG)
+
+### Problem
+
+The `ingressMedia` template (`ingress-media.yaml:32`) hardcodes a service name that doesn't exist:
+
+```yaml
+backend: {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-nginx" (include "common.names.fullname" .)) "servicePort" "http" "context" $) | nindent 14 }}
+```
+
+This generates a backend service name like `mijn-bureau-docs-nginx`, but **no nginx service exists in the chart**. The available services are:
+- `<fullname>-backend`
+- `<fullname>-frontend`
+- `<fullname>-y-provider`
+
+### Impact
+
+- **On nginx ingress controllers** (e.g., Kind): The ingress is created but returns 503 when accessed - fails silently
+- **On OpenShift**: The ingress-to-route controller refuses to create a route for an invalid backend - the route is simply missing
+- **User experience**: Image uploads may succeed (via `/api/`), but viewing images at `/media/` fails with 404 or "Application not found"
+
+### Evidence
+
+```bash
+$ kubectl describe ingress mijn-bureau-docs-media -n <namespace>
+...
+Rules:
+  Host              Path  Backends
+  ----              ----  --------
+  docs.example.com
+                    /media/(.*)   mijn-bureau-docs-nginx:http (<error: services "mijn-bureau-docs-nginx" not found>)
+```
+
+### Root Cause Analysis
+
+Looking at commented annotations in `values.yaml` (lines 2435-2438):
+```yaml
+##   nginx.ingress.kubernetes.io/auth-url: https://docs.127.0.0.1.nip.io/api/v1.0/documents/media-auth/
+##   nginx.ingress.kubernetes.io/upstream-vhost: dev-backend-minio.impress.svc.cluster.local:9000
+```
+
+The **intended design** appears to be using nginx ingress controller features to authenticate via the backend and proxy to MinIO. However, the template references a Kubernetes Service (`%s-nginx`) that was never created - this is an incomplete implementation or copy/paste error.
+
+### Fix Required
+
+Change line 32 in `templates/ingress-media.yaml`:
+
+```yaml
+# Before (broken):
+backend: {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-nginx" (include "common.names.fullname" .)) "servicePort" "http" "context" $) | nindent 14 }}
+
+# After (fixed):
+backend: {{- include "common.ingress.backend" (dict "serviceName" (printf "%s-backend" (include "common.names.fullname" .)) "servicePort" "http" "context" $) | nindent 14 }}
+```
+
+### Temporary Workaround (OpenShift)
+
+When using ArgoCD and unable to modify the helm chart, create a manual Route:
+
+```yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mijn-bureau-docs-media-fix
+  namespace: <namespace>
+  annotations:
+    # Prevent ArgoCD from pruning this resource
+    argocd.argoproj.io/sync-options: Prune=false
+spec:
+  host: docs.example.com
+  path: /media
+  to:
+    kind: Service
+    name: mijn-bureau-docs-backend
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+```
+
+**Note**: This workaround requires the route to be created outside of ArgoCD management or added to the ArgoCD Application with `Prune=false`.
+
+---
+
+## Issue 7: External Services Configuration Not Streamlined
 
 ### Problem
 
