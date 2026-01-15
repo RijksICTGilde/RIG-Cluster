@@ -184,7 +184,15 @@ class PVCManager:
                 project_data, deployment_name, component_name, storage_name
             )
 
-            logger.info(f"Creating PVC manifest for {component_name}/{storage_name} with generation {generation}")
+            # Get backup setting for this storage (project-level or per-storage override)
+            backup_enabled = self.project_manager._project_file_handler.get_storage_backup_enabled(
+                project_data, component_name, storage_name
+            )
+
+            logger.info(
+                f"Creating PVC manifest for {component_name}/{storage_name} "
+                f"with generation {generation}, backup_enabled={backup_enabled}"
+            )
 
             # DELETE OLD MANIFESTS if generation > 0
             if generation > 0:
@@ -204,6 +212,7 @@ class PVCManager:
                 "size": storage.get("size", "10Gi"),
                 "storage_class_name": storage_class_name,
                 "access_modes": access_modes,
+                "backup_enabled": backup_enabled,
             }
 
             # Handle clone-from logic for PVC

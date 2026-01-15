@@ -2,7 +2,7 @@
 
 {#
   Project Details Page - Self Service Portal
-  
+
   Comprehensive project details page showing all project information
   including services, components, deployments, and configuration.
 #}
@@ -448,6 +448,140 @@
     </c-card>
     {% endif %}
 
+    {# Backups Section - Show backups per deployment for current cluster #}
+    {% if backups_available and project.deployments %}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <div>
+                <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
+                <p class="rvo-text--subtle">Beschikbare backups per deployment (alleen voor cluster: {{ current_cluster }})</p>
+            </div>
+
+            {% set ns = namespace(has_backups=false) %}
+            {% for deployment in project.deployments %}
+                {% if deployment.cluster == current_cluster and deployment_backups.get(deployment.name) %}
+                    {% set ns.has_backups = true %}
+                {% endif %}
+            {% endfor %}
+
+            {% if ns.has_backups %}
+            <c-grid columns="one" gap="lg">
+                {% for deployment in project.deployments %}
+                {% if deployment.cluster == current_cluster %}
+                {% set backups = deployment_backups.get(deployment.name, []) %}
+
+                <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-groen);">
+                    <c-layout-flow gap="md">
+                        {# Deployment Header #}
+                        <c-layout-row gap="sm" verticalSpacing="center">
+                            <c-icon icon="applicatie" size="md" color="donkerblauw" />
+                            <c-heading type="h4" textContent="{{ deployment.name }}" />
+                            <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.namespace }}</span>
+                        </c-layout-row>
+
+                        {% if backups %}
+                        <div style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                                <thead>
+                                    <tr style="border-bottom: 2px solid var(--rvo-color-grijs-300);">
+                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Component</th>
+                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Storage</th>
+                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Gen</th>
+                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Timestamp</th>
+                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Grootte</th>
+                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Snapshot ID</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for backup in backups %}
+                                    <tr style="border-bottom: 1px solid var(--rvo-color-grijs-200);">
+                                        <td style="padding: 8px 12px;">
+                                            <span style="display: inline-flex; align-items: center; gap: 4px;">
+                                                <c-icon icon="document-blanco" size="sm" color="grijs-600" />
+                                                {{ backup.component_name or '-' }}
+                                            </span>
+                                        </td>
+                                        <td style="padding: 8px 12px;">
+                                            {{ backup.storage_name or '-' }}
+                                        </td>
+                                        <td style="padding: 8px 12px;">
+                                            {% if backup.generation is not none %}
+                                                <span style="display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; background: var(--rvo-color-grijs-200); border-radius: 4px; font-weight: 500;">v{{ backup.generation }}</span>
+                                            {% else %}
+                                                <span style="color: var(--rvo-color-grijs-500);">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td style="padding: 8px 12px;">
+                                            <span style="color: var(--rvo-color-grijs-700);">{{ backup.timestamp | dutch_date }}</span>
+                                        </td>
+                                        <td style="padding: 8px 12px;">
+                                            {% if backup.size_bytes is not none %}
+                                                {% if backup.size_bytes == 0 %}
+                                                    <span style="color: var(--rvo-color-grijs-500);">0 B (leeg)</span>
+                                                {% else %}
+                                                    {% set size_mb = (backup.size_bytes / 1048576) | round(2) %}
+                                                    {% if size_mb >= 1024 %}
+                                                        {{ (size_mb / 1024) | round(2) }} GB
+                                                    {% elif size_mb >= 1 %}
+                                                        {{ size_mb }} MB
+                                                    {% else %}
+                                                        {{ (backup.size_bytes / 1024) | round(2) }} KB
+                                                    {% endif %}
+                                                {% endif %}
+                                            {% else %}
+                                                <span style="color: var(--rvo-color-grijs-500);">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td style="padding: 8px 12px;">
+                                            {% set tags_display = [] %}
+                                            {% if backup.tags %}
+                                                {% for key, value in backup.tags.items() %}
+                                                    {% set _ = tags_display.append(key ~ ': ' ~ value) %}
+                                                {% endfor %}
+                                            {% endif %}
+                                            <code style="font-family: monospace; font-size: 0.75rem; background: var(--rvo-color-grijs-100); padding: 2px 6px; border-radius: 4px; cursor: help;" title="PVC: {{ backup.pvc_name }}&#10;{% if backup.tags %}Tags:&#10;{{ tags_display | join('&#10;') }}{% endif %}">{{ backup.snapshot_id[:12] }}...</code>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="rvo-text--sm rvo-text--subtle" style="margin-top: 8px;">
+                            {{ backups|length }} backup(s) gevonden
+                        </p>
+                        {% else %}
+                        <p class="rvo-text--md rvo-text--subtle">
+                            <c-icon icon="info" size="sm" color="grijs-500" />
+                            Geen backups gevonden voor deze deployment
+                        </p>
+                        {% endif %}
+                    </c-layout-flow>
+                </c-card>
+                {% endif %}
+                {% endfor %}
+            </c-grid>
+            {% else %}
+            <c-card padding="md" outline="true" backgroundColor="grijs-050">
+                <c-layout-row gap="md" verticalSpacing="center">
+                    <c-icon icon="info" size="md" color="grijs-500" />
+                    <p class="rvo-text--md">Geen backups beschikbaar voor deployments op cluster {{ current_cluster }}</p>
+                </c-layout-row>
+            </c-card>
+            {% endif %}
+        </c-layout-flow>
+    </c-card>
+    {% elif not backups_available and project.deployments %}
+    <c-card outline="true" padding="lg" backgroundColor="grijs-050">
+        <c-layout-row gap="md" verticalSpacing="center">
+            <c-icon icon="info" size="lg" color="grijs-500" />
+            <div>
+                <strong>Backups niet beschikbaar</strong>
+                <p class="rvo-text--sm rvo-text--subtle">De backup service is niet verbonden. Backup informatie wordt getoond wanneer de service beschikbaar is.</p>
+            </div>
+        </c-layout-row>
+    </c-card>
+    {% endif %}
+
     {# Team Section #}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
@@ -490,18 +624,7 @@
                         <strong>API Key</strong>
                     </div>
                     <div class="config-value">
-                        <div class="sensitive-field" id="api-key-field">
-                            <span class="sensitive-dots">••••••••••••••••••••••••••••••••</span>
-                            <span class="sensitive-value" style="display: none;">{{ project.config['api-key'] }}</span>
-                            <c-button 
-                                label="Tonen"
-                                kind="tertiary" 
-                                size="sm"
-                                showIcon="before"
-                                icon="oog"
-                                class="toggle-sensitive"
-                                @click="toggleSensitive('api-key-field')" />
-                        </div>
+                        <c-secret-field value="{{ project.config['api-key'] }}" />
                     </div>
                 </div>
                 {% endif %}
@@ -527,18 +650,7 @@
                         <strong>Age Private Key</strong>
                     </div>
                     <div class="config-value">
-                        <div class="sensitive-field" id="private-key-field">
-                            <span class="sensitive-dots">••••••••••••••••••••••••••••••••</span>
-                            <span class="sensitive-value" style="display: none;"><pre class="config-code">{{ project.config['age-private-key'] }}</pre></span>
-                            <c-button 
-                                label="Tonen"
-                                kind="tertiary" 
-                                size="sm"
-                                showIcon="before"
-                                icon="oog"
-                                class="toggle-sensitive"
-                                @click="toggleSensitive('private-key-field')" />
-                        </div>
+                        <c-secret-field value="{{ project.config['age-private-key'] }}" />
                     </div>
                 </div>
                 {% endif %}
@@ -634,7 +746,76 @@
                             </div>
                         </div>
                         {% endif %}
-                        
+
+                        {# Helm Charts in this deployment #}
+                        {% if deployment.get('helm-charts') %}
+                        <div class="deployment-helm-charts" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                            <c-heading type="h4"><c-icon icon="applicatie" size="md" color="groen" />Helm Charts</c-heading>
+                            <c-layout-flow gap="md">
+                                {% for helm_chart in deployment.get('helm-charts', []) %}
+                                <c-card padding="md" backgroundColor="wit" outline="true">
+                                    <c-layout-flow gap="sm">
+                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                            <c-icon icon="applicatie" size="sm" color="groen" />
+                                            <strong>{{ helm_chart.reference }}</strong>
+                                        </div>
+                                        {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping %}
+                                        <div class="helm-values-section">
+                                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                                                <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                                                <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
+                                                <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
+                                            </div>
+                                            <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" />
+                                        </div>
+                                        {% endif %}
+                                    </c-layout-flow>
+                                </c-card>
+                                {% endfor %}
+                            </c-layout-flow>
+                        </div>
+                        {% endif %}
+
+                        {# Helmfile in this deployment #}
+                        {% if deployment.get('helmfile') %}
+                        <div class="deployment-helmfile" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                            <c-heading type="h4"><c-icon icon="applicatie" size="md" color="oranje" />Helmfile</c-heading>
+                            <c-layout-flow gap="md">
+                                {% for helmfile in deployment.get('helmfile', []) %}
+                                <c-card padding="md" backgroundColor="wit" outline="true">
+                                    <c-layout-flow gap="sm">
+                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                            <c-icon icon="applicatie" size="sm" color="oranje" />
+                                            <strong>{{ helmfile.reference }}</strong>
+                                        </div>
+                                        {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping %}
+                                        <div class="helm-values-section">
+                                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                                                <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                                                <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
+                                                <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
+                                            </div>
+                                            <div class="sensitive-field" id="helmfile-{{ deployment.name }}-{{ helmfile.reference|replace('_', '-')|lower }}">
+                                                <span class="sensitive-dots">••••••••••••••••••••</span>
+                                                <span class="sensitive-value" style="display: none;"><pre class="config-code">{{ helmfile['helm-values'] | tojson(indent=2) }}</pre></span>
+                                                <c-button
+                                                    label="Tonen"
+                                                    kind="tertiary"
+                                                    size="sm"
+                                                    showIcon="before"
+                                                    icon="oog"
+                                                    class="toggle-sensitive"
+                                                    @click="toggleSensitive('helmfile-{{ deployment.name }}-{{ helmfile.reference|replace('_', '-')|lower }}')" />
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                    </c-layout-flow>
+                                </c-card>
+                                {% endfor %}
+                            </c-layout-flow>
+                        </div>
+                        {% endif %}
+
                         {# Public ingress links for this deployment #}
                         {% if deployment.ingress_links %}
                         <c-layout-flow gap="sm">
@@ -863,6 +1044,123 @@
         </c-layout-flow>
     </c-card>
 
+    {# Helm Charts Section (Base level) #}
+    {% if project.helm_charts %}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Helm Charts</c-heading>
+            <p class="rvo-text--subtle">Helm chart definities op project niveau</p>
+
+            <div class="helm-charts-section">
+                {% for helm_chart in project.helm_charts %}
+                <c-card class="helm-chart-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
+                    <c-layout-flow gap="md">
+                        <div class="helm-chart-header">
+                            <c-icon icon="applicatie" size="lg" color="groen" />
+                            <div>
+                                <c-heading type="h3" textContent="{{ helm_chart.name }}" />
+                                {% if helm_chart.get('repository') %}
+                                <div class="rvo-text--sm rvo-text--subtle">{{ helm_chart.repository }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="helm-chart-specs">
+                            {% if helm_chart.get('chart') %}
+                            <div class="spec-item"><strong>Chart:</strong> {{ helm_chart.chart }}</div>
+                            {% endif %}
+                            {% if helm_chart.get('version') %}
+                            <div class="spec-item"><strong>Version:</strong> {{ helm_chart.version }}</div>
+                            {% endif %}
+                        </div>
+
+                        {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping and helm_chart['helm-values']|length > 0 %}
+                        <div class="helm-values-section" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                                <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                                <span class="rvo-text--sm" style="font-weight: 600;">Helm Values (Base)</span>
+                                <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
+                            </div>
+                            <div class="sensitive-field" id="base-helm-{{ helm_chart.name|replace('_', '-')|lower }}">
+                                <span class="sensitive-dots">••••••••••••••••••••</span>
+                                <span class="sensitive-value" style="display: none;"><pre class="config-code">{{ helm_chart['helm-values'] | tojson(indent=2) }}</pre></span>
+                                <c-button
+                                    label="Tonen"
+                                    kind="tertiary"
+                                    size="sm"
+                                    showIcon="before"
+                                    icon="oog"
+                                    class="toggle-sensitive"
+                                    @click="toggleSensitive('base-helm-{{ helm_chart.name|replace('_', '-')|lower }}')" />
+                            </div>
+                        </div>
+                        {% endif %}
+                    </c-layout-flow>
+                </c-card>
+                {% endfor %}
+            </div>
+        </c-layout-flow>
+    </c-card>
+    {% endif %}
+
+    {# Helmfile Section (Base level) #}
+    {% if project.helmfile %}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="oranje" />Helmfile</c-heading>
+            <p class="rvo-text--subtle">Helmfile definities op project niveau</p>
+
+            <div class="helmfile-section">
+                {% for helmfile in project.helmfile %}
+                <c-card class="helmfile-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
+                    <c-layout-flow gap="md">
+                        <div class="helmfile-header">
+                            <c-icon icon="applicatie" size="lg" color="oranje" />
+                            <div>
+                                <c-heading type="h3" textContent="{{ helmfile.name }}" />
+                                {% if helmfile.get('repository') %}
+                                <div class="rvo-text--sm rvo-text--subtle">{{ helmfile.repository }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="helmfile-specs">
+                            {% if helmfile.get('path') %}
+                            <div class="spec-item"><strong>Path:</strong> {{ helmfile.path }}</div>
+                            {% endif %}
+                            {% if helmfile.get('branch') %}
+                            <div class="spec-item"><strong>Branch:</strong> {{ helmfile.branch }}</div>
+                            {% endif %}
+                        </div>
+
+                        {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values']|length > 0 %}
+                        <div class="helm-values-section" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                                <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                                <span class="rvo-text--sm" style="font-weight: 600;">Helm Values (Base)</span>
+                                <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
+                            </div>
+                            <div class="sensitive-field" id="base-helmfile-{{ helmfile.name|replace('_', '-')|lower }}">
+                                <span class="sensitive-dots">••••••••••••••••••••</span>
+                                <span class="sensitive-value" style="display: none;"><pre class="config-code">{{ helmfile['helm-values'] | tojson(indent=2) }}</pre></span>
+                                <c-button
+                                    label="Tonen"
+                                    kind="tertiary"
+                                    size="sm"
+                                    showIcon="before"
+                                    icon="oog"
+                                    class="toggle-sensitive"
+                                    @click="toggleSensitive('base-helmfile-{{ helmfile.name|replace('_', '-')|lower }}')" />
+                            </div>
+                        </div>
+                        {% endif %}
+                    </c-layout-flow>
+                </c-card>
+                {% endfor %}
+            </div>
+        </c-layout-flow>
+    </c-card>
+    {% endif %}
 
     {# Environment Variables Overview Section #}
     {% set ns = namespace(has_any_env_vars=false, has_component_env_vars=false, has_deployment_env_vars=false) %}
@@ -1350,6 +1648,52 @@
         line-height: 1.5;
     }
 
+    /* Helm Charts Section */
+    .helm-charts-section {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: var(--rvo-space-lg);
+    }
+
+    .helm-chart-card {
+        border-left: 4px solid var(--rvo-color-groen);
+    }
+
+    .helm-chart-header {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
+    }
+
+    .helm-chart-specs {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-xs);
+    }
+
+    /* Helmfile Section */
+    .helmfile-section {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: var(--rvo-space-lg);
+    }
+
+    .helmfile-card {
+        border-left: 4px solid var(--rvo-color-oranje);
+    }
+
+    .helmfile-header {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
+    }
+
+    .helmfile-specs {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-xs);
+    }
+
     /* Status Badges */
     .status-badge {
         display: inline-flex;
@@ -1604,6 +1948,30 @@
             button.textContent = 'Verbergen';
             button.querySelector('c-icon').setAttribute('icon', 'oog-dicht');
         }
+    }
+
+    /**
+     * Copy sensitive value to clipboard
+     */
+    function copyToClipboard(fieldId) {
+        const field = document.getElementById(fieldId);
+        const valueElement = field.querySelector('.sensitive-value');
+        const copyButton = field.querySelector('.copy-button');
+
+        // Get text content (strip HTML if it's a pre/code block)
+        const textToCopy = valueElement.textContent.trim();
+
+        navigator.clipboard.writeText(textToCopy).then(() => {
+            // Show feedback
+            const originalLabel = copyButton.textContent;
+            copyButton.textContent = 'Gekopieerd!';
+            setTimeout(() => {
+                copyButton.textContent = originalLabel;
+            }, 2000);
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            alert('Kopiëren mislukt');
+        });
     }
 
     /**

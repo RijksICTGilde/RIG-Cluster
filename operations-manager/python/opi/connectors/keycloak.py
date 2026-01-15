@@ -1693,12 +1693,12 @@ class KeycloakConnector:
             except KeycloakGetError:
                 # Config ID exists but config was deleted, recreate
                 logger.warning(f"Config ID {existing_config_id} not found, creating new config")
-                self.admin.create_authenticator_config(payload=config_data, execution_id=execution_id)
+                self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
                 logger.info("Created Identity Provider Redirector config")
         else:
             # No config exists, create it
             logger.debug("No config exists, creating new config")
-            self.admin.create_authenticator_config(payload=config_data, execution_id=execution_id)
+            self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
             logger.info("Created Identity Provider Redirector config")
 
     async def create_restricted_browser_flow(

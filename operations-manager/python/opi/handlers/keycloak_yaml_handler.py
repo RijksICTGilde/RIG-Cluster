@@ -62,6 +62,32 @@ class KeycloakYamlHandler:
 
         logger.info("Keycloak configuration execution completed")
 
+    async def ensure_authentication_flows(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
+        """Ensure authentication flows are correctly configured (idempotent).
+
+        This method only processes the authenticationFlows section of the YAML config.
+        It's used to update existing realms where the full execute_config is not needed.
+
+        Args:
+            yaml_path: Path to YAML configuration file
+            context: Dictionary of variables for substitution (must include realm_name)
+        """
+        logger.info(f"Ensuring authentication flows from {yaml_path}")
+
+        # Load YAML
+        config = self._load_yaml(yaml_path)
+
+        # Merge variables: YAML variables + context (context overrides)
+        variables = {**config.get("variables", {}), **context}
+
+        # Process only authentication flows
+        flows_section = config.get("authenticationFlows")
+        if flows_section:
+            await self._process_authentication_flows(flows_section, variables)
+            logger.info("Authentication flows configuration completed")
+        else:
+            logger.debug("No authenticationFlows section in configuration")
+
     def _load_yaml(self, yaml_path: str | Path) -> dict[str, Any]:
         """Load YAML file.
 
@@ -339,11 +365,37 @@ class KeycloakYamlHandler:
             return
 
         items = self._expand_list(flows_section, variables)
+        logger.debug(f"Processing {len(items)} authentication flow items")
+
         for item in items:
+            logger.debug(f"Processing flow item: alias={item.get('alias')}, setAsBrowserFlow={item.get('setAsBrowserFlow')}")
+
             if item.get("setAsBrowserFlow"):
-                # Use the connector's configure_sso_redirect_flow method
-                provider_alias = variables.get("provider_alias", "sso-rijk")
-                logger.info(f"Configuring SSO redirect flow for realm {realm_name}")
+                # Extract provider alias from the identity-provider-redirector execution config
+                provider_alias = None
+                executions = item.get("executions", [])
+                logger.debug(f"Flow has {len(executions)} executions")
+
+                for execution in executions:
+                    authenticator = execution.get("authenticator")
+                    logger.debug(f"Checking execution: authenticator={authenticator}")
+
+                    if authenticator == "identity-provider-redirector":
+                        auth_config = execution.get("authenticatorConfig", {})
+                        config = auth_config.get("config", {})
+                        provider_alias = config.get("defaultProvider")
+                        logger.debug(
+                            f"Found identity-provider-redirector: "
+                            f"authenticatorConfig={auth_config}, config={config}, defaultProvider={provider_alias}"
+                        )
+                        break
+
+                if not provider_alias:
+                    # Fallback to context variable or default
+                    provider_alias = variables.get("provider_alias", "sso-rijk")
+                    logger.warning(f"Could not find defaultProvider in flow config, using fallback: {provider_alias}")
+
+                logger.info(f"Configuring SSO redirect flow for realm {realm_name} with provider {provider_alias}")
                 await self.keycloak.configure_sso_redirect_flow(realm_name, provider_alias)
 
     async def _process_client_scopes(self, scopes_section: Any, variables: dict[str, Any]) -> None:

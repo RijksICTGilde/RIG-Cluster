@@ -24,7 +24,11 @@ CLUSTER_CONFIG = {
             "cluster_issuer": "kind-ca-issuer",
             "ip_whitelist": "0.0.0.0",
         },
-        "storage": {"storage_class_name": "standard", "access_modes": ["ReadWriteOnce"]},
+        "storage": {
+            "storage_class_name": "csi-hostpath-sc",
+            "access_modes": ["ReadWriteOnce"],
+            "volume_snapshot_class": "csi-hostpath-snapclass",
+        },
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
         },
@@ -57,7 +61,11 @@ CLUSTER_CONFIG = {
             # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
             "ip_whitelist": "0.0.0.0/0",  # VPN only: "147.181.0.0/16"
         },
-        "storage": {"storage_class_name": "ocs-storagecluster-ceph-rbd", "access_modes": ["ReadWriteOnce"]},
+        "storage": {
+            "storage_class_name": "ocs-storagecluster-ceph-rbd",
+            "access_modes": ["ReadWriteOnce"],
+            "volume_snapshot_class": "ocs-storagecluster-rbdplugin-snapclass",
+        },
         "keycloak": {
             "support_http": False,  # Only generate HTTPS redirect URIs in production
         },
@@ -206,6 +214,25 @@ def get_storage_access_modes(cluster_name: str) -> list[str]:
     """
     storage_config = get_storage_config(cluster_name)
     return storage_config["access_modes"]
+
+
+def get_volume_snapshot_class(cluster_name: str) -> str | None:
+    """
+    Get the VolumeSnapshotClass name for a specific cluster.
+
+    This is used when creating VolumeSnapshots for PVC backups.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        VolumeSnapshotClass name string, or None if not configured
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    storage_config = get_storage_config(cluster_name)
+    return storage_config.get("volume_snapshot_class")
 
 
 def get_ingress_config(cluster_name: str) -> dict:

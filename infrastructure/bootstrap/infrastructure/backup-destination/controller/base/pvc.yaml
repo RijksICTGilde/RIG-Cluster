@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-backup-storage
+  namespace: rig-backup-destination
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: backup-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

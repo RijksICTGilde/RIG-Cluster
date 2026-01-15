@@ -195,6 +195,7 @@ class Settings(BaseSettings):
     # API security
     API_TOKEN: str = "d68d6aebd694d636e5eb4784a952b9c3"  # Example hardcoded token for development
     USE_UNSAFE_API_KEY: bool = False  # Use hardcoded "secret" API key for development (set to True in .env.local)
+    MASTER_API_KEY: str | None = None  # Master API key for admin operations (backups, etc.)
 
     # SOPS age key settings (from Kubernetes secret)
     SOPS_AGE_KEY_CONTENT: str | None = None  # Full SOPS age key content from secret
@@ -244,6 +245,18 @@ class Settings(BaseSettings):
 
     # Prometheus configuration
     PROMETHEUS_URL: str = "http://prometheus.rig-system:9090"
+
+    # Backup configuration
+    BACKUP_S3_ENDPOINT: str = "minio.rig-backup-destination.svc:9000"
+    BACKUP_S3_BUCKET: str = "rig-backups"
+    BACKUP_S3_ACCESS_KEY: str = "backup-admin"
+    BACKUP_S3_SECRET_KEY: str = "backup-secret-key-local"
+    BACKUP_S3_USE_TLS: bool = False  # Use HTTP (False) or HTTPS (True) for S3 endpoint
+    BACKUP_SNAPSHOT_CLASS: str = "ocs-storagecluster-rbdplugin-snapclass"
+    BACKUP_TIMEOUT_SECONDS: int = 3600
+    BACKUP_RETENTION_KEEP_LATEST: int = 7
+    BACKUP_RETENTION_KEEP_DAILY: int = 7
+    BACKUP_RETENTION_KEEP_WEEKLY: int = 4
 
 
 def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:

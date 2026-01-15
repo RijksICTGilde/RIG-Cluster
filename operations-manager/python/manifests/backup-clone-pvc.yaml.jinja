@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "{{ clone_pvc_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/managed-by: opi-backup
+    backup.rig.nl/source-pvc: "{{ source_pvc_name }}"
+    backup.rig.nl/timestamp: "{{ timestamp }}"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: "{{ storage_class_name }}"
+  resources:
+    requests:
+      storage: "{{ size }}"
+  dataSource:
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+    name: "{{ snapshot_name }}"

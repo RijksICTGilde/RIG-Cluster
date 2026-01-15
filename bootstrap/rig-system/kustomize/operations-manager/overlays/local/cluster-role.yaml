@@ -29,7 +29,6 @@ rules:
       - nodes
       - nodes/proxy
       - nodes/metrics
-      - pods
       - services
       - endpoints
     verbs:
@@ -42,3 +41,56 @@ rules:
       - /metrics/cadvisor
     verbs:
       - get
+  # ==========================================================================
+  # PVC Backup System Permissions
+  # See: features/pvc-backup-system.md for documentation
+  # ==========================================================================
+  # Backup lock management (ConfigMap in rig-system namespace)
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - create
+      - get
+      - delete
+      - patch
+      - update
+  # PVC operations for backup clones and restores
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumeclaims
+    verbs:
+      - create
+      - get
+      - list
+      - delete
+  # Backup/restore pod management
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - create
+      - get
+      - list
+      - delete
+      - watch
+  # Read backup pod logs for status and debugging
+  - apiGroups:
+      - ""
+    resources:
+      - pods/log
+    verbs:
+      - get
+  # VolumeSnapshot operations (CSI snapshots for point-in-time backups)
+  - apiGroups:
+      - snapshot.storage.k8s.io
+    resources:
+      - volumesnapshots
+    verbs:
+      - create
+      - get
+      - list
+      - delete

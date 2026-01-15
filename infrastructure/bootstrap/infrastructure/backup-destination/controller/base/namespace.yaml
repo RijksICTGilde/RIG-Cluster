@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rig-backup-destination
+  labels:
+    app.kubernetes.io/name: backup-destination
+    app.kubernetes.io/component: testing
+    app.kubernetes.io/part-of: rig-platform

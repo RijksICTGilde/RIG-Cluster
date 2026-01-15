@@ -1,0 +1,13 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: "{{ snapshot_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/managed-by: opi-backup
+    backup.rig.nl/source-pvc: "{{ pvc_name }}"
+    backup.rig.nl/timestamp: "{{ timestamp }}"
+spec:
+  volumeSnapshotClassName: "{{ snapshot_class }}"
+  source:
+    persistentVolumeClaimName: "{{ pvc_name }}"

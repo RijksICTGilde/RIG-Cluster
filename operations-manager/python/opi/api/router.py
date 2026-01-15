@@ -599,8 +599,13 @@ async def update_deployment_image(
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
         # Extract service actions if provided (e.g., persistent-storage recreate actions)
-        service_actions = image_data.services if image_data.services else None
-        if service_actions:
+        # Convert Pydantic models to dicts for project_manager compatibility
+        service_actions = None
+        if image_data.services:
+            service_actions = {
+                service_type: service_ref.model_dump()
+                for service_type, service_ref in image_data.services.items()
+            }
             logger.info(f"Service actions requested: {service_actions}")
 
         # Handle the update-image action with optional service actions

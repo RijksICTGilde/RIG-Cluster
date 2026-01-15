@@ -63,7 +63,6 @@ from opi.utils.naming import (
     generate_argocd_application_name,
     generate_external_hostname,
     generate_helm_values_filename,
-    generate_ingress_map,
     generate_ingress_name_from_path,
     generate_issuer_manifest_name,
     generate_issuer_name,
@@ -78,6 +77,7 @@ from opi.utils.naming import (
     generate_storage_name,
     generate_tls_secret_name,
     generate_unique_name,
+    get_component_ingress_map,
 )
 from opi.utils.secrets import (
     BaseSecret,
@@ -3701,20 +3701,16 @@ class ProjectManager:
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, issuer: {issuer_config}"
             )
 
-            # Determine hostname based on whether external domain is configured
-            if base_domain and subdomain:
-                # External domain mode: use base-domain with subdomain
-                hostname = generate_external_hostname(subdomain, base_domain)
-                # Create ingress_map with the external hostname
-                base_name = generate_unique_name(deployment_name, component_name)
-                ingress_map = {base_name: hostname}
-                logger.info(f"Using external domain for {component_name}: {hostname}")
-            else:
-                # Standard mode: use cluster ingress_postfix
-                ingress_map = generate_ingress_map(
-                    component_name, deployment_name, project_name, ingress_postfix, subdomain
-                )
-                hostname = next(iter(ingress_map.values()))
+            # Get ingress map using centralized function
+            ingress_map = get_component_ingress_map(
+                component_name=component_name,
+                deployment_name=deployment_name,
+                project_name=project_name,
+                ingress_postfix=ingress_postfix,
+                subdomain=subdomain,
+                base_domain=base_domain,
+            )
+            hostname = next(iter(ingress_map.values()))
 
             logger.info(f"Generated ingress_map for {component_name}: {ingress_map}")
             logger.info(f"Primary hostname for {component_name}: {hostname}")

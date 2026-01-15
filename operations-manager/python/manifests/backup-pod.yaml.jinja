@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ pod_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/name: pvc-backup
+    app.kubernetes.io/component: backup-job
+    app.kubernetes.io/managed-by: opi-backup
+    backup.rig.nl/pvc: "{{ pvc_name }}"
+    backup.rig.nl/timestamp: "{{ timestamp }}"
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  containers:
+    - name: kopia
+      image: ghcr.io/minbzk/base-images/kopia:latest
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+
+          echo "Starting backup for PVC: {{ pvc_name }}"
+          echo "Namespace: {{ namespace }}"
+          echo "S3 Endpoint: ${S3_ENDPOINT}"
+          echo "S3 Bucket: ${S3_BUCKET}"
+          echo "Backup Prefix: ${BACKUP_PREFIX}"
+          echo "S3 Disable TLS: ${S3_DISABLE_TLS}"
+
+          # Build TLS flag based on configuration
+          TLS_FLAG=""
+          if [ "${S3_DISABLE_TLS}" = "true" ]; then
+            TLS_FLAG="--disable-tls"
+          fi
+
+          # Try to connect to existing repository, create if not exists
+          echo "Connecting to Kopia repository..."
+          if ! kopia repository connect s3 \
+            --bucket="${S3_BUCKET}" \
+            --prefix="${BACKUP_PREFIX}/" \
+            --endpoint="${S3_ENDPOINT}" \
+            --access-key="${S3_ACCESS_KEY}" \
+            --secret-access-key="${S3_SECRET_KEY}" \
+            --password="${KOPIA_PASSWORD}" \
+            ${TLS_FLAG} 2>/dev/null; then
+
+            echo "Repository does not exist, creating new repository..."
+            kopia repository create s3 \
+              --bucket="${S3_BUCKET}" \
+              --prefix="${BACKUP_PREFIX}/" \
+              --endpoint="${S3_ENDPOINT}" \
+              --access-key="${S3_ACCESS_KEY}" \
+              --secret-access-key="${S3_SECRET_KEY}" \
+              --password="${KOPIA_PASSWORD}" \
+              ${TLS_FLAG}
+          fi
+
+          echo "Repository connected successfully"
+
+          # Run backup with full context metadata
+          echo "Starting snapshot of /data..."
+          kopia snapshot create /data \
+            --description="PVC backup: {{ pvc_name }}" \
+            --tags="cluster:{{ cluster }}" \
+            --tags="namespace:{{ namespace }}" \
+            --tags="project:{{ project_name | default('unknown') }}" \
+            --tags="deployment:{{ deployment_name | default('unknown') }}" \
+            --tags="component:{{ component_name | default('unknown') }}" \
+            --tags="storage:{{ storage_name | default('unknown') }}" \
+            --tags="pvc:{{ pvc_name }}" \
+            --tags="generation:{{ pvc_generation | default('0') }}" \
+            --tags="timestamp:{{ timestamp }}"
+
+          echo "Snapshot created successfully"
+
+          # Set retention policy (1 per day, keep 7 days)
+          echo "Setting retention policy..."
+          kopia policy set /data \
+            --keep-latest={{ retention_keep_latest | default(1) }} \
+            --keep-daily={{ retention_keep_daily | default(7) }} \
+            --keep-weekly={{ retention_keep_weekly | default(0) }} \
+            --keep-monthly={{ retention_keep_monthly | default(0) }} \
+            --keep-annual={{ retention_keep_annual | default(0) }}
+
+          echo "Retention policy set"
+
+          # Apply retention policy - delete old snapshots
+          echo "Applying retention policy (expiring old snapshots)..."
+          kopia snapshot expire --delete
+
+          # Show snapshot list after cleanup
+          echo "Current snapshots after retention:"
+          kopia snapshot list
+
+          echo "Backup completed successfully for {{ pvc_name }}"
+      env:
+        - name: S3_ENDPOINT
+          value: "{{ s3_endpoint }}"
+        - name: S3_BUCKET
+          value: "{{ s3_bucket }}"
+        - name: S3_ACCESS_KEY
+          value: "{{ s3_access_key }}"
+        - name: S3_SECRET_KEY
+          value: "{{ s3_secret_key }}"
+        - name: S3_DISABLE_TLS
+          value: "{{ s3_disable_tls | lower }}"
+        - name: BACKUP_PREFIX
+          value: "{{ backup_prefix }}"
+        - name: KOPIA_PASSWORD
+          value: "{{ kopia_password }}"
+      volumeMounts:
+        - name: data
+          mountPath: /data
+          readOnly: true
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "1Gi"
+          cpu: "1000m"
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: "{{ clone_pvc_name }}"

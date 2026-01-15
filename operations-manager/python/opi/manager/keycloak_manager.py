@@ -16,10 +16,10 @@ from opi.services import ServiceAdapter, ServiceType
 from opi.utils.age import encrypt_age_content, get_project_public_key
 from opi.utils.naming import (
     generate_external_hostname,
-    generate_ingress_map,
     generate_project_admin_username,
     generate_project_platform_client_id,
     generate_project_realm_name,
+    get_deployment_hostnames,
     resolve_effective_base_domain,
 )
 from opi.utils.passwords import generate_secure_password
@@ -91,7 +91,6 @@ class KeycloakManager:
 
         try:
             # Collect all hostnames from all SSO components/helm-charts in this deployment
-            all_ingress_hosts = []
             ingress_postfix = get_ingress_postfix(cluster)
             subdomain = deployment.get("subdomain")
             base_domain = deployment.get("base-domain")
@@ -101,29 +100,33 @@ class KeycloakManager:
             else:
                 logger.info(f"Using component-specific mode for deployment {deployment_name}")
 
-            # Process component-based SSO (existing logic)
+            # Filter components that should process SSO
+            filtered_sso_components = []
             for component_name in sso_components:
-                # Check if we should process SSO for this component
                 should_process = await self._should_process_sso_rijk(project_data, component_name)
-                if not should_process:
+                if should_process:
+                    filtered_sso_components.append(component_name)
+                else:
                     logger.info(f"Skipping SSO setup for component {component_name} (not configured for SSO-Rijk)")
-                    continue
 
-                # Get hostname for this component using ingress map (supports subdomain)
-                ingress_map = generate_ingress_map(
-                    component_name, deployment_name, project_name, ingress_postfix, subdomain
-                )
-                hostname = next(iter(ingress_map.values()))
-                all_ingress_hosts.append(hostname)
-                logger.debug(f"Added hostname for component {component_name}: {hostname}")
+            # Collect all hostnames using centralized function
+            all_ingress_hosts = get_deployment_hostnames(
+                component_names=filtered_sso_components,
+                deployment_name=deployment_name,
+                project_name=project_name,
+                ingress_postfix=ingress_postfix,
+                subdomain=subdomain,
+                base_domain=base_domain,
+            )
+            if all_ingress_hosts:
+                logger.info(f"Generated hostnames for components: {all_ingress_hosts}")
 
-            # Process helm-chart-based SSO (new logic)
+            # Process helm-chart-based SSO
             if uses_keycloak_via_helm:
                 if not subdomain:
                     raise ValueError(
                         f"Helm-chart deployment {deployment_name} uses Keycloak but is missing required 'subdomain' field"
                     )
-                # For helm-chart deployments, construct hostname from subdomain + base-domain
                 effective_base_domain = resolve_effective_base_domain(base_domain, ingress_postfix)
                 helm_hostname = generate_external_hostname(subdomain, effective_base_domain)
                 if helm_hostname not in all_ingress_hosts:
@@ -136,7 +139,6 @@ class KeycloakManager:
                     raise ValueError(
                         f"Helmfile deployment {deployment_name} uses Keycloak but is missing required 'subdomain' field"
                     )
-                # For helmfile deployments, construct hostname from subdomain + base-domain
                 effective_base_domain = resolve_effective_base_domain(base_domain, ingress_postfix)
                 helmfile_hostname = generate_external_hostname(subdomain, effective_base_domain)
                 if helmfile_hostname not in all_ingress_hosts:
@@ -688,6 +690,10 @@ class KeycloakManager:
 
                 if await verify_keycloak.realm_exists(realm_name):
                     logger.info(f"Verified project realm {realm_name} exists in Keycloak")
+                    # Always ensure authentication flow is correctly configured (idempotent)
+                    await self._ensure_realm_authentication_flow(
+                        realm_name, keycloak_host, config
+                    )
                 else:
                     logger.warning(
                         f"Project realm config exists but realm {realm_name} not found in Keycloak - will recreate"
@@ -993,6 +999,55 @@ class KeycloakManager:
         """
         # Deployment credentials are stored in K8s secrets via secrets map, not in project config
         logger.debug("Deployment credentials are stored in K8s secrets, not storing in project config")
+
+    async def _ensure_realm_authentication_flow(
+        self,
+        realm_name: str,
+        keycloak_url: str,
+        config: dict[str, Any],
+    ) -> None:
+        """
+        Ensure the authentication flow is correctly configured for an existing realm.
+
+        This is an idempotent operation that updates the authentication flow configuration
+        based on the YAML template. It's called when the realm already exists to ensure
+        the SSO redirect flow uses the correct identity provider alias.
+
+        Args:
+            realm_name: Name of the realm to configure
+            keycloak_url: Base URL of the Keycloak server
+            config: Keycloak configuration dict with template and variables
+        """
+        template_name = config.get("template", "sso-only")
+        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
+
+        if not yaml_path.exists():
+            logger.warning(f"Template {template_name} not found, skipping authentication flow update")
+            return
+
+        logger.info(f"Ensuring authentication flow configuration for realm {realm_name} using template {template_name}")
+
+        # Create Keycloak connector
+        keycloak = await create_keycloak_connector(
+            keycloak_url=keycloak_url,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+
+        # Build minimal context for authentication flow processing
+        context = {
+            "realm_name": realm_name,
+            "project_realm_name": realm_name,
+        }
+
+        # Merge user-provided variables
+        user_variables = config.get("variables", {})
+        if isinstance(user_variables, dict):
+            context.update(user_variables)
+
+        # Process authentication flows (idempotent - updates if needed)
+        handler = KeycloakYamlHandler(keycloak)
+        await handler.ensure_authentication_flows(yaml_path, context)
 
     async def _setup_project_keycloak_realm(
         self,

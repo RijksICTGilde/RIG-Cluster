@@ -40,6 +40,14 @@ RUN curl -LO "https://dl.min.io/client/mc/release/linux-amd64/mc" \
     && chmod +x mc \
     && mv mc /usr/local/bin/mc
 
+# Install Kopia - for backup repository operations
+RUN KOPIA_VERSION=$(curl -s https://api.github.com/repos/kopia/kopia/releases/latest | grep -Po '"tag_name": "v\K[^"]*') \
+    && curl -LO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}/kopia-${KOPIA_VERSION}-linux-x64.tar.gz" \
+    && tar -xzf "kopia-${KOPIA_VERSION}-linux-x64.tar.gz" \
+    && mv "kopia-${KOPIA_VERSION}-linux-x64/kopia" /usr/local/bin/kopia \
+    && chmod +x /usr/local/bin/kopia \
+    && rm -rf "kopia-${KOPIA_VERSION}-linux-x64.tar.gz" "kopia-${KOPIA_VERSION}-linux-x64"
+
 # Install Chisel - used for establishing HTTP tunnels to remote services
 RUN CHISEL_VERSION=$(curl -s https://api.github.com/repos/jpillora/chisel/releases/latest | grep -Po '"tag_name": "v?\K[^"]*') \
     && curl -LO "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_amd64.gz" \

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: rig-backup-destination
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: backup-storage
+spec:
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
