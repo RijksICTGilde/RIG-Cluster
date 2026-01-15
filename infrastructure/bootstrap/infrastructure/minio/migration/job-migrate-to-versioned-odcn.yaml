@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: minio-migration-to-versioned
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
   ttlSecondsAfterFinished: 3600
   template:
