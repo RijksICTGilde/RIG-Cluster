@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "{{ pvc_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/managed-by: opi-restore
+    backup.rig.nl/restored: "true"
+{% if backup_enabled is defined and backup_enabled %}
+    backup.rig.nl/enabled: "true"
+{% endif %}
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=false
+    backup.rig.nl/restored-at: "{{ timestamp }}"
+    backup.rig.nl/restored-from: "{{ source_pvc_name }}"
+{% if snapshot_id %}
+    backup.rig.nl/snapshot-id: "{{ snapshot_id }}"
+{% endif %}
+spec:
+  accessModes:
+{% for mode in access_modes %}
+    - {{ mode }}
+{% endfor %}
+{% if storage_class_name %}
+  storageClassName: {{ storage_class_name }}
+{% endif %}
+  resources:
+    requests:
+      storage: {{ size }}

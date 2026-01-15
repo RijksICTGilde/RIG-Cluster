@@ -42,6 +42,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
+        fsGroup: 1001  # Required for PVC write access
         {% else %}
         # For OpenShift, let SCCs assign user/group IDs automatically
         runAsNonRoot: true

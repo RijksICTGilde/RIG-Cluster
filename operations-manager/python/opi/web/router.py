@@ -738,7 +738,9 @@ async def project_details(request: Request, project_name: str):
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
             raw_user_env_vars = component.get("user-env-vars")
-            logger.info(f"Component '{component_name}': has user-env-vars={raw_user_env_vars is not None}, type={type(raw_user_env_vars).__name__ if raw_user_env_vars else 'None'}")
+            logger.info(
+                f"Component '{component_name}': has user-env-vars={raw_user_env_vars is not None}, type={type(raw_user_env_vars).__name__ if raw_user_env_vars else 'None'}"
+            )
             if raw_user_env_vars:
                 logger.info(f"Processing user-env-vars for component '{component_name}'")
                 try:
@@ -751,6 +753,7 @@ async def project_details(request: Request, project_name: str):
                     # If result is a string (not a dict), try parsing as KEY=VALUE format
                     if isinstance(parsed_env_vars, str) or parsed_env_vars is None:
                         from opi.utils.env_vars import validate_and_parse_env_vars
+
                         logger.info(f"YAML returned {type(parsed_env_vars).__name__}, trying KEY=VALUE format")
                         parsed_env_vars = validate_and_parse_env_vars(decrypted_yaml)
 
@@ -764,6 +767,66 @@ async def project_details(request: Request, project_name: str):
                     component["user-env-vars"] = None
             else:
                 logger.debug(f"No user-env-vars found for component '{component_name}'")
+
+        # Decrypt helm-charts base helm-values
+        for helm_chart in project_data_decrypted.get("helm-charts", []):
+            chart_name = helm_chart.get("name", "unknown")
+            if helm_chart.get("helm-values"):
+                try:
+                    decrypted_yaml = await decrypt_age_content(helm_chart["helm-values"], project_private_key)
+                    helm_chart["helm-values"] = load_yaml_from_string(decrypted_yaml)
+                    logger.info(f"Decrypted helm-values for helm-chart '{chart_name}'")
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt helm-values for helm-chart '{chart_name}': {e}")
+                    helm_chart["helm-values"] = None
+
+        # Decrypt helmfile base helm-values
+        for helmfile in project_data_decrypted.get("helmfile", []):
+            helmfile_name = helmfile.get("name", "unknown")
+            if helmfile.get("helm-values"):
+                try:
+                    decrypted_yaml = await decrypt_age_content(helmfile["helm-values"], project_private_key)
+                    helmfile["helm-values"] = load_yaml_from_string(decrypted_yaml)
+                    logger.info(f"Decrypted helm-values for helmfile '{helmfile_name}'")
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt helm-values for helmfile '{helmfile_name}': {e}")
+                    helmfile["helm-values"] = None
+
+        # Decrypt deployment-level helm-charts and helmfile helm-values
+        for deployment in project_data_decrypted.get("deployments", []):
+            deployment_name = deployment.get("name", "unknown")
+
+            # Decrypt deployment helm-charts helm-values
+            for helm_chart in deployment.get("helm-charts", []):
+                chart_ref = helm_chart.get("reference", "unknown")
+                if helm_chart.get("helm-values"):
+                    try:
+                        decrypted_yaml = await decrypt_age_content(helm_chart["helm-values"], project_private_key)
+                        helm_chart["helm-values"] = load_yaml_from_string(decrypted_yaml)
+                        logger.info(
+                            f"Decrypted helm-values for deployment '{deployment_name}' helm-chart '{chart_ref}'"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to decrypt helm-values for deployment '{deployment_name}' helm-chart '{chart_ref}': {e}"
+                        )
+                        helm_chart["helm-values"] = None
+
+            # Decrypt deployment helmfile helm-values
+            for helmfile in deployment.get("helmfile", []):
+                helmfile_ref = helmfile.get("reference", "unknown")
+                if helmfile.get("helm-values"):
+                    try:
+                        decrypted_yaml = await decrypt_age_content(helmfile["helm-values"], project_private_key)
+                        helmfile["helm-values"] = load_yaml_from_string(decrypted_yaml)
+                        logger.info(
+                            f"Decrypted helm-values for deployment '{deployment_name}' helmfile '{helmfile_ref}'"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to decrypt helm-values for deployment '{deployment_name}' helmfile '{helmfile_ref}': {e}"
+                        )
+                        helmfile["helm-values"] = None
 
         # Process services to add display information
         services_with_info = []
@@ -793,6 +856,8 @@ async def project_details(request: Request, project_name: str):
             "deployments": project_data_decrypted.get("deployments", []),
             "repositories": project_data.get("repositories", []),
             "config": project_data_decrypted.get("config", {}),
+            "helm_charts": project_data_decrypted.get("helm-charts", []),
+            "helmfile": project_data_decrypted.get("helmfile", []),
         }
 
         # Add ingress URLs for components that have publish-on-web service
@@ -947,6 +1012,7 @@ async def project_details(request: Request, project_name: str):
 
         # Fetch ArgoCD status for each deployment
         from typing import Any
+
         argocd_status: dict[str, dict[str, Any]] = {}
         argocd_available = False
         try:
@@ -976,7 +1042,9 @@ async def project_details(request: Request, project_name: str):
                                     resource_health = resource.get("health", {})
                                     if resource_health.get("status") in ["Degraded", "Missing"]:
                                         error_msg = resource_health.get("message", "Unknown error")
-                                        resource_name = f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                        resource_name = (
+                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                        )
                                         errors.append({"resource": resource_name, "message": error_msg})
 
                                 # Check for sync errors
@@ -1003,14 +1071,18 @@ async def project_details(request: Request, project_name: str):
                                     "operation_message": operation_state.get("message"),
                                     "errors": errors,
                                 }
-                                logger.debug(f"Fetched ArgoCD status for {app_name}: health={health.get('status')}, sync={sync.get('status')}")
+                                logger.debug(
+                                    f"Fetched ArgoCD status for {app_name}: health={health.get('status')}, sync={sync.get('status')}"
+                                )
                             else:
                                 argocd_status[deployment_name] = {
                                     "app_name": app_name,
                                     "available": False,
                                     "health": "Unknown",
                                     "sync": "Unknown",
-                                    "errors": [{"resource": "Application", "message": "Application not found in ArgoCD"}],
+                                    "errors": [
+                                        {"resource": "Application", "message": "Application not found in ArgoCD"}
+                                    ],
                                 }
                         except Exception as app_error:
                             logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
@@ -1024,23 +1096,60 @@ async def project_details(request: Request, project_name: str):
         except Exception as argo_error:
             logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
 
-        return templates.TemplateResponse(
-            "project-details.html.j2",
-            {
-                "request": request,
-                "title": f"Project Details - {project_details['display_name']}",
-                "menu_items": get_menu_items(user),
-                "project": project_details,
-                "user": user,
-                "user_role": user_role,
-                "ServiceAdapter": ServiceAdapter,
-                "deployment_metrics_timeseries": deployment_metrics_timeseries,
-                "discovered_workloads": discovered_workloads,
-                "prometheus_available": prometheus_available,
-                "argocd_status": argocd_status,
-                "argocd_available": argocd_available,
-            },
-        )
+        # Fetch backup snapshots for deployments on current cluster
+        from opi.core.cluster_config import get_prefixed_namespace
+        from opi.core.config import settings
+        from opi.manager.backup_manager import BackupManager
+
+        current_cluster = settings.CLUSTER_MANAGER
+        deployment_backups: dict[str, list[dict[str, Any]]] = {}
+        backups_available = False
+
+        try:
+            backup_manager = BackupManager()
+            backups_available = True
+
+            for deployment in project_details["deployments"]:
+                deployment_name = deployment.get("name")
+                base_namespace = deployment.get("namespace")
+                cluster = deployment.get("cluster")
+
+                # Only fetch backups for deployments on the current cluster
+                if not deployment_name or not base_namespace or cluster != current_cluster:
+                    continue
+
+                # Get the actual Kubernetes namespace with cluster prefix
+                k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
+
+                try:
+                    snapshots = await backup_manager.list_snapshots(cluster, k8s_namespace)
+                    if snapshots:
+                        deployment_backups[deployment_name] = [
+                            {
+                                "snapshot_id": s.snapshot_id,
+                                "pvc_name": s.pvc_name,
+                                "timestamp": s.timestamp,
+                                "size_bytes": s.size_bytes,
+                                # Extended metadata
+                                "cluster": s.cluster,
+                                "namespace": s.namespace,
+                                "project_name": s.project_name,
+                                "deployment_name": s.deployment_name,
+                                "component_name": s.component_name,
+                                "storage_name": s.storage_name,
+                                "generation": s.generation,
+                                # Raw tags for debugging
+                                "tags": s.tags,
+                            }
+                            for s in snapshots
+                        ]
+                        logger.debug(f"Found {len(snapshots)} backups for deployment {deployment_name}")
+                except Exception as backup_err:
+                    logger.warning(f"Failed to fetch backups for deployment {deployment_name}: {backup_err}")
+
+        except Exception as backup_init_error:
+            logger.warning(f"Failed to initialize backup manager: {backup_init_error}")
+            backups_available = False
 
         # Generate ingress URLs for components with inbound ports
         from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
@@ -1139,6 +1248,14 @@ async def project_details(request: Request, project_name: str):
                 "user": user,
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
+                "deployment_metrics_timeseries": deployment_metrics_timeseries,
+                "discovered_workloads": discovered_workloads,
+                "prometheus_available": prometheus_available,
+                "argocd_status": argocd_status,
+                "argocd_available": argocd_available,
+                "deployment_backups": deployment_backups,
+                "backups_available": backups_available,
+                "current_cluster": current_cluster,
             },
         )
 

@@ -806,6 +806,180 @@ class MinioConnector:
             logger.exception("Failed to list buckets")
             raise MinioExecutionError(f"Bucket listing failed: {e}") from e
 
+    # Bucket Versioning Operations
+
+    async def get_bucket_versioning_status(self, alias: str, bucket_name: str) -> dict[str, Any]:
+        """
+        Get bucket versioning status.
+
+        Args:
+            alias: MinIO server alias
+            bucket_name: Name of bucket to check
+
+        Returns:
+            Dictionary with versioning status:
+                - enabled: bool - True if versioning is enabled
+                - suspended: bool - True if versioning is suspended
+                - status: str - "Enabled", "Suspended", or "Unversioned"
+        """
+        try:
+            validated_bucket_name = self._validate_bucket_name(bucket_name)
+            bucket_path = f"{alias}/{validated_bucket_name}"
+
+            args = ["version", "info", bucket_path, "--json"]
+            stdout, stderr, code = await self._run_mc_command(args)
+
+            if code != 0:
+                error_msg = f"Failed to get versioning status for bucket {validated_bucket_name}: {stderr}"
+                logger.error(error_msg)
+                raise MinioExecutionError(error_msg)
+
+            # Parse JSON output
+            if stdout.strip():
+                try:
+                    version_info = json.loads(stdout.strip())
+                    status = version_info.get("status", "").lower()
+
+                    return {
+                        "enabled": status == "enabled",
+                        "suspended": status == "suspended",
+                        "status": version_info.get("status", "Unversioned"),
+                    }
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse versioning info: {e}")
+                    # Fallback: assume unversioned
+                    return {"enabled": False, "suspended": False, "status": "Unversioned"}
+
+            # No output means unversioned
+            return {"enabled": False, "suspended": False, "status": "Unversioned"}
+
+        except MinioValidationError:
+            logger.exception("Validation failed for versioning status check")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to get versioning status for bucket {bucket_name}")
+            raise MinioExecutionError(f"Versioning status check failed: {e}") from e
+
+    async def enable_bucket_versioning(self, alias: str, bucket_name: str) -> dict[str, Any]:
+        """
+        Enable versioning on a bucket.
+
+        Args:
+            alias: MinIO server alias
+            bucket_name: Name of bucket to enable versioning on
+
+        Returns:
+            Dictionary with operation status and details
+        """
+        try:
+            validated_bucket_name = self._validate_bucket_name(bucket_name)
+            bucket_path = f"{alias}/{validated_bucket_name}"
+
+            args = ["version", "enable", bucket_path]
+            stdout, stderr, code = await self._run_mc_command(args)
+
+            if code != 0:
+                error_msg = f"Failed to enable versioning on bucket {validated_bucket_name}: {stderr}"
+                logger.error(error_msg)
+                raise MinioExecutionError(error_msg)
+
+            logger.info(f"Versioning enabled on bucket {validated_bucket_name}")
+            return {"status": "enabled", "message": f"Versioning enabled on bucket {validated_bucket_name}"}
+
+        except MinioValidationError:
+            logger.exception("Validation failed for versioning enable")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to enable versioning on bucket {bucket_name}")
+            raise MinioExecutionError(f"Versioning enable failed: {e}") from e
+
+    async def suspend_bucket_versioning(self, alias: str, bucket_name: str) -> dict[str, Any]:
+        """
+        Suspend versioning on a bucket (cannot be fully disabled once enabled).
+
+        Args:
+            alias: MinIO server alias
+            bucket_name: Name of bucket to suspend versioning on
+
+        Returns:
+            Dictionary with operation status and details
+        """
+        try:
+            validated_bucket_name = self._validate_bucket_name(bucket_name)
+            bucket_path = f"{alias}/{validated_bucket_name}"
+
+            args = ["version", "suspend", bucket_path]
+            stdout, stderr, code = await self._run_mc_command(args)
+
+            if code != 0:
+                error_msg = f"Failed to suspend versioning on bucket {validated_bucket_name}: {stderr}"
+                logger.error(error_msg)
+                raise MinioExecutionError(error_msg)
+
+            logger.info(f"Versioning suspended on bucket {validated_bucket_name}")
+            return {"status": "suspended", "message": f"Versioning suspended on bucket {validated_bucket_name}"}
+
+        except MinioValidationError:
+            logger.exception("Validation failed for versioning suspend")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to suspend versioning on bucket {bucket_name}")
+            raise MinioExecutionError(f"Versioning suspend failed: {e}") from e
+
+    async def ensure_bucket_versioning(self, alias: str, bucket_name: str, enable: bool) -> dict[str, Any]:
+        """
+        Idempotently ensure bucket versioning state.
+
+        Args:
+            alias: MinIO server alias
+            bucket_name: Name of bucket
+            enable: True to enable versioning, False to suspend versioning
+
+        Returns:
+            Dictionary with operation status:
+                - status: "enabled", "suspended", or "unchanged"
+                - message: Description of action taken
+        """
+        try:
+            validated_bucket_name = self._validate_bucket_name(bucket_name)
+
+            # Check current versioning status
+            current_status = await self.get_bucket_versioning_status(alias, validated_bucket_name)
+
+            if enable:
+                # Want versioning enabled
+                if current_status["enabled"]:
+                    logger.debug(f"Bucket {validated_bucket_name} versioning already enabled, no action needed")
+                    return {
+                        "status": "unchanged",
+                        "message": f"Bucket {validated_bucket_name} versioning already enabled",
+                    }
+                else:
+                    # Enable versioning
+                    logger.info(f"Enabling versioning on bucket {validated_bucket_name}")
+                    return await self.enable_bucket_versioning(alias, validated_bucket_name)
+            else:
+                # Want versioning suspended
+                if current_status["suspended"] or not current_status["enabled"]:
+                    logger.debug(
+                        f"Bucket {validated_bucket_name} versioning already suspended/disabled, no action needed"
+                    )
+                    return {
+                        "status": "unchanged",
+                        "message": f"Bucket {validated_bucket_name} versioning already suspended/disabled",
+                    }
+                else:
+                    # Suspend versioning
+                    logger.info(f"Suspending versioning on bucket {validated_bucket_name}")
+                    return await self.suspend_bucket_versioning(alias, validated_bucket_name)
+
+        except (MinioValidationError, MinioExecutionError):
+            logger.exception("Failed to ensure bucket versioning state")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to ensure versioning state for bucket {bucket_name}")
+            raise MinioExecutionError(f"Ensuring versioning state failed: {e}") from e
+
     # Convenience methods for common operations
 
     async def grant_bucket_access(

@@ -351,7 +351,8 @@ class ProjectFileHandler:
             if private_key:
                 return [
                     self._decrypt_with_private_key(match.value, private_key)
-                    if isinstance(match.value, str) else match.value
+                    if isinstance(match.value, str)
+                    else match.value
                     for match in matches
                 ]
             else:
@@ -362,7 +363,8 @@ class ProjectFileHandler:
             if private_key:
                 return [
                     self._decrypt_with_private_key(match.value, private_key)
-                    if isinstance(match.value, str) else match.value
+                    if isinstance(match.value, str)
+                    else match.value
                     for match in matches
                 ]
             else:
@@ -713,8 +715,7 @@ class ProjectFileHandler:
 
         if metrics_port or metrics_path:
             logger.info(
-                f"Found metrics config for component '{component_name}': "
-                f"port={metrics_port}, path={metrics_path}"
+                f"Found metrics config for component '{component_name}': port={metrics_port}, path={metrics_path}"
             )
         else:
             logger.debug(f"No metrics configuration found for component '{component_name}'")
@@ -807,6 +808,57 @@ class ProjectFileHandler:
             logger.warning(f"Component '{component_name}' in deployment '{deployment_name}' not found in project data")
 
         return project_data
+
+    def extract_backup_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Extract project-level backup configuration.
+
+        Args:
+            project_data: The parsed project data
+
+        Returns:
+            Backup configuration dict with keys:
+            - enabled: bool (default False)
+            - schedule: str (daily, weekly, manual) (default manual)
+        """
+        backup_config = project_data.get("backup", {})
+        return {
+            "enabled": backup_config.get("enabled", False),
+            "schedule": backup_config.get("schedule", "manual"),
+        }
+
+    def get_storage_backup_enabled(self, project_data: dict[str, Any], component_name: str, storage_name: str) -> bool:
+        """
+        Check if backup is enabled for a specific storage in a component.
+
+        The backup setting is determined by:
+        1. Per-storage override in component storage config (storage[].backup)
+        2. Project-level backup.enabled setting
+
+        Args:
+            project_data: The parsed project data
+            component_name: Name of the component
+            storage_name: Name of the storage (e.g., "data", "cache")
+
+        Returns:
+            True if backup should be enabled for this storage
+        """
+        # First check project-level backup setting
+        backup_config = self.extract_backup_config(project_data)
+        project_backup_enabled = backup_config.get("enabled", False)
+
+        # Then check per-storage override
+        # Path: $.components[?(@.name=='component_name')].storage[?(@.name=='storage_name')].backup
+        path = f"$.components[?(@.name=='{component_name}')].storage[?(@.name=='{storage_name}')].backup"
+        storage_backup = self.extract_value_by_path(project_data, path, None)
+
+        # Per-storage setting overrides project setting if specified
+        if storage_backup is not None:
+            logger.debug(f"Storage {component_name}/{storage_name} backup override: {storage_backup}")
+            return bool(storage_backup)
+
+        logger.debug(f"Storage {component_name}/{storage_name} using project backup setting: {project_backup_enabled}")
+        return project_backup_enabled
 
     def extract_remote_sources(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
         """
@@ -958,9 +1010,7 @@ class ProjectFileHandler:
         logger.warning(f"Helm chart '{name}' not found")
         return None
 
-    async def extract_helm_chart_values(
-        self, project_data: dict[str, Any], chart_name: str
-    ) -> dict[str, Any]:
+    async def extract_helm_chart_values(self, project_data: dict[str, Any], chart_name: str) -> dict[str, Any]:
         """
         Extract helm-values from a helm-chart definition by name (base values).
 
@@ -1045,14 +1095,57 @@ class ProjectFileHandler:
                 )
 
         logger.debug(
-            f"No deployment-level helm-values found for chart '{chart_reference}' "
-            f"in deployment '{deployment_name}'"
+            f"No deployment-level helm-values found for chart '{chart_reference}' in deployment '{deployment_name}'"
         )
         return {}
 
-    def extract_deployment_components(
-        self, project_data: dict[str, Any], deployment_name: str
-    ) -> list[dict[str, Any]]:
+    def extract_deployment_namespace(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
+        """
+        Extract the raw namespace for a deployment.
+
+        Note: This returns the raw namespace from the project file. To get the actual
+        Kubernetes namespace, use get_prefixed_namespace(cluster, namespace) from
+        opi.core.cluster_config.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            Raw namespace string if found, None otherwise
+        """
+        path = f"$.deployments[?(@.name=='{deployment_name}')].namespace"
+        namespace = self.extract_value_by_path(project_data, path, None)
+
+        if namespace:
+            logger.debug(f"Found namespace '{namespace}' for deployment '{deployment_name}'")
+            return namespace
+
+        logger.warning(f"No namespace found for deployment '{deployment_name}'")
+        return None
+
+    def extract_deployment_cluster(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
+        """
+        Extract the cluster for a deployment.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            Cluster string if found, None otherwise
+        """
+        path = f"$.deployments[?(@.name=='{deployment_name}')].cluster"
+        cluster = self.extract_value_by_path(project_data, path, None)
+
+        if cluster:
+            logger.debug(f"Found cluster '{cluster}' for deployment '{deployment_name}'")
+            return cluster
+
+        logger.warning(f"No cluster found for deployment '{deployment_name}'")
+        return None
+
+    def extract_deployment_components(self, project_data: dict[str, Any], deployment_name: str) -> list[dict[str, Any]]:
         """
         Extract component references from a deployment.
 
@@ -1096,9 +1189,7 @@ class ProjectFileHandler:
         logger.debug(f"No helm-charts found in deployment '{deployment_name}'")
         return []
 
-    def extract_helm_chart_uses_services(
-        self, project_data: dict[str, Any], chart_name: str
-    ) -> list[str]:
+    def extract_helm_chart_uses_services(self, project_data: dict[str, Any], chart_name: str) -> list[str]:
         """
         Extract uses-services from a helm-chart definition.
 
@@ -1157,9 +1248,7 @@ class ProjectFileHandler:
         logger.warning(f"Helmfile '{name}' not found")
         return None
 
-    async def extract_helmfile_values(
-        self, project_data: dict[str, Any], helmfile_name: str
-    ) -> dict[str, Any]:
+    async def extract_helmfile_values(self, project_data: dict[str, Any], helmfile_name: str) -> dict[str, Any]:
         """
         Extract helm-values from a helmfile definition by name (base values).
 
@@ -1249,9 +1338,7 @@ class ProjectFileHandler:
         )
         return {}
 
-    def extract_deployment_helmfiles(
-        self, project_data: dict[str, Any], deployment_name: str
-    ) -> list[dict[str, Any]]:
+    def extract_deployment_helmfiles(self, project_data: dict[str, Any], deployment_name: str) -> list[dict[str, Any]]:
         """
         Extract helmfile references from a deployment.
 
@@ -1272,9 +1359,7 @@ class ProjectFileHandler:
         logger.debug(f"No helmfiles found in deployment '{deployment_name}'")
         return []
 
-    def extract_helmfile_uses_services(
-        self, project_data: dict[str, Any], helmfile_name: str
-    ) -> list[str]:
+    def extract_helmfile_uses_services(self, project_data: dict[str, Any], helmfile_name: str) -> list[str]:
         """
         Extract uses-services from a helmfile definition.
 
@@ -1326,7 +1411,13 @@ class ProjectFileHandler:
                 if services:
                     service_list = services if isinstance(services, list) else [services]
                     for service in service_list:
-                        service_name = service if isinstance(service, str) else list(service.keys())[0] if isinstance(service, dict) else str(service)
+                        service_name = (
+                            service
+                            if isinstance(service, str)
+                            else list(service.keys())[0]
+                            if isinstance(service, dict)
+                            else str(service)
+                        )
                         if service_name in service_types:
                             return True
 
@@ -1337,7 +1428,13 @@ class ProjectFileHandler:
             if ref_name:
                 services = self.extract_helm_chart_uses_services(project_data, ref_name)
                 for service in services:
-                    service_name = service if isinstance(service, str) else list(service.keys())[0] if isinstance(service, dict) else str(service)
+                    service_name = (
+                        service
+                        if isinstance(service, str)
+                        else list(service.keys())[0]
+                        if isinstance(service, dict)
+                        else str(service)
+                    )
                     if service_name in service_types:
                         return True
 
@@ -1348,11 +1445,40 @@ class ProjectFileHandler:
             if ref_name:
                 services = self.extract_helmfile_uses_services(project_data, ref_name)
                 for service in services:
-                    service_name = service if isinstance(service, str) else list(service.keys())[0] if isinstance(service, dict) else str(service)
+                    service_name = (
+                        service
+                        if isinstance(service, str)
+                        else list(service.keys())[0]
+                        if isinstance(service, dict)
+                        else str(service)
+                    )
                     if service_name in service_types:
                         return True
 
         return False
+
+
+def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
+    """
+    Save project data to a YAML file.
+
+    This function writes the project data back to disk, preserving
+    the YAML structure as much as possible.
+
+    Args:
+        file_path: Full path to the project YAML file
+        project_data: The project data dictionary to save
+    """
+    logger.info(f"Saving project file: {file_path}")
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.default_flow_style = False
+    yaml.indent(mapping=2, sequence=4, offset=2)
+
+    with open(file_path, "w") as f:
+        yaml.dump(project_data, f)
+
+    logger.debug(f"Successfully saved project file: {file_path}")
 
 
 def create_project_file_handler() -> ProjectFileHandler:

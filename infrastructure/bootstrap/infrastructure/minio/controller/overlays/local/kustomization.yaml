@@ -24,3 +24,22 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/securityContext/runAsGroup
         value: 1001
+  - target:
+      kind: Deployment
+      name: minio-versioned
+    patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext/runAsUser
+        value: 1001
+      - op: add
+        path: /spec/template/spec/securityContext/runAsGroup
+        value: 1001
+      - op: add
+        path: /spec/template/spec/securityContext/fsGroup
+        value: 1001
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext/runAsUser
+        value: 1001
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext/runAsGroup
+        value: 1001

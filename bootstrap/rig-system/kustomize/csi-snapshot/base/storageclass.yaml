@@ -1,0 +1,10 @@
+# StorageClass for CSI Hostpath Driver
+# PVCs using this class will support VolumeSnapshots
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: csi-hostpath-sc
+provisioner: hostpath.csi.k8s.io
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

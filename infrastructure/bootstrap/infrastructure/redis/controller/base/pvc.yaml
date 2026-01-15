@@ -3,6 +3,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: rig-redis-data
   namespace: rig-system
+  labels:
+    backup.rig.nl/enabled: "true"
 spec:
   accessModes:
     - ReadWriteOnce

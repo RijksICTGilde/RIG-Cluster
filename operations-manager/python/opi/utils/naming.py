@@ -1259,6 +1259,103 @@ def generate_external_hostname(subdomain: str, base_domain: str) -> str:
     return f"{subdomain}.{base_domain}"
 
 
+def get_component_ingress_map(
+    component_name: str,
+    deployment_name: str,
+    project_name: str,
+    ingress_postfix: str,
+    subdomain: str | None = None,
+    base_domain: str | None = None,
+) -> dict[str, str]:
+    """
+    Get the ingress map for a single component.
+
+    Centralizes the hostname/ingress generation logic used by both keycloak_manager
+    and project_manager to avoid duplication.
+
+    When base_domain and subdomain are set, uses the custom domain.
+    Otherwise, uses the default cluster domain.
+
+    Args:
+        component_name: Name of the component
+        deployment_name: Name of the deployment
+        project_name: Name of the project
+        ingress_postfix: Cluster ingress postfix
+        subdomain: Optional subdomain override
+        base_domain: Optional custom base domain (e.g., "rijksapp.nl")
+
+    Returns:
+        Dict mapping ingress name to hostname
+
+    Example:
+        # Custom domain mode
+        >>> get_component_ingress_map(
+        ...     "frontend", "prod", "myapp",
+        ...     ".cluster.example.com", subdomain="myapp", base_domain="custom.nl"
+        ... )
+        {'prod-frontend': 'myapp.custom.nl'}
+
+        # Default cluster domain
+        >>> get_component_ingress_map(
+        ...     "frontend", "prod", "myapp",
+        ...     ".cluster.example.com", subdomain="myapp"
+        ... )
+        {'prod-frontend': 'myapp.cluster.example.com'}
+    """
+    if base_domain and subdomain:
+        # Custom domain mode
+        hostname = generate_external_hostname(subdomain, base_domain)
+        base_name = generate_unique_name(deployment_name, component_name)
+        return {base_name: hostname}
+    else:
+        # Default cluster domain
+        return generate_ingress_map(
+            component_name, deployment_name, project_name, ingress_postfix, subdomain
+        )
+
+
+def get_deployment_hostnames(
+    component_names: list[str],
+    deployment_name: str,
+    project_name: str,
+    ingress_postfix: str,
+    subdomain: str | None = None,
+    base_domain: str | None = None,
+) -> list[str]:
+    """
+    Get all hostnames for components in a deployment.
+
+    Centralizes the hostname generation logic used by keycloak_manager.
+
+    When base_domain and subdomain are set, returns a single custom domain hostname
+    (all components share the same hostname in custom domain mode).
+
+    Otherwise, returns hostnames for each component using the default cluster domain.
+
+    Args:
+        component_names: List of component names that need hostnames
+        deployment_name: Name of the deployment
+        project_name: Name of the project
+        ingress_postfix: Cluster ingress postfix
+        subdomain: Optional subdomain override
+        base_domain: Optional custom base domain (e.g., "rijksapp.nl")
+
+    Returns:
+        List of unique hostnames for the deployment
+    """
+    hostnames: list[str] = []
+
+    for component_name in component_names:
+        ingress_map = get_component_ingress_map(
+            component_name, deployment_name, project_name, ingress_postfix, subdomain, base_domain
+        )
+        hostname = next(iter(ingress_map.values()))
+        if hostname not in hostnames:
+            hostnames.append(hostname)
+
+    return hostnames
+
+
 def generate_helm_values_filename(deployment_name: str, chart_name: str, encrypted: bool = True) -> str:
     """
     Generate a consistent filename for Helm values files.
@@ -1325,3 +1422,127 @@ def generate_ingress_name_from_path(base_name: str, path: str, max_length: int =
         return sanitize_kubernetes_name(base_name, max_length)
 
     return sanitize_kubernetes_name(f"{base_name}-{path_suffix}", max_length)
+
+
+def generate_backup_prefix(cluster: str, namespace: str) -> str:
+    """
+    Generate S3 prefix for PVC backups.
+
+    The backup prefix follows the pattern {cluster}/{namespace} to organize
+    backups by cluster and namespace. This ensures backups from different
+    clusters or namespaces don't collide and allows for easy navigation.
+
+    Args:
+        cluster: Name of the cluster (e.g., "local", "odcn-production")
+        namespace: Name of the namespace (e.g., "example-project", "rig-system")
+
+    Returns:
+        S3 prefix string for backups
+
+    Examples:
+        >>> generate_backup_prefix("local", "example-project")
+        'local/example-project'
+        >>> generate_backup_prefix("odcn-production", "my-project")
+        'odcn-production/my-project'
+        >>> generate_backup_prefix("PRODUCTION", "My-Project")
+        'production/my-project'
+    """
+    cluster_clean = _sanitize_for_lowercase(cluster)
+    namespace_clean = _sanitize_for_lowercase(namespace)
+    return f"{cluster_clean}/{namespace_clean}"
+
+
+def generate_backup_snapshot_name(pvc_name: str, timestamp: str) -> str:
+    """
+    Generate a VolumeSnapshot name for PVC backup.
+
+    Args:
+        pvc_name: Name of the PVC being backed up
+        timestamp: Timestamp string (e.g., "20250112-143022")
+
+    Returns:
+        VolumeSnapshot name
+
+    Example:
+        >>> generate_backup_snapshot_name("app-data", "20250112-143022")
+        'app-data-backup-20250112-143022'
+    """
+    return f"{pvc_name}-backup-{timestamp}"
+
+
+def generate_backup_clone_pvc_name(pvc_name: str, timestamp: str) -> str:
+    """
+    Generate a clone PVC name for backup.
+
+    The clone PVC is a temporary copy created from the VolumeSnapshot
+    for the backup process.
+
+    Args:
+        pvc_name: Name of the original PVC
+        timestamp: Timestamp string (e.g., "20250112-143022")
+
+    Returns:
+        Clone PVC name
+
+    Example:
+        >>> generate_backup_clone_pvc_name("app-data", "20250112-143022")
+        'app-data-backup-clone-20250112-143022'
+    """
+    return f"{pvc_name}-backup-clone-{timestamp}"
+
+
+def generate_backup_pod_name(pvc_name: str, timestamp: str) -> str:
+    """
+    Generate the backup pod name.
+
+    Args:
+        pvc_name: Name of the PVC being backed up
+        timestamp: Timestamp string (e.g., "20250112-143022")
+
+    Returns:
+        Backup pod name
+
+    Example:
+        >>> generate_backup_pod_name("app-data", "20250112-143022")
+        'backup-app-data-20250112-143022'
+    """
+    return f"backup-{pvc_name}-{timestamp}"
+
+
+def generate_restore_pod_name(pvc_name: str, timestamp: str) -> str:
+    """
+    Generate the restore pod name.
+
+    Args:
+        pvc_name: Name of the PVC being restored
+        timestamp: Timestamp string (e.g., "20250112-143022")
+
+    Returns:
+        Restore pod name
+
+    Example:
+        >>> generate_restore_pod_name("app-data", "20250112-143022")
+        'restore-app-data-20250112-143022'
+    """
+    return f"restore-{pvc_name}-{timestamp}"
+
+
+def generate_restored_pvc_name(pvc_name: str, timestamp: str) -> str:
+    """
+    Generate the name for a restored PVC.
+
+    When restoring to a new PVC (not overwriting existing), this generates
+    a unique name for the restored PVC.
+
+    Args:
+        pvc_name: Original PVC name
+        timestamp: Timestamp string (e.g., "20250112-143022")
+
+    Returns:
+        Restored PVC name
+
+    Example:
+        >>> generate_restored_pvc_name("app-data", "20250112-143022")
+        'app-data-restored-20250112-143022'
+    """
+    return f"{pvc_name}-restored-{timestamp}"

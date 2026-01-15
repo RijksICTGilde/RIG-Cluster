@@ -208,6 +208,25 @@ class KubectlConnector:
 
         return stdout_str, stderr_str, process.returncode
 
+    async def run_command(
+        self, args: list[str], env: dict[str, str] | None = None, stdin_input: str | None = None
+    ) -> tuple[str, str, int]:
+        """
+        Run a kubectl command directly.
+
+        This is a public wrapper around _run_kubectl_command for use by other modules
+        that need direct kubectl access (e.g., backup manager).
+
+        Args:
+            args: List of kubectl command arguments
+            env: Optional environment variables
+            stdin_input: Optional input to pass via stdin
+
+        Returns:
+            Tuple of (stdout, stderr, return_code)
+        """
+        return await self._run_kubectl_command(args, env, stdin_input)
+
     def template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
         """
         Process Jinja2 template variables in a manifest.
@@ -414,10 +433,15 @@ class KubectlConnector:
 
         # Use merge patch to set finalizers to empty array - this won't fail if finalizers don't exist
         patch_args = [
-            "patch", "application", app_name,
-            "-n", namespace,
-            "--type", "merge",
-            "-p", '{"metadata":{"finalizers":[]}}'
+            "patch",
+            "application",
+            app_name,
+            "-n",
+            namespace,
+            "--type",
+            "merge",
+            "-p",
+            '{"metadata":{"finalizers":[]}}',
         ]
 
         stdout, stderr, code = await self._run_kubectl_command(patch_args)
@@ -448,11 +472,7 @@ class KubectlConnector:
         """
         logger.info(f"Deleting ArgoCD Application '{app_name}' in namespace '{namespace}'")
 
-        delete_args = [
-            "delete", "application", app_name,
-            "-n", namespace,
-            "--ignore-not-found=true"
-        ]
+        delete_args = ["delete", "application", app_name, "-n", namespace, "--ignore-not-found=true"]
 
         stdout, stderr, code = await self._run_kubectl_command(delete_args)
 

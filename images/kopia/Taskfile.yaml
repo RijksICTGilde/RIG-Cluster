@@ -1,0 +1,48 @@
+version: '3'
+
+tasks:
+  build-local:
+    desc: "Build kopia image locally for testing"
+    vars:
+      PLATFORM: '{{default "linux/amd64" .PLATFORM}}'
+    cmds:
+      - |
+        echo "Building kopia image for platform {{.PLATFORM}}..."
+        DOCKER_BUILDKIT=1 docker build --platform {{.PLATFORM}} -t kopia-rig:latest .
+      - echo -e "✅ Kopia image built for {{.PLATFORM}}!"
+    silent: false
+
+  build-and-load:
+    desc: "Build kopia image and load into kind cluster"
+    vars:
+      CLUSTER_NAME: '{{default "gitops-fluxcd" .KIND_CLUSTER_NAME}}'
+    cmds:
+      - task: build-local
+      - |
+        echo "Loading image into kind cluster..."
+        kind load docker-image kopia-rig:latest --name {{.CLUSTER_NAME}}
+      - echo -e "✅ Kopia image loaded into kind cluster!"
+    silent: false
+
+  publish:
+    desc: "Build and publish kopia image to registry"
+    cmds:
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/kopia
+          IMAGE_NAME: kopia-rig
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+  test:
+    desc: "Test the kopia image"
+    cmds:
+      - |
+        echo "Testing kopia image..."
+        docker run --rm --platform linux/amd64 kopia-rig:latest kopia --version
+      - echo -e "✅ Kopia test passed!"
+
+  # Delegate to parent task
+  docker-build-and-push:
+    internal: true
+    cmds:
+      - echo "Use parent taskfile for publishing. Example:"
+      - echo "  cd ../.. && task docker-build-and-push BUILD_CONTEXT=images/kopia IMAGE_NAME=kopia-rig REGISTRY_IMAGE=ghcr.io/minbzk/base-images"

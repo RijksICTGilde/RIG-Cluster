@@ -1,0 +1,16 @@
+# Git files
+.git*
+
+# Documentation
+*.md
+
+# Taskfile
+Taskfile.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/

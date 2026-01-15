@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ pod_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/name: pvc-restore
+    app.kubernetes.io/component: restore-job
+    app.kubernetes.io/managed-by: opi-backup
+    backup.rig.nl/pvc: "{{ pvc_name }}"
+    backup.rig.nl/target-pvc: "{{ target_pvc_name }}"
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  containers:
+    - name: kopia
+      image: ghcr.io/minbzk/base-images/kopia:latest
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+
+          echo "Starting restore for PVC: {{ pvc_name }}"
+          echo "Target PVC: {{ target_pvc_name }}"
+          echo "Namespace: {{ namespace }}"
+          echo "S3 Endpoint: ${S3_ENDPOINT}"
+          echo "S3 Bucket: ${S3_BUCKET}"
+          echo "Backup Prefix: ${BACKUP_PREFIX}"
+          echo "S3 Disable TLS: ${S3_DISABLE_TLS}"
+
+          # Build TLS flag based on configuration
+          TLS_FLAG=""
+          if [ "${S3_DISABLE_TLS}" = "true" ]; then
+            TLS_FLAG="--disable-tls"
+          fi
+
+          # Connect to repository
+          echo "Connecting to Kopia repository..."
+          kopia repository connect s3 \
+            --bucket="${S3_BUCKET}" \
+            --prefix="${BACKUP_PREFIX}/" \
+            --endpoint="${S3_ENDPOINT}" \
+            --access-key="${S3_ACCESS_KEY}" \
+            --secret-access-key="${S3_SECRET_KEY}" \
+            --password="${KOPIA_PASSWORD}" \
+            ${TLS_FLAG}
+
+          echo "Repository connected successfully"
+
+          # Find the snapshot to restore
+          SNAPSHOT_ID="${RESTORE_SNAPSHOT_ID}"
+
+          if [ -z "$SNAPSHOT_ID" ]; then
+            echo "No snapshot ID specified, finding latest snapshot for PVC {{ pvc_name }}..."
+            # Get latest snapshot with matching PVC tag
+            SNAPSHOT_ID=$(kopia snapshot list --tags="pvc:{{ pvc_name }}" --json 2>/dev/null | \
+              jq -r 'sort_by(.startTime) | reverse | .[0].id // empty')
+
+            if [ -z "$SNAPSHOT_ID" ]; then
+              echo "ERROR: No snapshots found for PVC {{ pvc_name }}"
+              exit 1
+            fi
+            echo "Found latest snapshot: $SNAPSHOT_ID"
+          else
+            echo "Using specified snapshot: $SNAPSHOT_ID"
+          fi
+
+          # Show snapshot info
+          echo "Snapshot details:"
+          kopia snapshot show "$SNAPSHOT_ID" || true
+
+          # Clear target directory
+          echo "Clearing target directory..."
+          rm -rf /data/*
+
+          # Restore snapshot
+          echo "Restoring snapshot to /data..."
+          kopia restore "$SNAPSHOT_ID" /data
+
+          echo "Verifying restore..."
+          ls -la /data || true
+
+          echo "Restore completed successfully for {{ pvc_name }} -> {{ target_pvc_name }}"
+      env:
+        - name: S3_ENDPOINT
+          value: "{{ s3_endpoint }}"
+        - name: S3_BUCKET
+          value: "{{ s3_bucket }}"
+        - name: S3_ACCESS_KEY
+          value: "{{ s3_access_key }}"
+        - name: S3_SECRET_KEY
+          value: "{{ s3_secret_key }}"
+        - name: S3_DISABLE_TLS
+          value: "{{ s3_disable_tls | lower }}"
+        - name: BACKUP_PREFIX
+          value: "{{ backup_prefix }}"
+        - name: KOPIA_PASSWORD
+          value: "{{ kopia_password }}"
+        - name: RESTORE_SNAPSHOT_ID
+          value: "{{ snapshot_id }}"
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "1Gi"
+          cpu: "1000m"
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: "{{ target_pvc_name }}"

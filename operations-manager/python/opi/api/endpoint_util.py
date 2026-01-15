@@ -5,6 +5,7 @@ from functools import wraps
 from typing import Any
 
 from fastapi import HTTPException
+from opi.core.config import settings
 from opi.services.project_service import get_project_service
 from starlette.requests import Request
 
@@ -76,3 +77,44 @@ def parse_ports(ports_str: str) -> list[int]:
 
 def normalize_project_name(text: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", text.lower())
+
+
+def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Decorator to validate master API key for admin operations.
+
+    This decorator requires the MASTER_API_KEY via X-API-Key header.
+    Used for operations that don't have a project context (e.g., namespace-based backups).
+
+    Args:
+        func: The route function to decorate
+
+    Returns:
+        The decorated function that requires a valid master API key
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Admin API route {func.__name__} called with master key authentication")
+
+        x_api_key = request.headers.get("X-API-Key")
+        if not x_api_key:
+            logger.warning(f"Authentication failed for route {func.__name__} - no X-API-Key provided")
+            raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
+
+        if not settings.MASTER_API_KEY:
+            logger.warning(f"Master API key not configured - route {func.__name__} is disabled")
+            raise HTTPException(
+                status_code=501,
+                detail="This endpoint requires MASTER_API_KEY to be configured",
+            )
+
+        if x_api_key != settings.MASTER_API_KEY:
+            logger.warning(f"Authentication failed for route {func.__name__} - invalid master API key")
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+        logger.debug(f"Master API key validation successful for route {func.__name__}")
+        return await func(*args, request=request, **kwargs)
+
+    return wrapper

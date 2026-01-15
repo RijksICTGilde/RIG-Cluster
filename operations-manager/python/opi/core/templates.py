@@ -4,11 +4,79 @@ Template system configuration for Operations Manager.
 This module sets up Jinja2 templates with ROOS components for the operations-manager UI.
 """
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi.templating import Jinja2Templates
 from jinja_roos_components import setup_components
+
+# Dutch month names
+DUTCH_MONTHS = [
+    "januari",
+    "februari",
+    "maart",
+    "april",
+    "mei",
+    "juni",
+    "juli",
+    "augustus",
+    "september",
+    "oktober",
+    "november",
+    "december",
+]
+
+
+def format_dutch_date(value: str | datetime | None, include_time: bool = True) -> str:
+    """
+    Format a date/timestamp in Dutch format.
+
+    Args:
+        value: ISO timestamp string or datetime object
+        include_time: Whether to include time in output
+
+    Returns:
+        Dutch formatted date string (e.g., "14 januari 2026 17:14")
+    """
+    if not value:
+        return "-"
+
+    try:
+        if isinstance(value, str):
+            # Parse ISO format timestamp (e.g., "2026-01-14T17:14:34.335860214Z")
+            # Handle various ISO formats
+            value = value.replace("Z", "+00:00")
+            if "." in value:
+                # Truncate nanoseconds to microseconds (max 6 digits after decimal)
+                parts = value.split(".")
+                if len(parts[1]) > 6:
+                    # Keep timezone info if present
+                    tz_part = ""
+                    decimal_part = parts[1]
+                    if "+" in decimal_part:
+                        idx = decimal_part.index("+")
+                        tz_part = decimal_part[idx:]
+                        decimal_part = decimal_part[:idx]
+                    value = parts[0] + "." + decimal_part[:6] + tz_part
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        elif isinstance(value, datetime):
+            dt = value
+        else:
+            return str(value)
+
+        day = dt.day
+        month = DUTCH_MONTHS[dt.month - 1]
+        year = dt.year
+
+        if include_time:
+            return f"{day} {month} {year} {dt.hour:02d}:{dt.minute:02d}"
+        else:
+            return f"{day} {month} {year}"
+
+    except (ValueError, TypeError, AttributeError):
+        # Fallback: return truncated original
+        return str(value)[:19] if value else "-"
 
 
 def get_service_name(service: str | dict[str, Any]) -> str:
@@ -58,6 +126,7 @@ templates.env.globals["roos_assets_base_url"] = "/static/roos/dist/"
 
 # Register custom filters
 templates.env.filters["service_name"] = get_service_name
+templates.env.filters["dutch_date"] = format_dutch_date
 
 
 def setup_templates() -> Jinja2Templates:

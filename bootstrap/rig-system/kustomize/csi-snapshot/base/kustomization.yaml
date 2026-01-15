@@ -1,0 +1,43 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# CSI Snapshot Support for Local Kind Cluster
+# This provides VolumeSnapshot capability for PVC backups
+#
+# Components:
+# 1. VolumeSnapshot CRDs (from external-snapshotter)
+# 2. Snapshot Controller (manages VolumeSnapshot lifecycle)
+# 3. CSI Sidecar RBAC (provisioner, attacher, snapshotter, resizer, health-monitor)
+# 4. CSI Hostpath Driver (provides actual snapshot capability on Kind)
+# 5. VolumeSnapshotClass and StorageClass
+
+resources:
+  # VolumeSnapshot CRDs
+  - https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.2.0/client/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.2.0/client/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.2.0/client/config/crd/snapshot.storage.k8s.io_volumesnapshots.yaml
+
+  # Snapshot Controller RBAC and Deployment
+  - https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.2.0/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.2.0/deploy/kubernetes/snapshot-controller/setup-snapshot-controller.yaml
+
+  # CSI Sidecar RBAC (required for provisioner, attacher, snapshotter, etc.)
+  - https://raw.githubusercontent.com/kubernetes-csi/external-provisioner/v6.0.0/deploy/kubernetes/rbac.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/external-attacher/v4.10.0/deploy/kubernetes/rbac.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.4.0/deploy/kubernetes/csi-snapshotter/rbac-csi-snapshotter.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/external-resizer/v2.0.0/deploy/kubernetes/rbac.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/external-health-monitor/v0.16.0/deploy/kubernetes/external-health-monitor-controller/rbac.yaml
+
+  # CSI Hostpath Driver (for Kind clusters)
+  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/master/deploy/kubernetes-1.30/hostpath/csi-hostpath-driverinfo.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/master/deploy/kubernetes-1.30/hostpath/csi-hostpath-plugin.yaml
+  - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/master/deploy/kubernetes-1.30/hostpath/csi-hostpath-snapshotclass.yaml
+
+  # Local StorageClass for CSI hostpath
+  - storageclass.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: rig-platform
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

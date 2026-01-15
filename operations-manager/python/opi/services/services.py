@@ -496,6 +496,37 @@ class ServiceAdapter:
         return ServiceType.REDIS in services or ServiceType.NAMESPACE_REDIS in services
 
     @classmethod
+    def needs_infrastructure_namespace(cls, services: list[ServiceType]) -> bool:
+        """Check if any service requires a dedicated infrastructure namespace."""
+        namespace_services = {ServiceType.NAMESPACE_POSTGRESQL_DATABASE, ServiceType.NAMESPACE_REDIS}
+        return any(svc in namespace_services for svc in services)
+
+    @classmethod
+    def project_uses_infrastructure_namespace(cls, project_data: dict) -> bool:
+        """
+        Check if a project uses any service that requires an infrastructure namespace.
+
+        Args:
+            project_data: The project configuration data
+
+        Returns:
+            True if the project uses namespace-postgresql-database or namespace-redis
+        """
+        namespace_services = {
+            ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
+            ServiceType.NAMESPACE_REDIS.value,
+        }
+        project_services = project_data.get("services", [])
+        for service_item in project_services:
+            if isinstance(service_item, str):
+                if service_item in namespace_services:
+                    return True
+            elif isinstance(service_item, dict):
+                if any(svc in service_item for svc in namespace_services):
+                    return True
+        return False
+
+    @classmethod
     def get_variables(cls, service: ServiceType) -> list[VariableDefinition]:
         """Get the list of variable definitions provided by a service."""
         definition = cls.get_service_definition(service)

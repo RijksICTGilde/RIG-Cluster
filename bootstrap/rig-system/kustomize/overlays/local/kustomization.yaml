@@ -8,6 +8,8 @@ generators:
 
 # Environment-specific configuration
 resources:
+# CSI Snapshot support (VolumeSnapshots for PVC backups)
+- ../../csi-snapshot/base
 - namespace.yaml
 #   NOTE: we apply our own ingress here instead of using the haven solution, this one seems simpeler for now
 #- https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/deploy/static/provider/kind/deploy.yaml # see https://mya.sh/blog/2020/10/21/local-ingress-domains-kind/
@@ -18,6 +20,8 @@ resources:
 - argocd-application-local-infrastructure.yaml
 - argocd-application-user-applications.yaml
 - ../../operations-manager/overlays/local
+# Backup destination MinIO for local development/testing
+- ../../backup-destination/base
 
 components:
 - ../../components/sops-plugin

@@ -5,6 +5,10 @@ metadata:
   namespace: "{{ namespace }}"
   annotations:
     argocd.argoproj.io/sync-options: Replace=false
+{% if backup_enabled is defined and backup_enabled %}
+  labels:
+    backup.rig.nl/enabled: "true"
+{% endif %}
 spec:
   accessModes:
   {% for mode in access_modes %}

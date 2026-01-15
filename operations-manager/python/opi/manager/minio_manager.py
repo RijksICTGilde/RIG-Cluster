@@ -26,6 +26,105 @@ class MinioManager:
         """
         self.project_manager = project_manager
 
+    def _get_minio_service_config(self, project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
+        """
+        Extract minio-storage service configuration for a deployment.
+
+        Supports both simple and configured service formats:
+        - Simple: "- minio-storage" -> returns None
+        - Configured: "- minio-storage:\n    config:\n      enable-versioning: true" -> returns config dict
+
+        Args:
+            project_data: The project configuration data
+            deployment_name: Name of the deployment to check
+
+        Returns:
+            Config dict or None if service not configured or no config block
+
+        Example return:
+            {"enable-versioning": True}
+        """
+        # Find the deployment in project data
+        deployments = project_data.get("deployments", [])
+        deployment = next((d for d in deployments if d.get("name") == deployment_name), None)
+
+        if not deployment:
+            logger.debug(f"Deployment {deployment_name} not found in project data")
+            return None
+
+        # Get services list for this deployment
+        services = project_data.get("services", [])
+
+        # Look for minio-storage service
+        for service in services:
+            if isinstance(service, str):
+                # Simple format: "- minio-storage"
+                if service == ServiceType.MINIO_STORAGE.value:
+                    logger.debug(f"Found simple minio-storage service for {deployment_name}, no config")
+                    return None
+            elif isinstance(service, dict):
+                # Configured format: "- minio-storage: ..."
+                service_name = list(service.keys())[0] if service else None
+                if service_name == ServiceType.MINIO_STORAGE.value:
+                    config = service.get(service_name, {}).get("config")
+                    if config:
+                        logger.debug(f"Found minio-storage config for {deployment_name}: {config}")
+                        return config
+                    else:
+                        logger.debug(f"Found minio-storage service for {deployment_name}, but no config block")
+                        return None
+
+        logger.debug(f"No minio-storage service found for {deployment_name}")
+        return None
+
+    async def _apply_bucket_versioning(
+        self,
+        minio_connector: MinioConnector,
+        alias: str,
+        bucket_name: str,
+        config: dict[str, Any] | None,
+    ) -> None:
+        """
+        Apply bucket versioning configuration if specified.
+
+        This method is idempotent and will only apply changes if needed.
+        Supports backward compatibility - if config is None or doesn't specify versioning,
+        no action is taken.
+
+        Args:
+            minio_connector: MinIO connector instance
+            alias: MinIO alias name
+            bucket_name: Bucket name
+            config: MinIO service config (may be None for backward compatibility)
+
+        Raises:
+            RuntimeError: If versioning operation fails
+        """
+        # Backward compatibility: if no config or no versioning setting, skip
+        if not config or "enable-versioning" not in config:
+            logger.debug(f"No versioning configuration for bucket {bucket_name}, skipping")
+            return
+
+        enable_versioning = config.get("enable-versioning", False)
+        logger.info(f"Applying versioning configuration to bucket {bucket_name}: enable={enable_versioning}")
+
+        try:
+            result = await minio_connector.ensure_bucket_versioning(alias, bucket_name, enable_versioning)
+
+            if result["status"] == "unchanged":
+                logger.info(f"Bucket {bucket_name} versioning already in desired state")
+            elif result["status"] == "enabled":
+                logger.info(f"Enabled versioning on bucket {bucket_name}")
+            elif result["status"] == "suspended":
+                logger.info(f"Suspended versioning on bucket {bucket_name}")
+            else:
+                logger.warning(f"Unexpected versioning operation result: {result}")
+
+        except Exception as e:
+            error_msg = f"Failed to apply versioning configuration to bucket {bucket_name}: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
+
     async def create_resources_for_deployment(
         self,
         project_data: dict[str, Any],
@@ -261,6 +360,10 @@ class MinioManager:
                     return
 
                 logger.info(f"Granted full access on bucket {bucket_name} to user {minio_username}")
+
+            # Apply versioning configuration regardless of setup path (works on create, refresh, and update)
+            minio_config = self._get_minio_service_config(project_data, deployment_name)
+            await self._apply_bucket_versioning(minio_connector, alias_name, bucket_name, minio_config)
 
             cluster = deployment["cluster"]
 
@@ -693,6 +796,10 @@ class MinioManager:
                 await self._copy_bucket_data(minio_connector, alias_name, source_bucket, target_bucket)
             else:
                 logger.info(f"Skipping data copy - source bucket {source_bucket} does not exist")
+
+        # Apply versioning configuration to cloned bucket (works on create, refresh, and update)
+        minio_config = self._get_minio_service_config(project_data, target_deployment_name)
+        await self._apply_bucket_versioning(minio_connector, alias_name, target_bucket, minio_config)
 
         cluster = target_deployment["cluster"]
 
@@ -1488,6 +1595,13 @@ class MinioManager:
                     raise Exception(f"Mirror failed: {mirror_result.get('message')}")
 
                 result["operations"].append({"type": "bucket_cloned", "status": "success"})
+
+                # Apply versioning configuration after successful clone
+                logger.info(f"Applying versioning configuration to cloned bucket {target_bucket}")
+                minio_config = self._get_minio_service_config(project_data, deployment_name)
+                await self._apply_bucket_versioning(minio_connector, alias_name, target_bucket, minio_config)
+                result["operations"].append({"type": "versioning_applied", "status": "success"})
+
             except Exception as e:
                 logger.error(f"Bucket clone failed: {e}")
                 result["errors"].append(f"Bucket clone failed: {e!s}")
