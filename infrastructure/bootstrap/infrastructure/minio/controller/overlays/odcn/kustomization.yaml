@@ -19,12 +19,10 @@ patches:
       - op: replace
         path: /spec/storageClassName
         value: ocs-storagecluster-ceph-rbd
-  # Phase 3: Switch minio service to point to versioned deployment
-  # NOTE: Only enable this AFTER running the migration job (Phase 2)
-  # - target:
-  #     kind: Service
-  #     name: minio
-  #   patch: |-
-  #     - op: replace
-  #       path: /spec/selector/app
-  #       value: minio-versioned
+  - target:
+      kind: Service
+      name: minio
+    patch: |-
+      - op: replace
+        path: /spec/selector/app
+        value: minio-versioned
