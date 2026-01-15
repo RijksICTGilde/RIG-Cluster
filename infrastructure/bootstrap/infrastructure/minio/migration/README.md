@@ -34,7 +34,12 @@ The existing MinIO continues running - no disruption.
 
 **Verify deployment:**
 ```bash
+# Local
 kubectl get pods -n rig-system | grep minio
+
+# ODCN
+kubectl get pods -n rig-prd-operations | grep minio
+
 # Should see both minio-xxx and minio-versioned-xxx running
 ```
 
@@ -51,7 +56,7 @@ kubectl logs -f job/minio-migration-to-versioned -n rig-system
 **For ODCN (production):**
 ```bash
 kubectl apply -f job-migrate-to-versioned-odcn.yaml
-kubectl logs -f job/minio-migration-to-versioned -n rig-system
+kubectl logs -f job/minio-migration-to-versioned -n rig-prd-operations
 ```
 
 The job will:
