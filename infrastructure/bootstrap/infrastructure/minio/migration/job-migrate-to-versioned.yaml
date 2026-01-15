@@ -31,7 +31,7 @@ spec:
             mc ls old/
 
             echo "Starting migration..."
-            for bucket in $(mc ls old/ --json | jq -r '.key' | sed 's:/$::'); do
+            mc ls old/ | awk '{print $NF}' | sed 's:/$::' | while read bucket; do
               echo "Creating bucket: $bucket"
               mc mb --ignore-existing new/$bucket
 
@@ -49,6 +49,11 @@ spec:
             mc ls new/
 
             echo "Done!"
+        env:
+        - name: MC_CONFIG_DIR
+          value: /tmp/.mc
+        - name: HOME
+          value: /tmp
         envFrom:
         - secretRef:
             name: minio-admin-credentials
