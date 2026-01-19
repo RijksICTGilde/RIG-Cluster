@@ -14,7 +14,7 @@ spec:
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
   containers:
     - name: kopia
-      image: ghcr.io/minbzk/base-images/kopia:latest
+      image: ghcr.io/minbzk/base-images/rig-backup:latest
       imagePullPolicy: IfNotPresent
       command:
         - /bin/sh
@@ -100,6 +100,11 @@ spec:
           value: "{{ kopia_password }}"
         - name: RESTORE_SNAPSHOT_ID
           value: "{{ snapshot_id }}"
+        # Use /tmp for Kopia cache (container filesystem is read-only)
+        - name: KOPIA_CACHE_DIRECTORY
+          value: "/tmp/kopia-cache"
+        - name: KOPIA_LOG_DIR
+          value: "/tmp/kopia-logs"
       volumeMounts:
         - name: data
           mountPath: /data

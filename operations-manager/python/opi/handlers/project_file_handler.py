@@ -722,13 +722,186 @@ class ProjectFileHandler:
 
         return {"port": metrics_port, "path": metrics_path}
 
+    # ========================================================================
+    # Service Config Generation Methods (reference/config pattern)
+    # ========================================================================
+
+    def _get_service_config_generation(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        service_type: str,
+        reference_name: str,
+    ) -> int | None:
+        """
+        Get generation from a service using the reference/config pattern.
+
+        Path: deployments[?(@.name=='{deployment_name}')].components[?(@.reference=='{component_name}')]
+              .services.{service_type}[?(@.reference=='{reference_name}')].config.generation
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            service_type: Service type ("persistent-storage", "database", "minio-storage")
+            reference_name: Reference name of the service item
+
+        Returns:
+            Generation number if set, None if not present (no version suffix will be used)
+        """
+        # Navigate manually since JSONPath with nested array filters can be tricky
+        deployments = project_data.get("deployments", [])
+
+        for deployment in deployments:
+            if deployment.get("name") == deployment_name:
+                components = deployment.get("components", [])
+                for component in components:
+                    if component.get("reference") == component_name:
+                        services = component.get("services", {})
+                        service_items = services.get(service_type, [])
+
+                        # Handle list format (new pattern)
+                        if isinstance(service_items, list):
+                            for item in service_items:
+                                if isinstance(item, dict) and item.get("reference") == reference_name:
+                                    config = item.get("config", {})
+                                    generation = config.get("generation")
+                                    if generation is not None:
+                                        logger.debug(
+                                            f"Service generation for {deployment_name}/{component_name}/"
+                                            f"{service_type}/{reference_name}: {generation}"
+                                        )
+                                        return int(generation)
+                                    return None
+
+                        # Handle dict format (old pattern - backward compatibility)
+                        elif isinstance(service_items, dict) and reference_name in service_items:
+                            item_config = service_items[reference_name]
+                            if isinstance(item_config, dict):
+                                generation = item_config.get("generation")
+                                if generation is not None:
+                                    logger.debug(
+                                        f"Service generation (old pattern) for {deployment_name}/"
+                                        f"{component_name}/{service_type}/{reference_name}: {generation}"
+                                    )
+                                    return int(generation)
+                                return None
+
+        logger.debug(f"No generation found for {deployment_name}/{component_name}/{service_type}/{reference_name}")
+        return None
+
+    def _set_service_config_generation(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        service_type: str,
+        reference_name: str,
+        generation: int,
+    ) -> dict[str, Any]:
+        """
+        Set generation using the reference/config pattern.
+
+        Creates the nested structure if it doesn't exist:
+        deployments[name].components[reference==component_name].services.{service_type}
+          = [{"reference": reference_name, "config": {"generation": generation}}]
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            service_type: Service type ("persistent-storage", "database", "minio-storage")
+            reference_name: Reference name of the service item
+            generation: Generation number to set
+
+        Returns:
+            Updated project_data dictionary
+        """
+        deployments = project_data.get("deployments", [])
+        component_found = False
+
+        for deployment in deployments:
+            if deployment.get("name") == deployment_name:
+                components = deployment.get("components", [])
+                for component in components:
+                    if component.get("reference") == component_name:
+                        component_found = True
+
+                        # Ensure 'services' dict exists
+                        if "services" not in component:
+                            component["services"] = {}
+
+                        # Ensure service_type list exists
+                        if service_type not in component["services"]:
+                            component["services"][service_type] = []
+
+                        service_items = component["services"][service_type]
+
+                        # Handle list format (new pattern)
+                        if isinstance(service_items, list):
+                            # Find existing item or add new one
+                            item_found = False
+                            for item in service_items:
+                                if isinstance(item, dict) and item.get("reference") == reference_name:
+                                    # Ensure config dict exists
+                                    if "config" not in item:
+                                        item["config"] = {}
+                                    item["config"]["generation"] = generation
+                                    item_found = True
+                                    break
+
+                            if not item_found:
+                                # Add new item with reference/config pattern
+                                service_items.append(
+                                    {"reference": reference_name, "config": {"generation": generation}}
+                                )
+
+                        # Handle dict format (old pattern) - convert to new pattern
+                        elif isinstance(service_items, dict):
+                            # Convert old dict pattern to new list pattern
+                            new_list = []
+                            for ref_name, ref_config in service_items.items():
+                                if ref_name == reference_name:
+                                    # Update this item with new generation
+                                    new_list.append({"reference": ref_name, "config": {"generation": generation}})
+                                elif isinstance(ref_config, dict) and "generation" in ref_config:
+                                    # Preserve existing items
+                                    new_list.append(
+                                        {"reference": ref_name, "config": {"generation": ref_config["generation"]}}
+                                    )
+                                else:
+                                    # Item without generation
+                                    new_list.append({"reference": ref_name})
+
+                            # If reference wasn't found in old dict, add it
+                            if not any(item.get("reference") == reference_name for item in new_list):
+                                new_list.append({"reference": reference_name, "config": {"generation": generation}})
+
+                            component["services"][service_type] = new_list
+
+                        logger.info(
+                            f"Set service generation for {deployment_name}/{component_name}/"
+                            f"{service_type}/{reference_name} to {generation}"
+                        )
+                        break
+
+                if component_found:
+                    break
+
+        if not component_found:
+            logger.warning(f"Component '{component_name}' in deployment '{deployment_name}' not found in project data")
+
+        return project_data
+
     def get_storage_generation(
         self, project_data: dict[str, Any], deployment_name: str, component_name: str, storage_name: str
-    ) -> int:
+    ) -> int | None:
         """
         Get the current generation number for a storage in a deployment component.
 
-        Path: deployments[?(@.name=='{deployment_name}')].components[?(@.reference=='{component_name}')].services.persistent-storage.{storage_name}.generation
+        Uses the reference/config pattern:
+        deployments[name].components[reference].services.persistent-storage[reference==storage_name].config.generation
 
         Args:
             project_data: The parsed project data
@@ -737,13 +910,11 @@ class ProjectFileHandler:
             storage_name: Name of the storage (e.g., "data", "temp")
 
         Returns:
-            Current generation number (0 if not set, for backward compatibility)
+            Generation number if set, None if not present (no version suffix will be used)
         """
-        path = f"$.deployments[?(@.name=='{deployment_name}')].components[?(@.reference=='{component_name}')].services.persistent-storage.{storage_name}.generation"
-        generation = self.extract_value_by_path(project_data, path, 0)
-
-        logger.debug(f"Storage generation for {deployment_name}/{component_name}/{storage_name}: {generation}")
-        return int(generation) if generation is not None else 0
+        return self._get_service_config_generation(
+            project_data, deployment_name, component_name, "persistent-storage", storage_name
+        )
 
     def set_storage_generation(
         self,
@@ -756,8 +927,9 @@ class ProjectFileHandler:
         """
         Set the generation number for a storage in a deployment component.
 
-        Creates the nested structure if it doesn't exist:
-        deployments[name].components[reference==component_name].services.persistent-storage.{storage_name}.generation
+        Uses the reference/config pattern:
+        deployments[name].components[reference].services.persistent-storage
+          = [{"reference": storage_name, "config": {"generation": generation}}]
 
         Args:
             project_data: The parsed project data
@@ -769,45 +941,111 @@ class ProjectFileHandler:
         Returns:
             Updated project_data dictionary
         """
-        # Find the deployment in the list
-        deployments = project_data.get("deployments", [])
-        component_found = False
+        return self._set_service_config_generation(
+            project_data, deployment_name, component_name, "persistent-storage", storage_name, generation
+        )
 
-        for deployment in deployments:
-            if deployment.get("name") == deployment_name:
-                # Find the component within the deployment
-                components = deployment.get("components", [])
-                for component in components:
-                    if component.get("reference") == component_name:
-                        component_found = True
+    def get_database_generation(
+        self, project_data: dict[str, Any], deployment_name: str, component_name: str, reference_name: str
+    ) -> int | None:
+        """
+        Get the current generation number for a database in a deployment component.
 
-                        # Ensure 'services' dict exists
-                        if "services" not in component:
-                            component["services"] = {}
+        Uses the reference/config pattern:
+        deployments[name].components[reference].services.database[reference==reference_name].config.generation
 
-                        # Ensure 'persistent-storage' dict exists
-                        if "persistent-storage" not in component["services"]:
-                            component["services"]["persistent-storage"] = {}
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            reference_name: Reference name of the database
 
-                        # Ensure storage name dict exists
-                        if storage_name not in component["services"]["persistent-storage"]:
-                            component["services"]["persistent-storage"][storage_name] = {}
+        Returns:
+            Generation number if set, None if not present
+        """
+        return self._get_service_config_generation(
+            project_data, deployment_name, component_name, "database", reference_name
+        )
 
-                        # Set the generation
-                        component["services"]["persistent-storage"][storage_name]["generation"] = generation
+    def set_database_generation(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        reference_name: str,
+        generation: int,
+    ) -> dict[str, Any]:
+        """
+        Set the generation number for a database in a deployment component.
 
-                        logger.info(
-                            f"Set storage generation for {deployment_name}/{component_name}/{storage_name} to {generation}"
-                        )
-                        break
+        Uses the reference/config pattern:
+        deployments[name].components[reference].services.database
+          = [{"reference": reference_name, "config": {"generation": generation}}]
 
-                if component_found:
-                    break
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            reference_name: Reference name of the database
+            generation: Generation number to set
 
-        if not component_found:
-            logger.warning(f"Component '{component_name}' in deployment '{deployment_name}' not found in project data")
+        Returns:
+            Updated project_data dictionary
+        """
+        return self._set_service_config_generation(
+            project_data, deployment_name, component_name, "database", reference_name, generation
+        )
 
-        return project_data
+    def get_bucket_generation(
+        self, project_data: dict[str, Any], deployment_name: str, component_name: str, reference_name: str
+    ) -> int | None:
+        """
+        Get the current generation number for a bucket in a deployment component.
+
+        Uses the reference/config pattern:
+        deployments[name].components[reference].services.minio-storage[reference==reference_name].config.generation
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            reference_name: Reference name of the bucket
+
+        Returns:
+            Generation number if set, None if not present
+        """
+        return self._get_service_config_generation(
+            project_data, deployment_name, component_name, "minio-storage", reference_name
+        )
+
+    def set_bucket_generation(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        reference_name: str,
+        generation: int,
+    ) -> dict[str, Any]:
+        """
+        Set the generation number for a bucket in a deployment component.
+
+        Uses the reference/config pattern:
+        deployments[name].components[reference].services.minio-storage
+          = [{"reference": reference_name, "config": {"generation": generation}}]
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            reference_name: Reference name of the bucket
+            generation: Generation number to set
+
+        Returns:
+            Updated project_data dictionary
+        """
+        return self._set_service_config_generation(
+            project_data, deployment_name, component_name, "minio-storage", reference_name, generation
+        )
 
     def extract_backup_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -926,6 +1164,107 @@ class ProjectFileHandler:
             logger.debug(f"No clone-from configuration for deployment: {deployment_name}")
 
         return clone_from_config
+
+    def get_clone_status(self, project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
+        """
+        Get the clone status from a deployment's clone-from configuration.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            Status dict with keys:
+            - completed: bool
+            - timestamp: str (ISO format)
+            Returns None if no status exists
+        """
+        clone_from = self.extract_deployment_clone_from_config(project_data, deployment_name)
+        if clone_from and isinstance(clone_from, dict):
+            status = clone_from.get("status")
+            if status:
+                logger.debug(f"Found clone status for {deployment_name}: completed={status.get('completed')}")
+                return status
+        return None
+
+    def set_clone_status(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        completed: bool,
+        timestamp: str,
+    ) -> dict[str, Any]:
+        """
+        Set the clone status in a deployment's clone-from configuration.
+
+        This adds/updates the status field in the clone-from block:
+        clone-from:
+          type: remote-source
+          reference: production-db
+          mode: once
+          status:
+            completed: true
+            timestamp: "2026-01-16T16:23:45Z"
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            completed: Whether the clone completed successfully
+            timestamp: ISO format timestamp of when the clone was performed
+
+        Returns:
+            Updated project_data dictionary
+        """
+        deployments = project_data.get("deployments", [])
+
+        for deployment in deployments:
+            if deployment.get("name") == deployment_name:
+                clone_from = deployment.get("clone-from")
+                if clone_from and isinstance(clone_from, dict):
+                    clone_from["status"] = {
+                        "completed": completed,
+                        "timestamp": timestamp,
+                    }
+                    logger.info(f"Set clone status for {deployment_name}: completed={completed}, timestamp={timestamp}")
+                else:
+                    logger.warning(f"Cannot set clone status for {deployment_name}: no clone-from configuration found")
+                break
+
+        return project_data
+
+    def get_clone_mode(self, project_data: dict[str, Any], deployment_name: str) -> str:
+        """
+        Get the clone mode from a deployment's clone-from configuration.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            Clone mode: "once" (default) or "always"
+        """
+        clone_from = self.extract_deployment_clone_from_config(project_data, deployment_name)
+        if clone_from and isinstance(clone_from, dict):
+            mode = clone_from.get("mode", "once")
+            logger.debug(f"Clone mode for {deployment_name}: {mode}")
+            return mode
+        return "once"
+
+    def is_clone_completed(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+        """
+        Check if a clone has been completed for a deployment.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            True if status.completed is True, False otherwise
+        """
+        status = self.get_clone_status(project_data, deployment_name)
+        if status:
+            return status.get("completed", False)
+        return False
 
     def extract_registries(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
         """
@@ -1456,6 +1795,200 @@ class ProjectFileHandler:
                         return True
 
         return False
+
+    # ========================================================================
+    # Invite System Methods
+    # ========================================================================
+
+    def extract_invites_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Extract the invites configuration section from project data.
+
+        Args:
+            project_data: The parsed project data
+
+        Returns:
+            Invites configuration dict with 'settings' and 'active' keys,
+            or empty dict if no invites configured
+        """
+        invites = project_data.get("invites", {})
+        if invites:
+            logger.debug(f"Found invites config with {len(invites.get('active', []))} active invite(s)")
+        else:
+            logger.debug("No invites configuration found in project data")
+        return invites
+
+    def get_invite_settings(self, project_data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Extract invite settings from project data.
+
+        Args:
+            project_data: The parsed project data
+
+        Returns:
+            Settings dict with defaults applied:
+            - allow_sso: bool (default True)
+            - allow_local: bool (default True)
+            - default_expiration_days: int (default 7)
+            - default_language: str (default 'nl')
+        """
+        invites = self.extract_invites_config(project_data)
+        settings = invites.get("settings", {})
+
+        return {
+            "allow_sso": settings.get("allow_sso", True),
+            "allow_local": settings.get("allow_local", True),
+            "default_expiration_days": settings.get("default_expiration_days", 7),
+            "default_language": settings.get("default_language", "nl"),
+        }
+
+    def get_invite_by_key(self, project_data: dict[str, Any], key: str) -> dict[str, Any] | None:
+        """
+        Get a specific invite by its key.
+
+        Args:
+            project_data: The parsed project data
+            key: The invite key to search for
+
+        Returns:
+            Invite configuration dict or None if not found
+        """
+        invites = self.extract_invites_config(project_data)
+        active_invites = invites.get("active", [])
+
+        for invite in active_invites:
+            if invite.get("key") == key:
+                logger.debug(f"Found invite with key: {key}")
+                return invite
+
+        logger.debug(f"Invite with key '{key}' not found")
+        return None
+
+    def get_all_active_invites(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Get all active invites from project data.
+
+        Args:
+            project_data: The parsed project data
+
+        Returns:
+            List of active invite configurations
+        """
+        invites = self.extract_invites_config(project_data)
+        active = invites.get("active", [])
+        logger.debug(f"Found {len(active)} active invite(s)")
+        return active
+
+    def get_invite_auth_methods(
+        self, project_data: dict[str, Any], invite: dict[str, Any]
+    ) -> dict[str, bool]:
+        """
+        Determine allowed authentication methods for an invite.
+
+        Combines project-level settings with invite-specific overrides.
+
+        Args:
+            project_data: The parsed project data
+            invite: The specific invite configuration
+
+        Returns:
+            Dict with 'sso' and 'local' boolean values
+        """
+        settings = self.get_invite_settings(project_data)
+
+        # Check invite-specific auth_methods override
+        invite_auth_methods = invite.get("auth_methods")
+
+        if invite_auth_methods:
+            # Invite specifies exact methods
+            return {
+                "sso": "sso" in invite_auth_methods,
+                "local": "local" in invite_auth_methods,
+            }
+
+        # Fall back to project-level settings
+        return {
+            "sso": settings.get("allow_sso", True),
+            "local": settings.get("allow_local", True),
+        }
+
+    def get_invite_message(
+        self, invite: dict[str, Any], language: str = "nl"
+    ) -> str:
+        """
+        Get the invite message in the specified language.
+
+        Args:
+            invite: The invite configuration
+            language: Language code (default: 'nl')
+
+        Returns:
+            The invite message string
+        """
+        message = invite.get("message", "")
+
+        if isinstance(message, dict):
+            # Multi-language message
+            return message.get(language, message.get("nl", message.get("en", "")))
+        elif isinstance(message, str):
+            # Simple string message
+            return message
+
+        return ""
+
+    def get_invite_success_title(
+        self, invite: dict[str, Any], language: str = "nl"
+    ) -> str:
+        """
+        Get the success page title in the specified language.
+
+        Args:
+            invite: The invite configuration
+            language: Language code (default: 'nl')
+
+        Returns:
+            The success title string or default
+        """
+        title = invite.get("success_title")
+
+        if isinstance(title, dict):
+            return title.get(language, title.get("nl", title.get("en", "")))
+        elif isinstance(title, str):
+            return title
+
+        # Default titles
+        defaults = {
+            "nl": "Account aangemaakt",
+            "en": "Account created",
+        }
+        return defaults.get(language, defaults["nl"])
+
+    def get_invite_success_button(
+        self, invite: dict[str, Any], language: str = "nl"
+    ) -> str:
+        """
+        Get the success page button text in the specified language.
+
+        Args:
+            invite: The invite configuration
+            language: Language code (default: 'nl')
+
+        Returns:
+            The button text string or default
+        """
+        button = invite.get("success_button")
+
+        if isinstance(button, dict):
+            return button.get(language, button.get("nl", button.get("en", "")))
+        elif isinstance(button, str):
+            return button
+
+        # Default button texts
+        defaults = {
+            "nl": "Ga naar applicatie",
+            "en": "Go to application",
+        }
+        return defaults.get(language, defaults["nl"])
 
 
 def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:

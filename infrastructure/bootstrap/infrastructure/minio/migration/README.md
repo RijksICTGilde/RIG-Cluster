@@ -65,16 +65,24 @@ The job will:
 3. Enable versioning on each bucket
 4. Mirror all objects with metadata preserved
 
+**Note:** The migration is idempotent - safe to run multiple times. Delete the job first if re-running:
+```bash
+kubectl delete job minio-migration-to-versioned -n $NS
+```
+
 **Verify migration:**
 ```bash
+# Set namespace (rig-system for local, rig-prd-operations for ODCN)
+NS=rig-system  # or rig-prd-operations
+
 # Check buckets exist on new MinIO
-kubectl exec -n rig-system deploy/minio-versioned -- sh -c \
+kubectl exec -n $NS deploy/minio-versioned -- sh -c \
   'export MC_CONFIG_DIR=/tmp/.mc && \
    mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" && \
    mc ls local/'
 
 # Check versioning is enabled
-kubectl exec -n rig-system deploy/minio-versioned -- sh -c \
+kubectl exec -n $NS deploy/minio-versioned -- sh -c \
   'export MC_CONFIG_DIR=/tmp/.mc && \
    mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" && \
    mc version info local/YOUR_BUCKET_NAME'
@@ -89,12 +97,15 @@ For ODCN: `overlays/odcn/kustomization.yaml`
 
 **To apply immediately (without waiting for Argo):**
 ```bash
-kubectl patch service minio -n rig-system -p '{"spec":{"selector":{"app":"minio-versioned"}}}'
+# Set namespace (rig-system for local, rig-prd-operations for ODCN)
+NS=rig-system  # or rig-prd-operations
+
+kubectl patch service minio -n $NS -p '{"spec":{"selector":{"app":"minio-versioned"}}}'
 ```
 
 **Verify switch:**
 ```bash
-kubectl get endpoints minio -n rig-system
+kubectl get endpoints minio -n $NS
 # Should show IP of minio-versioned pod
 ```
 

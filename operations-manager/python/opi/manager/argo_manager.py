@@ -840,6 +840,28 @@ class ArgoManager:
                     logger.info(f"Infrastructure application '{app_name}' is ready!")
                     return True
 
+                # Check for sync operation failures (unrecoverable errors)
+                operation_state = status_data.get("status", {}).get("operationState", {})
+                operation_phase = operation_state.get("phase")
+                operation_message = operation_state.get("message", "")
+
+                if operation_phase in ("Failed", "Error"):
+                    error_msg = f"Infrastructure application '{app_name}' sync failed: {operation_phase}"
+                    logger.error(error_msg)
+                    if operation_message:
+                        logger.error(f"  Sync error: {operation_message}")
+                    # Log sync result details if available
+                    sync_result = operation_state.get("syncResult", {})
+                    if sync_result:
+                        resources = sync_result.get("resources", [])
+                        for resource in resources:
+                            if resource.get("status") == "SyncFailed":
+                                kind = resource.get("kind")
+                                name = resource.get("name")
+                                msg = resource.get("message")
+                                logger.error(f"  Resource failed: {kind}/{name} - {msg}")
+                    raise RuntimeError(error_msg)
+
                 # Check for failure states - only Degraded is a true failure
                 # "Missing" means resources are still being created, which is expected during initial deployment
                 if health_status == "Degraded":

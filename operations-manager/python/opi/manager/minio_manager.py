@@ -220,14 +220,38 @@ class MinioManager:
                 )
 
                 if not credentials_valid:
-                    if settings.RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE:
-                        # Remove old user and create new one
-                        # (MinIO requires user removal before creating with new password)
+                    # Check if user exists in MinIO to distinguish between:
+                    # 1. User doesn't exist (fresh MinIO) -> always recreate
+                    # 2. User exists but wrong password -> respect setting
+                    user_exists = await self._check_minio_user_exists(
+                        minio_connector, alias_name, existing_minio_secret.access_key
+                    )
+
+                    if not user_exists:
+                        # User doesn't exist in MinIO (fresh MinIO deployment)
+                        # Always recreate user regardless of setting
+                        logger.warning(
+                            f"MinIO user {minio_username} doesn't exist in MinIO (fresh deployment), "
+                            f"creating new user with existing credentials from secret"
+                        )
+                        should_recreate = True
+                    elif settings.RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE:
+                        # User exists but credentials are invalid
+                        # Recreate because setting allows it
                         logger.warning(
                             f"MinIO credentials are invalid for {project_name}/{deployment_name}, "
                             f"removing old user and creating new one"
                         )
+                        should_recreate = True
+                    else:
+                        # User exists, credentials invalid, but setting prevents recreation
+                        logger.error(
+                            f"MinIO secret exists for {project_name}/{deployment_name} but credentials are invalid. "
+                            f"Manual intervention required to fix MinIO user or update secret."
+                        )
+                        return
 
+                    if should_recreate:
                         minio_secret_key = generate_secure_password(
                             min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20
                         )
@@ -261,12 +285,6 @@ class MinioManager:
 
                         # After user recreation, we need to ensure bucket exists and permissions are granted
                         need_bucket_setup = True
-                    else:
-                        logger.error(
-                            f"MinIO secret exists for {project_name}/{deployment_name} but credentials are invalid. "
-                            f"Manual intervention required to fix MinIO user or update secret."
-                        )
-                        return
                 else:
                     logger.info(f"Existing MinIO credentials are valid for {project_name}/{deployment_name}")
                     # Use existing credentials
@@ -642,6 +660,28 @@ class MinioManager:
         except Exception as e:
             logger.debug(f"Could not retrieve MinIO secret for {deployment_name}: {e}")
             return None
+
+    async def _check_minio_user_exists(self, minio_connector: MinioConnector, alias: str, username: str) -> bool:
+        """
+        Check if a MinIO user exists.
+
+        Args:
+            minio_connector: MinIO connector instance
+            alias: MinIO alias name
+            username: Username to check
+
+        Returns:
+            True if user exists, False otherwise
+        """
+        try:
+            users = await minio_connector.list_users(alias)
+            # Check if username matches either 'username' or 'access_key' field
+            user_exists = any(user.get("username") == username or user.get("access_key") == username for user in users)
+            logger.debug(f"MinIO user {username} exists: {user_exists}")
+            return user_exists
+        except Exception as e:
+            logger.debug(f"Error checking if MinIO user exists: {e}")
+            return False
 
     async def _test_minio_connection(
         self, minio_connector: MinioConnector, access_key: str, secret_key: str, bucket_name: str
@@ -1041,10 +1081,26 @@ class MinioManager:
             logger.info(f"Existing MinIO credentials are valid for {deployment_name}")
             return existing_minio_secret.access_key, existing_minio_secret.secret_key
 
-        # Credentials are invalid, need to fix them
-        if settings.RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE:
-            logger.warning(f"MinIO credentials are invalid for {deployment_name}, recreating user")
+        # Credentials are invalid, check if user exists to determine action
+        user_exists = await self._check_minio_user_exists(minio_connector, alias_name, existing_minio_secret.access_key)
 
+        if not user_exists:
+            # User doesn't exist (fresh MinIO) - always recreate
+            logger.warning(f"MinIO user {username} doesn't exist in MinIO (fresh deployment), creating new user")
+            should_recreate = True
+        elif settings.RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE:
+            # User exists but credentials invalid - recreate because setting allows it
+            logger.warning(f"MinIO credentials are invalid for {deployment_name}, recreating user")
+            should_recreate = True
+        else:
+            # User exists, credentials invalid, setting prevents recreation
+            logger.error(
+                f"MinIO credentials are invalid for {deployment_name} and "
+                "RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE is disabled"
+            )
+            return None
+
+        if should_recreate:
             # Generate new password
             new_secret_key = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
 
@@ -1070,12 +1126,8 @@ class MinioManager:
             await self._ensure_bucket_and_permissions(minio_connector, alias_name, username, bucket_name)
 
             return username, new_secret_key
-        else:
-            logger.error(
-                f"MinIO credentials are invalid for {deployment_name} and "
-                "RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE is disabled"
-            )
-            return None
+
+        return None
 
     async def _ensure_bucket_and_permissions(
         self, minio_connector: MinioConnector, alias_name: str, username: str, bucket_name: str

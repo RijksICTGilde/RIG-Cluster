@@ -1,0 +1,151 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ pod_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/name: bucket-restore
+    app.kubernetes.io/component: restore-job
+    app.kubernetes.io/managed-by: opi-backup
+    backup.rig.nl/bucket: "{{ reference_name }}"
+    backup.rig.nl/target-bucket: "{{ target_bucket_name }}"
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  containers:
+    - name: restore
+      image: ghcr.io/minbzk/base-images/rig-backup:latest
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+
+          echo "Starting bucket restore for: {{ reference_name }}"
+          echo "Target MinIO Endpoint: ${TARGET_MINIO_ENDPOINT}"
+          echo "Target Bucket: ${TARGET_BUCKET_NAME}"
+          echo "Namespace: {{ namespace }}"
+          echo "S3 Endpoint: ${S3_ENDPOINT}"
+          echo "S3 Bucket: ${S3_BUCKET}"
+          echo "Backup Prefix: ${BACKUP_PREFIX}"
+          echo "S3 Disable TLS: ${S3_DISABLE_TLS}"
+
+          # Build TLS flag based on configuration
+          TLS_FLAG=""
+          if [ "${S3_DISABLE_TLS}" = "true" ]; then
+            TLS_FLAG="--disable-tls"
+          fi
+
+          # Configure mc alias for target MinIO
+          echo "Configuring MinIO client for target..."
+          mc alias set target "${TARGET_MINIO_ENDPOINT}" "${TARGET_ACCESS_KEY}" "${TARGET_SECRET_KEY}" --api S3v4
+
+          # Connect to Kopia repository
+          echo "Connecting to Kopia repository..."
+          kopia repository connect s3 \
+            --bucket="${S3_BUCKET}" \
+            --prefix="${BACKUP_PREFIX}/" \
+            --endpoint="${S3_ENDPOINT}" \
+            --access-key="${S3_ACCESS_KEY}" \
+            --secret-access-key="${S3_SECRET_KEY}" \
+            --password="${KOPIA_PASSWORD}" \
+            ${TLS_FLAG}
+
+          echo "Repository connected successfully"
+
+          # Find the snapshot to restore
+          SNAPSHOT_ID="${RESTORE_SNAPSHOT_ID}"
+
+          if [ -z "$SNAPSHOT_ID" ]; then
+            echo "No snapshot ID specified, finding latest bucket snapshot for {{ reference_name }}..."
+            # Get latest snapshot with matching bucket tag
+            SNAPSHOT_ID=$(kopia snapshot list --tags="bucket:{{ reference_name }}" --tags="resource_type:bucket" --json 2>/dev/null | \
+              jq -r 'sort_by(.startTime) | reverse | .[0].id // empty')
+
+            if [ -z "$SNAPSHOT_ID" ]; then
+              echo "ERROR: No bucket snapshots found for {{ reference_name }}"
+              exit 1
+            fi
+            echo "Found latest snapshot: $SNAPSHOT_ID"
+          else
+            echo "Using specified snapshot: $SNAPSHOT_ID"
+          fi
+
+          # Show snapshot info
+          echo "Snapshot details:"
+          kopia snapshot show "$SNAPSHOT_ID" || true
+
+          # Ensure target bucket exists
+          echo "Ensuring target bucket exists..."
+          mc mb target/"${TARGET_BUCKET_NAME}" --ignore-existing || true
+
+          # Restore snapshot to temp directory
+          echo "Restoring snapshot to temp directory..."
+          mkdir -p /tmp/bucket-restore
+
+          kopia restore "$SNAPSHOT_ID" /tmp/bucket-restore/
+
+          # Get restore stats
+          OBJECT_COUNT=$(find /tmp/bucket-restore -type f | wc -l)
+          TOTAL_SIZE=$(du -sh /tmp/bucket-restore 2>/dev/null | cut -f1 || echo "unknown")
+          echo "Restored ${OBJECT_COUNT} objects, total size: ${TOTAL_SIZE}"
+
+          # Clear target bucket if requested
+          {% if clear_target %}
+          echo "Clearing target bucket before restore..."
+          mc rm --recursive --force target/"${TARGET_BUCKET_NAME}"/ || true
+          {% endif %}
+
+          # Mirror restored files to target bucket
+          echo "Uploading restored files to target bucket..."
+          mc mirror --preserve --overwrite \
+            /tmp/bucket-restore/ \
+            target/"${TARGET_BUCKET_NAME}"/
+
+          # Cleanup
+          echo "Cleaning up temp directory..."
+          rm -rf /tmp/bucket-restore
+
+          # Verify restore
+          echo "Verifying restore..."
+          mc ls target/"${TARGET_BUCKET_NAME}"/ | head -20
+
+          echo "Bucket restore completed successfully for {{ reference_name }} -> {{ target_bucket_name }}"
+      env:
+        - name: TARGET_MINIO_ENDPOINT
+          value: "{{ target_minio_endpoint }}"
+        - name: TARGET_BUCKET_NAME
+          value: "{{ target_bucket_name }}"
+        - name: TARGET_ACCESS_KEY
+          value: "{{ target_access_key }}"
+        - name: TARGET_SECRET_KEY
+          value: "{{ target_secret_key }}"
+        - name: S3_ENDPOINT
+          value: "{{ s3_endpoint }}"
+        - name: S3_BUCKET
+          value: "{{ s3_bucket }}"
+        - name: S3_ACCESS_KEY
+          value: "{{ s3_access_key }}"
+        - name: S3_SECRET_KEY
+          value: "{{ s3_secret_key }}"
+        - name: S3_DISABLE_TLS
+          value: "{{ s3_disable_tls | lower }}"
+        - name: BACKUP_PREFIX
+          value: "{{ backup_prefix }}"
+        - name: KOPIA_PASSWORD
+          value: "{{ kopia_password }}"
+        - name: RESTORE_SNAPSHOT_ID
+          value: "{{ snapshot_id }}"
+        # Use /tmp for Kopia cache (container filesystem is read-only)
+        - name: KOPIA_CACHE_DIRECTORY
+          value: "/tmp/kopia-cache"
+        - name: KOPIA_LOG_DIR
+          value: "/tmp/kopia-logs"
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "100m"
+        limits:
+          memory: "4Gi"
+          cpu: "2000m"

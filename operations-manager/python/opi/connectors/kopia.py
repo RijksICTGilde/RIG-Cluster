@@ -97,6 +97,16 @@ class KopiaSnapshot:
                 return None
         return None
 
+    @property
+    def backup_run_id(self) -> str | None:
+        """Extract backup run ID from tags (groups PVCs from same backup run)."""
+        return self._get_tag("backup_run")
+
+    @property
+    def resource_type(self) -> str | None:
+        """Extract resource type from tags (pvc, database, bucket)."""
+        return self._get_tag("resource_type")
+
 
 @dataclass
 class KopiaRepositoryConfig:
@@ -195,8 +205,18 @@ class KopiaConnector:
 
         cmd.extend(args)
 
-        # Log command (redact sensitive info)
-        safe_cmd = [arg if "password" not in arg.lower() and "key" not in arg.lower() else "***" for arg in cmd]
+        # Log command (redact sensitive info - also redact values after sensitive flags)
+        safe_cmd = []
+        redact_next = False
+        for arg in cmd:
+            if redact_next:
+                safe_cmd.append("***")
+                redact_next = False
+            elif "password" in arg.lower() or "secret" in arg.lower():
+                safe_cmd.append(arg)
+                redact_next = True
+            else:
+                safe_cmd.append(arg)
         logger.debug(f"Running Kopia command: {' '.join(safe_cmd)}")
 
         try:
@@ -228,18 +248,32 @@ class KopiaConnector:
             logger.error(f"Error running Kopia command: {e}")
             raise KopiaExecutionError(f"Command execution failed: {e}") from e
 
+    async def _disconnect_from_repository(self, config_file: str) -> None:
+        """Disconnect from repository, ignoring any errors."""
+        try:
+            await self._run_kopia_command(
+                ["repository", "disconnect"],
+                config_file=config_file,
+                timeout=10,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to disconnect from repository (non-fatal): {e}")
+
     async def list_snapshots(
         self,
         config: KopiaRepositoryConfig,
+        resource_type: str | None = None,
     ) -> list[KopiaSnapshot]:
         """
         List all snapshots in a Kopia repository.
 
         Args:
             config: Repository connection configuration
+            resource_type: Optional filter by resource type ('pvc', 'database', 'bucket').
+                          If None, returns all snapshots.
 
         Returns:
-            List of KopiaSnapshot objects
+            List of KopiaSnapshot objects, optionally filtered by resource_type
         """
         # Create a temporary config file for this connection
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -303,16 +337,174 @@ class KopiaConnector:
             snapshots = self._parse_snapshot_list(stdout)
 
             # Disconnect from repository
-            try:
-                await self._run_kopia_command(
-                    ["repository", "disconnect"],
-                    config_file=config_file,
-                    timeout=10,
-                )
-            except Exception as e:
-                logger.debug(f"Failed to disconnect from repository (non-fatal): {e}")
+            await self._disconnect_from_repository(config_file)
+
+            # Apply resource_type filter if provided
+            if resource_type:
+                snapshots = [s for s in snapshots if s.resource_type == resource_type]
+                logger.debug(f"Filtered to {len(snapshots)} snapshots with resource_type={resource_type}")
 
             return snapshots
+
+    async def delete_snapshot(
+        self,
+        config: KopiaRepositoryConfig,
+        snapshot_id: str,
+    ) -> bool:
+        """
+        Delete a snapshot from a Kopia repository.
+
+        Args:
+            config: Repository connection configuration
+            snapshot_id: The ID of the snapshot to delete
+
+        Returns:
+            True if deletion was successful, False otherwise
+        """
+        # Create a temporary config file for this connection
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_file = os.path.join(temp_dir, "repository.config")
+            cache_dir = os.path.join(temp_dir, "cache")
+            os.makedirs(cache_dir, exist_ok=True)
+
+            # Build TLS flag
+            tls_flag = [] if config.use_tls else ["--disable-tls"]
+
+            # Connect to repository
+            connect_args = [
+                "repository",
+                "connect",
+                "s3",
+                "--bucket",
+                config.s3_bucket,
+                "--prefix",
+                f"{config.s3_prefix}/",
+                "--endpoint",
+                config.s3_endpoint,
+                "--access-key",
+                config.s3_access_key,
+                "--secret-access-key",
+                config.s3_secret_key,
+                "--password",
+                config.password,
+                "--cache-directory",
+                cache_dir,
+                "--no-check-for-updates",
+                *tls_flag,
+            ]
+
+            stdout, stderr, code = await self._run_kopia_command(
+                connect_args,
+                config_file=config_file,
+                timeout=30,
+            )
+
+            if code != 0:
+                logger.warning(f"Failed to connect to Kopia repository: {stderr}")
+                return False
+
+            # Delete the snapshot
+            delete_args = ["snapshot", "delete", snapshot_id, "--delete"]
+
+            stdout, stderr, code = await self._run_kopia_command(
+                delete_args,
+                config_file=config_file,
+                timeout=30,
+            )
+
+            if code != 0:
+                logger.warning(f"Failed to delete snapshot {snapshot_id}: {stderr}")
+                # Try to disconnect anyway (ignore errors)
+                await self._disconnect_from_repository(config_file)
+                return False
+
+            logger.info(f"Successfully deleted snapshot {snapshot_id}")
+
+            # Disconnect from repository
+            await self._disconnect_from_repository(config_file)
+
+            return True
+
+    async def get_snapshot(
+        self,
+        config: KopiaRepositoryConfig,
+        snapshot_id: str,
+    ) -> KopiaSnapshot | None:
+        """
+        Get a single snapshot by ID.
+
+        Args:
+            config: Repository connection configuration
+            snapshot_id: The ID of the snapshot to retrieve
+
+        Returns:
+            KopiaSnapshot if found, None otherwise
+        """
+        # Create a temporary config file for this connection
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_file = os.path.join(temp_dir, "repository.config")
+            cache_dir = os.path.join(temp_dir, "cache")
+            os.makedirs(cache_dir, exist_ok=True)
+
+            # Build TLS flag
+            tls_flag = [] if config.use_tls else ["--disable-tls"]
+
+            # Connect to repository
+            connect_args = [
+                "repository",
+                "connect",
+                "s3",
+                "--bucket",
+                config.s3_bucket,
+                "--prefix",
+                f"{config.s3_prefix}/",
+                "--endpoint",
+                config.s3_endpoint,
+                "--access-key",
+                config.s3_access_key,
+                "--secret-access-key",
+                config.s3_secret_key,
+                "--password",
+                config.password,
+                "--cache-directory",
+                cache_dir,
+                "--no-check-for-updates",
+                *tls_flag,
+            ]
+
+            stdout, stderr, code = await self._run_kopia_command(
+                connect_args,
+                config_file=config_file,
+                timeout=30,
+            )
+
+            if code != 0:
+                logger.warning(f"Failed to connect to Kopia repository: {stderr}")
+                return None
+
+            # Get snapshot info as JSON
+            show_args = ["snapshot", "list", "--json", "--all"]
+
+            stdout, stderr, code = await self._run_kopia_command(
+                show_args,
+                config_file=config_file,
+                timeout=30,
+            )
+
+            # Disconnect from repository
+            await self._disconnect_from_repository(config_file)
+
+            if code != 0:
+                logger.warning(f"Failed to list snapshots: {stderr}")
+                return None
+
+            # Parse and find the specific snapshot
+            snapshots = self._parse_snapshot_list(stdout)
+            for snapshot in snapshots:
+                if snapshot.snapshot_id == snapshot_id:
+                    return snapshot
+
+            return None
 
     def _parse_snapshot_list(self, json_output: str) -> list[KopiaSnapshot]:
         """

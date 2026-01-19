@@ -65,14 +65,15 @@ FROM base-system AS dependencies
 WORKDIR /app
 
 # Copy poetry configuration files - this triggers dependency installation only when these change
-COPY operations-manager/python/pyproject.toml ./
+COPY operations-manager/python/pyproject.toml operations-manager/python/poetry.lock ./
 
-# Generate lock file and install dependencies with cache mounts
-# This is cached unless pyproject.toml or jinja-roos-components change
-RUN --mount=type=cache,target=/root/.cache/pypoetry,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    poetry lock --no-interaction --no-ansi && \
-    poetry install --no-interaction --no-ansi --no-root
+# Install only production dependencies (exclude dev and test groups)
+# Then clean up pip cache and unnecessary files to reduce image size
+RUN poetry install --no-interaction --no-ansi --no-root --without dev,test && \
+    rm -rf /root/.cache/pip /root/.cache/pypoetry && \
+    find /usr/local/lib/python3.13/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.13/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.13/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
 
 # Stage 3: Application (changes frequently)
 FROM dependencies AS application

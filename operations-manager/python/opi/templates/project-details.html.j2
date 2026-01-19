@@ -480,10 +480,22 @@
                         </c-layout-row>
 
                         {% if backups %}
+                        {# Group backups by backup_run_id for visual distinction #}
+                        {% set backup_runs = {} %}
+                        {% for backup in backups %}
+                            {% set run_id = backup.backup_run_id or 'unknown' %}
+                            {% if run_id not in backup_runs %}
+                                {% set _ = backup_runs.update({run_id: []}) %}
+                            {% endif %}
+                            {% set _ = backup_runs[run_id].append(backup) %}
+                        {% endfor %}
+                        {% set run_colors = ['var(--rvo-color-wit)', 'var(--rvo-color-grijs-100)'] %}
                         <div style="overflow-x: auto;">
                             <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
                                 <thead>
                                     <tr style="border-bottom: 2px solid var(--rvo-color-grijs-300);">
+                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Backup Run</th>
+                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Type</th>
                                         <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Component</th>
                                         <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Storage</th>
                                         <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Gen</th>
@@ -493,8 +505,35 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {% for backup in backups %}
-                                    <tr style="border-bottom: 1px solid var(--rvo-color-grijs-200);">
+                                    {% set color_idx = namespace(val=0) %}
+                                    {% for run_id, run_backups in backup_runs.items() | sort(reverse=true) %}
+                                    {% set row_bg = run_colors[color_idx.val % 2] %}
+                                    {% for backup in run_backups %}
+                                    <tr style="border-bottom: 1px solid var(--rvo-color-grijs-200); background: {{ row_bg }};">
+                                        <td style="padding: 8px 12px;">
+                                            {% if run_id != 'unknown' %}
+                                                <code style="font-family: monospace; font-size: 0.75rem; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw); padding: 2px 6px; border-radius: 4px; cursor: help;" title="{{ run_backups | length }} item(s) in deze backup run">{{ run_id }}</code>
+                                            {% else %}
+                                                <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td style="padding: 8px 12px;">
+                                            {% if backup.resource_type == 'pvc' %}
+                                                <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw);">
+                                                    PVC
+                                                </span>
+                                            {% elif backup.resource_type == 'database' %}
+                                                <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-grasgroen-200); color: var(--rvo-color-grasgroen-800);">
+                                                    DB
+                                                </span>
+                                            {% elif backup.resource_type == 'bucket' %}
+                                                <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-oranje-200); color: var(--rvo-color-oranje-800);">
+                                                    Bucket
+                                                </span>
+                                            {% else %}
+                                                <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">{{ backup.resource_type or '-' }}</span>
+                                            {% endif %}
+                                        </td>
                                         <td style="padding: 8px 12px;">
                                             <span style="display: inline-flex; align-items: center; gap: 4px;">
                                                 <c-icon icon="document-blanco" size="sm" color="grijs-600" />
@@ -539,15 +578,22 @@
                                                     {% set _ = tags_display.append(key ~ ': ' ~ value) %}
                                                 {% endfor %}
                                             {% endif %}
-                                            <code style="font-family: monospace; font-size: 0.75rem; background: var(--rvo-color-grijs-100); padding: 2px 6px; border-radius: 4px; cursor: help;" title="PVC: {{ backup.pvc_name }}&#10;{% if backup.tags %}Tags:&#10;{{ tags_display | join('&#10;') }}{% endif %}">{{ backup.snapshot_id[:12] }}...</code>
+                                            <code style="font-family: monospace; font-size: 0.7rem; background: var(--rvo-color-grijs-100); padding: 2px 6px; border-radius: 4px; cursor: pointer; user-select: all;" title="Click to select, PVC: {{ backup.pvc_name }}&#10;{% if backup.tags %}Tags:&#10;{{ tags_display | join('&#10;') }}{% endif %}">{{ backup.snapshot_id }}</code>
                                         </td>
                                     </tr>
+                                    {% endfor %}
+                                    {% set color_idx.val = color_idx.val + 1 %}
                                     {% endfor %}
                                 </tbody>
                             </table>
                         </div>
                         <p class="rvo-text--sm rvo-text--subtle" style="margin-top: 8px;">
-                            {{ backups|length }} backup(s) gevonden
+                            {% set known_runs = backup_runs.keys() | reject('equalto', 'unknown') | list %}
+                            {% if known_runs | length > 0 %}
+                                {{ known_runs | length }} backup run(s), {{ backups|length }} snapshot(s) totaal
+                            {% else %}
+                                {{ backups|length }} backup(s) gevonden
+                            {% endif %}
                         </p>
                         {% else %}
                         <p class="rvo-text--md rvo-text--subtle">
@@ -614,8 +660,30 @@
             <p class="rvo-text--subtle">Project configuratie en gevoelige informatie</p>
             
             <div class="config-section">
+                {# Project Name - always show #}
+                <div class="config-item">
+                    <div class="config-label">
+                        <c-icon icon="publicatie" size="md" color="hemelblauw" />
+                        <strong>Project Naam</strong>
+                    </div>
+                    <div class="config-value config-value--inline">
+                        <code class="config-code">{{ project.name }}</code>
+                        <c-button
+                            kind="tertiary"
+                            size="sm"
+                            showIcon="before"
+                            icon="document-blanco"
+                            class="copy-btn"
+                            aria-label="Kopieer project naam"
+                            @click="copyToClipboard('.config-code', event, '.config-item')">
+                            <span class="copy-btn__label">Kopieer</span>
+                            <span class="copy-btn__copied">Gekopieerd!</span>
+                        </c-button>
+                    </div>
+                </div>
+
                 {% if project.config %}
-                
+
                 {# API Key Section #}
                 {% if project.config.get('api-key') %}
                 <div class="config-item">
@@ -636,8 +704,19 @@
                         <c-icon icon="beveiligingsscan" size="md" color="groen" />
                         <strong>Age Public Key</strong>
                     </div>
-                    <div class="config-value">
+                    <div class="config-value config-value--inline">
                         <code class="config-code">{{ project.config['age-public-key'] }}</code>
+                        <c-button
+                            kind="tertiary"
+                            size="sm"
+                            showIcon="before"
+                            icon="document-blanco"
+                            class="copy-btn"
+                            aria-label="Kopieer Age Public Key"
+                            @click="copyToClipboard('.config-code', event, '.config-item')">
+                            <span class="copy-btn__label">Kopieer</span>
+                            <span class="copy-btn__copied">Gekopieerd!</span>
+                        </c-button>
                     </div>
                 </div>
                 {% endif %}
@@ -795,18 +874,10 @@
                                                 <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
                                                 <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                                             </div>
-                                            <div class="sensitive-field" id="helmfile-{{ deployment.name }}-{{ helmfile.reference|replace('_', '-')|lower }}">
-                                                <span class="sensitive-dots">••••••••••••••••••••</span>
-                                                <span class="sensitive-value" style="display: none;"><pre class="config-code">{{ helmfile['helm-values'] | tojson(indent=2) }}</pre></span>
-                                                <c-button
-                                                    label="Tonen"
-                                                    kind="tertiary"
-                                                    size="sm"
-                                                    showIcon="before"
-                                                    icon="oog"
-                                                    class="toggle-sensitive"
-                                                    @click="toggleSensitive('helmfile-{{ deployment.name }}-{{ helmfile.reference|replace('_', '-')|lower }}')" />
-                                            </div>
+                                            <c-secret-field
+                                                value="{{ helmfile['helm-values'] | tojson(indent=2) }}"
+                                                valueType="json"
+                                                contentWidth="lg" />
                                         </div>
                                         {% endif %}
                                     </c-layout-flow>
@@ -849,18 +920,7 @@
                                                 <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
                                             </div>
                                             <div style="margin-left: var(--rvo-space-lg);">
-                                                <div class="sensitive-field" id="config-{{ deployment.name }}-{{ key|replace('_', '-')|lower }}">
-                                                    <span class="sensitive-dots">••••••••••••••••••••</span>
-                                                    <span class="sensitive-value" style="display: none;">{{ value }}</span>
-                                                    <c-button
-                                                        label="Tonen"
-                                                        kind="tertiary"
-                                                        size="sm"
-                                                        showIcon="before"
-                                                        icon="oog"
-                                                        class="toggle-sensitive"
-                                                        @click="toggleSensitive('config-{{ deployment.name }}-{{ key|replace('_', '-')|lower }}')" />
-                                                </div>
+                                                <c-secret-field value="{{ value }}" />
                                             </div>
                                         </c-layout-flow>
                                     </c-card>
@@ -922,18 +982,7 @@
                                                         <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
                                                     </div>
                                                     <div style="margin-left: var(--rvo-space-lg);">
-                                                        <div class="sensitive-field" id="user-{{ deployment.name }}-{{ component.reference }}-{{ key|replace('_', '-')|lower }}">
-                                                            <span class="sensitive-dots">••••••••••••••••••••</span>
-                                                            <span class="sensitive-value" style="display: none;">{{ value }}</span>
-                                                            <c-button
-                                                                label="Tonen"
-                                                                kind="tertiary"
-                                                                size="sm"
-                                                                showIcon="before"
-                                                                icon="oog"
-                                                                class="toggle-sensitive"
-                                                                @click="toggleSensitive('user-{{ deployment.name }}-{{ component.reference }}-{{ key|replace('_', '-')|lower }}')" />
-                                                        </div>
+                                                        <c-secret-field value="{{ value }}" />
                                                     </div>
                                                 </c-layout-flow>
                                             </c-card>
@@ -1081,18 +1130,10 @@
                                 <span class="rvo-text--sm" style="font-weight: 600;">Helm Values (Base)</span>
                                 <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
                             </div>
-                            <div class="sensitive-field" id="base-helm-{{ helm_chart.name|replace('_', '-')|lower }}">
-                                <span class="sensitive-dots">••••••••••••••••••••</span>
-                                <span class="sensitive-value" style="display: none;"><pre class="config-code">{{ helm_chart['helm-values'] | tojson(indent=2) }}</pre></span>
-                                <c-button
-                                    label="Tonen"
-                                    kind="tertiary"
-                                    size="sm"
-                                    showIcon="before"
-                                    icon="oog"
-                                    class="toggle-sensitive"
-                                    @click="toggleSensitive('base-helm-{{ helm_chart.name|replace('_', '-')|lower }}')" />
-                            </div>
+                            <c-secret-field
+                                value="{{ helm_chart['helm-values'] | tojson(indent=2) }}"
+                                valueType="json"
+                                contentWidth="lg" />
                         </div>
                         {% endif %}
                     </c-layout-flow>
@@ -1140,18 +1181,10 @@
                                 <span class="rvo-text--sm" style="font-weight: 600;">Helm Values (Base)</span>
                                 <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                             </div>
-                            <div class="sensitive-field" id="base-helmfile-{{ helmfile.name|replace('_', '-')|lower }}">
-                                <span class="sensitive-dots">••••••••••••••••••••</span>
-                                <span class="sensitive-value" style="display: none;"><pre class="config-code">{{ helmfile['helm-values'] | tojson(indent=2) }}</pre></span>
-                                <c-button
-                                    label="Tonen"
-                                    kind="tertiary"
-                                    size="sm"
-                                    showIcon="before"
-                                    icon="oog"
-                                    class="toggle-sensitive"
-                                    @click="toggleSensitive('base-helmfile-{{ helmfile.name|replace('_', '-')|lower }}')" />
-                            </div>
+                            <c-secret-field
+                                value="{{ helmfile['helm-values'] | tojson(indent=2) }}"
+                                valueType="json"
+                                contentWidth="lg" />
                         </div>
                         {% endif %}
                     </c-layout-flow>
@@ -1217,18 +1250,7 @@
                                             <code>{{ key }}</code>
                                         </div>
                                         <div class="env-var-value">
-                                            <div class="sensitive-field" id="env-overview-comp-{{ component.name }}-{{ key|replace('_', '-')|lower }}">
-                                                <span class="sensitive-dots">••••••••••••••••</span>
-                                                <span class="sensitive-value" style="display: none;">{{ value }}</span>
-                                                <c-button
-                                                    label="Tonen"
-                                                    kind="tertiary"
-                                                    size="sm"
-                                                    showIcon="before"
-                                                    icon="oog"
-                                                    class="toggle-sensitive"
-                                                    @click="toggleSensitive('env-overview-comp-{{ component.name }}-{{ key|replace('_', '-')|lower }}')" />
-                                            </div>
+                                            <c-secret-field value="{{ value }}" />
                                         </div>
                                     </div>
                                     {% endfor %}
@@ -1288,18 +1310,7 @@
                                                     <code>{{ key }}</code>
                                                 </div>
                                                 <div class="env-var-value">
-                                                    <div class="sensitive-field" id="env-overview-dep-{{ deployment.name }}-{{ dep_component.reference }}-{{ key|replace('_', '-')|lower }}">
-                                                        <span class="sensitive-dots">••••••••••••••••</span>
-                                                        <span class="sensitive-value" style="display: none;">{{ value }}</span>
-                                                        <c-button
-                                                            label="Tonen"
-                                                            kind="tertiary"
-                                                            size="sm"
-                                                            showIcon="before"
-                                                            icon="oog"
-                                                            class="toggle-sensitive"
-                                                            @click="toggleSensitive('env-overview-dep-{{ deployment.name }}-{{ dep_component.reference }}-{{ key|replace('_', '-')|lower }}')" />
-                                                    </div>
+                                                    <c-secret-field value="{{ value }}" />
                                                 </div>
                                             </div>
                                             {% endfor %}
@@ -1746,33 +1757,43 @@
         border-radius: 4px;
         font-family: monospace;
         font-size: 0.875rem;
-        display: block;
         word-break: break-all;
     }
 
-    /* Sensitive Fields */
-    .sensitive-field {
+    .config-value--inline {
         display: flex;
         align-items: center;
         gap: var(--rvo-space-md);
+        flex-wrap: wrap;
     }
 
-    .sensitive-dots {
-        font-family: monospace;
-        font-size: 1.25rem;
-        letter-spacing: 2px;
-        color: var(--rvo-color-grijs-600);
+    .config-value--inline .config-code {
+        display: inline-block;
     }
 
-    .sensitive-value {
-        font-family: monospace;
-        font-size: 0.875rem;
-        background: var(--rvo-color-grijs-100);
-        padding: var(--rvo-space-sm);
-        border-radius: 4px;
-        word-break: break-all;
-        max-width: 100%;
-        overflow-x: auto;
+    /* Copy button label toggle */
+    .copy-btn__copied {
+        display: none;
+    }
+
+    .copy-btn__label {
+        display: inline;
+    }
+
+    .copy-btn.is-copied {
+        color: var(--rvo-color-groen) !important;
+    }
+
+    .copy-btn.is-copied .rvo-icon {
+        color: var(--rvo-color-groen) !important;
+    }
+
+    .copy-btn.is-copied .copy-btn__label {
+        display: none;
+    }
+
+    .copy-btn.is-copied .copy-btn__copied {
+        display: inline;
     }
 
     /* Environment Variables Section */
@@ -1926,54 +1947,6 @@
 </style>
 
 <script>
-    /**
-     * Toggle visibility of sensitive information
-     */
-    function toggleSensitive(fieldId) {
-        const field = document.getElementById(fieldId);
-        const dots = field.querySelector('.sensitive-dots');
-        const value = field.querySelector('.sensitive-value');
-        const button = field.querySelector('.toggle-sensitive');
-
-        if (dots.style.display === 'none') {
-            // Hide sensitive value
-            dots.style.display = 'inline';
-            value.style.display = 'none';
-            button.textContent = 'Tonen';
-            button.querySelector('c-icon').setAttribute('icon', 'oog');
-        } else {
-            // Show sensitive value
-            dots.style.display = 'none';
-            value.style.display = 'block';
-            button.textContent = 'Verbergen';
-            button.querySelector('c-icon').setAttribute('icon', 'oog-dicht');
-        }
-    }
-
-    /**
-     * Copy sensitive value to clipboard
-     */
-    function copyToClipboard(fieldId) {
-        const field = document.getElementById(fieldId);
-        const valueElement = field.querySelector('.sensitive-value');
-        const copyButton = field.querySelector('.copy-button');
-
-        // Get text content (strip HTML if it's a pre/code block)
-        const textToCopy = valueElement.textContent.trim();
-
-        navigator.clipboard.writeText(textToCopy).then(() => {
-            // Show feedback
-            const originalLabel = copyButton.textContent;
-            copyButton.textContent = 'Gekopieerd!';
-            setTimeout(() => {
-                copyButton.textContent = originalLabel;
-            }, 2000);
-        }).catch(err => {
-            console.error('Failed to copy:', err);
-            alert('Kopiëren mislukt');
-        });
-    }
-
     /**
      * Switch between deployment metrics sections
      */

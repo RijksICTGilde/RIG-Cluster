@@ -1099,7 +1099,7 @@ async def project_details(request: Request, project_name: str):
         # Fetch backup snapshots for deployments on current cluster
         from opi.core.cluster_config import get_prefixed_namespace
         from opi.core.config import settings
-        from opi.manager.backup_manager import BackupManager
+        from opi.manager.backup import BackupManager
 
         current_cluster = settings.CLUSTER_MANAGER
         deployment_backups: dict[str, list[dict[str, Any]]] = {}
@@ -1122,7 +1122,9 @@ async def project_details(request: Request, project_name: str):
                 k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
 
                 try:
-                    snapshots = await backup_manager.list_snapshots(cluster, k8s_namespace)
+                    snapshots = await backup_manager.list_snapshots(
+                        cluster, k8s_namespace, project_name=project_name
+                    )
                     if snapshots:
                         deployment_backups[deployment_name] = [
                             {
@@ -1138,6 +1140,8 @@ async def project_details(request: Request, project_name: str):
                                 "component_name": s.component_name,
                                 "storage_name": s.storage_name,
                                 "generation": s.generation,
+                                "backup_run_id": s.backup_run_id,
+                                "resource_type": s.resource_type,
                                 # Raw tags for debugging
                                 "tags": s.tags,
                             }

@@ -80,9 +80,7 @@ class DeleteProjectManager:
         deployments = project_data.get("deployments", [])
         return sum(1 for d in deployments if d.get("cluster") == cluster)
 
-    async def _cleanup_orphaned_argocd_resources(
-        self, project_name: str, deletion_results: dict[str, Any]
-    ) -> None:
+    async def _cleanup_orphaned_argocd_resources(self, project_name: str, deletion_results: dict[str, Any]) -> None:
         """
         Clean up orphaned ArgoCD Applications and AppProjects for a project.
 
@@ -104,7 +102,8 @@ class DeleteProjectManager:
             # List all applications and find ones matching this project
             all_applications = await argo_connector.list_applications()
             orphaned_apps = [
-                app for app in all_applications
+                app
+                for app in all_applications
                 if app.get("metadata", {}).get("name", "").startswith(f"{project_name}-")
             ]
 
@@ -120,20 +119,24 @@ class DeleteProjectManager:
                     try:
                         delete_success = await argo_connector.delete_application(app_name)
                         if delete_success:
-                            deletion_results["operations"].append({
-                                "type": "orphaned_argocd_application_cleanup",
-                                "target": app_name,
-                                "status": "success",
-                                "message": f"Deleted orphaned ArgoCD application '{app_name}'",
-                            })
+                            deletion_results["operations"].append(
+                                {
+                                    "type": "orphaned_argocd_application_cleanup",
+                                    "target": app_name,
+                                    "status": "success",
+                                    "message": f"Deleted orphaned ArgoCD application '{app_name}'",
+                                }
+                            )
                             logger.info(f"Successfully deleted orphaned application: {app_name}")
                         else:
-                            deletion_results["operations"].append({
-                                "type": "orphaned_argocd_application_cleanup",
-                                "target": app_name,
-                                "status": "failed",
-                                "message": f"Failed to delete orphaned ArgoCD application '{app_name}'",
-                            })
+                            deletion_results["operations"].append(
+                                {
+                                    "type": "orphaned_argocd_application_cleanup",
+                                    "target": app_name,
+                                    "status": "failed",
+                                    "message": f"Failed to delete orphaned ArgoCD application '{app_name}'",
+                                }
+                            )
                             logger.error(f"Failed to delete orphaned application: {app_name}")
                     except Exception as e:
                         logger.exception(f"Error deleting orphaned application {app_name}")
@@ -166,12 +169,14 @@ class DeleteProjectManager:
                             ["delete", "appproject", appproject_name, "-n", argo_namespace]
                         )
                         if del_code == 0:
-                            deletion_results["operations"].append({
-                                "type": "orphaned_argocd_appproject_cleanup",
-                                "target": appproject_name,
-                                "status": "success",
-                                "message": f"Deleted orphaned ArgoCD AppProject '{appproject_name}'",
-                            })
+                            deletion_results["operations"].append(
+                                {
+                                    "type": "orphaned_argocd_appproject_cleanup",
+                                    "target": appproject_name,
+                                    "status": "success",
+                                    "message": f"Deleted orphaned ArgoCD AppProject '{appproject_name}'",
+                                }
+                            )
                             logger.info(f"Successfully deleted orphaned AppProject: {appproject_name}")
                         else:
                             logger.error(f"Failed to delete AppProject {appproject_name}: {stderr}")
@@ -434,9 +439,7 @@ class DeleteProjectManager:
         # Look up actual filename from project service (filename may differ from project name)
         project = get_project_service().get_project(project_name)
         if not project:
-            raise HTTPException(
-                status_code=404, detail=f"Project '{project_name}' not found in project service"
-            )
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in project service")
         self.project_manager._project_file_relative_path = f"projects/{project.filename}"
 
         try:
@@ -682,9 +685,7 @@ class DeleteProjectManager:
 
         return result
 
-    async def delete_deployment(
-        self, project_name: str, deployment_name: str, force: bool = False
-    ) -> dict[str, Any]:
+    async def delete_deployment(self, project_name: str, deployment_name: str, force: bool = False) -> dict[str, Any]:
         """
         Delete all resources associated with a specific deployment.
 
@@ -726,9 +727,7 @@ class DeleteProjectManager:
         # Look up actual filename from project service (filename may differ from project name)
         project = get_project_service().get_project(project_name)
         if not project:
-            raise HTTPException(
-                status_code=404, detail=f"Project '{project_name}' not found in project service"
-            )
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in project service")
         self.project_manager._project_file_relative_path = f"projects/{project.filename}"
 
         try:
@@ -937,8 +936,10 @@ class DeleteProjectManager:
                                 f"ArgoCD application {app_name} deletion timed out - "
                                 "force mode: attempting to remove finalizers"
                             )
-                            finalizer_removed = await self.project_manager._kubectl_connector.remove_argocd_application_finalizers(
-                                app_name
+                            finalizer_removed = (
+                                await self.project_manager._kubectl_connector.remove_argocd_application_finalizers(
+                                    app_name
+                                )
                             )
                             if finalizer_removed:
                                 deletion_results["operations"].append(
@@ -987,24 +988,23 @@ class DeleteProjectManager:
                     logger.info(f"ArgoCD application {app_name} was not found (already deleted or never existed)")
                     argocd_app_deleted = True  # Consider it deleted if not found
 
-            except PermissionError as e:
-                # In force mode, we can't check app status - assume we need to try cleanup
+            except PermissionError:
+                # Permission denied means the AppProject was deleted before the Application.
+                # This indicates the Application is deleted or will be garbage collected.
                 deletion_results["operations"].append(
                     {
                         "type": "argocd_app_gitops_deletion",
                         "target": app_name,
                         "cluster": cluster,
                         "deployment": deployment_name,
-                        "status": "permission_denied",
-                        "error": str(e),
+                        "status": "success",
+                        "note": "Permission denied (AppProject deleted), treating as deleted",
                     }
                 )
-                if force:
-                    logger.warning("Permission denied checking ArgoCD app - force mode: attempting finalizer removal")
-                    await self.project_manager._kubectl_connector.remove_argocd_application_finalizers(app_name)
-                    argocd_app_deleted = True  # Assume deleted in force mode after finalizer removal
-                else:
-                    logger.error(f"Permission denied checking ArgoCD application status: {e}")
+                logger.info(
+                    f"ArgoCD application {app_name} - permission denied (AppProject deleted), treating as deleted"
+                )
+                argocd_app_deleted = True
 
             except Exception as e:
                 deletion_results["operations"].append(
@@ -1422,9 +1422,7 @@ class DeleteProjectManager:
                     deletion_results["errors"].extend(database_results["errors"])
             except Exception as db_error:
                 if force:
-                    logger.warning(
-                        f"Force mode: could not delete database resources ({db_error}), skipping"
-                    )
+                    logger.warning(f"Force mode: could not delete database resources ({db_error}), skipping")
                     deletion_results["service_results"]["database"] = {
                         "operations": [],
                         "errors": [str(db_error)],

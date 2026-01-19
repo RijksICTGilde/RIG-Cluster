@@ -1,9 +1,8 @@
 """Database service manager for handling PostgreSQL resources."""
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-
-from jsonpath_ng.ext import parse as jsonpath_parse
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -378,6 +377,12 @@ class DatabaseManager:
         Uses the DatabaseManager's bound credentials for all operations.
         Handles both local deployment clones and remote-source clones with Chisel tunnels.
 
+        Clone modes:
+        - mode: "once" (default): Clone only if status.completed is not True
+        - mode: "always": Clone every sync, implies force_clone=True
+
+        After successful clone, updates the clone-from.status in project_data and saves the project file.
+
         Args:
             project_name: Name of the project
             deployment_name: Name of the deployment
@@ -392,6 +397,31 @@ class DatabaseManager:
         clone_from = deployment.get("clone-from")
         # Use runtime override if True, otherwise fall back to deployment config
         force_clone = force_clone_override or deployment.get("force-clone", False)
+
+        # Handle clone mode and status checking for new dict format
+        clone_mode = "once"  # Default mode
+        clone_status_completed = False
+        is_dict_format = isinstance(clone_from, dict)
+
+        if clone_from and is_dict_format:
+            clone_mode = clone_from.get("mode", "once")
+            status = clone_from.get("status", {})
+            clone_status_completed = status.get("completed", False) if isinstance(status, dict) else False
+
+            # mode: "always" implies force_clone=True
+            if clone_mode == "always":
+                force_clone = True
+                logger.info(f"Clone mode 'always' for {deployment_name}, forcing clone")
+
+            # mode: "once" with completed status - skip clone entirely
+            if clone_mode == "once" and clone_status_completed:
+                logger.info(
+                    f"Clone mode 'once' for {deployment_name} and clone already completed "
+                    f"(timestamp: {status.get('timestamp', 'unknown')}), skipping clone"
+                )
+                # Still need to ensure database exists (in case cluster was rebuilt)
+                # but skip the clone operation
+                clone_from = None  # Set to None to skip clone logic but continue to normal flow
 
         # Handle clone-from configuration - can be dict (new format) or string (legacy)
         if clone_from:
@@ -444,6 +474,9 @@ class DatabaseManager:
 
                     if not result.get("success"):
                         raise RuntimeError(f"Remote source clone failed: {result.get('errors', ['Unknown error'])}")
+
+                    # Update clone status after successful clone
+                    await self._update_clone_status(project_data, deployment_name)
 
                     return  # Skip normal create flow
                 elif clone_type == "deployment":
@@ -524,6 +557,12 @@ class DatabaseManager:
 
             logger.info(f"Successfully cloned database from {source_database} to {db_database}")
             logger.info(f"Schema cloned with target name '{db_schema}' - no additional rename needed")
+
+            # Update clone status after successful local deployment clone
+            # Note: For local deployment clones, the original clone_from dict is in deployment
+            # We need to check if the original config was dict format with mode support
+            if is_dict_format and project_data:
+                await self._update_clone_status(project_data, deployment_name)
         else:
             # Normal flow: ensure database and schema exist
             database_result = await self.postgres_connector.create_database(
@@ -573,6 +612,50 @@ class DatabaseManager:
                 logger.info(f"Created database schema: {db_schema}")
             else:
                 logger.info(f"Database schema already exists: {db_schema}")
+
+    async def _update_clone_status(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+    ) -> None:
+        """
+        Update the clone status in the project data after a successful clone operation.
+
+        This sets status.completed=True and status.timestamp in the clone-from config.
+        The project_data dict is modified in place (shared reference with project_manager).
+        The actual save and git commit is handled by the calling process_project flow.
+
+        Args:
+            project_data: The project data dictionary (will be modified in place)
+            deployment_name: Name of the deployment to update status for
+        """
+        timestamp = datetime.now(UTC).isoformat()
+
+        # Update the status in project_data (in place - shared reference)
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") == deployment_name:
+                clone_from = deployment.get("clone-from")
+                if clone_from and isinstance(clone_from, dict):
+                    clone_from["status"] = {
+                        "completed": True,
+                        "timestamp": timestamp,
+                    }
+                    logger.info(f"Updated clone status for {deployment_name}: completed=True, timestamp={timestamp}")
+                break
+
+        # Save the project file to disk
+        # Note: git commit is handled by the calling process_project flow
+        try:
+            await self.project_manager.save_project_data()
+            logger.info(f"Saved project file with updated clone status for {deployment_name}")
+        except Exception as e:
+            # Log the error but don't fail the clone operation
+            # The clone was successful, status update is secondary
+            logger.warning(
+                f"Failed to save clone status update for {deployment_name}: {e}. "
+                "Clone was successful but status may not be persisted."
+            )
 
     async def _validate_clone_source(self, source_database: str, source_schema: str) -> None:
         """

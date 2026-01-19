@@ -1,23 +1,25 @@
-"""PVC Backup Manager - Orchestrates backups to external S3 using Kopia."""
+"""PVC Backup Manager - Orchestrates PVC backups to external S3 using Kopia."""
 
 import asyncio
-import base64
-import hashlib
 import json
 import logging
 import os
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from types import TracebackType
+from typing import Any
 
-from opi.connectors.kubectl import KubectlConnector
-from opi.connectors.minio_mc import create_minio_connector
-from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
+from opi.manager.backup.base import (
+    BackupConfig,
+    BackupResult,
+    BaseBackupManager,
+    RestoreResult,
+    SnapshotInfo,
+    utc_now,
+)
 from opi.utils.naming import (
     generate_backup_clone_pvc_name,
     generate_backup_pod_name,
     generate_backup_prefix,
+    generate_backup_run_id,
     generate_backup_snapshot_name,
     generate_restore_pod_name,
     generate_restored_pvc_name,
@@ -26,287 +28,7 @@ from opi.utils.naming import (
 logger = logging.getLogger(__name__)
 
 
-def _now() -> datetime:
-    """Get current UTC datetime."""
-    return datetime.now(UTC)
-
-
-@dataclass
-class BackupResult:
-    """Result of a backup operation."""
-
-    namespace: str
-    pvc_name: str
-    success: bool
-    snapshot_name: str | None = None
-    error: str | None = None
-    duration_seconds: float = 0
-
-
-@dataclass
-class BackupStatus:
-    """Current backup status."""
-
-    lock_held: bool = False
-    current_namespace: str | None = None
-    current_pvc: str | None = None
-    locked_by: str | None = None
-    locked_at: str | None = None
-
-
-@dataclass
-class SnapshotInfo:
-    """Information about a Kopia snapshot."""
-
-    snapshot_id: str
-    pvc_name: str  # For PVCs, or reference_name for databases/buckets
-    timestamp: str
-    size_bytes: int | None = None
-    # Extended metadata
-    cluster: str | None = None
-    namespace: str | None = None
-    project_name: str | None = None
-    deployment_name: str | None = None
-    component_name: str | None = None
-    storage_name: str | None = None
-    generation: int | None = None
-    backup_run_id: str | None = None  # Groups resources from same backup run
-    resource_type: str | None = None  # 'pvc', 'database', or 'bucket'
-    # Raw tags for debugging
-    tags: dict[str, str] | None = None
-
-
-@dataclass
-class RestoreResult:
-    """Result of a restore operation."""
-
-    namespace: str
-    pvc_name: str
-    success: bool
-    target_pvc_name: str | None = None
-    snapshot_id: str | None = None
-    error: str | None = None
-    duration_seconds: float = 0
-
-
-class BackupLock:
-    """
-    Distributed lock using Kubernetes ConfigMap.
-
-    Ensures only one backup runs at a time across all instances.
-    """
-
-    LOCK_NAME = "backup-lock"
-    LOCK_NAMESPACE = "rig-system"
-
-    def __init__(self, kubectl: KubectlConnector) -> None:
-        self.kubectl = kubectl
-        self._held = False
-
-    async def acquire(self, timeout_seconds: int = 3600) -> bool:
-        """
-        Acquire the backup lock.
-
-        Args:
-            timeout_seconds: Consider lock stale after this many seconds
-
-        Returns:
-            True if lock acquired, False if already held by another process
-        """
-        try:
-            # Try to get existing lock
-            args = ["get", "configmap", self.LOCK_NAME, "-n", self.LOCK_NAMESPACE, "-o", "json"]
-            stdout, stderr, code = await self.kubectl.run_command(args)
-
-            if code == 0:
-                # Lock exists, check if stale
-                lock_data = json.loads(stdout)
-                data = lock_data.get("data", {})
-                locked_at_str = data.get("locked_at", "")
-
-                if locked_at_str:
-                    locked_at = datetime.fromisoformat(locked_at_str)
-                    age_seconds = (_now() - locked_at).total_seconds()
-
-                    if age_seconds < timeout_seconds:
-                        # Lock is fresh, cannot acquire
-                        logger.warning(
-                            f"Backup lock held by {data.get('locked_by', 'unknown')} "
-                            f"since {locked_at_str} ({age_seconds:.0f}s ago)"
-                        )
-                        return False
-                    else:
-                        # Lock is stale, take over
-                        logger.warning(
-                            f"Taking over stale backup lock (held for {age_seconds:.0f}s, "
-                            f"timeout is {timeout_seconds}s)"
-                        )
-
-            # Create or update lock
-            lock_content = {
-                "locked_at": _now().isoformat(),
-                "locked_by": os.environ.get("HOSTNAME", "unknown"),
-            }
-
-            # Use kubectl apply with configmap
-            configmap_yaml = f"""apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {self.LOCK_NAME}
-  namespace: {self.LOCK_NAMESPACE}
-data:
-  locked_at: "{lock_content["locked_at"]}"
-  locked_by: "{lock_content["locked_by"]}"
-"""
-            args = ["apply", "-f", "-"]
-            _, stderr, code = await self.kubectl.run_command(args, stdin_input=configmap_yaml)
-
-            if code == 0:
-                self._held = True
-                logger.info(f"Backup lock acquired by {lock_content['locked_by']}")
-                return True
-            else:
-                logger.error(f"Failed to create backup lock: {stderr}")
-                return False
-
-        except Exception:
-            logger.exception("Error acquiring backup lock")
-            return False
-
-    async def release(self) -> bool:
-        """
-        Release the backup lock.
-
-        Returns:
-            True if released successfully, False otherwise
-        """
-        if not self._held:
-            return True
-
-        try:
-            args = ["delete", "configmap", self.LOCK_NAME, "-n", self.LOCK_NAMESPACE, "--ignore-not-found=true"]
-            _, stderr, code = await self.kubectl.run_command(args)
-
-            if code == 0:
-                self._held = False
-                logger.info("Backup lock released")
-                return True
-            else:
-                logger.error(f"Failed to release backup lock: {stderr}")
-                return False
-
-        except Exception:
-            logger.exception("Error releasing backup lock")
-            return False
-
-    async def get_status(self) -> BackupStatus:
-        """Get current lock status."""
-        try:
-            args = ["get", "configmap", self.LOCK_NAME, "-n", self.LOCK_NAMESPACE, "-o", "json"]
-            stdout, _, code = await self.kubectl.run_command(args)
-
-            if code == 0:
-                lock_data = json.loads(stdout)
-                data = lock_data.get("data", {})
-                return BackupStatus(
-                    lock_held=True,
-                    locked_by=data.get("locked_by"),
-                    locked_at=data.get("locked_at"),
-                    current_namespace=data.get("current_namespace"),
-                    current_pvc=data.get("current_pvc"),
-                )
-            else:
-                return BackupStatus(lock_held=False)
-
-        except Exception:
-            logger.exception("Error getting backup lock status")
-            return BackupStatus(lock_held=False)
-
-    async def update_progress(self, namespace: str, pvc_name: str) -> None:
-        """Update lock with current progress."""
-        if not self._held:
-            return
-
-        try:
-            configmap_yaml = f"""apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {self.LOCK_NAME}
-  namespace: {self.LOCK_NAMESPACE}
-data:
-  locked_at: "{_now().isoformat()}"
-  locked_by: "{os.environ.get("HOSTNAME", "unknown")}"
-  current_namespace: "{namespace}"
-  current_pvc: "{pvc_name}"
-"""
-            args = ["apply", "-f", "-"]
-            await self.kubectl.run_command(args, stdin_input=configmap_yaml)
-        except Exception as e:
-            logger.warning(f"Failed to update backup progress: {e}")
-
-    async def __aenter__(self) -> "BackupLock":
-        if not await self.acquire():
-            raise RuntimeError("Could not acquire backup lock - another backup is running")
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        await self.release()
-
-
-@dataclass
-class BackupConfig:
-    """Configuration for backup operations."""
-
-    s3_endpoint: str
-    s3_bucket: str  # Default bucket (used when project context unavailable)
-    s3_access_key: str
-    s3_secret_key: str
-    s3_use_tls: bool = False
-    snapshot_class: str = "ocs-storagecluster-rbdplugin-snapclass"
-    timeout_seconds: int = 3600
-    retention_keep_latest: int = 7
-    retention_keep_daily: int = 7
-    retention_keep_weekly: int = 4
-
-    def get_bucket_name(
-        self,
-        project_name: str | None = None,
-        cluster: str | None = None,
-    ) -> str:
-        """
-        Get the bucket name for a specific project/cluster.
-
-        Uses the centralized get_backup_bucket_name function.
-        """
-        from opi.manager.backup.base import get_backup_bucket_name
-
-        return get_backup_bucket_name(project_name, cluster)
-
-    @classmethod
-    def from_settings(cls) -> "BackupConfig":
-        """Create BackupConfig from application settings."""
-        # Get snapshot class from cluster config, fall back to settings if not configured
-        snapshot_class = get_volume_snapshot_class(settings.CLUSTER_MANAGER) or settings.BACKUP_SNAPSHOT_CLASS
-        return cls(
-            s3_endpoint=settings.BACKUP_S3_ENDPOINT,
-            s3_bucket=settings.BACKUP_S3_BUCKET,
-            s3_access_key=settings.BACKUP_S3_ACCESS_KEY,
-            s3_secret_key=settings.BACKUP_S3_SECRET_KEY,
-            s3_use_tls=settings.BACKUP_S3_USE_TLS,
-            snapshot_class=snapshot_class,
-            timeout_seconds=settings.BACKUP_TIMEOUT_SECONDS,
-            retention_keep_latest=settings.BACKUP_RETENTION_KEEP_LATEST,
-            retention_keep_daily=settings.BACKUP_RETENTION_KEEP_DAILY,
-            retention_keep_weekly=settings.BACKUP_RETENTION_KEEP_WEEKLY,
-        )
-
-
-class BackupManager:
+class PVCBackupManager(BaseBackupManager):
     """
     Orchestrates PVC backups to external S3 using Kopia.
 
@@ -323,54 +45,6 @@ class BackupManager:
     """
 
     BACKUP_LABEL = "backup.rig.nl/enabled"
-    MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
-
-    def __init__(self, config: BackupConfig | None = None) -> None:
-        self.kubectl = KubectlConnector()
-        self.config = config or BackupConfig.from_settings()
-        self.lock = BackupLock(self.kubectl)
-
-    async def get_status(self) -> BackupStatus:
-        """Get current backup status."""
-        return await self.lock.get_status()
-
-    async def _ensure_backup_bucket_exists(self) -> None:
-        """
-        Ensure the backup S3 bucket exists, creating it if necessary.
-
-        Uses the minio connector to check and create the bucket on the
-        backup destination minio instance.
-        """
-        minio_connector = create_minio_connector()
-
-        # Configure alias for backup destination minio
-        # Endpoint format: "host:port" (e.g., "minio.rig-backup-destination.svc:9000")
-        endpoint = self.config.s3_endpoint
-        host_with_port = endpoint if ":" in endpoint else f"{endpoint}:9000"
-
-        alias_name = "backup-destination"
-        alias_configured = await minio_connector.configure_alias(
-            alias=alias_name,
-            host=host_with_port,
-            access_key=self.config.s3_access_key,
-            secret_key=self.config.s3_secret_key,
-            secure=False,  # Internal cluster communication
-        )
-
-        if not alias_configured:
-            raise RuntimeError(f"Failed to configure MinIO alias for backup destination: {host_with_port}")
-
-        # Check if bucket exists and create if needed
-        bucket_result = await minio_connector.create_bucket(alias_name, self.config.s3_bucket)
-
-        if bucket_result["status"] == "created":
-            logger.info(f"Created backup bucket: {self.config.s3_bucket}")
-        elif bucket_result["status"] == "exists":
-            logger.debug(f"Backup bucket already exists: {self.config.s3_bucket}")
-        else:
-            raise RuntimeError(
-                f"Failed to ensure backup bucket exists: {bucket_result.get('message', 'Unknown error')}"
-            )
 
     async def backup_namespace(self, namespace: str) -> list[BackupResult]:
         """
@@ -393,11 +67,13 @@ class BackupManager:
                 logger.info(f"No PVCs with backup label found in namespace {namespace}")
                 return results
 
-            logger.info(f"Found {len(pvcs)} PVC(s) to backup in namespace {namespace}")
+            # Generate backup_run_id for this backup run
+            backup_run_id = generate_backup_run_id()
+            logger.info(f"Found {len(pvcs)} PVC(s) to backup in namespace {namespace}, backup_run_id={backup_run_id}")
 
             for pvc_name in pvcs:
                 await self.lock.update_progress(namespace, pvc_name)
-                result = await self._backup_pvc(namespace, pvc_name)
+                result = await self._backup_pvc(namespace, pvc_name, backup_run_id=backup_run_id)
                 results.append(result)
 
             return results
@@ -406,6 +82,7 @@ class BackupManager:
         self,
         namespace: str,
         pvc_name: str,
+        backup_run_id: str | None = None,
         cluster: str | None = None,
         project_name: str | None = None,
         deployment_name: str | None = None,
@@ -419,6 +96,7 @@ class BackupManager:
         Args:
             namespace: Namespace containing the PVC
             pvc_name: Name of the PVC to backup
+            backup_run_id: Backup run ID (generated if not provided)
             cluster: Cluster name for metadata
             project_name: Project name for metadata
             deployment_name: Deployment name for metadata
@@ -430,13 +108,18 @@ class BackupManager:
             BackupResult with operation details
         """
         # Ensure backup bucket exists before starting
-        await self._ensure_backup_bucket_exists()
+        await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
+
+        # Generate backup_run_id if not provided
+        if not backup_run_id:
+            backup_run_id = generate_backup_run_id()
 
         async with self.lock:
             await self.lock.update_progress(namespace, pvc_name)
             return await self._backup_pvc(
                 namespace,
                 pvc_name,
+                backup_run_id=backup_run_id,
                 cluster=cluster,
                 project_name=project_name,
                 deployment_name=deployment_name,
@@ -449,13 +132,13 @@ class BackupManager:
         self,
         namespace: str,
         pvc_name: str,
+        backup_run_id: str,
         cluster: str | None = None,
         project_name: str | None = None,
         deployment_name: str | None = None,
         component_name: str | None = None,
         storage_name: str | None = None,
         pvc_generation: int | None = None,
-        backup_run_id: str | None = None,
     ) -> BackupResult:
         """
         Internal: backup a single PVC (lock must be held).
@@ -463,6 +146,7 @@ class BackupManager:
         Args:
             namespace: Namespace containing the PVC
             pvc_name: Name of the PVC to backup
+            backup_run_id: ID to group all PVCs in the same backup run (required)
             cluster: Cluster name for backup prefix (defaults to settings.CLUSTER)
             project_name: Project name for metadata
             deployment_name: Deployment name for metadata
@@ -474,7 +158,7 @@ class BackupManager:
         Returns:
             BackupResult with operation details
         """
-        start_time = _now()
+        start_time = utc_now()
         timestamp = start_time.strftime("%Y%m%d-%H%M%S")
 
         # Use naming utilities for consistent naming
@@ -496,7 +180,7 @@ class BackupManager:
                     pvc_name=pvc_name,
                     success=False,
                     error=f"PVC {pvc_name} not found in namespace {namespace}",
-                    duration_seconds=(_now() - start_time).total_seconds(),
+                    duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
             # 2. Create VolumeSnapshot
@@ -552,10 +236,10 @@ class BackupManager:
                     pvc_name=pvc_name,
                     success=False,
                     error=f"Backup pod failed. Logs: {logs[-500:] if logs else 'no logs'}",
-                    duration_seconds=(_now() - start_time).total_seconds(),
+                    duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
-            duration = (_now() - start_time).total_seconds()
+            duration = (utc_now() - start_time).total_seconds()
             logger.info(f"Backup of {namespace}/{pvc_name} completed successfully in {duration:.1f}s")
 
             return BackupResult(
@@ -567,7 +251,7 @@ class BackupManager:
             )
 
         except Exception as e:
-            duration = (_now() - start_time).total_seconds()
+            duration = (utc_now() - start_time).total_seconds()
             logger.exception("Backup of %s/%s failed after %.1fs", namespace, pvc_name, duration)
             return BackupResult(
                 namespace=namespace,
@@ -642,11 +326,13 @@ class BackupManager:
                 logger.info(f"No PVCs found in namespace {namespace}")
                 return results
 
-            logger.info(f"Found {len(pvcs)} PVC(s) to backup in namespace {namespace} (all mode)")
+            # Generate backup_run_id for this backup run
+            backup_run_id = generate_backup_run_id()
+            logger.info(f"Found {len(pvcs)} PVC(s) to backup in namespace {namespace} (all mode), backup_run_id={backup_run_id}")
 
             for pvc_name in pvcs:
                 await self.lock.update_progress(namespace, pvc_name)
-                result = await self._backup_pvc(namespace, pvc_name)
+                result = await self._backup_pvc(namespace, pvc_name, backup_run_id=backup_run_id)
                 results.append(result)
 
             return results
@@ -654,11 +340,12 @@ class BackupManager:
     async def backup_project_deployment(
         self,
         project_name: str,
-        project_data: dict,
+        project_data: dict[str, Any],
         deployment_name: str,
         namespace: str,
         cluster: str,
         all_pvcs: bool = False,
+        backup_run_id: str | None = None,
     ) -> list[BackupResult]:
         """
         Backup PVCs for a project deployment with full metadata context.
@@ -678,21 +365,19 @@ class BackupManager:
         Returns:
             List of BackupResult for each PVC
         """
-
         from opi.handlers.project_file_handler import create_project_file_handler
         from opi.utils.naming import generate_pvc_name, generate_unique_name
 
         # Ensure backup bucket exists before starting
-        await self._ensure_backup_bucket_exists()
+        await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
 
         async with self.lock:
             results: list[BackupResult] = []
             project_file_handler = create_project_file_handler()
 
-            # Generate backup_run_id for this entire backup run (groups all PVCs together)
-            from opi.utils.naming import generate_backup_run_id
-
-            backup_run_id = generate_backup_run_id()
+            # Use provided backup_run_id or generate one for this entire backup run
+            if not backup_run_id:
+                backup_run_id = generate_backup_run_id()
             logger.info(f"Starting backup run {backup_run_id} for project {project_name}/{deployment_name}")
 
             # Get PVCs to backup
@@ -734,6 +419,7 @@ class BackupManager:
                     storage_name = storage.get("name")
                     if not storage_name:
                         from opi.utils.naming import generate_storage_name
+
                         mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
                         storage_name = generate_storage_name(mount_path, idx)
 
@@ -783,49 +469,6 @@ class BackupManager:
 
             return results
 
-    async def _get_pvc_info(self, namespace: str, pvc_name: str) -> dict[str, str] | None:
-        """Get PVC size and storage class."""
-        args = ["get", "pvc", pvc_name, "-n", namespace, "-o", "json"]
-        stdout, stderr, code = await self.kubectl.run_command(args)
-
-        if code != 0:
-            logger.error(f"Failed to get PVC {pvc_name}: {stderr}")
-            return None
-
-        pvc_data = json.loads(stdout)
-        spec = pvc_data.get("spec", {})
-        status = pvc_data.get("status", {})
-
-        # Get actual size from status if available, otherwise from spec
-        size = status.get("capacity", {}).get("storage") or spec.get("resources", {}).get("requests", {}).get(
-            "storage", "1Gi"
-        )
-
-        return {
-            "size": size,
-            "storage_class": spec.get("storageClassName", ""),
-        }
-
-    async def _derive_backup_key(self, namespace: str) -> str:
-        """
-        Derive Kopia password from namespace's SOPS age key.
-
-        Uses HKDF-like derivation to create a backup-specific password
-        from the project's SOPS key.
-        """
-        # Get the SOPS age secret from the namespace
-        age_key = await self.kubectl.get_sops_secret_from_namespace(namespace)
-
-        if not age_key:
-            # Fallback to a namespace-based key if no SOPS key found
-            logger.warning(f"No SOPS key found in namespace {namespace}, using namespace-based key")
-            age_key = f"fallback-key-{namespace}"
-
-        # Derive a backup-specific password
-        material = f"kopia-backup-{namespace}-{age_key}".encode()
-        derived = hashlib.sha256(material).digest()
-        return base64.b64encode(derived).decode()[:32]
-
     async def _create_snapshot(self, namespace: str, pvc_name: str, snapshot_name: str) -> None:
         """Create a VolumeSnapshot from a PVC."""
         template_path = os.path.join(self.MANIFESTS_DIR, "backup-snapshot.yaml.jinja")
@@ -840,7 +483,7 @@ class BackupManager:
                 "namespace": namespace,
                 "pvc_name": pvc_name,
                 "snapshot_class": self.config.snapshot_class,
-                "timestamp": _now().strftime("%Y%m%d-%H%M%S"),
+                "timestamp": utc_now().strftime("%Y%m%d-%H%M%S"),
             },
         )
 
@@ -913,26 +556,6 @@ class BackupManager:
         if code != 0:
             raise RuntimeError(f"Failed to create clone PVC: {stderr}")
 
-    async def _wait_for_pvc(self, namespace: str, pvc_name: str, timeout: int = 300) -> None:
-        """Wait for PVC to be bound."""
-        logger.info(f"Waiting for PVC {pvc_name} to be bound...")
-
-        start_time = asyncio.get_event_loop().time()
-
-        while True:
-            elapsed = asyncio.get_event_loop().time() - start_time
-            if elapsed > timeout:
-                raise RuntimeError(f"Timeout waiting for PVC {pvc_name} after {timeout}s")
-
-            args = ["get", "pvc", pvc_name, "-n", namespace, "-o", "jsonpath={.status.phase}"]
-            stdout, _, code = await self.kubectl.run_command(args)
-
-            if code == 0 and stdout.strip().lower() == "bound":
-                logger.info(f"PVC {pvc_name} is bound")
-                return
-
-            await asyncio.sleep(5)
-
     async def _create_backup_pod(
         self,
         namespace: str,
@@ -942,13 +565,13 @@ class BackupManager:
         kopia_password: str,
         timestamp: str,
         backup_prefix: str,
+        backup_run_id: str,
         cluster: str | None = None,
         project_name: str | None = None,
         deployment_name: str | None = None,
         component_name: str | None = None,
         storage_name: str | None = None,
         pvc_generation: int | None = None,
-        backup_run_id: str | None = None,
     ) -> None:
         """Create the backup pod.
 
@@ -960,18 +583,22 @@ class BackupManager:
             kopia_password: Encryption password for Kopia
             timestamp: Backup timestamp string
             backup_prefix: S3 prefix for the backup (cluster/namespace)
+            backup_run_id: Backup run ID (required)
             cluster: Cluster name for metadata (optional)
             project_name: Project name for metadata (optional)
             deployment_name: Deployment name for metadata (optional)
             component_name: Component name for metadata (optional)
             storage_name: Storage name for metadata (optional)
             pvc_generation: PVC generation number for metadata (optional)
-            backup_run_id: Backup run ID to group PVCs in same backup (optional)
         """
         template_path = os.path.join(self.MANIFESTS_DIR, "backup-pod.yaml.jinja")
 
         with open(template_path) as f:
             template_content = f.read()
+
+        # Get the bucket name (may be per-project based on config)
+        effective_cluster = cluster or settings.CLUSTER_MANAGER
+        bucket_name = self.config.get_bucket_name(project_name, effective_cluster)
 
         manifest = self.kubectl.template_manifest(
             template_content,
@@ -982,7 +609,7 @@ class BackupManager:
                 "clone_pvc_name": clone_pvc_name,
                 "timestamp": timestamp,
                 "s3_endpoint": self.config.s3_endpoint,
-                "s3_bucket": self.config.s3_bucket,
+                "s3_bucket": bucket_name,
                 "s3_access_key": self.config.s3_access_key,
                 "s3_secret_key": self.config.s3_secret_key,
                 "s3_disable_tls": not self.config.s3_use_tls,
@@ -993,7 +620,7 @@ class BackupManager:
                 "retention_keep_daily": self.config.retention_keep_daily,
                 "retention_keep_weekly": self.config.retention_keep_weekly,
                 # Project context metadata
-                "cluster": cluster or settings.CLUSTER_MANAGER,
+                "cluster": effective_cluster,
                 "project_name": project_name,
                 "deployment_name": deployment_name,
                 "component_name": component_name,
@@ -1008,57 +635,6 @@ class BackupManager:
 
         if code != 0:
             raise RuntimeError(f"Failed to create backup pod: {stderr}")
-
-    async def _wait_for_pod(self, namespace: str, pod_name: str, timeout: int | None = None) -> bool:
-        """
-        Wait for pod to complete.
-
-        Returns:
-            True if pod completed successfully, False if failed
-        """
-        timeout = timeout or self.config.timeout_seconds
-        logger.info(f"Waiting for backup pod {pod_name} to complete (timeout: {timeout}s)...")
-
-        start_time = asyncio.get_event_loop().time()
-
-        while True:
-            elapsed = asyncio.get_event_loop().time() - start_time
-            if elapsed > timeout:
-                logger.error(f"Timeout waiting for pod {pod_name} after {timeout}s")
-                return False
-
-            args = ["get", "pod", pod_name, "-n", namespace, "-o", "jsonpath={.status.phase}"]
-            stdout, stderr, code = await self.kubectl.run_command(args)
-
-            if code != 0:
-                logger.warning(f"Failed to get pod status: {stderr}")
-                await asyncio.sleep(10)
-                continue
-
-            phase = stdout.strip().lower()
-
-            if phase == "succeeded":
-                logger.info(f"Backup pod {pod_name} completed successfully")
-                return True
-            elif phase == "failed":
-                logger.error(f"Backup pod {pod_name} failed")
-                return False
-            elif phase in ("pending", "running"):
-                logger.debug(f"Backup pod {pod_name} is {phase}")
-            else:
-                logger.warning(f"Unexpected pod phase: {phase}")
-
-            await asyncio.sleep(10)
-
-    async def _get_pod_logs(self, namespace: str, pod_name: str) -> str:
-        """Get logs from a pod."""
-        args = ["logs", pod_name, "-n", namespace, "--tail=100"]
-        stdout, stderr, code = await self.kubectl.run_command(args)
-
-        if code != 0:
-            return f"Failed to get logs: {stderr}"
-
-        return stdout
 
     # =========================================================================
     # Restore Methods
@@ -1081,7 +657,7 @@ class BackupManager:
             cluster: Cluster name
             namespace: Namespace name
             pvc_name: Optional PVC name to filter by
-            project_name: Optional project name for per-project bucket resolution
+            project_name: Optional project name for per-project bucket mode
 
         Returns:
             List of available snapshots
@@ -1090,6 +666,7 @@ class BackupManager:
 
         backup_prefix = generate_backup_prefix(cluster, namespace)
         kopia_password = await self._derive_backup_key(namespace)
+        bucket_name = self.config.get_bucket_name(project_name, cluster)
 
         # Create Kopia connector and query repository directly
         kopia = KopiaConnector()
@@ -1097,9 +674,6 @@ class BackupManager:
         if not KopiaConnector.is_kopia_available:
             logger.warning("Kopia CLI not available, cannot list snapshots")
             return []
-
-        # Use bucket resolver for per-project bucket support
-        bucket_name = self.get_bucket_name(project_name, cluster)
 
         repo_config = KopiaRepositoryConfig(
             s3_endpoint=self.config.s3_endpoint,
@@ -1232,7 +806,7 @@ class BackupManager:
         """
         Internal: restore a single PVC (lock must be held).
         """
-        start_time = _now()
+        start_time = utc_now()
         timestamp = start_time.strftime("%Y%m%d-%H%M%S")
 
         # Generate target PVC name if not provided
@@ -1254,7 +828,7 @@ class BackupManager:
                     success=False,
                     target_pvc_name=target_pvc_name,
                     error=f"Target PVC {target_pvc_name} exists. Set overwrite=true to replace contents.",
-                    duration_seconds=(_now() - start_time).total_seconds(),
+                    duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
             # 2. Create target PVC if it doesn't exist
@@ -1295,10 +869,10 @@ class BackupManager:
                     success=False,
                     target_pvc_name=target_pvc_name,
                     error=f"Restore pod failed. Logs: {logs[-500:] if logs else 'no logs'}",
-                    duration_seconds=(_now() - start_time).total_seconds(),
+                    duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
-            duration = (_now() - start_time).total_seconds()
+            duration = (utc_now() - start_time).total_seconds()
             logger.info(f"Restore of {pvc_name} to {target_pvc_name} completed in {duration:.1f}s")
 
             return RestoreResult(
@@ -1311,7 +885,7 @@ class BackupManager:
             )
 
         except Exception as e:
-            duration = (_now() - start_time).total_seconds()
+            duration = (utc_now() - start_time).total_seconds()
             logger.exception("Restore of %s failed after %.1fs", pvc_name, duration)
             return RestoreResult(
                 namespace=namespace,
@@ -1324,11 +898,7 @@ class BackupManager:
 
         finally:
             # Cleanup restore pod (best effort)
-            try:
-                args = ["delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"]
-                await self.kubectl.run_command(args)
-            except Exception as e:
-                logger.warning(f"Failed to delete restore pod {pod_name}: {e}")
+            await self._cleanup_pod(namespace, pod_name)
 
     async def _create_restore_pvc(
         self,
@@ -1440,7 +1010,7 @@ spec:
         """
         Internal: restore to a project-managed PVC (lock must be held).
         """
-        start_time = _now()
+        start_time = utc_now()
         timestamp = start_time.strftime("%Y%m%d-%H%M%S")
         pod_name = generate_restore_pod_name(source_pvc_name[:20], timestamp)
         backup_prefix = generate_backup_prefix(cluster, namespace)
@@ -1457,7 +1027,7 @@ spec:
                     success=False,
                     target_pvc_name=target_pvc_name,
                     error=f"Target PVC {target_pvc_name} already exists. Cannot restore.",
-                    duration_seconds=(_now() - start_time).total_seconds(),
+                    duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
             # 2. Create target PVC with project-compatible template
@@ -1509,10 +1079,10 @@ spec:
                     success=False,
                     target_pvc_name=target_pvc_name,
                     error=f"Restore pod failed. Logs: {logs[-500:] if logs else 'no logs'}",
-                    duration_seconds=(_now() - start_time).total_seconds(),
+                    duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
-            duration = (_now() - start_time).total_seconds()
+            duration = (utc_now() - start_time).total_seconds()
             logger.info(f"Project restore of {source_pvc_name} to {target_pvc_name} completed in {duration:.1f}s")
 
             return RestoreResult(
@@ -1525,7 +1095,7 @@ spec:
             )
 
         except Exception as e:
-            duration = (_now() - start_time).total_seconds()
+            duration = (utc_now() - start_time).total_seconds()
             logger.exception("Project restore of %s failed after %.1fs", source_pvc_name, duration)
             return RestoreResult(
                 namespace=namespace,
@@ -1538,11 +1108,7 @@ spec:
 
         finally:
             # Cleanup restore pod (best effort)
-            try:
-                args = ["delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"]
-                await self.kubectl.run_command(args)
-            except Exception as e:
-                logger.warning(f"Failed to delete restore pod {pod_name}: {e}")
+            await self._cleanup_pod(namespace, pod_name)
 
     async def _create_project_restore_pvc(
         self,
@@ -1592,6 +1158,8 @@ spec:
         kopia_password: str,
         backup_prefix: str,
         snapshot_id: str | None = None,
+        project_name: str | None = None,
+        cluster: str | None = None,
     ) -> None:
         """Create the restore pod."""
         template_path = os.path.join(self.MANIFESTS_DIR, "restore-pod.yaml.jinja")
@@ -1602,6 +1170,9 @@ spec:
         with open(template_path) as f:
             template_content = f.read()
 
+        # Get the bucket name (may be per-project based on config)
+        bucket_name = self.config.get_bucket_name(project_name, cluster)
+
         manifest = self.kubectl.template_manifest(
             template_content,
             {
@@ -1610,7 +1181,7 @@ spec:
                 "pvc_name": pvc_name,
                 "target_pvc_name": target_pvc_name,
                 "s3_endpoint": self.config.s3_endpoint,
-                "s3_bucket": self.config.s3_bucket,
+                "s3_bucket": bucket_name,
                 "s3_access_key": self.config.s3_access_key,
                 "s3_secret_key": self.config.s3_secret_key,
                 "s3_disable_tls": not self.config.s3_use_tls,
@@ -1636,12 +1207,7 @@ spec:
         logger.info(f"Cleaning up backup resources in {namespace}")
 
         # Delete pod
-        try:
-            args = ["delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"]
-            await self.kubectl.run_command(args)
-            logger.debug(f"Deleted pod {pod_name}")
-        except Exception as e:
-            logger.warning(f"Failed to delete pod {pod_name}: {e}")
+        await self._cleanup_pod(namespace, pod_name)
 
         # Delete clone PVC
         try:
@@ -1662,14 +1228,18 @@ spec:
         logger.info(f"Cleanup completed for {namespace}")
 
 
-def create_backup_manager(config: BackupConfig | None = None) -> BackupManager:
+# Backward compatibility alias
+BackupManager = PVCBackupManager
+
+
+def create_backup_manager(config: BackupConfig | None = None) -> PVCBackupManager:
     """
-    Create a BackupManager instance.
+    Create a PVCBackupManager instance.
 
     Args:
         config: Optional BackupConfig. If not provided, uses settings.
 
     Returns:
-        BackupManager instance
+        PVCBackupManager instance
     """
-    return BackupManager(config)
+    return PVCBackupManager(config)

@@ -1,16 +1,18 @@
-# PVC Backup System
+# Backup System
 
-This document describes the PVC backup system that enables offsite backups of persistent volumes to external S3-compatible storage using Kopia.
+This document describes the comprehensive backup system that enables offsite backups of persistent volumes (PVCs), PostgreSQL databases, and MinIO buckets to external S3-compatible storage using Kopia.
 
 ## Overview
 
 The backup system provides:
+- **Multiple resource types**: PVC, PostgreSQL database, and MinIO bucket backups
 - **Incremental backups** using Kopia's deduplication
 - **Per-project encryption** derived from SOPS age keys
 - **Offsite storage** to external S3-compatible storage
 - **Sequential execution** with distributed locking
 - **Label-based selection** of PVCs to backup
 - **Backup all mode** for Helm/external projects without labels
+- **Resource type tagging** for filtering snapshots by type (pvc, database, bucket)
 
 ## Architecture
 
@@ -18,25 +20,44 @@ The backup system provides:
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Operations Manager API                                             │
 │                                                                     │
-│  POST /api/v1/backup/project/{project_name}  (recommended)          │
-│  POST /api/v1/backup/namespace/{namespace}                          │
-│  POST /api/v1/backup/namespace/{namespace}/all  (no labels needed)  │
-│  POST /api/v1/backup/pvc/{namespace}/{pvc_name}                     │
+│  PVC Backups:                                                       │
+│    POST /api/v1/backup/project/{project}/deployment/{deployment}    │
+│    POST /api/v1/backup/namespace/{namespace}                        │
+│    POST /api/v1/backup/pvc/{namespace}/{pvc_name}                   │
+│                                                                     │
+│  Database Backups:                                                  │
+│    POST /api/v1/backup/database/{namespace}/{reference_name}        │
+│                                                                     │
+│  Bucket Backups:                                                    │
+│    POST /api/v1/backup/bucket/{namespace}/{reference_name}          │
+│                                                                     │
 │  GET  /api/v1/backup/status                                         │
 │                                                                     │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  BackupManager                                                      │
+│  Backup Managers                                                    │
 │                                                                     │
-│  For each PVC:                                                      │
+│  PVCBackupManager (for persistent volumes):                         │
 │    1. Create VolumeSnapshot (instant, copy-on-write)                │
 │    2. Create temp PVC clone from snapshot                           │
 │    3. Derive encryption key from namespace's SOPS age key           │
 │    4. Spawn Kopia backup pod                                        │
 │    5. Upload to external S3 (encrypted, deduplicated)               │
 │    6. Cleanup temp resources                                        │
+│                                                                     │
+│  DatabaseBackupManager (for PostgreSQL):                            │
+│    1. Derive encryption key from namespace's SOPS age key           │
+│    2. Spawn backup pod that runs pg_dump | kopia snapshot --stdin   │
+│    3. Database dump streamed directly to Kopia (encrypted)          │
+│    4. Cleanup backup pod                                            │
+│                                                                     │
+│  BucketBackupManager (for MinIO buckets):                           │
+│    1. Derive encryption key from namespace's SOPS age key           │
+│    2. Spawn backup pod with mc mirror + Kopia                       │
+│    3. Mirror bucket to temp dir, then create Kopia snapshot         │
+│    4. Cleanup backup pod                                            │
 │                                                                     │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
@@ -51,6 +72,7 @@ The backup system provides:
 │                                                                     │
 │  Each prefix = separate Kopia repository                            │
 │  Each repository = separate encryption key                          │
+│  Snapshots tagged with resource_type: pvc | database | bucket       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -232,7 +254,7 @@ curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data
 
 ## API Reference
 
-### Backup Endpoints
+### PVC Backup Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -242,7 +264,21 @@ curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data
 | `POST` | `/api/v1/backup/namespace/{namespace}/all` | Backup ALL PVCs in namespace (no labels required) |
 | `POST` | `/api/v1/backup/pvc/{namespace}/{pvc_name}` | Backup a specific PVC |
 
-### Restore Endpoints
+### Database Backup Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/backup/database/{namespace}/{reference_name}` | Backup a PostgreSQL database |
+| `POST` | `/api/v1/restore/database/{cluster}/{namespace}/{reference_name}` | Restore a PostgreSQL database |
+
+### Bucket Backup Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/backup/bucket/{namespace}/{reference_name}` | Backup a MinIO bucket (Kopia encrypted or mc mirror) |
+| `POST` | `/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}` | Restore a MinIO bucket |
+
+### PVC Restore Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -477,6 +513,236 @@ metadata:
   name: my-pvc
   labels:
     backup.rig.nl/enabled: "true"
+```
+
+## Database Backups (PostgreSQL)
+
+The backup system supports PostgreSQL database backups using `pg_dump` with streaming encryption through Kopia.
+
+### How Database Backup Works
+
+1. A backup pod is spawned in the target namespace
+2. The pod runs `pg_dump --format=custom` piped directly to `kopia snapshot create --stdin-name`
+3. The database dump is encrypted and deduplicated by Kopia
+4. Snapshots are tagged with `resource_type:database` for filtering
+
+### Backup a Database
+
+```bash
+curl -X POST "http://localhost:9595/api/v1/backup/database/my-namespace/mydb" \
+  -H "X-API-Key: your-master-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "database_host": "postgresql.my-namespace.svc.cluster.local",
+    "database_port": 5432,
+    "database_name": "myapp",
+    "database_user": "myapp",
+    "database_password": "secret",
+    "source_type": "namespace"
+  }'
+```
+
+**Parameters:**
+- `namespace`: Kubernetes namespace where the backup pod runs
+- `reference_name`: Logical name for this database (used in tags and snapshot identification)
+- `database_host`: PostgreSQL host address
+- `database_port`: PostgreSQL port (default: 5432)
+- `database_name`: Database name to backup
+- `database_user`: Database username
+- `database_password`: Database password
+- `source_type`: `"namespace"` for namespace-local databases, `"shared"` for shared databases
+
+### Restore a Database
+
+```bash
+# Restore latest snapshot
+curl -X POST "http://localhost:9595/api/v1/restore/database/local/my-namespace/mydb" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_database_host": "postgresql.my-namespace.svc.cluster.local",
+    "target_database_port": 5432,
+    "target_database_name": "myapp_restored",
+    "target_database_user": "myapp",
+    "target_database_password": "secret"
+  }'
+
+# Restore a specific snapshot
+curl -X POST "http://localhost:9595/api/v1/restore/database/local/my-namespace/mydb" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "snapshot_id": "k1234567890abcdef",
+    "target_database_host": "postgresql.my-namespace.svc.cluster.local",
+    "target_database_name": "myapp",
+    "target_database_user": "myapp",
+    "target_database_password": "secret"
+  }'
+```
+
+**Restore Parameters:**
+- `cluster`: Cluster name where the backup was made
+- `namespace`: Kubernetes namespace for the restore pod
+- `reference_name`: Logical name of the database backup to restore
+- `snapshot_id`: Optional specific snapshot ID (default: latest)
+- `target_database_*`: Connection parameters for the target database
+
+### Database Backup Response
+
+```json
+{
+  "status": "success",
+  "message": "Database backup of mydb completed successfully",
+  "result": {
+    "namespace": "my-namespace",
+    "reference_name": "mydb",
+    "database_name": "myapp",
+    "success": true,
+    "snapshot_name": "database-mydb.dump",
+    "duration_seconds": 45.3
+  }
+}
+```
+
+## Bucket Backups (MinIO)
+
+The backup system supports MinIO bucket backups with two modes:
+1. **Kopia mode** (default): Encrypted, deduplicated backups via `mc mirror` + Kopia
+2. **mc mirror mode**: Direct bucket-to-bucket sync (faster, but unencrypted)
+
+### How Bucket Backup Works (Kopia Mode)
+
+1. A backup pod is spawned in the target namespace
+2. The pod runs `mc mirror` to download the bucket to a temp directory
+3. Kopia creates an encrypted snapshot of the temp directory
+4. Snapshots are tagged with `resource_type:bucket` for filtering
+
+### How Bucket Backup Works (mc mirror Mode)
+
+1. A backup pod is spawned in the target namespace
+2. The pod runs `mc mirror` directly from source bucket to backup bucket
+3. Files are synced without encryption (faster for large buckets)
+4. Metadata is stored alongside the backup
+
+### Backup a Bucket
+
+```bash
+# Kopia backup (encrypted, recommended)
+curl -X POST "http://localhost:9595/api/v1/backup/bucket/my-namespace/mybucket" \
+  -H "X-API-Key: your-master-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
+    "source_bucket_name": "my-bucket",
+    "source_access_key": "minioaccess",
+    "source_secret_key": "miniosecret",
+    "source_type": "namespace",
+    "use_kopia": true
+  }'
+
+# mc mirror backup (unencrypted, faster)
+curl -X POST "http://localhost:9595/api/v1/backup/bucket/my-namespace/mybucket" \
+  -H "X-API-Key: your-master-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
+    "source_bucket_name": "my-bucket",
+    "source_access_key": "minioaccess",
+    "source_secret_key": "miniosecret",
+    "use_kopia": false
+  }'
+```
+
+**Parameters:**
+- `namespace`: Kubernetes namespace where the backup pod runs
+- `reference_name`: Logical name for this bucket (used in tags and snapshot identification)
+- `source_minio_endpoint`: MinIO endpoint URL
+- `source_bucket_name`: Bucket name to backup
+- `source_access_key`: MinIO access key
+- `source_secret_key`: MinIO secret key
+- `source_type`: `"namespace"` for namespace-local MinIO, `"shared"` for shared MinIO
+- `use_kopia`: `true` for encrypted Kopia backup (default), `false` for mc mirror
+
+### Restore a Bucket
+
+```bash
+# Restore latest snapshot
+curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/my-namespace/mybucket" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
+    "target_bucket_name": "my-bucket-restored",
+    "target_access_key": "minioaccess",
+    "target_secret_key": "miniosecret"
+  }'
+
+# Restore with clear target (remove existing files first)
+curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/my-namespace/mybucket" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "snapshot_id": "k1234567890abcdef",
+    "target_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
+    "target_bucket_name": "my-bucket",
+    "target_access_key": "minioaccess",
+    "target_secret_key": "miniosecret",
+    "clear_target": true
+  }'
+```
+
+**Restore Parameters:**
+- `cluster`: Cluster name where the backup was made
+- `namespace`: Kubernetes namespace for the restore pod
+- `reference_name`: Logical name of the bucket backup to restore
+- `snapshot_id`: Optional specific snapshot ID (default: latest)
+- `target_minio_endpoint`: Target MinIO endpoint URL
+- `target_bucket_name`: Target bucket name (can be different from source)
+- `target_access_key`: Target MinIO access key
+- `target_secret_key`: Target MinIO secret key
+- `clear_target`: If `true`, clear target bucket before restoring (default: false)
+
+### Bucket Backup Response
+
+```json
+{
+  "status": "success",
+  "message": "Bucket backup of mybucket completed successfully",
+  "result": {
+    "namespace": "my-namespace",
+    "reference_name": "mybucket",
+    "bucket_name": "my-bucket",
+    "success": true,
+    "use_kopia": true,
+    "duration_seconds": 120.5
+  }
+}
+```
+
+### Choosing Between Kopia and mc mirror
+
+| Feature | Kopia (use_kopia=true) | mc mirror (use_kopia=false) |
+|---------|------------------------|------------------------------|
+| Encryption | Yes (SOPS-derived key) | No |
+| Deduplication | Yes | No |
+| Speed | Slower (download + encrypt) | Faster (direct sync) |
+| Storage | Efficient (dedup) | 1:1 copy |
+| Restore | From Kopia snapshot | Not supported via API |
+| Use case | Production backups | Quick syncs, staging |
+
+## Resource Type Filtering
+
+All backups are tagged with a `resource_type` tag for easy filtering:
+
+- `resource_type:pvc` - Persistent Volume Claim backups
+- `resource_type:database` - PostgreSQL database backups
+- `resource_type:bucket` - MinIO bucket backups
+
+The Kopia connector supports filtering by resource type when listing snapshots:
+
+```python
+# In Python code
+snapshots = await kopia_connector.list_snapshots(config, resource_type="database")
 ```
 
 ## Security Model

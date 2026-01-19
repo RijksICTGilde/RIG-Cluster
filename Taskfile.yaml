@@ -1031,6 +1031,31 @@ tasks:
       - echo -e "✅ PostgreSQL image built and loaded successfully!"
     silent: true
 
+  build-backup-image:
+    desc: "Build and load the rig-backup image into kind cluster"
+    cmds:
+      - |
+        echo "Building rig-backup image (kopia, mc, pg_dump)..."
+        docker build -t ghcr.io/minbzk/base-images/rig-backup:latest -f operations-manager/backup-image/Dockerfile operations-manager/backup-image/
+      - |
+        echo "Loading image into kind cluster..."
+        kind load docker-image ghcr.io/minbzk/base-images/rig-backup:latest --name {{.KIND_CLUSTER_NAME}}
+      - echo -e "✅ rig-backup image built and loaded successfully!"
+    silent: true
+
+  publish-backup-image:
+    desc: "Build and publish the rig-backup image to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      - task: _build-and-publish-image
+        vars:
+          DOCKERFILE_PATH: operations-manager/backup-image/Dockerfile
+          IMAGE_NAME: rig-backup
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images/rig-backup
+          PLATFORMS: linux/amd64,linux/arm64
+          CACHE_IMAGE: ghcr.io/minbzk/base-images/rig-backup:cache
+          BUILDER_NAME: rig-backup-builder
+
   # Internal shared task for secret generation
   _generate-secrets-shared:
     internal: true

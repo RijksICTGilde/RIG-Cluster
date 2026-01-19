@@ -4,16 +4,16 @@ metadata:
   name: "{{ pod_name }}"
   namespace: "{{ namespace }}"
   labels:
-    app.kubernetes.io/name: pvc-backup
+    app.kubernetes.io/name: database-backup
     app.kubernetes.io/component: backup-job
     app.kubernetes.io/managed-by: opi-backup
-    backup.rig.nl/pvc: "{{ pvc_name }}"
+    backup.rig.nl/database: "{{ reference_name }}"
     backup.rig.nl/timestamp: "{{ timestamp }}"
 spec:
   restartPolicy: Never
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
   containers:
-    - name: kopia
+    - name: backup
       image: ghcr.io/minbzk/base-images/rig-backup:latest
       imagePullPolicy: IfNotPresent
       command:
@@ -22,7 +22,12 @@ spec:
         - |
           set -e
 
-          echo "Starting backup for PVC: {{ pvc_name }}"
+          echo "Starting database backup for: {{ reference_name }}"
+          echo "Database Host: ${DB_HOST}"
+          echo "Database Port: ${DB_PORT}"
+          echo "Database Name: ${DB_NAME}"
+          echo "Database User: ${DB_USER}"
+          echo "Source Type: {{ source_type }}"
           echo "Namespace: {{ namespace }}"
           echo "S3 Endpoint: ${S3_ENDPOINT}"
           echo "S3 Bucket: ${S3_BUCKET}"
@@ -59,30 +64,43 @@ spec:
 
           echo "Repository connected successfully"
 
-          # Run backup with full context metadata
-          echo "Starting snapshot of /data..."
-          kopia snapshot create /data \
-            --description="PVC backup: {{ pvc_name }}" \
-            --tags="resource_type:pvc" \
-            --tags="cluster:{{ cluster }}" \
-            --tags="namespace:{{ namespace }}" \
-            --tags="project:{{ project_name | default('unknown') }}" \
-            --tags="deployment:{{ deployment_name | default('unknown') }}" \
-            --tags="component:{{ component_name | default('unknown') }}" \
-            --tags="storage:{{ storage_name | default('unknown') }}" \
-            --tags="pvc:{{ pvc_name }}" \
-            --tags="generation:{{ pvc_generation | default('0') }}" \
-            --tags="timestamp:{{ timestamp }}" \
-            --tags="backup_run:{{ backup_run_id }}"
+          # Test database connectivity
+          echo "Testing database connectivity..."
+          PGPASSWORD="${DB_PASSWORD}" psql \
+            -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+            -c "SELECT 1" > /dev/null
+
+          echo "Database connection successful"
+
+          # Stream pg_dump through Kopia using stdin
+          echo "Starting database dump and backup..."
+          PGPASSWORD="${DB_PASSWORD}" pg_dump \
+            -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+            --format=custom \
+            --verbose \
+            | kopia snapshot create --stdin-file="database-{{ reference_name }}.dump" - \
+              --description="PostgreSQL backup: {{ reference_name }}" \
+              --tags="resource_type:database" \
+              --tags="cluster:{{ cluster }}" \
+              --tags="namespace:{{ namespace }}" \
+              --tags="project:{{ project_name | default('unknown') }}" \
+              --tags="deployment:{{ deployment_name | default('unknown') }}" \
+              --tags="component:{{ component_name | default('unknown') }}" \
+              --tags="database:{{ reference_name }}" \
+              --tags="source_host:{{ db_host }}" \
+              --tags="source_type:{{ source_type }}" \
+              --tags="generation:{{ generation | default('0') }}" \
+              --tags="timestamp:{{ timestamp }}" \
+              --tags="backup_run:{{ backup_run_id }}"
 
           echo "Snapshot created successfully"
 
-          # Set retention policy (1 per day, keep 7 days)
+          # Set retention policy
           echo "Setting retention policy..."
-          kopia policy set /data \
-            --keep-latest={{ retention_keep_latest | default(1) }} \
+          kopia policy set --global \
+            --keep-latest={{ retention_keep_latest | default(7) }} \
             --keep-daily={{ retention_keep_daily | default(7) }} \
-            --keep-weekly={{ retention_keep_weekly | default(0) }} \
+            --keep-weekly={{ retention_keep_weekly | default(4) }} \
             --keep-monthly={{ retention_keep_monthly | default(0) }} \
             --keep-annual={{ retention_keep_annual | default(0) }}
 
@@ -96,8 +114,18 @@ spec:
           echo "Current snapshots after retention:"
           kopia snapshot list
 
-          echo "Backup completed successfully for {{ pvc_name }}"
+          echo "Database backup completed successfully for {{ reference_name }}"
       env:
+        - name: DB_HOST
+          value: "{{ db_host }}"
+        - name: DB_PORT
+          value: "{{ db_port | default(5432) }}"
+        - name: DB_NAME
+          value: "{{ db_name }}"
+        - name: DB_USER
+          value: "{{ db_user }}"
+        - name: DB_PASSWORD
+          value: "{{ db_password }}"
         - name: S3_ENDPOINT
           value: "{{ s3_endpoint }}"
         - name: S3_BUCKET
@@ -117,18 +145,10 @@ spec:
           value: "/tmp/kopia-cache"
         - name: KOPIA_LOG_DIR
           value: "/tmp/kopia-logs"
-      volumeMounts:
-        - name: data
-          mountPath: /data
-          readOnly: true
       resources:
         requests:
           memory: "256Mi"
           cpu: "100m"
         limits:
-          memory: "1Gi"
+          memory: "2Gi"
           cpu: "1000m"
-  volumes:
-    - name: data
-      persistentVolumeClaim:
-        claimName: "{{ clone_pvc_name }}"

@@ -24,6 +24,7 @@ metrics_router: APIRouter = APIRouter(
         404: {"description": "Not found"},
         503: {"description": "Prometheus not available"},
     },
+    default_response_class=JSONResponse,
 )
 
 

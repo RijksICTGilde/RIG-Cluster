@@ -6,7 +6,10 @@ metadata:
 data:
   .env: |
     CLUSTER_MANAGER=local
-    
+
+    # Fast startup - skip namespace/Keycloak/MinIO checks (set to false for full checks)
+    SKIP_STARTUP_CHECKS=true
+
     ENABLE_GIT_MONITOR=false
     GIT_PROJECTS_SERVER_URL=https://github.com/RijksICTGilde/rig-cluster-projects.git
     GIT_PROJECTS_SERVER_USERNAME=git
