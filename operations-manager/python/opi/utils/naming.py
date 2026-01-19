@@ -60,43 +60,51 @@ def generate_storage_name(mount_path: str, index: int) -> str:
     return storage_name or f"storage{index}"
 
 
-def generate_pvc_name(unique_name: str, storage_name: str, generation: int = 0) -> str:
+def generate_pvc_name(unique_name: str, storage_name: str, generation: int | None = None) -> str:
     """
     Generate a PVC name using the unique resource name and storage name with optional generation.
 
     Args:
         unique_name: The unique name for the resource (from generate_unique_name)
         storage_name: The storage name (from generate_storage_name)
-        generation: Generation number for PVC recreation (0 = no suffix, for backward compatibility)
+        generation: Generation number for PVC recreation:
+            - None: no version suffix (default, for resources without generation tracking)
+            - 0: no version suffix (backward compatibility)
+            - >0: adds -v{generation} suffix
 
     Returns:
         PVC name in format:
-        - generation 0: unique_name-storage_name-pvc
+        - generation None or 0: unique_name-storage_name-pvc
         - generation > 0: unique_name-storage_name-pvc-v{generation}
 
     Example:
         generate_pvc_name("frontend-webapp", "data") -> "frontend-webapp-data-pvc"
+        generate_pvc_name("frontend-webapp", "data", None) -> "frontend-webapp-data-pvc"
+        generate_pvc_name("frontend-webapp", "data", 0) -> "frontend-webapp-data-pvc"
         generate_pvc_name("frontend-webapp", "data", 1) -> "frontend-webapp-data-pvc-v1"
         generate_pvc_name("frontend-webapp", "data", 2) -> "frontend-webapp-data-pvc-v2"
     """
     base_name = f"{unique_name}-{storage_name}-pvc"
-    if generation > 0:
+    if generation is not None and generation > 0:
         return f"{base_name}-v{generation}"
     return base_name
 
 
-def generate_manifest_name(component_name: str, manifest_type: str, generation: int = 0) -> str:
+def generate_manifest_name(component_name: str, manifest_type: str, generation: int | None = None) -> str:
     """
     Generate a manifest filename that includes the component name for uniqueness.
 
     Args:
         component_name: Name of the component
         manifest_type: Type of manifest (e.g., "deployment", "service", "data-pvc")
-        generation: Optional generation number for versioned resources (0 = no suffix, for backward compatibility)
+        generation: Optional generation number for versioned resources:
+            - None: no version suffix (default, for resources without generation tracking)
+            - 0: no version suffix (backward compatibility)
+            - >0: adds -v{generation} suffix
 
     Returns:
         Unique manifest name in format:
-        - generation 0: component-manifest_type
+        - generation None or 0: component-manifest_type
         - generation > 0: component-manifest_type-v{generation}
 
     Example:
@@ -106,7 +114,7 @@ def generate_manifest_name(component_name: str, manifest_type: str, generation: 
         generate_manifest_name("webapp", "data-pvc", 2) -> "webapp-data-pvc-v2"
     """
     base_name = f"{component_name}-{manifest_type}"
-    if generation > 0:
+    if generation is not None and generation > 0:
         return f"{base_name}-v{generation}"
     return base_name
 
@@ -1546,3 +1554,25 @@ def generate_restored_pvc_name(pvc_name: str, timestamp: str) -> str:
         'app-data-restored-20250112-143022'
     """
     return f"{pvc_name}-restored-{timestamp}"
+
+
+def generate_backup_run_id() -> str:
+    """
+    Generate a unique backup run ID.
+
+    The backup run ID is used to group all backups (PVCs, databases, buckets)
+    that are part of the same backup operation. This allows for consistent
+    restoration of an entire deployment.
+
+    Format: YYYYMMDDHHmmss (UTC)
+
+    Returns:
+        Backup run ID string
+
+    Example:
+        >>> generate_backup_run_id()
+        '20260116163045'
+    """
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")

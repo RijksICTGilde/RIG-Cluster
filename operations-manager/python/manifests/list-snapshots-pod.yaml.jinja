@@ -63,6 +63,11 @@ spec:
           value: "{{ backup_prefix }}"
         - name: KOPIA_PASSWORD
           value: "{{ kopia_password }}"
+        # Use /tmp for Kopia cache (container filesystem is read-only)
+        - name: KOPIA_CACHE_DIRECTORY
+          value: "/tmp/kopia-cache"
+        - name: KOPIA_LOG_DIR
+          value: "/tmp/kopia-logs"
       resources:
         requests:
           memory: "128Mi"

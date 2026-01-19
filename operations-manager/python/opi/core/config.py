@@ -149,6 +149,7 @@ class Settings(BaseSettings):
     RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE: bool = (
         False  # If True, recreate passwords/users when authentication fails
     )
+    SKIP_STARTUP_CHECKS: bool = False  # Skip namespace/Keycloak/MinIO checks on startup (for fast local dev)
 
     # Legacy Git server settings (for backward compatibility)
     # TODO: This is only used for testing creating local GIT repositories and should be removed or fixed in the future
@@ -248,7 +249,9 @@ class Settings(BaseSettings):
 
     # Backup configuration
     BACKUP_S3_ENDPOINT: str = "minio.rig-backup-destination.svc:9000"
-    BACKUP_S3_BUCKET: str = "rig-backups"
+    BACKUP_S3_BUCKET: str = "rig-backups"  # Fallback bucket when project context unavailable
+    BACKUP_S3_BUCKET_MODE: str = "per-project"  # "single" = use BACKUP_S3_BUCKET, "per-project" = auto-generate
+    BACKUP_S3_ORG_PREFIX: str = "rig"  # Organization prefix for per-project bucket names
     BACKUP_S3_ACCESS_KEY: str = "backup-admin"
     BACKUP_S3_SECRET_KEY: str = "backup-secret-key-local"
     BACKUP_S3_USE_TLS: bool = False  # Use HTTP (False) or HTTPS (True) for S3 endpoint

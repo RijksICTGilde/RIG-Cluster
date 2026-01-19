@@ -424,6 +424,7 @@ api_router: APIRouter = APIRouter(
     prefix="/api",
     tags=["projects"],
     responses={404: {"description": "Not found"}},
+    default_response_class=JSONResponse,
 )
 
 

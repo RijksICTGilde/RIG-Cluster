@@ -539,6 +539,12 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     Returns:
         True if all startup tasks completed successfully, False otherwise
     """
+    from opi.core.config import settings
+
+    skip_checks = settings.SKIP_STARTUP_CHECKS
+    if skip_checks:
+        logger.warning("SKIP_STARTUP_CHECKS=True - skipping namespace/Keycloak/MinIO checks for fast startup")
+
     logger.info("Running startup tasks...")
 
     # Initialize database connection pools (CRITICAL - app cannot function without this)
@@ -612,10 +618,15 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             try:
                 project_file_base_name = os.path.basename(project_file)
                 logger.info(f"Processing project file: {project_file_base_name}")
-                await project_manager.check_and_create_namespaces()
-                await project_manager.check_and_create_sops_secrets_in_namespaces()
 
-                # Load and register API key for this project
+                # Skip namespace/SOPS checks when SKIP_STARTUP_CHECKS is enabled
+                if not skip_checks:
+                    await project_manager.check_and_create_namespaces()
+                    await project_manager.check_and_create_sops_secrets_in_namespaces()
+                else:
+                    logger.debug(f"Skipping namespace/SOPS checks for {project_file_base_name}")
+
+                # Load and register API key for this project (always needed)
                 api_key = await project_manager.get_api_key()
                 project_name = await project_manager.get_name()
                 project_service = get_project_service()
@@ -634,36 +645,40 @@ async def run_startup_tasks(app: FastAPI) -> bool:
                 # Close all resources including database connections
                 await project_manager.close()
 
-        logger.info("Checking MinIO CLI availability")
-        minio_success = await check_minio_availability()
-        if minio_success:
-            logger.info("MinIO CLI check completed successfully")
+        # Skip MinIO/Keycloak checks when SKIP_STARTUP_CHECKS is enabled
+        if not skip_checks:
+            logger.info("Checking MinIO CLI availability")
+            minio_success = await check_minio_availability()
+            if minio_success:
+                logger.info("MinIO CLI check completed successfully")
+            else:
+                logger.error("MinIO CLI check failed")
+                all_successful = False
+
+            logger.info("Ensuring operations manager has valid Keycloak credentials")
+            credentials_success = await keycloak_client_exists_and_works()
+            if credentials_success:
+                logger.info("Operations manager Keycloak credentials ensured successfully")
+            else:
+                logger.error("Failed to ensure operations manager Keycloak credentials")
+                all_successful = False
+
+            logger.info("Setting up Keycloak (realm, SSO, scopes, and operations client)")
+            keycloak_success = await setup_keycloak()
+            if not keycloak_success:
+                raise RuntimeError("Keycloak setup failed - cannot proceed without authentication")
+
+            logger.info("Complete Keycloak setup completed successfully")
+
+            # Register OAuth client now that OIDC credentials are available
+            if app:
+                logger.info("Registering OAuth client with post-setup credentials")
+                await register_oauth_client_after_keycloak_setup(app)
+                logger.info("OAuth client registration completed successfully")
+            else:
+                raise RuntimeError("No app instance provided - cannot register OAuth client")
         else:
-            logger.error("MinIO CLI check failed")
-            all_successful = False
-
-        logger.info("Ensuring operations manager has valid Keycloak credentials")
-        credentials_success = await keycloak_client_exists_and_works()
-        if credentials_success:
-            logger.info("Operations manager Keycloak credentials ensured successfully")
-        else:
-            logger.error("Failed to ensure operations manager Keycloak credentials")
-            all_successful = False
-
-        logger.info("Setting up Keycloak (realm, SSO, scopes, and operations client)")
-        keycloak_success = await setup_keycloak()
-        if not keycloak_success:
-            raise RuntimeError("Keycloak setup failed - cannot proceed without authentication")
-
-        logger.info("Complete Keycloak setup completed successfully")
-
-        # Register OAuth client now that OIDC credentials are available
-        if app:
-            logger.info("Registering OAuth client with post-setup credentials")
-            await register_oauth_client_after_keycloak_setup(app)
-            logger.info("OAuth client registration completed successfully")
-        else:
-            raise RuntimeError("No app instance provided - cannot register OAuth client")
+            logger.warning("Skipped MinIO/Keycloak/OAuth checks (SKIP_STARTUP_CHECKS=True)")
 
         # API keys are now loaded inline during project file processing above
         logger.info("Project API keys loaded during project processing")

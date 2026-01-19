@@ -2706,6 +2706,39 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             return None
 
+    async def get_user_by_email(self, realm_name: str, email: str) -> dict[str, Any] | None:
+        """
+        Find a user by email address in the specified realm.
+
+        Args:
+            realm_name: Name of the realm
+            email: Email address to search for
+
+        Returns:
+            User information dictionary or None if not found
+        """
+        try:
+            # Switch to target realm
+            self.admin.change_current_realm(realm_name)
+
+            users = self.admin.get_users(query={"email": email, "exact": "true"})
+
+            # Switch back to master
+            self.admin.change_current_realm("master")
+
+            if users and len(users) > 0:
+                logger.debug(f"Found user with email '{email}' in realm '{realm_name}'")
+                return users[0]
+
+            logger.debug(f"User with email '{email}' not found in realm '{realm_name}'")
+            return None
+
+        except KeycloakError as e:
+            logger.error(f"Failed to search for user with email '{email}': {e}")
+            # Switch back to master
+            self.admin.change_current_realm("master")
+            return None
+
     async def delete_user_by_username(self, realm_name: str, username: str) -> bool:
         """
         Delete a user from the specified realm by username.

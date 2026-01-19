@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ pod_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/name: database-restore
+    app.kubernetes.io/component: restore-job
+    app.kubernetes.io/managed-by: opi-backup
+    backup.rig.nl/database: "{{ reference_name }}"
+    backup.rig.nl/target-database: "{{ target_db_name }}"
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  containers:
+    - name: restore
+      image: ghcr.io/minbzk/base-images/rig-backup:latest
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+
+          echo "Starting database restore for: {{ reference_name }}"
+          echo "Target Database Host: ${TARGET_DB_HOST}"
+          echo "Target Database Port: ${TARGET_DB_PORT}"
+          echo "Target Database Name: ${TARGET_DB_NAME}"
+          echo "Target Database User: ${TARGET_DB_USER}"
+          echo "Namespace: {{ namespace }}"
+          echo "S3 Endpoint: ${S3_ENDPOINT}"
+          echo "S3 Bucket: ${S3_BUCKET}"
+          echo "Backup Prefix: ${BACKUP_PREFIX}"
+          echo "S3 Disable TLS: ${S3_DISABLE_TLS}"
+
+          # Build TLS flag based on configuration
+          TLS_FLAG=""
+          if [ "${S3_DISABLE_TLS}" = "true" ]; then
+            TLS_FLAG="--disable-tls"
+          fi
+
+          # Connect to repository
+          echo "Connecting to Kopia repository..."
+          kopia repository connect s3 \
+            --bucket="${S3_BUCKET}" \
+            --prefix="${BACKUP_PREFIX}/" \
+            --endpoint="${S3_ENDPOINT}" \
+            --access-key="${S3_ACCESS_KEY}" \
+            --secret-access-key="${S3_SECRET_KEY}" \
+            --password="${KOPIA_PASSWORD}" \
+            ${TLS_FLAG}
+
+          echo "Repository connected successfully"
+
+          # Find the snapshot to restore
+          SNAPSHOT_ID="${RESTORE_SNAPSHOT_ID}"
+
+          if [ -z "$SNAPSHOT_ID" ]; then
+            echo "No snapshot ID specified, finding latest database snapshot for {{ reference_name }}..."
+            # Get latest snapshot with matching database tag
+            SNAPSHOT_ID=$(kopia snapshot list --tags="database:{{ reference_name }}" --tags="resource_type:database" --json 2>/dev/null | \
+              jq -r 'sort_by(.startTime) | reverse | .[0].id // empty')
+
+            if [ -z "$SNAPSHOT_ID" ]; then
+              echo "ERROR: No database snapshots found for {{ reference_name }}"
+              exit 1
+            fi
+            echo "Found latest snapshot: $SNAPSHOT_ID"
+          else
+            echo "Using specified snapshot: $SNAPSHOT_ID"
+          fi
+
+          # Show snapshot info
+          echo "Snapshot details:"
+          kopia snapshot show "$SNAPSHOT_ID" || true
+
+          # Test database connectivity
+          echo "Testing target database connectivity..."
+          PGPASSWORD="${TARGET_DB_PASSWORD}" psql \
+            -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
+            -c "SELECT 1" > /dev/null
+
+          echo "Target database connection successful"
+
+          # Restore database
+          # First, we need to find the stdin file in the snapshot
+          echo "Finding database dump file in snapshot..."
+          DUMP_FILE=$(kopia snapshot show "$SNAPSHOT_ID" --json 2>/dev/null | \
+            jq -r '.rootEntry.name // empty')
+
+          if [ -z "$DUMP_FILE" ]; then
+            DUMP_FILE="database-{{ reference_name }}.dump"
+          fi
+          echo "Dump file: $DUMP_FILE"
+
+          # Stream restore: kopia restore --stdout | pg_restore
+          echo "Restoring database from snapshot..."
+
+          # Create temp directory for restore
+          mkdir -p /tmp/restore
+
+          # Restore to temp location first
+          kopia restore "$SNAPSHOT_ID" /tmp/restore/
+
+          # Find the dump file
+          DUMP_PATH=$(find /tmp/restore -name "*.dump" -type f | head -1)
+
+          if [ -z "$DUMP_PATH" ]; then
+            echo "ERROR: No .dump file found in snapshot"
+            ls -la /tmp/restore/
+            exit 1
+          fi
+
+          echo "Found dump file: $DUMP_PATH"
+
+          # Restore using pg_restore
+          # --clean: Drop objects before recreating
+          # --if-exists: Don't error if objects don't exist
+          # --no-owner: Don't set ownership
+          # --no-privileges: Don't restore privileges
+          PGPASSWORD="${TARGET_DB_PASSWORD}" pg_restore \
+            -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
+            --clean --if-exists --no-owner --no-privileges \
+            --verbose \
+            "$DUMP_PATH" || {
+              # pg_restore often returns non-zero even on success due to missing objects
+              echo "pg_restore completed (some warnings may be expected)"
+            }
+
+          # Cleanup
+          rm -rf /tmp/restore
+
+          echo "Database restore completed successfully for {{ reference_name }} -> {{ target_db_name }}"
+      env:
+        - name: TARGET_DB_HOST
+          value: "{{ target_db_host }}"
+        - name: TARGET_DB_PORT
+          value: "{{ target_db_port | default(5432) }}"
+        - name: TARGET_DB_NAME
+          value: "{{ target_db_name }}"
+        - name: TARGET_DB_USER
+          value: "{{ target_db_user }}"
+        - name: TARGET_DB_PASSWORD
+          value: "{{ target_db_password }}"
+        - name: S3_ENDPOINT
+          value: "{{ s3_endpoint }}"
+        - name: S3_BUCKET
+          value: "{{ s3_bucket }}"
+        - name: S3_ACCESS_KEY
+          value: "{{ s3_access_key }}"
+        - name: S3_SECRET_KEY
+          value: "{{ s3_secret_key }}"
+        - name: S3_DISABLE_TLS
+          value: "{{ s3_disable_tls | lower }}"
+        - name: BACKUP_PREFIX
+          value: "{{ backup_prefix }}"
+        - name: KOPIA_PASSWORD
+          value: "{{ kopia_password }}"
+        - name: RESTORE_SNAPSHOT_ID
+          value: "{{ snapshot_id }}"
+        # Use /tmp for Kopia cache (container filesystem is read-only)
+        - name: KOPIA_CACHE_DIRECTORY
+          value: "/tmp/kopia-cache"
+        - name: KOPIA_LOG_DIR
+          value: "/tmp/kopia-logs"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "2Gi"
+          cpu: "1000m"

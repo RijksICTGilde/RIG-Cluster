@@ -425,10 +425,8 @@ class ArgoConnector:
             retry_delay: Delay between retries in seconds
 
         Returns:
-            True if application was deleted, False if it still exists after max retries
-
-        Raises:
-            PermissionError: If access to the application is denied (403)
+            True if application was deleted (or permission denied, indicating AppProject is gone),
+            False if it still exists after max retries
         """
         import asyncio
 
@@ -446,8 +444,10 @@ class ArgoConnector:
                     await asyncio.sleep(retry_delay)
 
             except PermissionError:
-                # Permission denied - propagate this error as we can't determine state
-                raise
+                # Permission denied means the AppProject was deleted before the Application.
+                # This indicates the Application is deleted or will be garbage collected.
+                logger.info(f"Application {app_name} - permission denied (AppProject deleted), treating as deleted")
+                return True
             except Exception as e:
                 logger.error(f"Error checking application deletion status: {e}")
                 if attempt < max_retries - 1:

@@ -78,3 +78,35 @@ data:
       - job_name: 'kube-state-metrics'
         static_configs:
           - targets: ['kube-state-metrics.rig-system:8080']
+
+      # Scrape CloudNativePG PostgreSQL metrics (database sizes, replication, etc.)
+      - job_name: 'cloudnative-pg'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - rig-system
+        relabel_configs:
+          # Only scrape CNPG pods by label
+          - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+            action: keep
+            regex: rig-db
+          # Use metrics port 9187
+          - source_labels: [__address__]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:9187
+          # Add namespace and pod labels
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+            target_label: cluster
+
+      # Scrape MinIO metrics (bucket sizes, object counts, capacity)
+      - job_name: 'minio'
+        static_configs:
+          - targets: ['minio.rig-system:9000']
+        metrics_path: /minio/v2/metrics/cluster

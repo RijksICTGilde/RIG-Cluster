@@ -1,0 +1,113 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ pod_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/name: bucket-mirror
+    app.kubernetes.io/component: backup-job
+    app.kubernetes.io/managed-by: opi-backup
+    backup.rig.nl/bucket: "{{ reference_name }}"
+    backup.rig.nl/timestamp: "{{ timestamp }}"
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  containers:
+    - name: mirror
+      image: ghcr.io/minbzk/base-images/rig-backup:latest
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+
+          echo "Starting bucket mirror for: {{ reference_name }}"
+          echo "Source MinIO Endpoint: ${SOURCE_MINIO_ENDPOINT}"
+          echo "Source Bucket: ${SOURCE_BUCKET_NAME}"
+          echo "Source Type: {{ source_type }}"
+          echo "Backup MinIO Endpoint: ${BACKUP_MINIO_ENDPOINT}"
+          echo "Backup Path: ${BACKUP_PATH}"
+          echo "Namespace: {{ namespace }}"
+
+          # Configure mc aliases
+          echo "Configuring MinIO client aliases..."
+          mc alias set source "${SOURCE_MINIO_ENDPOINT}" "${SOURCE_ACCESS_KEY}" "${SOURCE_SECRET_KEY}" --api S3v4
+          mc alias set backup "${BACKUP_MINIO_ENDPOINT}" "${BACKUP_ACCESS_KEY}" "${BACKUP_SECRET_KEY}" --api S3v4
+
+          # Verify source bucket exists
+          echo "Verifying source bucket exists..."
+          if ! mc ls source/"${SOURCE_BUCKET_NAME}" > /dev/null 2>&1; then
+            echo "ERROR: Source bucket '${SOURCE_BUCKET_NAME}' does not exist or is not accessible"
+            exit 1
+          fi
+
+          # Ensure backup bucket exists
+          echo "Ensuring backup bucket exists..."
+          mc mb backup/"${BACKUP_BUCKET}" --ignore-existing || true
+
+          # Get backup destination path
+          # Format: backup/{bucket}/backups/{project}/{deployment}/{reference}/gen-{generation}/{timestamp}/
+          BACKUP_DEST="${BACKUP_PATH}"
+
+          echo "Backup destination: backup/${BACKUP_BUCKET}/${BACKUP_DEST}"
+
+          # Mirror bucket contents
+          echo "Mirroring bucket contents..."
+          mc mirror --preserve --overwrite \
+            source/"${SOURCE_BUCKET_NAME}" \
+            backup/"${BACKUP_BUCKET}"/"${BACKUP_DEST}"
+
+          # Get stats
+          echo "Mirror completed. Backup stats:"
+          mc du backup/"${BACKUP_BUCKET}"/"${BACKUP_DEST}" || true
+
+          # Create metadata file
+          echo "Creating backup metadata..."
+          cat > /tmp/metadata.json << EOF
+          {
+            "backup_type": "bucket-mirror",
+            "source_endpoint": "${SOURCE_MINIO_ENDPOINT}",
+            "source_bucket": "${SOURCE_BUCKET_NAME}",
+            "source_type": "{{ source_type }}",
+            "cluster": "{{ cluster }}",
+            "namespace": "{{ namespace }}",
+            "project": "{{ project_name | default('unknown') }}",
+            "deployment": "{{ deployment_name | default('unknown') }}",
+            "component": "{{ component_name | default('unknown') }}",
+            "reference": "{{ reference_name }}",
+            "generation": {{ generation | default(0) }},
+            "timestamp": "{{ timestamp }}",
+            "backup_run": "{{ backup_run_id }}"
+          }
+          EOF
+
+          mc cp /tmp/metadata.json backup/"${BACKUP_BUCKET}"/"${BACKUP_DEST}"/_backup_metadata.json
+
+          echo "Bucket mirror completed successfully for {{ reference_name }}"
+      env:
+        - name: SOURCE_MINIO_ENDPOINT
+          value: "{{ source_minio_endpoint }}"
+        - name: SOURCE_BUCKET_NAME
+          value: "{{ source_bucket_name }}"
+        - name: SOURCE_ACCESS_KEY
+          value: "{{ source_access_key }}"
+        - name: SOURCE_SECRET_KEY
+          value: "{{ source_secret_key }}"
+        - name: BACKUP_MINIO_ENDPOINT
+          value: "{{ backup_minio_endpoint }}"
+        - name: BACKUP_BUCKET
+          value: "{{ backup_bucket }}"
+        - name: BACKUP_ACCESS_KEY
+          value: "{{ backup_access_key }}"
+        - name: BACKUP_SECRET_KEY
+          value: "{{ backup_secret_key }}"
+        - name: BACKUP_PATH
+          value: "{{ backup_path }}"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "2Gi"
+          cpu: "1000m"

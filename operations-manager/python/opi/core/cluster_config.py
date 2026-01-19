@@ -40,6 +40,7 @@ CLUSTER_CONFIG = {
             "env_vars": {
                 "REQUESTS_CA_BUNDLE": "/etc/ssl/certs",
                 "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/custom-ca.crt",
+                "SSL_CERT_DIR": "/etc/ssl/certs",  # For Python's native SSL (httpx, etc.)
             },
         },
         "letsencrypt": {

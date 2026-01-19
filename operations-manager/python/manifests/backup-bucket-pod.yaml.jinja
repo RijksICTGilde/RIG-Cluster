@@ -4,16 +4,16 @@ metadata:
   name: "{{ pod_name }}"
   namespace: "{{ namespace }}"
   labels:
-    app.kubernetes.io/name: pvc-backup
+    app.kubernetes.io/name: bucket-backup
     app.kubernetes.io/component: backup-job
     app.kubernetes.io/managed-by: opi-backup
-    backup.rig.nl/pvc: "{{ pvc_name }}"
+    backup.rig.nl/bucket: "{{ reference_name }}"
     backup.rig.nl/timestamp: "{{ timestamp }}"
 spec:
   restartPolicy: Never
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
   containers:
-    - name: kopia
+    - name: backup
       image: ghcr.io/minbzk/base-images/rig-backup:latest
       imagePullPolicy: IfNotPresent
       command:
@@ -22,7 +22,10 @@ spec:
         - |
           set -e
 
-          echo "Starting backup for PVC: {{ pvc_name }}"
+          echo "Starting bucket backup for: {{ reference_name }}"
+          echo "Source MinIO Endpoint: ${SOURCE_MINIO_ENDPOINT}"
+          echo "Source Bucket: ${SOURCE_BUCKET_NAME}"
+          echo "Source Type: {{ source_type }}"
           echo "Namespace: {{ namespace }}"
           echo "S3 Endpoint: ${S3_ENDPOINT}"
           echo "S3 Bucket: ${S3_BUCKET}"
@@ -33,6 +36,17 @@ spec:
           TLS_FLAG=""
           if [ "${S3_DISABLE_TLS}" = "true" ]; then
             TLS_FLAG="--disable-tls"
+          fi
+
+          # Configure mc alias for source MinIO
+          echo "Configuring MinIO client for source..."
+          mc alias set source "${SOURCE_MINIO_ENDPOINT}" "${SOURCE_ACCESS_KEY}" "${SOURCE_SECRET_KEY}" --api S3v4
+
+          # Verify source bucket exists
+          echo "Verifying source bucket exists..."
+          if ! mc ls source/"${SOURCE_BUCKET_NAME}" > /dev/null 2>&1; then
+            echo "ERROR: Source bucket '${SOURCE_BUCKET_NAME}' does not exist or is not accessible"
+            exit 1
           fi
 
           # Try to connect to existing repository, create if not exists
@@ -59,30 +73,43 @@ spec:
 
           echo "Repository connected successfully"
 
-          # Run backup with full context metadata
-          echo "Starting snapshot of /data..."
-          kopia snapshot create /data \
-            --description="PVC backup: {{ pvc_name }}" \
-            --tags="resource_type:pvc" \
+          # Download bucket contents to temp directory
+          echo "Downloading bucket contents to temp directory..."
+          mkdir -p /tmp/bucket-backup
+
+          mc mirror --preserve source/"${SOURCE_BUCKET_NAME}" /tmp/bucket-backup/
+
+          # Get bucket stats
+          OBJECT_COUNT=$(find /tmp/bucket-backup -type f | wc -l)
+          TOTAL_SIZE=$(du -sh /tmp/bucket-backup 2>/dev/null | cut -f1 || echo "unknown")
+          echo "Downloaded ${OBJECT_COUNT} objects, total size: ${TOTAL_SIZE}"
+
+          # Backup through Kopia with encryption
+          echo "Creating Kopia snapshot..."
+          kopia snapshot create /tmp/bucket-backup \
+            --description="Bucket backup: {{ reference_name }}" \
+            --tags="resource_type:bucket" \
             --tags="cluster:{{ cluster }}" \
             --tags="namespace:{{ namespace }}" \
             --tags="project:{{ project_name | default('unknown') }}" \
             --tags="deployment:{{ deployment_name | default('unknown') }}" \
             --tags="component:{{ component_name | default('unknown') }}" \
-            --tags="storage:{{ storage_name | default('unknown') }}" \
-            --tags="pvc:{{ pvc_name }}" \
-            --tags="generation:{{ pvc_generation | default('0') }}" \
+            --tags="bucket:{{ reference_name }}" \
+            --tags="source_bucket:{{ source_bucket_name }}" \
+            --tags="source_endpoint:{{ source_minio_endpoint }}" \
+            --tags="source_type:{{ source_type }}" \
+            --tags="generation:{{ generation | default('0') }}" \
             --tags="timestamp:{{ timestamp }}" \
             --tags="backup_run:{{ backup_run_id }}"
 
           echo "Snapshot created successfully"
 
-          # Set retention policy (1 per day, keep 7 days)
+          # Set retention policy
           echo "Setting retention policy..."
-          kopia policy set /data \
-            --keep-latest={{ retention_keep_latest | default(1) }} \
+          kopia policy set --global \
+            --keep-latest={{ retention_keep_latest | default(7) }} \
             --keep-daily={{ retention_keep_daily | default(7) }} \
-            --keep-weekly={{ retention_keep_weekly | default(0) }} \
+            --keep-weekly={{ retention_keep_weekly | default(4) }} \
             --keep-monthly={{ retention_keep_monthly | default(0) }} \
             --keep-annual={{ retention_keep_annual | default(0) }}
 
@@ -92,12 +119,24 @@ spec:
           echo "Applying retention policy (expiring old snapshots)..."
           kopia snapshot expire --delete
 
+          # Cleanup temp directory
+          echo "Cleaning up temp directory..."
+          rm -rf /tmp/bucket-backup
+
           # Show snapshot list after cleanup
           echo "Current snapshots after retention:"
           kopia snapshot list
 
-          echo "Backup completed successfully for {{ pvc_name }}"
+          echo "Bucket backup completed successfully for {{ reference_name }}"
       env:
+        - name: SOURCE_MINIO_ENDPOINT
+          value: "{{ source_minio_endpoint }}"
+        - name: SOURCE_BUCKET_NAME
+          value: "{{ source_bucket_name }}"
+        - name: SOURCE_ACCESS_KEY
+          value: "{{ source_access_key }}"
+        - name: SOURCE_SECRET_KEY
+          value: "{{ source_secret_key }}"
         - name: S3_ENDPOINT
           value: "{{ s3_endpoint }}"
         - name: S3_BUCKET
@@ -117,18 +156,10 @@ spec:
           value: "/tmp/kopia-cache"
         - name: KOPIA_LOG_DIR
           value: "/tmp/kopia-logs"
-      volumeMounts:
-        - name: data
-          mountPath: /data
-          readOnly: true
       resources:
         requests:
-          memory: "256Mi"
+          memory: "512Mi"
           cpu: "100m"
         limits:
-          memory: "1Gi"
-          cpu: "1000m"
-  volumes:
-    - name: data
-      persistentVolumeClaim:
-        claimName: "{{ clone_pvc_name }}"
+          memory: "4Gi"
+          cpu: "2000m"

@@ -8,6 +8,13 @@ spec:
   primaryUpdateStrategy: unsupervised
   enableSuperuserAccess: true
 
+  # Add Prometheus scrape annotations to all CNPG pods
+  inheritedMetadata:
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9187"
+      prometheus.io/path: "/metrics"
+
   # Use custom superuser password instead of auto-generated
   superuserSecret:
     name: postgres-admin-credentials
