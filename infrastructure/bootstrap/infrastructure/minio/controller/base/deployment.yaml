@@ -56,6 +56,8 @@ spec:
         env:
         - name: MINIO_BROWSER_LOGIN_ANIMATION
           value: "off"
+        - name: MINIO_PROMETHEUS_AUTH_TYPE
+          value: "public"
         volumeMounts:
         - name: minio-storage
           mountPath: /data

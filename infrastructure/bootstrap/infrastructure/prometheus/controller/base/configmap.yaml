@@ -81,6 +81,7 @@ data:
 
       # Scrape CloudNativePG PostgreSQL metrics (database sizes, replication, etc.)
       - job_name: 'cloudnative-pg'
+        scrape_interval: 2h
         kubernetes_sd_configs:
           - role: pod
             namespaces:
@@ -107,6 +108,7 @@ data:
 
       # Scrape MinIO metrics (bucket sizes, object counts, capacity)
       - job_name: 'minio'
+        scrape_interval: 2h
         static_configs:
           - targets: ['minio.rig-system:9000']
         metrics_path: /minio/v2/metrics/cluster
