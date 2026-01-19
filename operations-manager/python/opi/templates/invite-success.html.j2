@@ -1,0 +1,104 @@
+{#
+  Invite Success Page Template
+
+  Displays the success page after completing the invite flow.
+#}
+
+{% set title_nl = success_title ~ " - " ~ display_name %}
+{% set title_en = success_title ~ " - " ~ display_name %}
+{% set page_title = title_nl if language == 'nl' else title_en %}
+
+<c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive">
+    <div class="rvo-demo-page">
+        {# Header #}
+        <c-header
+            text="{{ success_title }}"
+            subtitle="{{ display_name }}"
+            link="/"/>
+
+        <c-layout-flow gap="xl" size="lg">
+            <main>
+                <c-layout-flow gap="xl">
+                    {# Success Alert #}
+                    <c-alert
+                        kind="success"
+                        heading="{{ success_title }}"
+                        messages="{% if language == 'nl' %}U heeft nu toegang tot {{ display_name }}.{% else %}You now have access to {{ display_name }}.{% endif %}"/>
+
+                    {# Success Details Card #}
+                    <c-card outline="true" padding="lg">
+                        <c-layout-flow gap="lg">
+                            <c-heading type="h2" textContent="{% if language == 'nl' %}Uw toegang{% else %}Your access{% endif %}" />
+
+                            {% if email %}
+                            <div>
+                                <p class="rvo-paragraph"><strong>{% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %}:</strong> {{ email }}</p>
+                            </div>
+                            {% endif %}
+
+                            {% if assigned and assigned.roles %}
+                            <div>
+                                <p class="rvo-paragraph"><strong>{% if language == 'nl' %}Toegewezen rollen{% else %}Assigned roles{% endif %}:</strong></p>
+                                <ul class="utrecht-unordered-list">
+                                    {% for role in assigned.roles %}
+                                    <li class="utrecht-unordered-list__item">{{ role }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+
+                            {% if assigned and assigned.groups %}
+                            <div>
+                                <p class="rvo-paragraph"><strong>{% if language == 'nl' %}Toegevoegd aan groepen{% else %}Added to groups{% endif %}:</strong></p>
+                                <ul class="utrecht-unordered-list">
+                                    {% for group in assigned.groups %}
+                                    <li class="utrecht-unordered-list__item">{{ group }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+
+                            {% if application_url %}
+                            <c-layout-flow gap="md">
+                                <p class="rvo-paragraph">
+                                    {% if language == 'nl' %}
+                                    Klik op de onderstaande knop om naar de applicatie te gaan.
+                                    {% else %}
+                                    Click the button below to go to the application.
+                                    {% endif %}
+                                </p>
+                                <c-action-group
+                                    :actions="[
+                                        {
+                                            'type': 'link',
+                                            'kind': 'primary',
+                                            'size': 'md',
+                                            'label': '{{ success_button }}',
+                                            'showIcon': 'after',
+                                            'icon': 'pijl-naar-rechts',
+                                            'url': '{{ application_url }}'
+                                        }
+                                    ]"/>
+                            </c-layout-flow>
+                            {% endif %}
+                        </c-layout-flow>
+                    </c-card>
+
+                    {# Help Section #}
+                    <c-card outline="true" padding="md">
+                        <c-layout-flow gap="sm">
+                            <c-heading type="h3" textContent="{% if language == 'nl' %}Volgende stappen{% else %}Next steps{% endif %}" />
+                            <p class="rvo-paragraph">
+                                {% if language == 'nl' %}
+                                U kunt nu inloggen met uw account. Indien u problemen ondervindt, neem dan contact op met de beheerder van {{ display_name }}.
+                                {% else %}
+                                You can now sign in with your account. If you experience any issues, please contact the administrator of {{ display_name }}.
+                                {% endif %}
+                            </p>
+                        </c-layout-flow>
+                    </c-card>
+                </c-layout-flow>
+            </main>
+        </c-layout-flow>
+    </div>
+</c-page>

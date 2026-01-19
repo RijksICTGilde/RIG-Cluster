@@ -13,6 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from opi.api.auth_routes import auth_router
 from opi.api.backup_router import backup_router
+from opi.api.invite_routes import invite_router
 from opi.api.metrics_router import metrics_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
@@ -152,6 +153,7 @@ def create_app() -> FastAPI:
     app.include_router(backup_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(restore_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(metrics_router, include_in_schema=True)  # Include in OpenAPI docs
+    app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs
 
     # Mount ROOS component assets - use a simpler approach
