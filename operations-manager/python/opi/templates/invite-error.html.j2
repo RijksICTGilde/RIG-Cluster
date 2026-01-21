@@ -9,21 +9,20 @@
 {% set page_title = page_title_nl if language == 'nl' else page_title_en %}
 
 <c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive">
-    <div class="rvo-demo-page">
-        {# Header #}
-        <c-header
-            text="{% if language == 'nl' %}Fout{% else %}Error{% endif %}"
-            subtitle="{% if language == 'nl' %}Uitnodiging{% else %}Invitation{% endif %}"
-            link="/"/>
+    {# Header #}
+    <c-header
+        text="Zelfservice voor Applicatie Deployment"
+        subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+        link="/"/>
 
-        <c-layout-flow gap="xl" size="lg">
-            <main>
-                <c-layout-flow gap="xl">
+    <c-layout-flow gap="xl" size="lg">
+        <main>
+            <c-layout-flow gap="xl">
                     {# Error Alert #}
                     <c-alert
                         kind="error"
                         heading="{{ error_title }}"
-                        messages="{{ error_message if error_message else '' }}"/>
+                        content="{{ error_message if error_message else '' }}"/>
 
                     {# Error Details Card #}
                     <c-card outline="true" padding="lg">
@@ -87,8 +86,7 @@
                             </p>
                         </c-layout-flow>
                     </c-card>
-                </c-layout-flow>
-            </main>
-        </c-layout-flow>
-    </div>
+            </c-layout-flow>
+        </main>
+    </c-layout-flow>
 </c-page>

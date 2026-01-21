@@ -51,11 +51,9 @@
                 <thead>
                     <tr>
                         <th class="col-project">Project</th>
-                        <th class="col-status">Status</th>
                         <th class="col-environment">Omgeving</th>
                         <th class="col-team">Team</th>
                         <th class="col-services">Services</th>
-                        <th class="col-created">Aangemaakt</th>
                         <th class="col-actions">Acties</th>
                     </tr>
                 </thead>
@@ -66,13 +64,8 @@
                             <td class="col-project">
                                 <div class="project-info">
                                     <div class="project-name">{{ project.display_name or project.name }}</div>
+                                    <div class="project-id">{{ project.name }}</div>
                                     <div class="project-description">{{ project.description or "Geen beschrijving beschikbaar" }}</div>
-                                </div>
-                            </td>
-                            <td class="col-status">
-                                <div class="status-badge status-running">
-                                    <c-icon icon="applicatie" size="sm" />
-                                    <span>Running</span>
                                 </div>
                             </td>
                             <td class="col-environment">
@@ -112,12 +105,6 @@
                                     {% endif %}
                                 </div>
                             </td>
-                            <td class="col-created">
-                                <div class="date-info">
-                                    <div class="date">Recent</div>
-                                    <div class="time">-</div>
-                                </div>
-                            </td>
                             <td class="col-actions">
                                 <div class="actions">
                                     <c-button 
@@ -140,7 +127,7 @@
                         {% endfor %}
                     {% else %}
                         <tr class="project-row">
-                            <td colspan="7" style="text-align: center; padding: var(--rvo-space-xl);">
+                            <td colspan="5" style="text-align: center; padding: var(--rvo-space-xl);">
                                 <div style="color: var(--rvo-color-grijs-600);">
                                     <c-icon icon="info" size="lg" style="margin-bottom: var(--rvo-space-sm);" />
                                     <div>Geen projecten gevonden waar u toegang toe heeft.</div>
@@ -276,13 +263,11 @@
     }
     
     /* Column Widths */
-    .col-project { width: 25{{ '%' }}; }
-    .col-status { width: 12{{ '%' }}; }
-    .col-environment { width: 10{{ '%' }}; }
-    .col-team { width: 12{{ '%' }}; }
-    .col-services { width: 20{{ '%' }}; }
-    .col-created { width: 11{{ '%' }}; }
-    .col-actions { width: 10{{ '%' }}; }
+    .col-project { width: 35{{ '%' }}; }
+    .col-environment { width: 12{{ '%' }}; }
+    .col-team { width: 15{{ '%' }}; }
+    .col-services { width: 25{{ '%' }}; }
+    .col-actions { width: 13{{ '%' }}; }
     
     /* Project Info */
     .project-info .project-name {
@@ -290,45 +275,20 @@
         color: var(--rvo-color-grijs-900);
         margin-bottom: var(--rvo-space-xs);
     }
-    
+
+    .project-info .project-id {
+        font-size: 0.75rem;
+        color: var(--rvo-color-grijs-500);
+        font-family: monospace;
+        margin-bottom: var(--rvo-space-xs);
+    }
+
     .project-info .project-description {
         color: var(--rvo-color-grijs-600);
         font-size: 0.8125rem;
         line-height: 1.4;
     }
-    
-    /* Status Badges */
-    .status-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: var(--rvo-space-sm);
-        padding: var(--rvo-space-xs) var(--rvo-space-sm);
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-    
-    .status-running {
-        background: var(--rvo-color-groen-50);
-        color: var(--rvo-color-groen);
-    }
-    
-    .status-deploying {
-        background: var(--rvo-color-oranje-50);
-        color: var(--rvo-color-oranje);
-    }
-    
-    .status-error {
-        background: var(--rvo-color-rood-50);
-        color: var(--rvo-color-rood);
-    }
-    
-    .status-stopped {
-        background: var(--rvo-color-grijs-100);
-        color: var(--rvo-color-grijs-700);
-    }
-    
+
     /* Environment Badges */
     .environment-badge {
         padding: var(--rvo-space-xs) var(--rvo-space-sm);
@@ -391,18 +351,7 @@
         border-radius: 4px;
         font-size: 0.75rem;
     }
-    
-    /* Date Info */
-    .date-info .date {
-        font-weight: 500;
-        color: var(--rvo-color-grijs-900);
-    }
-    
-    .date-info .time {
-        font-size: 0.75rem;
-        color: var(--rvo-color-grijs-600);
-    }
-    
+
     /* Actions */
     .actions {
         display: flex;

@@ -127,6 +127,32 @@ authenticationFlows:
     # Set as browser flow for the realm
     setAsBrowserFlow: true
 
+# Client for operations manager invite flow
+# Allows the operations manager to authenticate users via this realm for invitations
+# This is a public client (no secret) since the OAuth flow happens in the user's browser
+# Uses the standard "browser" flow to bypass the External IDP Redirector and access restrictions
+clients:
+  - clientId: "{{ invite_client_id }}"
+    name: "Operations Manager Invite Flow"
+    enabled: true
+    publicClient: true
+    protocol: "openid-connect"
+    redirectUris:
+      - "https://{{ operations_manager_domain }}/invite/*"
+      - "http://{{ operations_manager_domain }}/invite/*"
+    webOrigins:
+      - "https://{{ operations_manager_domain }}"
+      - "http://{{ operations_manager_domain }}"
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    pkceCodeChallengeMethod: "S256"
+    browserFlowOverride: "browser"
+    # Explicitly set theme since browserFlowOverride may not inherit realm theme correctly
+    attributes:
+      login_theme: "nl-design-system"
+
 clientScopes:
   - name: "custom_attributes_passthrough"
     description: "Custom attributes passthrough for project realm (no override mappers)"

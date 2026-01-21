@@ -69,7 +69,7 @@ spec:
 
           # Show snapshot info
           echo "Snapshot details:"
-          kopia snapshot show "$SNAPSHOT_ID" || true
+          kopia show "$SNAPSHOT_ID" || true
 
           # Clear target directory
           echo "Clearing target directory..."

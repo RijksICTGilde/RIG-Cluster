@@ -11,6 +11,11 @@ import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.sessions.AuthenticationSessionModel;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
+
 /**
  * Authenticator that checks if a user has a required client role.
  *
@@ -35,12 +40,23 @@ public class RequireClientRoleAuthenticator implements Authenticator {
             return;
         }
 
+        // Check if the current OAuth client should skip this role check
+        String currentOAuthClientId = getCurrentOAuthClientId(context);
+        List<String> skipClients = getConfiguredSkipClients(context);
+
+        if (currentOAuthClientId != null && skipClients.contains(currentOAuthClientId)) {
+            LOG.infof("Skipping role check for user '%s' - OAuth client '%s' is in skip list",
+                      user.getUsername(), currentOAuthClientId);
+            context.success();
+            return;
+        }
+
         String clientId = getConfiguredClientId(context);
         String roleName = getConfiguredRoleName(context);
         String errorMessage = getConfiguredErrorMessage(context);
 
-        LOG.debugf("Checking if user '%s' has role '%s' on client '%s'",
-                   user.getUsername(), roleName, clientId);
+        LOG.debugf("Checking if user '%s' has role '%s' on client '%s' (OAuth client: %s)",
+                   user.getUsername(), roleName, clientId, currentOAuthClientId);
 
         if (clientId == null || clientId.isEmpty()) {
             LOG.warn("Client ID not configured for RequireClientRoleAuthenticator");
@@ -147,5 +163,35 @@ public class RequireClientRoleAuthenticator implements Authenticator {
         }
 
         return user.hasRole(role);
+    }
+
+    /**
+     * Get the current OAuth client ID from the authentication session.
+     * This is the client that initiated the OAuth flow (e.g., the invite client).
+     */
+    private String getCurrentOAuthClientId(AuthenticationFlowContext context) {
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        if (authSession != null && authSession.getClient() != null) {
+            return authSession.getClient().getClientId();
+        }
+        return null;
+    }
+
+    /**
+     * Get the list of client IDs that should skip this role check.
+     */
+    private List<String> getConfiguredSkipClients(AuthenticationFlowContext context) {
+        String skipClientsConfig = context.getAuthenticatorConfig() != null
+            ? context.getAuthenticatorConfig().getConfig().get(RequireClientRoleAuthenticatorFactory.CONFIG_SKIP_CLIENTS)
+            : null;
+
+        if (skipClientsConfig == null || skipClientsConfig.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return Arrays.stream(skipClientsConfig.split(","))
+                     .map(String::trim)
+                     .filter(s -> !s.isEmpty())
+                     .collect(Collectors.toList());
     }
 }

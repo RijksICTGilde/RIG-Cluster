@@ -274,6 +274,26 @@ class BucketBackupResponse(BaseModel):
     result: BucketBackupResultModel
 
 
+# Deployment Backup Request Model
+
+
+class DeploymentBackupRequest(BaseModel):
+    """Request body for project deployment backup operations."""
+
+    resource_types: list[str] = Field(
+        default=["pvc", "database", "minio"],
+        description="List of resource types to backup: 'pvc', 'database', 'minio'. Defaults to all.",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "resource_types": ["pvc", "database", "minio"],
+            }
+        }
+    }
+
+
 # Combined Deployment Backup Response Models
 
 
@@ -591,38 +611,48 @@ async def backup_pvc(request: Request, namespace: str, pvc_name: str) -> JSONRes
 @backup_router.post("/project/{project_name}/deployment/{deployment_name}", response_model=DeploymentBackupResponse)
 @validate_api_token
 async def backup_project_deployment(
-    request: Request, project_name: str, deployment_name: str, all_pvcs: bool = False
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    body: DeploymentBackupRequest | None = None,
 ) -> JSONResponse:
     """
-    Trigger backup for all resources in a specific project deployment.
+    Trigger backup for resources in a specific project deployment.
 
-    This endpoint backs up:
-    - PVCs (with backup label, or all if all_pvcs=true)
+    This endpoint backs up selected resource types:
+    - PVCs (persistent volume claims with backup label)
     - Databases (if deployment uses postgresql-database or namespace-postgresql-database)
     - MinIO buckets (if deployment uses minio-storage)
 
     The namespace is resolved from the project configuration based on the
     deployment name and cluster settings.
 
-    Query Parameters:
-        all_pvcs: If true, backup ALL PVCs (no label required). Default: false
+    Request Body (optional):
+        resource_types: List of types to backup. Default: ["pvc", "database", "minio"]
 
     Headers:
         X-API-Key: The API key (required)
 
     Example:
     ```bash
-    # Backup all resources (PVCs with labels, databases, MinIO buckets)
+    # Backup all resource types (default)
     curl -X POST "http://localhost:9595/api/v1/backup/project/my-project/deployment/production" \\
       -H "X-API-Key: your-api-key"
 
-    # Backup ALL PVCs (no label required) plus databases and buckets
-    curl -X POST "http://localhost:9595/api/v1/backup/project/my-project/deployment/production?all_pvcs=true" \\
-      -H "X-API-Key: your-api-key"
+    # Backup only databases and minio
+    curl -X POST "http://localhost:9595/api/v1/backup/project/my-project/deployment/production" \\
+      -H "X-API-Key: your-api-key" \\
+      -H "Content-Type: application/json" \\
+      -d '{"resource_types": ["database", "minio"]}'
     ```
     """
     try:
-        logger.info(f"Backup request for project: {project_name}, deployment: {deployment_name}, all_pvcs: {all_pvcs}")
+        # Parse resource types from body (defaults to all)
+        resource_types = body.resource_types if body else ["pvc", "database", "minio"]
+        logger.info(
+            f"Backup request for project: {project_name}, deployment: {deployment_name}, "
+            f"resource_types: {resource_types}"
+        )
 
         # Look up project data
         project_service = get_project_service()
@@ -674,52 +704,54 @@ async def backup_project_deployment(
         all_results: list[BackupResult] = []
         namespaces_backed_up: list[str] = []
 
-        backup_type = "all PVCs" if all_pvcs else "labeled PVCs"
+        # Backup PVCs if requested
+        if "pvc" in resource_types:
+            logger.info(f"Backing up PVCs in application namespace: {app_namespace}")
+            app_results = await backup_manager.backup_project_deployment(
+                project_name=project_name,
+                project_data=project.data,
+                deployment_name=deployment_name,
+                namespace=app_namespace,
+                cluster=current_cluster,
+                all_pvcs=False,  # Only backup labeled PVCs
+                backup_run_id=backup_run_id,
+            )
+            all_results.extend(app_results)
+            if app_results:
+                namespaces_backed_up.append(app_namespace)
 
-        # Backup app namespace using project-aware method
-        logger.info(f"Backing up {backup_type} in application namespace: {app_namespace}")
-        app_results = await backup_manager.backup_project_deployment(
-            project_name=project_name,
-            project_data=project.data,
-            deployment_name=deployment_name,
-            namespace=app_namespace,
-            cluster=current_cluster,
-            all_pvcs=all_pvcs,
-            backup_run_id=backup_run_id,
-        )
-        all_results.extend(app_results)
-        if app_results:
-            namespaces_backed_up.append(app_namespace)
-
-        # Only backup infra namespace if the project uses infrastructure services
-        if ServiceAdapter.project_uses_infrastructure_namespace(project.model_dump()):
-            infra_namespace = get_prefixed_namespace(deployment_cluster, f"{raw_namespace}-infra")
-            logger.info(f"Project uses infrastructure services, backing up: {infra_namespace}")
-            try:
-                # Infra PVCs don't follow our naming convention, but pass basic context
-                if all_pvcs:
-                    infra_results = await backup_manager.backup_namespace_all(infra_namespace)
-                else:
+            # Also backup infra namespace PVCs if project uses infrastructure services
+            if ServiceAdapter.project_uses_infrastructure_namespace(project.model_dump()):
+                infra_namespace = get_prefixed_namespace(deployment_cluster, f"{raw_namespace}-infra")
+                logger.info(f"Project uses infrastructure services, backing up: {infra_namespace}")
+                try:
                     infra_results = await backup_manager.backup_namespace(infra_namespace)
-                all_results.extend(infra_results)
-                if infra_results:
-                    namespaces_backed_up.append(infra_namespace)
-            except Exception as e:
-                logger.warning(f"Failed to backup infrastructure namespace {infra_namespace}: {e}")
+                    all_results.extend(infra_results)
+                    if infra_results:
+                        namespaces_backed_up.append(infra_namespace)
+                except Exception as e:
+                    logger.warning(f"Failed to backup infrastructure namespace {infra_namespace}: {e}")
 
         # Track database and bucket backup results
         database_results: list[DatabaseBackupResult] = []
         bucket_results: list[BucketBackupResult] = []
         kubectl = create_kubectl_connector()
 
-        # Backup databases if deployment uses database services
+        # Backup databases if requested and deployment uses database services
         database_service_types = [
             ServiceType.POSTGRESQL_DATABASE.value,
             ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
         ]
-        if project_file_handler.deployment_uses_service(project.data, deployment_name, database_service_types):
+        if "database" in resource_types and project_file_handler.deployment_uses_service(
+            project.data, deployment_name, database_service_types
+        ):
             logger.info("Deployment uses database service, attempting database backup")
             try:
+                # Get components using database service
+                db_components = project_file_handler.get_components_using_service(
+                    project.data, deployment_name, database_service_types
+                )
+
                 # Get database credentials from secret
                 db_secret = await DatabaseSecret.get_data(
                     kubectl_connector=kubectl,
@@ -728,13 +760,30 @@ async def backup_project_deployment(
                 )
                 if db_secret:
                     database_backup_manager = create_database_backup_manager()
-                    # Reference name follows naming convention: deployment-database
-                    reference_name = f"{deployment_name}-database"
+
+                    # Use component info if available, else fallback to deployment-level naming
+                    if db_components:
+                        component_info = db_components[0]  # Take first component using database
+                        component_name = component_info["component_name"]
+                        reference_name = component_info["reference_name"]
+                        # Get generation from project file
+                        generation = project_file_handler.get_database_generation(
+                            project.data, deployment_name, component_name, reference_name
+                        )
+                    else:
+                        component_name = None
+                        reference_name = f"{deployment_name}-database"
+                        generation = None
+
                     # Determine source type based on which service is used
                     uses_namespace_db = project_file_handler.deployment_uses_service(
                         project.data, deployment_name, [ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
                     )
                     source_type = "namespace" if uses_namespace_db else "shared"
+
+                    logger.info(
+                        f"Backing up database: ref={reference_name}, component={component_name}, gen={generation}"
+                    )
 
                     db_result = await database_backup_manager.backup_database(
                         namespace=app_namespace,
@@ -747,6 +796,8 @@ async def backup_project_deployment(
                         source_type=source_type,
                         project_name=project_name,
                         deployment_name=deployment_name,
+                        component_name=component_name,
+                        generation=generation,
                         cluster=current_cluster,
                         backup_run_id=backup_run_id,
                     )
@@ -757,11 +808,18 @@ async def backup_project_deployment(
             except Exception as e:
                 logger.warning(f"Failed to backup database for deployment {deployment_name}: {e}")
 
-        # Backup MinIO buckets if deployment uses MinIO service
+        # Backup MinIO buckets if requested and deployment uses MinIO service
         minio_service_types = [ServiceType.MINIO_STORAGE.value]
-        if project_file_handler.deployment_uses_service(project.data, deployment_name, minio_service_types):
+        if "minio" in resource_types and project_file_handler.deployment_uses_service(
+            project.data, deployment_name, minio_service_types
+        ):
             logger.info("Deployment uses MinIO service, attempting bucket backup")
             try:
+                # Get components using minio service
+                minio_components = project_file_handler.get_components_using_service(
+                    project.data, deployment_name, minio_service_types
+                )
+
                 # Get MinIO credentials from secret
                 minio_secret = await MinIOSecret.get_data(
                     kubectl_connector=kubectl,
@@ -770,8 +828,24 @@ async def backup_project_deployment(
                 )
                 if minio_secret:
                     bucket_backup_manager = create_bucket_backup_manager()
-                    # Reference name follows naming convention: deployment-minio
-                    reference_name = f"{deployment_name}-minio"
+
+                    # Use component info if available, else fallback to deployment-level naming
+                    if minio_components:
+                        component_info = minio_components[0]  # Take first component using minio
+                        component_name = component_info["component_name"]
+                        reference_name = component_info["reference_name"]
+                        # Get generation from project file
+                        generation = project_file_handler.get_bucket_generation(
+                            project.data, deployment_name, component_name, reference_name
+                        )
+                    else:
+                        component_name = None
+                        reference_name = f"{deployment_name}-minio"
+                        generation = None
+
+                    logger.info(
+                        f"Backing up bucket: ref={reference_name}, component={component_name}, gen={generation}"
+                    )
 
                     bucket_result = await bucket_backup_manager.backup_bucket(
                         namespace=app_namespace,
@@ -784,6 +858,8 @@ async def backup_project_deployment(
                         use_kopia=True,
                         project_name=project_name,
                         deployment_name=deployment_name,
+                        component_name=component_name,
+                        generation=generation,
                         cluster=current_cluster,
                         backup_run_id=backup_run_id,
                     )

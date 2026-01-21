@@ -16,6 +16,7 @@ from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
 from opi.utils.age import encrypt_age_content, get_project_public_key
 from opi.utils.naming import (
+    extract_domain_from_url,
     generate_external_hostname,
     generate_project_admin_username,
     generate_project_platform_client_id,
@@ -700,6 +701,10 @@ class KeycloakManager:
                     await self._ensure_idp_and_platform_client_configuration(
                         project_name, cluster, keycloak_url
                     )
+                    # Always ensure clients from YAML template are created (idempotent)
+                    await self._ensure_realm_clients(
+                        project_name, cluster, realm_name, keycloak_host, config
+                    )
                 else:
                     logger.warning(
                         f"Project realm config exists but realm {realm_name} not found in Keycloak - will recreate"
@@ -935,12 +940,14 @@ class KeycloakManager:
         )
 
         # Create the post-broker login flow
+        # Always skip the invite client so users can complete invites without existing roles
         await keycloak.create_post_broker_login_flow(
             realm_name=realm_name,
             flow_alias=post_broker_flow_alias,
             client_id=client_id,
             role_name=role_name,
             error_message=error_message,
+            skip_clients=[settings.INVITE_CLIENT_ID],
         )
 
         # Set the post-broker login flow on each identity provider
@@ -1016,8 +1023,9 @@ class KeycloakManager:
         Ensure the authentication flow is correctly configured for an existing realm.
 
         This is an idempotent operation that updates the authentication flow configuration
-        based on the YAML template. It's called when the realm already exists to ensure
-        the SSO redirect flow uses the correct identity provider alias.
+        based on the YAML template. It's called when the realm already exists to ensure:
+        1. The browserFlow matches the template (browser vs External IDP Redirector)
+        2. The SSO redirect flow uses the correct identity provider alias (for sso-only)
 
         Args:
             realm_name: Name of the realm to configure
@@ -1040,6 +1048,14 @@ class KeycloakManager:
             admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
         )
 
+        # Determine expected browser flow based on template
+        # sso-only: Uses External IDP Redirector flow (auto-redirect to IdP)
+        # sso-support: Uses standard browser flow (shows login form with SSO button)
+        expected_browser_flow = "External IDP Redirector" if template_name == "sso-only" else "browser"
+
+        # Ensure browser flow matches template (idempotent)
+        await keycloak.ensure_browser_flow(realm_name, expected_browser_flow)
+
         # Build minimal context for authentication flow processing
         context = {
             "realm_name": realm_name,
@@ -1054,6 +1070,68 @@ class KeycloakManager:
         # Process authentication flows (idempotent - updates if needed)
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_authentication_flows(yaml_path, context)
+
+    async def _ensure_realm_clients(
+        self,
+        project_name: str,
+        cluster: str,
+        realm_name: str,
+        keycloak_url: str,
+        config: dict[str, Any],
+    ) -> None:
+        """
+        Ensure all clients from YAML template exist in the realm.
+
+        This is an idempotent operation that creates any missing clients defined
+        in the YAML template. Used during project refresh to ensure new clients
+        (like the invite flow client) are created for existing realms.
+
+        Args:
+            project_name: Name of the project
+            cluster: Name of the cluster
+            realm_name: Name of the realm
+            keycloak_url: Base URL of the Keycloak server
+            config: Keycloak configuration dict with template and variables
+        """
+        template_name = config.get("template", "sso-only")
+        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
+
+        if not yaml_path.exists():
+            logger.warning(f"Template {template_name} not found, skipping clients update")
+            return
+
+        logger.info(f"Ensuring clients for realm {realm_name} using template {template_name}")
+
+        # Create Keycloak connector
+        keycloak = await create_keycloak_connector(
+            keycloak_url=keycloak_url,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+
+        # Extract domain from OWN_DOMAIN (strip protocol if present)
+        operations_manager_domain = extract_domain_from_url(settings.OWN_DOMAIN)
+
+        # Build context for client template processing
+        context = {
+            "project_name": project_name,
+            "cluster": cluster,
+            "keycloak_url": keycloak_url,
+            "realm_name": realm_name,
+            "project_realm_name": realm_name,
+            # Operations manager domain and client ID for invite flow
+            "operations_manager_domain": operations_manager_domain,
+            "invite_client_id": settings.INVITE_CLIENT_ID,
+        }
+
+        # Merge user-provided variables
+        user_variables = config.get("variables", {})
+        if isinstance(user_variables, dict):
+            context.update(user_variables)
+
+        # Process clients (idempotent - skips existing clients)
+        handler = KeycloakYamlHandler(keycloak)
+        await handler.ensure_clients(yaml_path, context)
 
     async def _ensure_idp_and_platform_client_configuration(
         self,
@@ -1261,6 +1339,12 @@ class KeycloakManager:
 
         logger.info(f"Loading Keycloak template: {template_name}.yaml for realm {realm_name}")
 
+        # Get cluster-specific HTTP support setting (used for URL protocol)
+        support_http = get_keycloak_support_http(cluster)
+
+        # Extract domain from OWN_DOMAIN (strip protocol if present)
+        operations_manager_domain = extract_domain_from_url(settings.OWN_DOMAIN)
+
         # Build base context for YAML template
         context = {
             # Infrastructure variables
@@ -1274,13 +1358,13 @@ class KeycloakManager:
             # Unified variable names (works with all templates)
             "realm_name": realm_name,
             "realm_display_name": f"{project_name} ({cluster})",
+            # Operations manager domain and client ID for invite flow
+            "operations_manager_domain": operations_manager_domain,
+            "invite_client_id": settings.INVITE_CLIENT_ID,
         }
 
         # Add redirect URIs from component ingress hosts if provided
         if ingress_hosts:
-            # Get cluster-specific HTTP support setting
-            support_http = get_keycloak_support_http(cluster)
-
             # Build redirect URIs from ingress hosts based on cluster protocol support
             # Use first host as frontend_redirect_uris (templates expect single value)
             # TODO: Support multiple redirect URIs using forEach in templates

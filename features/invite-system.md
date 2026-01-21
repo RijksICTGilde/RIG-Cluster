@@ -210,8 +210,72 @@ Language is determined in this order:
 ## Dependencies
 
 - Keycloak realm must exist for the project
-- OAuth client configured in Operations Manager
 - Project must have at least one deployment (for cluster/realm determination)
+
+## Technical Setup
+
+### OAuth Client (Automatic)
+
+The invite system requires an OAuth client in each project's Keycloak realm. This client is **automatically created** when:
+- A new project realm is created
+- An existing project is refreshed (idempotent - skips if exists)
+
+The client configuration:
+```yaml
+clientId: "operations-manager-invites"  # Configurable via INVITE_CLIENT_ID
+publicClient: true                       # No secret required
+pkceCodeChallengeMethod: "S256"          # PKCE for security
+redirectUris:
+  - "{{ operations_manager_url }}/invite/*"
+webOrigins:
+  - "{{ operations_manager_url }}"
+```
+
+### Why PKCE?
+The invite flow uses PKCE (Proof Key for Code Exchange) instead of a client secret because:
+- The OAuth flow happens in the user's browser (public client)
+- PKCE provides equivalent security without needing to manage secrets across multiple realms
+- Each invite flow generates a unique code verifier/challenge pair
+
+### Configuration (Operations Manager)
+
+The following settings control the invite OAuth client:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `INVITE_CLIENT_ID` | `operations-manager-invites` | Client ID for invite OAuth flow |
+| `OWN_DOMAIN` | - | Operations manager URL (used for redirect URIs)  |
+
+### Keycloak Template Integration
+
+The invite client is defined in the Keycloak YAML templates:
+- `configs/keycloak/sso-only.yaml` - For SSO-only realms
+- `configs/keycloak/sso-support.yaml` - For realms with SSO + local accounts
+
+To add the invite client to a custom template, include:
+```yaml
+clients:
+  - clientId: "{{ invite_client_id }}"
+    name: "Operations Manager Invite Flow"
+    enabled: true
+    publicClient: true
+    protocol: "openid-connect"
+    redirectUris:
+      - "{{ operations_manager_url }}/invite/*"
+    webOrigins:
+      - "{{ operations_manager_url }}"
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    pkceCodeChallengeMethod: "S256"
+```
+
+### Refreshing Projects
+
+If the invite client is missing from an existing project realm, simply refresh the project:
+- The keycloak YAML handler will create any missing clients defined in the template
+- This is idempotent - existing clients are skipped without errors
 
 ## Troubleshooting
 

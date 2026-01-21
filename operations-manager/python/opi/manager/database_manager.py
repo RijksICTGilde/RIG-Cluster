@@ -11,7 +11,7 @@ from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import ServiceType
-from opi.utils.naming import generate_resource_identifier
+from opi.utils.naming import generate_database_name
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
 
@@ -63,6 +63,23 @@ class DatabaseManager:
         if self._postgres_connector is not None:
             await self._postgres_connector.close()
             self._postgres_connector = None
+
+    def _get_deployment_database_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
+        """
+        Get the database generation for a deployment from the project file.
+
+        Reads from the deployment-level services block:
+        deployments[name].services.database.generation
+
+        Args:
+            project_data: The project configuration data
+            deployment_name: Name of the deployment
+
+        Returns:
+            Generation number if set, None otherwise
+        """
+        project_file_handler = self.project_manager._project_file_handler
+        return project_file_handler.get_deployment_database_generation(project_data, deployment_name)
 
     async def create_resources_for_deployment(
         self,
@@ -147,11 +164,17 @@ class DatabaseManager:
             if database_privileges:
                 logger.info(f"Database privileges specified for {project_name}: {database_privileges}")
 
-            # Generate consistent database identifiers (username, schema, database all use same pattern)
-            db_identifier = generate_resource_identifier(project_name, deployment_name, "_")
-            db_username = db_identifier
-            db_schema = db_identifier
-            db_database = db_identifier  # Same as schema for isolation
+            # Get the generation from project file if set (for versioned databases after restore)
+            generation = self._get_deployment_database_generation(project_data, deployment_name)
+            if generation is not None and generation > 0:
+                logger.info(f"Using database generation {generation} for {deployment_name}")
+
+            # Generate consistent database identifiers
+            # Username is never versioned (same user accesses all versions)
+            # Database and schema use generation if set (for versioned restore)
+            db_username = generate_database_name(project_name, deployment_name, None)  # Username never versioned
+            db_database = generate_database_name(project_name, deployment_name, generation)
+            db_schema = db_database  # Schema matches database name
 
             # PHASE 1: CREDENTIAL RESOLUTION - Determine working credentials
             logger.info(f"Phase 1: Resolving database credentials for {project_name}/{deployment_name}")
@@ -180,6 +203,7 @@ class DatabaseManager:
                 db_password,
                 project_data,
                 force_clone,
+                generation,
             )
 
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
@@ -369,6 +393,7 @@ class DatabaseManager:
         db_password: str,
         project_data: dict[str, Any] | None = None,
         force_clone_override: bool = False,
+        generation: int | None = None,
     ) -> None:
         """
         Ensure the database exists in the correct state, handling clone-from and force-clone logic.
@@ -489,42 +514,55 @@ class DatabaseManager:
 
         if clone_from:
             # Handle local database cloning (type: deployment)
-            source_database = generate_resource_identifier(project_name, clone_from, "_")
-            source_schema = generate_resource_identifier(project_name, clone_from, "_")
+            # Source uses base name (None generation) - versioned sources would need explicit handling
+            source_database = generate_database_name(project_name, str(clone_from), None)
+            source_schema = source_database  # Schema matches database name
             logger.info(f"Clone requested from {source_database} to {db_database} (force={force_clone})")
 
             # STEP 1: Validate that source database and schema exist before cloning
             await self._validate_clone_source(source_database, source_schema)
 
-            if force_clone:
-                # Force clone: drop and recreate database
-                logger.info(f"Force clone enabled, dropping existing database {db_database} if it exists")
-                drop_result = await self.postgres_connector.delete_database(
-                    database_name=db_database,
-                )
-                if drop_result["status"] == "deleted":
-                    logger.info(f"Dropped existing database: {db_database}")
+            # Check if target database exists by attempting to create it
+            database_result = await self.postgres_connector.create_database(
+                database_name=db_database,
+                owner=db_username,
+            )
+            target_db_exists = database_result["status"] == "exists"
 
-                # Recreate database after dropping
+            if force_clone and target_db_exists:
+                # Generational approach: increment generation and create new versioned database
+                # Instead of destroying the old database, create a new versioned one
+                new_generation = (generation or 0) + 1
+                db_database = generate_database_name(project_name, deployment_name, new_generation)
+                db_schema = db_database  # Schema matches database name
+
+                logger.info(
+                    f"force_clone=True: Using generational approach. "
+                    f"Creating new database {db_database} (generation {generation} -> {new_generation})"
+                )
+
+                # Create new versioned database (old database is preserved)
                 database_result = await self.postgres_connector.create_database(
                     database_name=db_database,
                     owner=db_username,
                 )
                 if database_result["status"] != "created":
                     raise Exception(
-                        f"Failed to recreate database {db_database} after force drop: {database_result.get('message', 'Unknown error')}"
+                        f"Failed to create versioned database {db_database}: {database_result.get('message', 'Unknown error')}"
                     )
-                logger.info(f"Recreated database after force drop: {db_database}")
+                logger.info(f"Created new versioned database: {db_database}")
+
+                # Update generation in project file
+                if project_data:
+                    project_file_handler = self.project_manager._project_file_handler
+                    project_file_handler.set_deployment_database_generation(
+                        project_data, deployment_name, new_generation
+                    )
+                    logger.info(f"Updated database generation in project file: {new_generation}")
+            elif database_result["status"] == "created":
+                logger.info(f"Created database for cloning: {db_database}")
             else:
-                # Regular clone: ensure database exists first
-                database_result = await self.postgres_connector.create_database(
-                    database_name=db_database,
-                    owner=db_username,
-                )
-                if database_result["status"] == "created":
-                    logger.info(f"Created database for cloning: {db_database}")
-                else:
-                    logger.info(f"Database already exists for cloning: {db_database}")
+                logger.info(f"Database already exists for cloning: {db_database}")
 
             # Always execute postInitSQL before clone (idempotent - uses IF NOT EXISTS)
             # Extensions must exist before schema clone to avoid dependency issues
@@ -806,10 +844,10 @@ class DatabaseManager:
                 project_data, deployment
             )
 
-            db_identifier = generate_resource_identifier(project_name, deployment_name, "_")
-            db_username = db_identifier
-            db_database = db_identifier
-            db_schema = db_identifier
+            # Generate database identifiers (base name without version for deletion)
+            # Note: For versioned databases, deletion should be handled by ArgoCD pruning
+            db_username = generate_database_name(project_name, deployment_name, None)
+            db_database = db_username
 
             # Delete database (this will cascade delete all schemas and objects within it)
             try:
@@ -1631,10 +1669,10 @@ class DatabaseManager:
             database_privileges = service_config.get("privileges", [])
 
             # STEP 4: Resolve target credentials (reuse existing method)
-            db_identifier = generate_resource_identifier(project_name, deployment_name, "_")
-            target_database = db_identifier
-            target_schema = db_identifier
-            target_username = db_identifier
+            # Use base name (None generation) for external clone targets
+            target_username = generate_database_name(project_name, deployment_name, None)
+            target_database = target_username
+            target_schema = target_database
 
             try:
                 target_password = await self._resolve_database_credentials(

@@ -3,7 +3,7 @@
 import logging
 import re
 from datetime import date, datetime
-from typing import Any
+from typing import Any, cast
 
 from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
 from opi.handlers.project_file_handler import ProjectFileHandler
@@ -203,6 +203,40 @@ class InviteManager:
 
         return invite
 
+    async def _assign_client_roles(
+        self,
+        keycloak: KeycloakConnector,
+        realm_name: str,
+        user_id: str,
+        client_roles: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Assign client roles to a user."""
+        assigned: dict[str, list[str]] = {}
+        errors: list[str] = []
+
+        for client_id, role_names in client_roles.items():
+            if not isinstance(role_names, list):
+                errors.append(f"Invalid client_roles[{client_id}]: expected list, got {type(role_names)}")
+                logger.error(f"Skipping client_roles[{client_id}]: expected list, got {type(role_names)}")
+                continue
+
+            assigned_for_client: list[str] = []
+            role_name_list = cast(list[Any], role_names)
+            for role_name in [str(r) for r in role_name_list]:
+                try:
+                    await keycloak.assign_client_role_to_user(realm_name, client_id, user_id, role_name)
+                    assigned_for_client.append(role_name)
+                    logger.info(f"Assigned client role '{client_id}.{role_name}' to user {user_id}")
+                except Exception as e:
+                    error_msg = f"Client role '{client_id}.{role_name}' not found or could not be assigned"
+                    errors.append(error_msg)
+                    logger.error(f"Failed to assign client role '{client_id}.{role_name}': {e}")
+
+            if assigned_for_client:
+                assigned[client_id] = assigned_for_client
+
+        return {"assigned": assigned, "errors": errors}
+
     async def assign_invite_permissions(
         self,
         keycloak: KeycloakConnector,
@@ -213,6 +247,10 @@ class InviteManager:
         """
         Assign roles and groups from invite configuration to a user.
 
+        Supports both realm roles and client roles:
+        - roles: ["role1", "role2"] - assigns realm-level roles
+        - client_roles: {"client-id": ["role1"]} - assigns client-level roles
+
         Args:
             keycloak: KeycloakConnector instance
             realm_name: The Keycloak realm name
@@ -220,19 +258,34 @@ class InviteManager:
             invite: The invite configuration
 
         Returns:
-            Dict with assigned roles and groups
+            Dict with assigned roles, client_roles, and groups
         """
-        assigned: dict[str, list[str]] = {"roles": [], "groups": []}
+        assigned: dict[str, Any] = {"roles": [], "client_roles": {}, "groups": []}
+        errors: list[str] = []
 
         # Assign realm roles
         roles = invite.get("roles", [])
         if roles:
             try:
-                await keycloak.assign_realm_roles_to_user(realm_name, user_id, roles)
-                assigned["roles"] = roles
-                logger.info(f"Assigned roles {roles} to user {user_id} in realm {realm_name}")
+                result = await keycloak.assign_realm_roles_to_user(realm_name, user_id, roles)
+                assigned["roles"] = result["assigned"]
+                if result["not_found"]:
+                    errors.append(f"Realm roles not found: {result['not_found']}")
+                logger.info(f"Assigned realm roles {result['assigned']} to user {user_id} in realm {realm_name}")
             except Exception as e:
-                logger.warning(f"Failed to assign some roles: {e}")
+                errors.append(f"Failed to assign realm roles: {e}")
+                logger.error(f"Failed to assign realm roles: {e}")
+
+        # Assign client roles
+        client_roles_raw = invite.get("client_roles", {})
+        if client_roles_raw and isinstance(client_roles_raw, dict):
+            client_roles = cast(dict[str, Any], client_roles_raw)
+            client_result = await self._assign_client_roles(
+                keycloak, realm_name, user_id, client_roles
+            )
+            assigned["client_roles"] = client_result["assigned"]
+            if client_result["errors"]:
+                errors.extend(client_result["errors"])
 
         # Add to groups
         groups = invite.get("groups", [])
@@ -242,7 +295,12 @@ class InviteManager:
                 assigned["groups"].append(group_name)
                 logger.info(f"Added user {user_id} to group {group_name} in realm {realm_name}")
             except Exception as e:
-                logger.warning(f"Failed to add user to group {group_name}: {e}")
+                errors.append(f"Group '{group_name}' not found or could not be joined: {e}")
+                logger.error(f"Failed to add user to group {group_name}: {e}")
+
+        # Include errors in the result
+        if errors:
+            assigned["errors"] = errors
 
         return assigned
 
@@ -340,7 +398,8 @@ class InviteManager:
         Complete the local account invite flow for a user.
 
         This creates a new local user in the project realm with the provided
-        credentials, then assigns the configured roles and groups.
+        credentials, then assigns the configured roles and groups. If the user
+        already exists, just assigns the roles/groups without creating a new user.
 
         Args:
             project_data: The project configuration data
@@ -350,11 +409,10 @@ class InviteManager:
             realm_name: The project's Keycloak realm name
 
         Returns:
-            Dict with user_id and assigned permissions
+            Dict with user_id, email, created (bool), and assigned permissions
 
         Raises:
             InviteDomainError: If email doesn't match domain restriction
-            UserExistsError: If user already exists
             InviteError: For validation errors
         """
         email = form_data.get("email", "").strip()
@@ -385,17 +443,18 @@ class InviteManager:
 
         keycloak = await create_keycloak_connector()
 
-        # Check if user already exists
+        # Check if user already exists - for local registration, reject existing emails
         existing_user = await keycloak.get_user_by_email(realm_name, email)
+        if not existing_user:
+            # Also check by username (email)
+            existing_user = await keycloak.get_user_by_username(realm_name, email)
+
         if existing_user:
+            # For local account registration, don't allow using existing email addresses
+            logger.warning(f"Local registration rejected: email {email} already exists in realm {realm_name}")
             raise UserExistsError(email)
 
-        # Also check by username (email)
-        existing_by_username = await keycloak.get_user_by_username(realm_name, email)
-        if existing_by_username:
-            raise UserExistsError(email)
-
-        # Create the user
+        # Create new user
         created_user = await keycloak.create_user(
             realm_name=realm_name,
             username=email,
@@ -478,6 +537,84 @@ class InviteManager:
                     return "en"
 
         return default
+
+    async def get_realm_auth_methods(self, realm_name: str) -> dict[str, Any]:
+        """
+        Query Keycloak to determine available authentication methods for a realm.
+
+        This queries the actual Keycloak configuration to determine:
+        - SSO: Whether any identity providers are configured and enabled
+        - Local: Whether the realm allows local authentication (based on realm settings)
+
+        Args:
+            realm_name: The Keycloak realm name
+
+        Returns:
+            Dict with:
+                - 'sso': bool - Whether SSO is available
+                - 'local': bool - Whether local accounts are available
+                - 'identity_providers': list - List of available IdP info (alias, displayName)
+        """
+        try:
+            keycloak = await create_keycloak_connector()
+
+            # Get identity providers
+            identity_providers = await keycloak.get_identity_providers(realm_name)
+            enabled_idps = [
+                {
+                    "alias": idp.get("alias"),
+                    "displayName": idp.get("displayName", idp.get("alias")),
+                    "providerId": idp.get("providerId"),
+                }
+                for idp in identity_providers
+                if idp.get("enabled", True)
+            ]
+
+            # Get realm configuration to check local auth settings
+            realm_config = await keycloak.get_realm(realm_name)
+
+            # Local auth is available if the browser flow supports username/password login.
+            # We create users via Admin API (not self-registration), so registrationAllowed
+            # doesn't matter. What matters is: can users log in with username/password?
+            #
+            # - If browserFlow is "browser" (default), username/password login is shown
+            # - If browserFlow is a custom SSO-redirect flow, users are auto-redirected to IdP
+            local_available = False
+            if realm_config:
+                browser_flow = realm_config.get("browserFlow", "browser")
+
+                # Standard browser flow supports username/password login
+                # Custom flows like "External IDP Redirector" auto-redirect to SSO
+                # We consider local available if using the standard browser flow
+                is_standard_browser_flow = browser_flow == "browser"
+                local_available = is_standard_browser_flow
+
+                # If there are no identity providers, local must be available
+                # (otherwise users couldn't login at all)
+                if not enabled_idps:
+                    local_available = True
+
+            logger.info(
+                f"Realm {realm_name} auth methods: "
+                f"sso={len(enabled_idps) > 0}, local={local_available}, "
+                f"browserFlow={realm_config.get('browserFlow') if realm_config else 'N/A'}, "
+                f"idps={[idp['alias'] for idp in enabled_idps]}"
+            )
+
+            return {
+                "sso": len(enabled_idps) > 0,
+                "local": local_available,
+                "identity_providers": enabled_idps,
+            }
+
+        except Exception as e:
+            logger.warning(f"Failed to query Keycloak for realm {realm_name} auth methods: {e}")
+            # Fall back to safe defaults - assume both are available
+            return {
+                "sso": True,
+                "local": True,
+                "identity_providers": [],
+            }
 
 
 def create_invite_manager() -> InviteManager:

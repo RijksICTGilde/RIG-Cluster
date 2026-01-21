@@ -118,7 +118,8 @@
                                                             type="email"
                                                             :required="true"
                                                             placeholder="naam@organisatie.nl"
-                                                            helperText="Rijksoverheid e-mailadres"/>
+                                                            helperText="Rijksoverheid e-mailadres"
+                                                            value="{{ user.email if user and user.email else '' }}"/>
                                                     </div>
                                                     <div style="flex: 2;">
                                                         <c-select-field
@@ -126,6 +127,7 @@
                                                             name="user-role[]"
                                                             label="Rol"
                                                             :required="true"
+                                                            value="admin"
                                                             :options="[
                                                                 {'value': 'admin', 'label': 'Administrator'},
                                                                 {'value': 'developer', 'label': 'Developer'},

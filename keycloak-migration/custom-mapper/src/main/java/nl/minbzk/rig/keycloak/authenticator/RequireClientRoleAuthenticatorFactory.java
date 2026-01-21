@@ -23,6 +23,7 @@ public class RequireClientRoleAuthenticatorFactory implements AuthenticatorFacto
     public static final String CONFIG_CLIENT_ID = "clientId";
     public static final String CONFIG_ROLE_NAME = "roleName";
     public static final String CONFIG_ERROR_MESSAGE = "errorMessage";
+    public static final String CONFIG_SKIP_CLIENTS = "skipClients";
 
     private static final RequireClientRoleAuthenticator SINGLETON = new RequireClientRoleAuthenticator();
 
@@ -48,7 +49,14 @@ public class RequireClientRoleAuthenticatorFactory implements AuthenticatorFacto
         errorMessage.setType(ProviderConfigProperty.STRING_TYPE);
         errorMessage.setDefaultValue("${accessDeniedNoPermission}");
 
-        CONFIG_PROPERTIES = List.of(clientId, roleName, errorMessage);
+        ProviderConfigProperty skipClients = new ProviderConfigProperty();
+        skipClients.setName(CONFIG_SKIP_CLIENTS);
+        skipClients.setLabel("Skip Clients");
+        skipClients.setHelpText("Comma-separated list of OAuth client IDs that should bypass this role check. " +
+                "Use this to allow specific clients (e.g., invite flow) to authenticate without the required role.");
+        skipClients.setType(ProviderConfigProperty.STRING_TYPE);
+
+        CONFIG_PROPERTIES = List.of(clientId, roleName, errorMessage, skipClients);
     }
 
     @Override

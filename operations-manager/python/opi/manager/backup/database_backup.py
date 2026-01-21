@@ -309,6 +309,7 @@ class DatabaseBackupManager(BaseBackupManager):
         target_database_user: str,
         target_database_password: str,
         snapshot_id: str | None = None,
+        project_name: str | None = None,
     ) -> DatabaseRestoreResult:
         """
         Restore a PostgreSQL database from a Kopia backup.
@@ -323,6 +324,7 @@ class DatabaseBackupManager(BaseBackupManager):
             target_database_user: Target database user
             target_database_password: Target database password
             snapshot_id: Optional specific snapshot ID (defaults to latest)
+            project_name: Project name for per-project backup bucket
 
         Returns:
             DatabaseRestoreResult with operation details
@@ -339,6 +341,7 @@ class DatabaseBackupManager(BaseBackupManager):
                 target_database_user=target_database_user,
                 target_database_password=target_database_password,
                 snapshot_id=snapshot_id,
+                project_name=project_name,
             )
 
     async def _restore_database(
@@ -352,6 +355,7 @@ class DatabaseBackupManager(BaseBackupManager):
         target_database_user: str,
         target_database_password: str,
         snapshot_id: str | None = None,
+        project_name: str | None = None,
     ) -> DatabaseRestoreResult:
         """
         Internal: restore a PostgreSQL database (lock must be held).
@@ -382,6 +386,8 @@ class DatabaseBackupManager(BaseBackupManager):
                 kopia_password=kopia_password,
                 backup_prefix=backup_prefix,
                 snapshot_id=snapshot_id,
+                project_name=project_name,
+                cluster=cluster,
             )
 
             # 3. Wait for pod completion

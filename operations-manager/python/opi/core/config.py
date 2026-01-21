@@ -163,6 +163,12 @@ class Settings(BaseSettings):
     OIDC_CLIENT_SECRET: str | None = None
     OIDC_DISCOVERY_URL: str | None = None
 
+    # Invite system settings
+    INVITE_CLIENT_ID: str = "operations-manager-invites"
+
+    # Access control settings
+    ALLOWED_EMAILS: str | None = None  # Comma-separated list of allowed email addresses
+
     # Git projects server settings - for monitoring and retrieving project files
     ENABLE_GIT_MONITOR: bool = False
     GIT_PROJECTS_SERVER_URL: str = "git://localhost:9090/"

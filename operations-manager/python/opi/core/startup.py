@@ -344,6 +344,15 @@ async def refresh_projects_from_git() -> int:
                 project_service.register(
                     project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
                 )
+
+                # Add project users to allowed emails list
+                project_users = project_data.get("users", [])
+                if project_users:
+                    user_service = get_user_service()
+                    project_user_emails = [u.get("email") for u in project_users if u.get("email")]
+                    if project_user_emails:
+                        user_service.add_allowed_emails(project_user_emails)
+
                 loaded_count += 1
             except Exception as e:
                 logger.error(f"Error refreshing project file {project_file}: {e}")
@@ -585,13 +594,12 @@ async def run_startup_tasks(app: FastAPI) -> bool:
         user_service.add_allowed_emails(default_allowed_emails)
         logger.info(f"Added {len(default_allowed_emails)} default allowed emails to user service")
 
-    # If ALLOWED_EMAILS environment variable is set, add those too
-    env_allowed_emails = os.environ.get("ALLOWED_EMAILS")
-    if env_allowed_emails:
-        env_emails = [email.strip() for email in env_allowed_emails.split(",") if email.strip()]
+    # If ALLOWED_EMAILS setting is configured, add those too
+    if settings.ALLOWED_EMAILS:
+        env_emails = [email.strip() for email in settings.ALLOWED_EMAILS.split(",") if email.strip()]
         if env_emails:
             user_service.add_allowed_emails(env_emails)
-            logger.info(f"Added {len(env_emails)} allowed emails from ALLOWED_EMAILS environment variable")
+            logger.info(f"Added {len(env_emails)} allowed emails from ALLOWED_EMAILS setting")
 
     # Get the list of project files to process
     # Create a shared git connector that will be reused across all ProjectManagers
@@ -638,6 +646,13 @@ async def run_startup_tasks(app: FastAPI) -> bool:
                 project_service.register(
                     project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
                 )
+
+                # Add project users to allowed emails list
+                project_users = project_data.get("users", [])
+                if project_users:
+                    project_user_emails = [u.get("email") for u in project_users if u.get("email")]
+                    if project_user_emails:
+                        user_service.add_allowed_emails(project_user_emails)
             except Exception as e:
                 logger.error(f"Error processing project file {project_file}: {e}")
                 all_successful = False
@@ -645,7 +660,30 @@ async def run_startup_tasks(app: FastAPI) -> bool:
                 # Close all resources including database connections
                 await project_manager.close()
 
-        # Skip MinIO/Keycloak checks when SKIP_STARTUP_CHECKS is enabled
+        # Log all allowed emails for visibility (after all project users have been added)
+        all_allowed_emails = user_service.get_allowed_emails()
+        if all_allowed_emails:
+            logger.info(f"Allowed user emails ({len(all_allowed_emails)}): {', '.join(sorted(all_allowed_emails))}")
+
+        # Always ensure operations manager has valid Keycloak credentials
+        # This is needed for the operations manager's own authentication system
+        logger.info("Ensuring operations manager has valid Keycloak credentials")
+        credentials_success = await keycloak_client_exists_and_works()
+        if credentials_success:
+            logger.info("Operations manager Keycloak credentials ensured successfully")
+        else:
+            logger.error("Failed to ensure operations manager Keycloak credentials")
+            all_successful = False
+
+        # Always register OAuth client - this is internal configuration, not external resource creation
+        if app:
+            logger.info("Registering OAuth client")
+            await register_oauth_client_after_keycloak_setup(app)
+            logger.info("OAuth client registration completed successfully")
+        else:
+            raise RuntimeError("No app instance provided - cannot register OAuth client")
+
+        # Skip external resource creation when SKIP_STARTUP_CHECKS is enabled
         if not skip_checks:
             logger.info("Checking MinIO CLI availability")
             minio_success = await check_minio_availability()
@@ -655,30 +693,14 @@ async def run_startup_tasks(app: FastAPI) -> bool:
                 logger.error("MinIO CLI check failed")
                 all_successful = False
 
-            logger.info("Ensuring operations manager has valid Keycloak credentials")
-            credentials_success = await keycloak_client_exists_and_works()
-            if credentials_success:
-                logger.info("Operations manager Keycloak credentials ensured successfully")
-            else:
-                logger.error("Failed to ensure operations manager Keycloak credentials")
-                all_successful = False
-
             logger.info("Setting up Keycloak (realm, SSO, scopes, and operations client)")
             keycloak_success = await setup_keycloak()
             if not keycloak_success:
                 raise RuntimeError("Keycloak setup failed - cannot proceed without authentication")
 
             logger.info("Complete Keycloak setup completed successfully")
-
-            # Register OAuth client now that OIDC credentials are available
-            if app:
-                logger.info("Registering OAuth client with post-setup credentials")
-                await register_oauth_client_after_keycloak_setup(app)
-                logger.info("OAuth client registration completed successfully")
-            else:
-                raise RuntimeError("No app instance provided - cannot register OAuth client")
         else:
-            logger.warning("Skipped MinIO/Keycloak/OAuth checks (SKIP_STARTUP_CHECKS=True)")
+            logger.warning("Skipped external resource creation (SKIP_STARTUP_CHECKS=True)")
 
         # API keys are now loaded inline during project file processing above
         logger.info("Project API keys loaded during project processing")

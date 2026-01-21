@@ -567,10 +567,20 @@ class KubectlConnector:
             return False
 
     async def apply_label_to_resource(
-        self, resource_type: str, resource_name: str, label_key: str, label_value: str, namespace: str | None = None
+        self,
+        resource_type: str,
+        resource_name: str,
+        label_key: str,
+        label_value: str,
+        namespace: str | None = None,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
     ) -> bool:
         """
         Apply a label to a specific Kubernetes resource.
+
+        Includes retry logic to handle transient failures from admission webhooks
+        (e.g., Capsule) that may temporarily deny requests during reconciliation.
 
         Args:
             resource_type: The type of resource (e.g., 'namespace', 'pod', 'service')
@@ -578,33 +588,53 @@ class KubectlConnector:
             label_key: The label key to apply
             label_value: The label value to apply
             namespace: The namespace of the resource (not needed for cluster-scoped resources like namespaces)
+            max_retries: Maximum number of retry attempts (default: 3)
+            retry_delay: Delay in seconds between retry attempts (default: 1.0)
 
         Returns:
             True if the label was applied successfully, False otherwise
         """
         logger.debug(f"Applying label {label_key}={label_value} to {resource_type}/{resource_name}")
 
-        try:
-            # Build the kubectl label command with --overwrite to handle existing labels
-            args = ["label", resource_type, resource_name, f"{label_key}={label_value}", "--overwrite"]
+        # Build the kubectl label command with --overwrite to handle existing labels
+        args = ["label", resource_type, resource_name, f"{label_key}={label_value}", "--overwrite"]
 
-            # Add namespace flag if provided and not a cluster-scoped resource
-            if namespace and resource_type.lower() != "namespace":
-                args.extend(["-n", namespace])
+        # Add namespace flag if provided and not a cluster-scoped resource
+        if namespace and resource_type.lower() != "namespace":
+            args.extend(["-n", namespace])
 
-            stdout, stderr, code = await self._run_kubectl_command(args)
+        last_error = ""
+        for attempt in range(1, max_retries + 1):
+            try:
+                stdout, stderr, code = await self._run_kubectl_command(args)
 
-            if code != 0:
-                error_msg = f"Failed to apply label to {resource_type}/{resource_name}: {stderr}"
-                logger.error(error_msg)
-                return False
+                if code == 0:
+                    logger.info(
+                        f"Successfully applied label {label_key}={label_value} to {resource_type}/{resource_name}"
+                    )
+                    return True
 
-            logger.info(f"Successfully applied label {label_key}={label_value} to {resource_type}/{resource_name}")
-            return True
+                last_error = stderr
+                if attempt < max_retries:
+                    logger.warning(
+                        f"Failed to apply label to {resource_type}/{resource_name} (attempt {attempt}/{max_retries}): "
+                        f"{stderr}. Retrying in {retry_delay}s..."
+                    )
+                    await asyncio.sleep(retry_delay)
 
-        except Exception as e:
-            logger.error(f"Error applying label to {resource_type}/{resource_name}: {e}")
-            return False
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries:
+                    logger.warning(
+                        f"Error applying label to {resource_type}/{resource_name} (attempt {attempt}/{max_retries}): "
+                        f"{e}. Retrying in {retry_delay}s..."
+                    )
+                    await asyncio.sleep(retry_delay)
+
+        logger.error(
+            f"Failed to apply label to {resource_type}/{resource_name} after {max_retries} attempts: {last_error}"
+        )
+        return False
 
     async def apply_annotation_to_resource(
         self,

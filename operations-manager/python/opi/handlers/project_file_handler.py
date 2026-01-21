@@ -1047,6 +1047,171 @@ class ProjectFileHandler:
             project_data, deployment_name, component_name, "minio-storage", reference_name, generation
         )
 
+    # ========================================================================
+    # Deployment-Level Service Generation Methods
+    # ========================================================================
+    # These methods store/retrieve generation at the deployment level for
+    # services like database and minio that are deployment-wide resources.
+    # Structure: deployments[name].services.{service_type}.generation
+
+    def get_deployment_database_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
+        """
+        Get the database generation for a deployment.
+
+        Path: deployments[name].services.database.generation
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            Generation number if set, None if not present
+        """
+        return self._get_deployment_service_generation(project_data, deployment_name, "database")
+
+    def set_deployment_database_generation(
+        self, project_data: dict[str, Any], deployment_name: str, generation: int
+    ) -> dict[str, Any]:
+        """
+        Set the database generation for a deployment.
+
+        Path: deployments[name].services.database.generation
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            generation: Generation number to set
+
+        Returns:
+            Updated project_data dictionary
+        """
+        return self._set_deployment_service_generation(project_data, deployment_name, "database", generation)
+
+    def get_deployment_bucket_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
+        """
+        Get the bucket/minio generation for a deployment.
+
+        Path: deployments[name].services.minio-storage.generation
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+
+        Returns:
+            Generation number if set, None if not present
+        """
+        return self._get_deployment_service_generation(project_data, deployment_name, "minio-storage")
+
+    def set_deployment_bucket_generation(
+        self, project_data: dict[str, Any], deployment_name: str, generation: int
+    ) -> dict[str, Any]:
+        """
+        Set the bucket/minio generation for a deployment.
+
+        Path: deployments[name].services.minio-storage.generation
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            generation: Generation number to set
+
+        Returns:
+            Updated project_data dictionary
+        """
+        return self._set_deployment_service_generation(project_data, deployment_name, "minio-storage", generation)
+
+    def _get_deployment_service_generation(
+        self, project_data: dict[str, Any], deployment_name: str, service_type: str
+    ) -> int | None:
+        """
+        Get generation from deployment-level services block.
+
+        Expected format:
+        deployments:
+          - name: deployment-1
+            services:
+              - reference: database
+                config:
+                  generation: 1
+              - reference: minio-storage
+                config:
+                  generation: 2
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") == deployment_name:
+                services = deployment.get("services", [])
+
+                # Services is a list of {reference: ..., config: ...}
+                if isinstance(services, list):
+                    for item in services:
+                        if isinstance(item, dict) and item.get("reference") == service_type:
+                            config = item.get("config", {})
+                            generation = config.get("generation")
+                            if generation is not None:
+                                logger.debug(
+                                    f"Deployment service generation for {deployment_name}/{service_type}: {generation}"
+                                )
+                                return int(generation)
+                            return None
+
+                return None
+        return None
+
+    def _set_deployment_service_generation(
+        self, project_data: dict[str, Any], deployment_name: str, service_type: str, generation: int
+    ) -> dict[str, Any]:
+        """
+        Set generation in deployment-level services block.
+
+        Format:
+        deployments:
+          - name: deployment-1
+            services:
+              - reference: database
+                config:
+                  generation: 1
+        """
+        deployments = project_data.get("deployments", [])
+        deployment_found = False
+
+        for deployment in deployments:
+            if deployment.get("name") == deployment_name:
+                deployment_found = True
+
+                # Ensure services list exists
+                if "services" not in deployment:
+                    deployment["services"] = []
+                services = deployment["services"]
+
+                # Convert dict to list if needed (migration from old format)
+                if isinstance(services, dict):
+                    deployment["services"] = []
+                    services = deployment["services"]
+
+                # Find existing service entry or create new one
+                service_entry = None
+                for item in services:
+                    if isinstance(item, dict) and item.get("reference") == service_type:
+                        service_entry = item
+                        break
+
+                if service_entry is None:
+                    service_entry = {"reference": service_type, "config": {"generation": generation}}
+                    services.append(service_entry)
+                else:
+                    if "config" not in service_entry or not isinstance(service_entry["config"], dict):
+                        service_entry["config"] = {}
+                    service_entry["config"]["generation"] = generation
+
+                logger.info(f"Set deployment service generation for {deployment_name}/{service_type} to {generation}")
+                break
+
+        if not deployment_found:
+            logger.warning(f"Deployment '{deployment_name}' not found in project data")
+
+        return project_data
+
     def extract_backup_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
         Extract project-level backup configuration.
@@ -1796,6 +1961,61 @@ class ProjectFileHandler:
 
         return False
 
+    def get_components_using_service(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        service_types: list[str],
+    ) -> list[dict[str, Any]]:
+        """
+        Get components in a deployment that use specified service types.
+
+        Returns a list of dicts with component info including the service reference.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment to check
+            service_types: List of service type values to check for
+
+        Returns:
+            List of dicts with keys: component_name, service_type, reference_name
+        """
+        results: list[dict[str, Any]] = []
+
+        component_refs = self.extract_deployment_components(project_data, deployment_name)
+        for component_ref in component_refs:
+            ref_name = component_ref.get("reference") if isinstance(component_ref, dict) else component_ref
+            if not ref_name:
+                continue
+
+            path = f"$.components[?(@.name=='{ref_name}')].uses-services"
+            services = self.extract_value_by_path(project_data, path, [])
+            if not services:
+                continue
+
+            service_list = services if isinstance(services, list) else [services]
+            for service in service_list:
+                if isinstance(service, str):
+                    service_name = service
+                    service_ref = f"{deployment_name}-{service_name.split('-')[0]}"
+                elif isinstance(service, dict):
+                    service_name = list(service.keys())[0]
+                    service_config = service[service_name]
+                    service_ref = service_config.get("reference", f"{deployment_name}-{service_name.split('-')[0]}")
+                else:
+                    continue
+
+                if service_name in service_types:
+                    results.append(
+                        {
+                            "component_name": ref_name,
+                            "service_type": service_name,
+                            "reference_name": service_ref,
+                        }
+                    )
+
+        return results
+
     # ========================================================================
     # Invite System Methods
     # ========================================================================
@@ -1879,9 +2099,7 @@ class ProjectFileHandler:
         logger.debug(f"Found {len(active)} active invite(s)")
         return active
 
-    def get_invite_auth_methods(
-        self, project_data: dict[str, Any], invite: dict[str, Any]
-    ) -> dict[str, bool]:
+    def get_invite_auth_methods(self, project_data: dict[str, Any], invite: dict[str, Any]) -> dict[str, bool]:
         """
         Determine allowed authentication methods for an invite.
 
@@ -1912,9 +2130,7 @@ class ProjectFileHandler:
             "local": settings.get("allow_local", True),
         }
 
-    def get_invite_message(
-        self, invite: dict[str, Any], language: str = "nl"
-    ) -> str:
+    def get_invite_message(self, invite: dict[str, Any], language: str = "nl") -> str:
         """
         Get the invite message in the specified language.
 
@@ -1936,9 +2152,7 @@ class ProjectFileHandler:
 
         return ""
 
-    def get_invite_success_title(
-        self, invite: dict[str, Any], language: str = "nl"
-    ) -> str:
+    def get_invite_success_title(self, invite: dict[str, Any], language: str = "nl") -> str:
         """
         Get the success page title in the specified language.
 
@@ -1963,9 +2177,7 @@ class ProjectFileHandler:
         }
         return defaults.get(language, defaults["nl"])
 
-    def get_invite_success_button(
-        self, invite: dict[str, Any], language: str = "nl"
-    ) -> str:
+    def get_invite_success_button(self, invite: dict[str, Any], language: str = "nl") -> str:
         """
         Get the success page button text in the specified language.
 

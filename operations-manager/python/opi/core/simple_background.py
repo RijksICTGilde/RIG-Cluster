@@ -232,10 +232,14 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
                 repo_path=settings.GIT_PROJECTS_SERVER_REPO_PATH,
             )
 
-            # Create project file in Git repository
+            # Create project file in Git repository and commit immediately
+            # This ensures the project configuration is preserved even if deployment fails
             project_file_path = f"projects/{project_data.project_name}.yaml"
-            await git_connector_for_project_files.create_or_update_file(project_file_path, yaml_content, False)
-            logger.info(f"Task {task_id}: Project file created at {project_file_path}")
+            commit_message = f"Create project {project_data.project_name}"
+            await git_connector_for_project_files.create_or_update_file(
+                project_file_path, yaml_content, do_commit_and_push=True, commit_message=commit_message
+            )
+            logger.info(f"Task {task_id}: Project file created and pushed at {project_file_path}")
             task_progress_manager.complete_task(git_task)
         except Exception as e:
             error_msg = f"Failed Git operations: {e}"

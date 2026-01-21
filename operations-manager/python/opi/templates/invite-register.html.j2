@@ -9,160 +9,99 @@
 {% set page_title = title_nl if language == 'nl' else title_en %}
 
 <c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive">
-    <div class="rvo-demo-page">
-        {# Header #}
-        <c-header
-            text="{% if language == 'nl' %}Account Aanmaken{% else %}Create Account{% endif %}"
-            subtitle="{{ display_name }}"
-            link="/"/>
+    {# Header #}
+    <c-header
+        text="Zelfservice voor Applicatie Deployment"
+        subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+        link="/"/>
 
-        <c-layout-flow gap="xl" size="lg">
-            <main>
-                <c-layout-flow gap="xl">
-                    {# Welcome Card #}
-                    {% if message %}
-                    <c-card background="color" backgroundColor="hemelblauw" padding="lg">
-                        <c-layout-flow gap="md">
-                            <c-heading type="h1" textContent="{% if language == 'nl' %}Welkom{% else %}Welcome{% endif %}" />
-                            <p style="color: rgba(255,255,255,0.9); font-size: 1.1em;">{{ message }}</p>
-                        </c-layout-flow>
-                    </c-card>
-                    {% endif %}
-
+    <c-layout-flow gap="xl" size="lg">
+        <main>
+            <c-layout-flow gap="xl">
                     {# Registration Form Card #}
                     <c-card outline="true" padding="lg">
                         <form method="POST" action="/invite/{{ invite_key }}/register">
                             <c-layout-flow gap="lg">
+                                <c-heading type="h1" textContent="{{ display_name }}" />
                                 <c-heading type="h2" textContent="{% if language == 'nl' %}Nieuw Account{% else %}New Account{% endif %}" />
+
+                                {% if general_error %}
+                                <c-alert
+                                    kind="error"
+                                    heading="{% if language == 'nl' %}Fout{% else %}Error{% endif %}"
+                                    content="{{ general_error }}"/>
+                                {% endif %}
 
                                 {% if domain_restriction %}
                                 <c-alert
                                     kind="info"
                                     heading="{% if language == 'nl' %}E-mail beperking{% else %}Email restriction{% endif %}"
-                                    messages="{% if language == 'nl' %}Uw e-mailadres moet eindigen op {{ domain_restriction }}{% else %}Your email address must end with {{ domain_restriction }}{% endif %}"/>
+                                    content="{% if language == 'nl' %}Uw e-mailadres moet eindigen op {{ domain_restriction }}{% else %}Your email address must end with {{ domain_restriction }}{% endif %}"/>
                                 {% endif %}
 
                                 {# Email Field #}
-                                <div>
-                                    <label for="email" class="utrecht-form-label">
-                                        {% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %} *
-                                    </label>
-                                    <c-input id="email"
-                                           name="email"
-                                           type="email"
-                                           placeholder="{% if language == 'nl' %}naam@organisatie.nl{% else %}name@organization.com{% endif %}"
-                                           value="{{ form_data.email if form_data else '' }}"
-                                           required="true" />
-                                    {% if errors and errors.email %}
-                                    <p class="utrecht-form-field-error-message" style="color: #d52b1e; margin-top: 0.25rem;">{{ errors.email }}</p>
-                                    {% endif %}
-                                </div>
+                                <c-text-input-field
+                                    id="email"
+                                    name="email"
+                                    type="email"
+                                    label="{% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %}"
+                                    placeholder="{% if language == 'nl' %}naam@organisatie.nl{% else %}name@organization.com{% endif %}"
+                                    {% if form_data and form_data.email %}value="{{ form_data.email }}"{% endif %}
+                                    required="true"
+                                    {% if errors and errors.email %}errorText="{{ errors.email }}"{% endif %} />
 
                                 {# First Name Field #}
-                                <div>
-                                    <label for="first_name" class="utrecht-form-label">
-                                        {% if language == 'nl' %}Voornaam{% else %}First name{% endif %} *
-                                    </label>
-                                    <c-input id="first_name"
-                                           name="first_name"
-                                           type="text"
-                                           placeholder="{% if language == 'nl' %}Voornaam{% else %}First name{% endif %}"
-                                           value="{{ form_data.first_name if form_data else '' }}"
-                                           required="true" />
-                                    {% if errors and errors.first_name %}
-                                    <p class="utrecht-form-field-error-message" style="color: #d52b1e; margin-top: 0.25rem;">{{ errors.first_name }}</p>
-                                    {% endif %}
-                                </div>
+                                <c-text-input-field
+                                    id="first_name"
+                                    name="first_name"
+                                    type="text"
+                                    label="{% if language == 'nl' %}Voornaam{% else %}First name{% endif %}"
+                                    placeholder="{% if language == 'nl' %}Voornaam{% else %}First name{% endif %}"
+                                    {% if form_data and form_data.first_name %}value="{{ form_data.first_name }}"{% endif %}
+                                    required="true"
+                                    {% if errors and errors.first_name %}errorText="{{ errors.first_name }}"{% endif %} />
 
                                 {# Last Name Field #}
-                                <div>
-                                    <label for="last_name" class="utrecht-form-label">
-                                        {% if language == 'nl' %}Achternaam{% else %}Last name{% endif %} *
-                                    </label>
-                                    <c-input id="last_name"
-                                           name="last_name"
-                                           type="text"
-                                           placeholder="{% if language == 'nl' %}Achternaam{% else %}Last name{% endif %}"
-                                           value="{{ form_data.last_name if form_data else '' }}"
-                                           required="true" />
-                                    {% if errors and errors.last_name %}
-                                    <p class="utrecht-form-field-error-message" style="color: #d52b1e; margin-top: 0.25rem;">{{ errors.last_name }}</p>
-                                    {% endif %}
-                                </div>
+                                <c-text-input-field
+                                    id="last_name"
+                                    name="last_name"
+                                    type="text"
+                                    label="{% if language == 'nl' %}Achternaam{% else %}Last name{% endif %}"
+                                    placeholder="{% if language == 'nl' %}Achternaam{% else %}Last name{% endif %}"
+                                    {% if form_data and form_data.last_name %}value="{{ form_data.last_name }}"{% endif %}
+                                    required="true"
+                                    {% if errors and errors.last_name %}errorText="{{ errors.last_name }}"{% endif %} />
 
                                 {# Password Field #}
-                                <div>
-                                    <label for="password" class="utrecht-form-label">
-                                        {% if language == 'nl' %}Wachtwoord{% else %}Password{% endif %} *
-                                    </label>
-                                    <c-input id="password"
-                                           name="password"
-                                           type="password"
-                                           placeholder="{% if language == 'nl' %}Minimaal 12 tekens{% else %}At least 12 characters{% endif %}"
-                                           required="true" />
-                                    <p class="utrecht-form-field-description" style="color: #666; font-size: 0.875rem; margin-top: 0.25rem;">
-                                        {% if language == 'nl' %}
-                                        Minimaal 12 tekens, met hoofdletter, kleine letter en cijfer.
-                                        {% else %}
-                                        At least 12 characters, including uppercase, lowercase and number.
-                                        {% endif %}
-                                    </p>
-                                    {% if errors and errors.password %}
-                                    <p class="utrecht-form-field-error-message" style="color: #d52b1e; margin-top: 0.25rem;">{{ errors.password }}</p>
-                                    {% endif %}
-                                </div>
+                                <c-text-input-field
+                                    id="password"
+                                    name="password"
+                                    type="password"
+                                    label="{% if language == 'nl' %}Wachtwoord{% else %}Password{% endif %}"
+                                    placeholder="{% if language == 'nl' %}Minimaal 12 tekens{% else %}At least 12 characters{% endif %}"
+                                    helperText="{% if language == 'nl' %}Minimaal 12 tekens, met hoofdletter, kleine letter en cijfer.{% else %}At least 12 characters, including uppercase, lowercase and number.{% endif %}"
+                                    required="true"
+                                    {% if errors and errors.password %}errorText="{{ errors.password }}"{% endif %} />
 
                                 {# Confirm Password Field #}
-                                <div>
-                                    <label for="password_confirm" class="utrecht-form-label">
-                                        {% if language == 'nl' %}Bevestig wachtwoord{% else %}Confirm password{% endif %} *
-                                    </label>
-                                    <c-input id="password_confirm"
-                                           name="password_confirm"
-                                           type="password"
-                                           placeholder="{% if language == 'nl' %}Herhaal wachtwoord{% else %}Repeat password{% endif %}"
-                                           required="true" />
-                                    {% if errors and errors.password_confirm %}
-                                    <p class="utrecht-form-field-error-message" style="color: #d52b1e; margin-top: 0.25rem;">{{ errors.password_confirm }}</p>
-                                    {% endif %}
-                                </div>
+                                <c-text-input-field
+                                    id="password_confirm"
+                                    name="password_confirm"
+                                    type="password"
+                                    label="{% if language == 'nl' %}Bevestig wachtwoord{% else %}Confirm password{% endif %}"
+                                    placeholder="{% if language == 'nl' %}Herhaal wachtwoord{% else %}Repeat password{% endif %}"
+                                    required="true"
+                                    {% if errors and errors.password_confirm %}errorText="{{ errors.password_confirm }}"{% endif %} />
 
                                 {# Form Actions #}
                                 <c-layout-flow gap="md" row="true">
                                     <c-button type="submit" kind="primary" label="{% if language == 'nl' %}Account Aanmaken{% else %}Create Account{% endif %}" />
-                                    <c-button type="button" kind="secondary" label="{% if language == 'nl' %}Annuleren{% else %}Cancel{% endif %}" onclick="window.location.href='/invite/{{ invite_key }}'" />
+                                    <c-button type="button" kind="secondary" label="{% if language == 'nl' %}Annuleren{% else %}Cancel{% endif %}" @click="window.location.href='/invite/{{ invite_key }}'" />
                                 </c-layout-flow>
                             </c-layout-flow>
                         </form>
                     </c-card>
-
-                    {# Alternative Login Option #}
-                    <c-card outline="true" padding="md">
-                        <c-layout-flow gap="sm">
-                            <c-heading type="h3" textContent="{% if language == 'nl' %}Heeft u al een account?{% else %}Already have an account?{% endif %}" />
-                            <p class="rvo-paragraph">
-                                {% if language == 'nl' %}
-                                Als u al een rijksoverheid account heeft, kunt u ook inloggen met SSO-Rijk.
-                                {% else %}
-                                If you already have a government account, you can also sign in with SSO-Rijk.
-                                {% endif %}
-                            </p>
-                            <c-action-group
-                                :actions="[
-                                    {
-                                        'type': 'link',
-                                        'kind': 'tertiary',
-                                        'size': 'sm',
-                                        'label': '{% if language == \"nl\" %}Terug naar opties{% else %}Back to options{% endif %}',
-                                        'showIcon': 'before',
-                                        'icon': 'pijl-naar-links',
-                                        'url': '/invite/{{ invite_key }}'
-                                    }
-                                ]"/>
-                        </c-layout-flow>
-                    </c-card>
-                </c-layout-flow>
-            </main>
-        </c-layout-flow>
-    </div>
+            </c-layout-flow>
+        </main>
+    </c-layout-flow>
 </c-page>

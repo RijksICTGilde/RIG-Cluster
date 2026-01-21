@@ -35,7 +35,12 @@ async def self_service_portal(request: Request):
         user = get_current_user(request)
         return templates.TemplateResponse(
             "self-service-portal.html.j2",
-            {"request": request, "title": "Nieuw Project - Self Service Portal", "menu_items": get_menu_items(user)},
+            {
+                "request": request,
+                "title": "Nieuw Project - Self Service Portal",
+                "menu_items": get_menu_items(user),
+                "user": user,
+            },
         )
     except Exception as e:
         import traceback

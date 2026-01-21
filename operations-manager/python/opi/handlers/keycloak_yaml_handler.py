@@ -88,6 +88,33 @@ class KeycloakYamlHandler:
         else:
             logger.debug("No authenticationFlows section in configuration")
 
+    async def ensure_clients(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
+        """Ensure clients are correctly configured (idempotent).
+
+        This method only processes the clients section of the YAML config.
+        It's used to update existing realms where clients may have been added
+        to the template after initial realm creation.
+
+        Args:
+            yaml_path: Path to YAML configuration file
+            context: Dictionary of variables for substitution (must include realm_name)
+        """
+        logger.info(f"Ensuring clients from {yaml_path}")
+
+        # Load YAML
+        config = self._load_yaml(yaml_path)
+
+        # Merge variables: YAML variables + context (context overrides)
+        variables = {**config.get("variables", {}), **context}
+
+        # Process only clients
+        clients_section = config.get("clients")
+        if clients_section:
+            await self._process_clients(clients_section, variables)
+            logger.info("Clients configuration completed")
+        else:
+            logger.debug("No clients section in configuration")
+
     def _load_yaml(self, yaml_path: str | Path) -> dict[str, Any]:
         """Load YAML file.
 
@@ -523,6 +550,16 @@ class KeycloakYamlHandler:
                 if web_origins:
                     client_data["webOrigins"] = web_origins
 
+            # Add PKCE code challenge method for public clients
+            if "pkceCodeChallengeMethod" in item:
+                client_data["attributes"] = client_data.get("attributes", {})
+                client_data["attributes"]["pkce.code.challenge.method"] = item["pkceCodeChallengeMethod"]
+
+            # Merge any additional attributes from YAML (e.g., login_theme)
+            if "attributes" in item and isinstance(item["attributes"], dict):
+                client_data["attributes"] = client_data.get("attributes", {})
+                client_data["attributes"].update(item["attributes"])
+
             # Add protocol mappers if specified
             if "protocolMappers" in item:
                 client_data["protocolMappers"] = item["protocolMappers"]
@@ -535,7 +572,7 @@ class KeycloakYamlHandler:
                 alphabet = string.ascii_letters + string.digits
                 client_data["secret"] = "".join(secrets.choice(alphabet) for _ in range(32))
 
-            # Create the client
+            # Create or update the client
             try:
                 self.keycloak.admin.change_current_realm(realm_name)
 
@@ -544,7 +581,9 @@ class KeycloakYamlHandler:
                     logger.info(f"Created client '{client_id}' in realm '{realm_name}'")
                 except Exception as e:
                     if "409" in str(e) or "Conflict" in str(e):
-                        logger.info(f"Client '{client_id}' already exists in realm '{realm_name}'")
+                        logger.info(f"Client '{client_id}' already exists in realm '{realm_name}', updating redirect URIs")
+                        # Find existing client and update redirect URIs and web origins
+                        await self._update_existing_client(realm_name, client_id, client_data)
                     else:
                         raise
 
@@ -562,10 +601,80 @@ class KeycloakYamlHandler:
                 if "restrictAccess" in item:
                     await self._process_restrict_access(realm_name, client_id, item["restrictAccess"])
 
+                # Handle browser flow override (e.g., to bypass access restrictions for invite client)
+                if "browserFlowOverride" in item:
+                    flow_alias = item["browserFlowOverride"]
+                    logger.info(f"Setting browser flow override '{flow_alias}' for client '{client_id}'")
+                    await self.keycloak.set_client_authentication_flow_override(
+                        realm_name=realm_name,
+                        client_id=client_id,
+                        browser_flow_alias=flow_alias,
+                    )
+
             except Exception as e:
                 logger.error(f"Failed to create client '{client_id}': {e}")
                 self.keycloak.admin.change_current_realm("master")
                 raise
+
+    async def _update_existing_client(
+        self, realm_name: str, client_id: str, client_data: dict[str, Any]
+    ) -> None:
+        """Update an existing client with new redirect URIs and web origins.
+
+        This is used to fix clients that were created with incorrect URLs
+        (e.g., missing protocol prefix) during project refresh.
+
+        Args:
+            realm_name: Realm name
+            client_id: Client ID (the clientId field, not internal ID)
+            client_data: New client data containing redirectUris and webOrigins
+        """
+        try:
+            # Find existing client by clientId
+            all_clients = self.keycloak.admin.get_clients()
+            existing_client = None
+            for client in all_clients:
+                if client.get("clientId") == client_id:
+                    existing_client = client
+                    break
+
+            if not existing_client:
+                logger.warning(f"Could not find existing client '{client_id}' to update")
+                return
+
+            # Build update payload with only the fields we want to update
+            update_data: dict[str, Any] = {}
+
+            # Update redirect URIs if provided
+            if "redirectUris" in client_data:
+                update_data["redirectUris"] = client_data["redirectUris"]
+
+            # Update web origins if provided
+            if "webOrigins" in client_data:
+                update_data["webOrigins"] = client_data["webOrigins"]
+
+            # Update attributes (includes PKCE settings)
+            if "attributes" in client_data:
+                # Merge with existing attributes
+                existing_attrs = existing_client.get("attributes", {})
+                existing_attrs.update(client_data["attributes"])
+                update_data["attributes"] = existing_attrs
+
+            if not update_data:
+                logger.debug(f"No fields to update for client '{client_id}'")
+                return
+
+            # Update the client
+            self.keycloak.admin.update_client(client_id=existing_client["id"], payload=update_data)
+            logger.info(
+                f"Updated client '{client_id}' in realm '{realm_name}': "
+                f"redirectUris={update_data.get('redirectUris', 'unchanged')}, "
+                f"webOrigins={update_data.get('webOrigins', 'unchanged')}"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to update existing client '{client_id}': {e}")
+            # Don't raise - this is best-effort update during refresh
 
     async def _assign_service_account_roles(
         self, realm_name: str, client_id: str, role_mappings: dict[str, list[str]]

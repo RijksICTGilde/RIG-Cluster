@@ -12,6 +12,10 @@ spec:
     metadata:
       labels:
         app: keycloak
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -63,6 +67,8 @@ spec:
             - name: KC_PROXY_HEADERS
               value: "xforwarded"
             - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
               value: "true"
             - name: KC_HTTP_ENABLED
               value: "true"
