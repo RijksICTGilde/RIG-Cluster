@@ -27,8 +27,8 @@ patches:
       name: keycloak
     patch: |-
       - op: test
-        path: /spec/template/spec/containers/0/env/5/name
+        path: /spec/template/spec/containers/0/env/6/name
         value: "KC_HOSTNAME"
       - op: replace
-        path: /spec/template/spec/containers/0/env/5/value
+        path: /spec/template/spec/containers/0/env/6/value
         value: "https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl"
