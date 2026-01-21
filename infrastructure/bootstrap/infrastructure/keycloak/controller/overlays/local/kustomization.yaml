@@ -74,3 +74,40 @@ patches:
             cp keycloak-nl-design-system.jar /opt/keycloak/providers/
             wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar
             cp keycloak-saml-nameid-mapper-1.0.0.jar /opt/keycloak/providers/
+  # Add management port (9000) to service for metrics endpoint
+  - target:
+      kind: Service
+      name: keycloak
+    patch: |-
+      - op: add
+        path: /spec/ports/-
+        value:
+          name: management
+          port: 9000
+          protocol: TCP
+          targetPort: 9000
+  # Add /metrics path to ingress routing to management port (DEV ONLY)
+  - target:
+      kind: Ingress
+      name: keycloak
+    patch: |-
+      - op: add
+        path: /spec/rules/0/http/paths/-
+        value:
+          path: /metrics
+          pathType: Exact
+          backend:
+            service:
+              name: keycloak
+              port:
+                number: 9000
+      - op: add
+        path: /spec/rules/0/http/paths/-
+        value:
+          path: /health
+          pathType: Prefix
+          backend:
+            service:
+              name: keycloak
+              port:
+                number: 9000

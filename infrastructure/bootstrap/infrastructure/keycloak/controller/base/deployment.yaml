@@ -14,7 +14,7 @@ spec:
         app: keycloak
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
+        prometheus.io/port: "9000"
         prometheus.io/path: "/metrics"
     spec:
       automountServiceAccountToken: false

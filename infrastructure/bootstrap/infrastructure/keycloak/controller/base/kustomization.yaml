@@ -8,6 +8,9 @@ resources:
 
 namespace: rig-system
 
-commonLabels:
-  app.kubernetes.io/name: keycloak
-  app.kubernetes.io/component: identity-provider
+labels:
+- pairs:
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/component: identity-provider
+  includeSelectors: true
+  includeTemplates: true
