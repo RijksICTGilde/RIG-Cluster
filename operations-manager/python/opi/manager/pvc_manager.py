@@ -195,7 +195,7 @@ class PVCManager:
             )
 
             # DELETE OLD MANIFESTS if generation > 0
-            if generation > 0:
+            if generation is not None and generation > 0:
                 deleted_files = await self.delete_old_pvc_manifests(
                     project_dir=full_output_dir,
                     component_name=component_name,

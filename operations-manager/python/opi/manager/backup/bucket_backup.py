@@ -499,6 +499,7 @@ class BucketBackupManager(BaseBackupManager):
         target_secret_key: str,
         snapshot_id: str | None = None,
         clear_target: bool = False,
+        project_name: str | None = None,
     ) -> BucketRestoreResult:
         """
         Restore a MinIO bucket from a Kopia backup.
@@ -513,6 +514,7 @@ class BucketBackupManager(BaseBackupManager):
             target_secret_key: Target MinIO secret key
             snapshot_id: Optional specific snapshot ID (defaults to latest)
             clear_target: If True, clear target bucket before restore
+            project_name: Project name for per-project backup bucket
 
         Returns:
             BucketRestoreResult with operation details
@@ -529,6 +531,7 @@ class BucketBackupManager(BaseBackupManager):
                 target_secret_key=target_secret_key,
                 snapshot_id=snapshot_id,
                 clear_target=clear_target,
+                project_name=project_name,
             )
 
     async def _restore_bucket(
@@ -542,6 +545,7 @@ class BucketBackupManager(BaseBackupManager):
         target_secret_key: str,
         snapshot_id: str | None = None,
         clear_target: bool = False,
+        project_name: str | None = None,
     ) -> BucketRestoreResult:
         """
         Internal: restore a bucket from Kopia (lock must be held).
@@ -572,6 +576,8 @@ class BucketBackupManager(BaseBackupManager):
                 backup_prefix=backup_prefix,
                 snapshot_id=snapshot_id,
                 clear_target=clear_target,
+                project_name=project_name,
+                cluster=cluster,
             )
 
             # Wait for pod completion

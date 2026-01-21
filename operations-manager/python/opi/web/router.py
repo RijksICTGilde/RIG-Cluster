@@ -682,7 +682,7 @@ async def project_details(request: Request, project_name: str):
         templates = get_templates()
         user = get_current_user(request)
         # TODO: this logic has to be centralized
-        user_email = "robbert.uittenbroek@rijksoverheid.nl"  # user.get("email", "").lower()
+        user_email = user.get("email", "").lower()
 
         # Get project service to validate access
         project_service = get_project_service()
@@ -716,6 +716,18 @@ async def project_details(request: Request, project_name: str):
 
         # Store decrypted private key for display (admins only see this in UI)
         project_data_decrypted["config"]["age-private-key"] = project_private_key
+
+        # Decrypt Keycloak passwords
+        if project_data_decrypted["config"].get("keycloak"):
+            for kc_config in project_data_decrypted["config"]["keycloak"]:
+                if kc_config.get("password"):
+                    try:
+                        kc_config["password"] = await decrypt_password_smart(
+                            kc_config["password"], project_private_key
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
+                        kc_config["password"] = None
 
         for deployment in project_data_decrypted.get("deployments", []):
             if deployment.get("configuration"):
@@ -1307,7 +1319,7 @@ async def projects_overview(request: Request):
 
         templates = get_templates()
         user = get_current_user(request)
-        user_email = "robbert.uittenbroek@rijksoverheid.nl"  # user.get("email", "").lower()
+        user_email = user.get("email", "").lower()
 
         # Ensure project data is fresh (refreshes from Git if stale)
         await ensure_projects_fresh()

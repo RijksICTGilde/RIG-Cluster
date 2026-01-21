@@ -53,14 +53,19 @@ cnpg_pg_database_size_bytes / 1024 / 1024
 cnpg_pg_database_size_bytes / 1024 / 1024 / 1024
 ```
 
-**Growth rate over the last hour (bytes/second):**
+**Growth over the last 24 hours (bytes):**
 ```promql
-rate(cnpg_pg_database_size_bytes[1h])
+delta(cnpg_pg_database_size_bytes[24h])
 ```
 
-**Growth rate for a specific database over 24 hours:**
+**Growth for a specific database over 24 hours:**
 ```promql
-rate(cnpg_pg_database_size_bytes{datname="keycloak"}[24h])
+delta(cnpg_pg_database_size_bytes{datname="keycloak"}[24h])
+```
+
+**Growth per second (linear regression):**
+```promql
+deriv(cnpg_pg_database_size_bytes[24h])
 ```
 
 **Databases larger than 100MB:**
@@ -133,9 +138,9 @@ minio_bucket_usage_object_total
 minio_bucket_usage_object_total{bucket="my-bucket-name"}
 ```
 
-**Growth rate over the last hour:**
+**Growth over the last 24 hours (bytes):**
 ```promql
-rate(minio_bucket_usage_total_bytes[1h])
+delta(minio_bucket_usage_total_bytes[24h])
 ```
 
 **Buckets larger than 1GB:**

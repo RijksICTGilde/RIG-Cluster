@@ -5,11 +5,18 @@ These routes are PUBLIC and do not require SSO authentication.
 They provide the invite flow for users to join a project's Keycloak realm.
 """
 
+import base64
+import hashlib
 import logging
+import re
+import secrets
 from typing import Any
+from urllib.parse import urlencode
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from opi.core.config import settings
 from opi.core.templates import get_templates
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.invite_manager import (
@@ -26,12 +33,151 @@ from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 
+
+def _generate_pkce_pair() -> tuple[str, str]:
+    """
+    Generate PKCE code_verifier and code_challenge pair.
+
+    Returns:
+        Tuple of (code_verifier, code_challenge)
+    """
+    # Generate random code_verifier (43-128 characters)
+    code_verifier = secrets.token_urlsafe(32)
+
+    # Create code_challenge using S256 method
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+    return code_verifier, code_challenge
+
+
+def _get_keycloak_url_for_cluster(cluster: str) -> str:
+    """
+    Get the Keycloak URL for a given cluster.
+
+    Args:
+        cluster: The cluster name
+
+    Returns:
+        Keycloak base URL
+    """
+    # Import here to avoid circular imports
+    from opi.core.cluster_config import get_keycloak_discovery_url
+
+    return get_keycloak_discovery_url(cluster)
+
+
+def _build_realm_auth_url(
+    keycloak_url: str,
+    realm_name: str,
+    redirect_uri: str,
+    state: str,
+    code_challenge: str,
+) -> str:
+    """
+    Build the Keycloak authorization URL for a project realm.
+
+    Args:
+        keycloak_url: Base Keycloak URL
+        realm_name: The project realm name
+        redirect_uri: OAuth callback URL
+        state: OAuth state parameter
+        code_challenge: PKCE code challenge
+
+    Returns:
+        Full authorization URL
+    """
+    params = {
+        "client_id": settings.INVITE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid profile email",
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "prompt": "login",  # Force login screen even if user has existing Keycloak session
+    }
+
+    auth_endpoint = f"{keycloak_url}/realms/{realm_name}/protocol/openid-connect/auth"
+    return f"{auth_endpoint}?{urlencode(params)}"
+
+
+async def _exchange_code_for_token(
+    keycloak_url: str,
+    realm_name: str,
+    code: str,
+    redirect_uri: str,
+    code_verifier: str,
+) -> dict[str, Any]:
+    """
+    Exchange authorization code for tokens.
+
+    Args:
+        keycloak_url: Base Keycloak URL
+        realm_name: The project realm name
+        code: Authorization code from callback
+        redirect_uri: OAuth callback URL (must match original)
+        code_verifier: PKCE code verifier
+
+    Returns:
+        Token response dict
+
+    Raises:
+        httpx.HTTPStatusError: If token exchange fails
+    """
+    token_endpoint = f"{keycloak_url}/realms/{realm_name}/protocol/openid-connect/token"
+
+    data = {
+        "grant_type": "authorization_code",
+        "client_id": settings.INVITE_CLIENT_ID,
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "code_verifier": code_verifier,
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            token_endpoint,
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def _get_userinfo(keycloak_url: str, realm_name: str, access_token: str) -> dict[str, Any]:
+    """
+    Get user info from Keycloak using access token.
+
+    Args:
+        keycloak_url: Base Keycloak URL
+        realm_name: The project realm name
+        access_token: OAuth access token
+
+    Returns:
+        User info dict
+
+    Raises:
+        httpx.HTTPStatusError: If userinfo request fails
+    """
+    userinfo_endpoint = f"{keycloak_url}/realms/{realm_name}/protocol/openid-connect/userinfo"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            userinfo_endpoint,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        response.raise_for_status()
+        return response.json()
+
 invite_router = APIRouter(prefix="/invite", tags=["invites"])
 
 
-def _find_project_by_invite_key(key: str) -> tuple[str, dict[str, Any], dict[str, Any], str] | None:
+async def _find_project_by_invite_key(key: str) -> tuple[str, dict[str, Any], dict[str, Any], str] | None:
     """
     Search all projects in memory for an invite with the given key.
+
+    Ensures project data is fresh (refreshes from Git if stale, max every 30 seconds).
 
     Args:
         key: The invite key to search for
@@ -39,6 +185,11 @@ def _find_project_by_invite_key(key: str) -> tuple[str, dict[str, Any], dict[str
     Returns:
         Tuple of (project_name, project_data, invite, cluster) or None if not found
     """
+    # Ensure project data is fresh before searching
+    from opi.core.startup import ensure_projects_fresh
+
+    await ensure_projects_fresh()
+
     project_service = get_project_service()
     handler = ProjectFileHandler()
 
@@ -146,6 +297,9 @@ async def invite_landing(request: Request, key: str) -> Response:
     """
     Display the invite landing page with authentication options.
 
+    Queries Keycloak to determine which authentication methods are actually
+    available in the project's realm.
+
     Args:
         request: FastAPI request
         key: The invite key
@@ -156,7 +310,7 @@ async def invite_landing(request: Request, key: str) -> Response:
     templates = get_templates()
 
     # Find project and invite
-    result = _find_project_by_invite_key(key)
+    result = await _find_project_by_invite_key(key)
     if not result:
         return templates.TemplateResponse(
             "invite-error.html.j2",
@@ -168,7 +322,7 @@ async def invite_landing(request: Request, key: str) -> Response:
             },
         )
 
-    project_name, project_data, invite, _cluster = result
+    project_name, project_data, invite, cluster = result
     language = _get_language(request, project_data)
 
     # Validate invite
@@ -187,12 +341,26 @@ async def invite_landing(request: Request, key: str) -> Response:
             },
         )
 
-    # Get auth methods
-    auth_methods = invite_manager.project_file_handler.get_invite_auth_methods(project_data, invite)
+    # Get the project's realm name
+    realm_name = generate_project_realm_name(project_name, cluster)
+
+    # Query Keycloak for actual available auth methods in this realm
+    realm_auth = await invite_manager.get_realm_auth_methods(realm_name)
+
+    # Combine with invite-level restrictions (invite can restrict, not expand)
+    invite_auth_config = invite_manager.project_file_handler.get_invite_auth_methods(project_data, invite)
+
+    # Final auth methods: must be available in realm AND allowed by invite config
+    allow_sso = realm_auth["sso"] and invite_auth_config["sso"]
+    allow_local = realm_auth["local"] and invite_auth_config["local"]
 
     # Get localized content
     message = invite_manager.project_file_handler.get_invite_message(invite, language)
     display_name = project_data.get("display-name", project_name)
+    contact_email = invite.get("contact_email", "")
+
+    # Get identity provider display names for SSO buttons
+    identity_providers = realm_auth.get("identity_providers", [])
 
     return templates.TemplateResponse(
         "invite-landing.html.j2",
@@ -202,8 +370,10 @@ async def invite_landing(request: Request, key: str) -> Response:
             "display_name": display_name,
             "invite_key": key,
             "message": message,
-            "allow_sso": auth_methods["sso"],
-            "allow_local": auth_methods["local"],
+            "allow_sso": allow_sso,
+            "allow_local": allow_local,
+            "identity_providers": identity_providers,
+            "contact_email": contact_email,
             "language": language,
         },
     )
@@ -214,17 +384,18 @@ async def invite_sso_start(request: Request, key: str) -> Response:
     """
     Initiate the SSO authentication flow for an invite.
 
-    Stores the invite key in session and redirects to Keycloak.
+    Redirects to the PROJECT's Keycloak realm for authentication.
+    Uses PKCE with a public client for security.
 
     Args:
         request: FastAPI request
         key: The invite key
 
     Returns:
-        Redirect to Keycloak authorization endpoint
+        Redirect to project realm's Keycloak authorization endpoint
     """
     # Find and validate invite
-    result = _find_project_by_invite_key(key)
+    result = await _find_project_by_invite_key(key)
     if not result:
         raise HTTPException(status_code=404, detail="Invite not found")
 
@@ -237,23 +408,43 @@ async def invite_sso_start(request: Request, key: str) -> Response:
     except InviteError as e:
         raise HTTPException(status_code=400, detail=e.message) from e
 
-    # Store invite flow state in session
+    # Generate PKCE pair for secure public client flow
+    code_verifier, code_challenge = _generate_pkce_pair()
+
+    # Generate state for CSRF protection
+    state = secrets.token_urlsafe(16)
+
+    # Get project realm info
+    realm_name = generate_project_realm_name(project_name, cluster)
+    keycloak_url = _get_keycloak_url_for_cluster(cluster)
+
+    # Build callback URL
+    callback_url = str(request.url_for("invite_sso_callback", key=key))
+
+    # Store invite flow state in session (including PKCE verifier)
     request.session["invite_flow"] = {
         "key": key,
         "project_name": project_name,
         "cluster": cluster,
+        "realm_name": realm_name,
+        "keycloak_url": keycloak_url,
+        "code_verifier": code_verifier,
+        "state": state,
+        "redirect_uri": callback_url,
     }
 
-    # Get OAuth client and redirect
-    oauth = request.app.state.oauth
+    # Build authorization URL for the project's realm
+    auth_url = _build_realm_auth_url(
+        keycloak_url=keycloak_url,
+        realm_name=realm_name,
+        redirect_uri=callback_url,
+        state=state,
+        code_challenge=code_challenge,
+    )
 
-    if not hasattr(oauth, "keycloak"):
-        raise HTTPException(status_code=500, detail="Authentication system not initialized")
+    logger.info(f"Starting invite SSO flow for key '{key}', realm: {realm_name}, callback: {callback_url}")
 
-    callback_url = str(request.url_for("invite_sso_callback", key=key))
-    logger.info(f"Starting invite SSO flow for key '{key}', callback: {callback_url}")
-
-    return await oauth.keycloak.authorize_redirect(request, callback_url)
+    return RedirectResponse(url=auth_url, status_code=302)
 
 
 @invite_router.get("/{key}/sso/callback")
@@ -261,7 +452,8 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
     """
     Handle the OAuth callback after SSO authentication.
 
-    Completes the invite flow by creating/updating the user and assigning permissions.
+    Exchanges the authorization code for tokens using the project realm,
+    then completes the invite flow by assigning permissions.
 
     Args:
         request: FastAPI request
@@ -276,27 +468,63 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
         logger.warning(f"SSO callback session mismatch for key '{key}'")
         return RedirectResponse(url=f"/invite/{key}/error?code=session_error", status_code=302)
 
+    # Verify state parameter (CSRF protection)
+    state_param = request.query_params.get("state")
+    if state_param != invite_flow.get("state"):
+        logger.warning(f"SSO callback state mismatch for key '{key}'")
+        return RedirectResponse(url=f"/invite/{key}/error?code=session_error", status_code=302)
+
+    # Check for error from Keycloak
+    error = request.query_params.get("error")
+    if error:
+        error_description = request.query_params.get("error_description", error)
+        logger.warning(f"SSO callback error for key '{key}': {error} - {error_description}")
+        return RedirectResponse(url=f"/invite/{key}/error?code=sso_error", status_code=302)
+
+    # Get authorization code
+    code = request.query_params.get("code")
+    if not code:
+        logger.warning(f"SSO callback missing code for key '{key}'")
+        return RedirectResponse(url=f"/invite/{key}/error?code=missing_code", status_code=302)
+
     # Find project and invite
-    result = _find_project_by_invite_key(key)
+    result = await _find_project_by_invite_key(key)
     if not result:
         return RedirectResponse(url=f"/invite/{key}/error?code=invite_not_found", status_code=302)
 
     project_name, project_data, invite, cluster = result
 
     try:
-        # Exchange token
-        oauth = request.app.state.oauth
-        token = await oauth.keycloak.authorize_access_token(request)
+        # Get stored OAuth parameters from session
+        keycloak_url = invite_flow["keycloak_url"]
+        realm_name = invite_flow["realm_name"]
+        code_verifier = invite_flow["code_verifier"]
+        redirect_uri = invite_flow["redirect_uri"]
 
-        user_info = token.get("userinfo")
-        if not user_info:
+        # Exchange code for tokens using project realm
+        token_response = await _exchange_code_for_token(
+            keycloak_url=keycloak_url,
+            realm_name=realm_name,
+            code=code,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+        )
+
+        access_token = token_response.get("access_token")
+        if not access_token:
+            raise InviteError("Failed to obtain access token", "token_error")
+
+        # Get user info from project realm
+        user_info = await _get_userinfo(keycloak_url, realm_name, access_token)
+
+        if not user_info or not user_info.get("email"):
             raise InviteError("Failed to retrieve user information", "no_user_info")
 
         logger.info(f"SSO callback for invite '{key}', user: {user_info.get('email', 'unknown')}")
 
-        # Complete invite flow
+        # Complete invite flow - user is already authenticated in the project realm
+        # We just need to assign the invite's roles and groups
         invite_manager = InviteManager()
-        realm_name = generate_project_realm_name(project_name, cluster)
 
         result_data = await invite_manager.complete_sso_invite(
             project_data=project_data,
@@ -318,6 +546,9 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
 
         return RedirectResponse(url=f"/invite/{key}/success", status_code=302)
 
+    except httpx.HTTPStatusError as e:
+        logger.exception(f"HTTP error in SSO callback for invite '{key}': {e}")
+        return RedirectResponse(url=f"/invite/{key}/error?code=token_error", status_code=302)
     except InviteDomainError as e:
         error_url = f"/invite/{key}/error?code=domain_mismatch&domain={e.required_domain}"
         return RedirectResponse(url=error_url, status_code=302)
@@ -343,7 +574,7 @@ async def invite_register_form(request: Request, key: str) -> Response:
     templates = get_templates()
 
     # Find and validate invite
-    result = _find_project_by_invite_key(key)
+    result = await _find_project_by_invite_key(key)
     if not result:
         return templates.TemplateResponse(
             "invite-error.html.j2",
@@ -404,6 +635,8 @@ async def invite_register_form(request: Request, key: str) -> Response:
             "language": language,
             "domain_restriction": domain_restriction,
             "errors": {},
+            "general_error": None,
+            "form_data": None,
         },
     )
 
@@ -423,7 +656,7 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     templates = get_templates()
 
     # Find and validate invite
-    result = _find_project_by_invite_key(key)
+    result = await _find_project_by_invite_key(key)
     if not result:
         return templates.TemplateResponse(
             "invite-error.html.j2",
@@ -465,9 +698,47 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     }
     password_confirm = str(form.get("password_confirm", ""))
 
-    # Validate password confirmation
+    # Validate all fields and collect all errors
     errors: dict[str, str] = {}
-    if form_data["password"] != password_confirm:
+
+    # Email validation
+    if not form_data["email"]:
+        errors["email"] = error_messages["missing_email"]
+    else:
+        email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if not re.match(email_pattern, form_data["email"]):
+            errors["email"] = error_messages["invalid_email"]
+        else:
+            # Check domain restriction
+            restrict_domain = invite.get("restrict_domain")
+            if restrict_domain:
+                domain = restrict_domain if restrict_domain.startswith("@") else f"@{restrict_domain}"
+                if not form_data["email"].lower().endswith(domain.lower()):
+                    errors["email"] = error_messages["domain_mismatch"]
+
+    # Name validation
+    if not form_data["first_name"]:
+        errors["first_name"] = error_messages["missing_first_name"]
+    if not form_data["last_name"]:
+        errors["last_name"] = error_messages["missing_last_name"]
+
+    # Password validation
+    if not form_data["password"]:
+        errors["password"] = error_messages["missing_password"]
+    else:
+        if len(form_data["password"]) < 12:
+            errors["password"] = error_messages["password_too_short"]
+        elif not re.search(r"[A-Z]", form_data["password"]):
+            errors["password"] = error_messages["password_no_uppercase"]
+        elif not re.search(r"[a-z]", form_data["password"]):
+            errors["password"] = error_messages["password_no_lowercase"]
+        elif not re.search(r"\d", form_data["password"]):
+            errors["password"] = error_messages["password_no_digit"]
+
+    # Password confirmation
+    if form_data["password"] and form_data["password"] != password_confirm:
+        errors["password_confirm"] = error_messages["password_mismatch"]
+    elif not password_confirm:
         errors["password_confirm"] = error_messages["password_mismatch"]
 
     if errors:
@@ -526,8 +797,12 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         field = field_map.get(e.error_code, "email")
         errors[field] = error_messages.get(e.error_code, e.message)
 
+        # For user_exists, also show a general alert
+        general_error = None
+        if e.error_code == "user_exists":
+            general_error = error_messages.get(e.error_code, e.message)
+
         display_name = project_data.get("display-name", project_name)
-        message = invite_manager.project_file_handler.get_invite_message(invite, language)
         return templates.TemplateResponse(
             "invite-register.html.j2",
             {
@@ -535,22 +810,28 @@ async def invite_register_submit(request: Request, key: str) -> Response:
                 "project_name": project_name,
                 "display_name": display_name,
                 "invite_key": key,
-                "message": message,
                 "language": language,
                 "domain_restriction": invite.get("restrict_domain"),
                 "errors": errors,
+                "general_error": general_error,
                 "form_data": form_data,
             },
         )
-    except Exception as e:
+    except Exception:
         logger.exception(f"Error creating local account for invite '{key}'")
+        display_name = project_data.get("display-name", project_name)
         return templates.TemplateResponse(
-            "invite-error.html.j2",
+            "invite-register.html.j2",
             {
                 "request": request,
-                "error_title": error_messages["generic_error"],
-                "error_message": str(e),
+                "project_name": project_name,
+                "display_name": display_name,
+                "invite_key": key,
                 "language": language,
+                "domain_restriction": invite.get("restrict_domain"),
+                "errors": {},
+                "general_error": error_messages["generic_error"],
+                "form_data": form_data,
             },
         )
 
@@ -570,7 +851,7 @@ async def invite_success(request: Request, key: str) -> Response:
     templates = get_templates()
 
     # Find project and invite
-    result = _find_project_by_invite_key(key)
+    result = await _find_project_by_invite_key(key)
     if not result:
         return templates.TemplateResponse(
             "invite-error.html.j2",
@@ -585,6 +866,12 @@ async def invite_success(request: Request, key: str) -> Response:
     project_name, project_data, invite, _cluster = result
     language = _get_language(request, project_data)
 
+    # Get success info from session - if empty, user accessed directly without completing flow
+    success_info = request.session.pop("invite_success", {})
+    if not success_info:
+        # Redirect to landing page - user hasn't completed the invite flow
+        return RedirectResponse(url=f"/invite/{key}", status_code=302)
+
     invite_manager = InviteManager()
 
     # Get localized content
@@ -592,9 +879,6 @@ async def invite_success(request: Request, key: str) -> Response:
     success_button = invite_manager.project_file_handler.get_invite_success_button(invite, language)
     application_url = invite.get("application_url", "")
     display_name = project_data.get("display-name", project_name)
-
-    # Get success info from session
-    success_info = request.session.pop("invite_success", {})
 
     return templates.TemplateResponse(
         "invite-success.html.j2",
@@ -628,7 +912,7 @@ async def invite_error(request: Request, key: str) -> Response:
     templates = get_templates()
 
     # Try to find project for language detection
-    result = _find_project_by_invite_key(key)
+    result = await _find_project_by_invite_key(key)
     if result:
         _, project_data, _, _ = result
         language = _get_language(request, project_data)

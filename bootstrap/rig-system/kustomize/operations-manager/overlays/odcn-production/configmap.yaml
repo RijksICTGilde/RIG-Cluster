@@ -38,3 +38,5 @@ data:
     
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
+    
+    ALLOWED_EMAILS=anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl

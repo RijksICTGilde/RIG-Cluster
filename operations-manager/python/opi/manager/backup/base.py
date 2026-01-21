@@ -9,6 +9,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from types import TracebackType
 
 from opi.connectors.kubectl import KubectlConnector
@@ -17,6 +18,24 @@ from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class ResourceType(str, Enum):
+    """Types of resources that can be backed up and restored."""
+
+    PVC = "pvc"
+    DATABASE = "database"
+    BUCKET = "bucket"
+
+    @classmethod
+    def from_string(cls, value: str | None) -> "ResourceType":
+        """Convert string to ResourceType, defaulting to PVC."""
+        if not value:
+            return cls.PVC
+        try:
+            return cls(value.lower())
+        except ValueError:
+            return cls.PVC
 
 
 def utc_now() -> datetime:
@@ -68,6 +87,22 @@ class SnapshotInfo:
     resource_type: str | None = None
     # Raw tags for debugging
     tags: dict[str, str] | None = None
+
+    @property
+    def reference_name(self) -> str | None:
+        """Get reference name based on resource type.
+
+        For PVCs: returns storage_name
+        For databases/buckets: extracts from tags
+        """
+        rt = ResourceType.from_string(self.resource_type)
+        if rt == ResourceType.PVC:
+            return self.storage_name
+        elif rt == ResourceType.DATABASE:
+            return self.tags.get("tag:database") or self.tags.get("database") if self.tags else None
+        elif rt == ResourceType.BUCKET:
+            return self.tags.get("tag:bucket") or self.tags.get("bucket") if self.tags else None
+        return self.storage_name
 
 
 @dataclass
@@ -135,8 +170,7 @@ class BackupLock:
                     elif age_seconds < timeout_seconds:
                         # Lock is fresh and pod exists, cannot acquire
                         logger.warning(
-                            f"Backup lock held by {locked_by} "
-                            f"since {locked_at_str} ({age_seconds:.0f}s ago)"
+                            f"Backup lock held by {locked_by} " f"since {locked_at_str} ({age_seconds:.0f}s ago)"
                         )
                         return False
                     else:
@@ -530,14 +564,16 @@ class BaseBackupManager:
             await asyncio.sleep(5)
 
     # Container statuses that indicate unrecoverable errors
-    FATAL_CONTAINER_STATUSES = frozenset({
-        "imagepullbackoff",
-        "errimagepull",
-        "crashloopbackoff",
-        "createcontainerconfigerror",
-        "invalidimagename",
-        "errimageneverpull",
-    })
+    FATAL_CONTAINER_STATUSES = frozenset(
+        {
+            "imagepullbackoff",
+            "errimagepull",
+            "crashloopbackoff",
+            "createcontainerconfigerror",
+            "invalidimagename",
+            "errimageneverpull",
+        }
+    )
 
     async def _wait_for_pod(self, namespace: str, pod_name: str, timeout: int | None = None) -> bool:
         """
@@ -568,6 +604,7 @@ class BaseBackupManager:
 
             try:
                 import json
+
                 pod_data = json.loads(stdout)
                 phase = pod_data.get("status", {}).get("phase", "").lower()
 
@@ -593,7 +630,7 @@ class BaseBackupManager:
                     logger.warning(f"Unexpected pod phase: {phase}")
 
             except json.JSONDecodeError:
-                logger.warning(f"Failed to parse pod status JSON")
+                logger.warning("Failed to parse pod status JSON")
 
             await asyncio.sleep(10)
 

@@ -15,6 +15,8 @@ import tempfile
 import threading
 from dataclasses import dataclass
 
+from opi.manager.backup.base import ResourceType
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,9 +105,25 @@ class KopiaSnapshot:
         return self._get_tag("backup_run")
 
     @property
-    def resource_type(self) -> str | None:
-        """Extract resource type from tags (pvc, database, bucket)."""
-        return self._get_tag("resource_type")
+    def resource_type(self) -> ResourceType:
+        """Extract resource type from tags."""
+        return ResourceType.from_string(self._get_tag("resource_type"))
+
+    @property
+    def reference_name(self) -> str | None:
+        """Extract reference name based on resource type.
+
+        Different resource types store reference names in different tags:
+        - pvc: uses 'storage' tag
+        - database: uses 'database' tag
+        - bucket: uses 'bucket' tag
+        """
+        tag_map = {
+            ResourceType.PVC: "storage",
+            ResourceType.DATABASE: "database",
+            ResourceType.BUCKET: "bucket",
+        }
+        return self._get_tag(tag_map.get(self.resource_type, "storage"))
 
 
 @dataclass

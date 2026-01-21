@@ -72,7 +72,7 @@ spec:
 
           # Show snapshot info
           echo "Snapshot details:"
-          kopia snapshot show "$SNAPSHOT_ID" || true
+          kopia show "$SNAPSHOT_ID" || true
 
           # Test database connectivity
           echo "Testing target database connectivity..."
@@ -85,7 +85,7 @@ spec:
           # Restore database
           # First, we need to find the stdin file in the snapshot
           echo "Finding database dump file in snapshot..."
-          DUMP_FILE=$(kopia snapshot show "$SNAPSHOT_ID" --json 2>/dev/null | \
+          DUMP_FILE=$(kopia show "$SNAPSHOT_ID" --json 2>/dev/null | \
             jq -r '.rootEntry.name // empty')
 
           if [ -z "$DUMP_FILE" ]; then

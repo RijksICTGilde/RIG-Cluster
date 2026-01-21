@@ -43,7 +43,8 @@
     </div>
 
     {# Metrics Section #}
-    {% if prometheus_available and project.deployments %}
+    {% set deployments_on_current_cluster = project.deployments | selectattr('cluster', 'equalto', current_cluster) | list %}
+    {% if prometheus_available and deployments_on_current_cluster %}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -51,18 +52,18 @@
                     <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="grafiek" size="xl" color="groen" />Resource Metrics</c-heading>
                     <p class="rvo-text--subtle">Resource usage per component (laatste uur, 5 min intervallen)</p>
                 </div>
-                {% if project.deployments|length > 1 %}
+                {% if deployments_on_current_cluster|length > 1 %}
                 <div>
                     <select id="deployment-selector" class="deployment-select" onchange="showDeploymentMetrics(this.value)">
-                        {% for deployment in project.deployments %}
-                        <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+                        {% for deployment in deployments_on_current_cluster %}
+                        <option value="{{ deployment.name }}">{{ deployment.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 {% endif %}
             </div>
 
-            {% for deployment in project.deployments %}
+            {% for deployment in deployments_on_current_cluster %}
             <div id="metrics-{{ deployment.name }}" class="deployment-metrics-section" {% if not loop.first %}style="display: none;"{% endif %}>
                 {% if deployment.components %}
                 <div class="metrics-grid">
@@ -308,6 +309,16 @@
             {% endfor %}
         </c-layout-flow>
     </c-card>
+    {% elif prometheus_available and project.deployments and not deployments_on_current_cluster %}
+    <c-card outline="true" padding="lg" backgroundColor="grijs-050">
+        <c-layout-row gap="md" verticalSpacing="center">
+            <c-icon icon="info" size="lg" color="grijs-500" />
+            <div>
+                <strong>Metrics niet beschikbaar</strong>
+                <p class="rvo-text--sm rvo-text--subtle">Geen deployments op cluster {{ current_cluster }}. Resource metrics zijn alleen beschikbaar voor deployments op het huidige cluster.</p>
+            </div>
+        </c-layout-row>
+    </c-card>
     {% elif not prometheus_available %}
     <c-card outline="true" padding="lg" backgroundColor="grijs-050">
         <c-layout-row gap="md" verticalSpacing="center">
@@ -346,6 +357,18 @@
                             <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.cluster }}</span>
                         </c-layout-row>
 
+                        {% if deployment.cluster != current_cluster %}
+                        {# Deployment is on a different cluster - show info message #}
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--rvo-color-grijs-100); border: 1px solid var(--rvo-color-grijs-300); border-radius: 4px;">
+                            <c-icon icon="info" size="md" color="grijs-600" />
+                            <div>
+                                <span class="rvo-text--sm">Deze deployment draait op cluster <strong>{{ deployment.cluster }}</strong>.</span>
+                                <br />
+                                <span class="rvo-text--sm rvo-text--subtle">ArgoCD status is alleen beschikbaar vanaf de Operations Manager van dat cluster.</span>
+                            </div>
+                        </div>
+                        {% else %}
+                        {# Deployment is on current cluster - show ArgoCD status #}
                         {# Status Badges Row #}
                         <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                             {# Health Badge #}
@@ -429,6 +452,7 @@
                                 {% endfor %}
                             </div>
                         </div>
+                        {% endif %}
                         {% endif %}
                     </c-layout-flow>
                 </c-card>
@@ -733,7 +757,7 @@
                     </div>
                 </div>
                 {% endif %}
-                
+
                 {% else %}
                 <div class="empty-state">
                     <c-icon icon="info" size="lg" color="grijs-050" />
@@ -745,12 +769,107 @@
     </c-card>
     {% endif %}
 
+    {# Keycloak Section #}
+    {% if user_role in ["admin", "owner"] and project.config and project.config.get('keycloak') %}
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="beveiligingsscan" size="xl" color="hemelblauw" />Keycloak</c-heading>
+            <p class="rvo-text--subtle">Keycloak realm configuratie en admin toegang</p>
+
+            <div class="config-section">
+                {% for kc_config in project.config.keycloak %}
+                {% if not loop.first %}
+                <div style="margin-top: var(--rvo-space-lg); padding-top: var(--rvo-space-lg); border-top: 1px solid var(--rvo-color-grijs-200);"></div>
+                {% endif %}
+                <c-heading type="h3" style="margin-bottom: var(--rvo-space-md);"><c-icon icon="beveiligingsscan" size="md" color="hemelblauw" />Realm: {{ kc_config.realm }}</c-heading>
+                <div class="config-item">
+                    <div class="config-label">
+                        <c-icon icon="server" size="md" color="hemelblauw" />
+                        <strong>Admin Console</strong>
+                    </div>
+                    <div class="config-value config-value--inline">
+                        <code class="config-code">{{ kc_config.host }}</code>
+                        <c-button
+                            kind="tertiary"
+                            size="sm"
+                            showIcon="before"
+                            icon="document-blanco"
+                            class="copy-btn"
+                            aria-label="Kopieer host"
+                            @click="copyToClipboard('.config-code', event, '.config-item')">
+                            <span class="copy-btn__label">Kopieer</span>
+                            <span class="copy-btn__copied">Gekopieerd!</span>
+                        </c-button>
+                    </div>
+                    <c-button
+                        label="Open Admin Console"
+                        kind="secondary"
+                        size="sm"
+                        showIcon="after"
+                        icon="externe-link"
+                        @click="window.open('{{ kc_config.host }}/admin/master/console/#/{{ kc_config.realm }}', '_blank')" />
+                </div>
+                <div class="config-item">
+                    <div class="config-label">
+                        <c-icon icon="applicatie" size="md" color="grijs-600" />
+                        <strong>Realm</strong>
+                    </div>
+                    <div class="config-value config-value--inline">
+                        <code class="config-code">{{ kc_config.realm }}</code>
+                        <c-button
+                            kind="tertiary"
+                            size="sm"
+                            showIcon="before"
+                            icon="document-blanco"
+                            class="copy-btn"
+                            aria-label="Kopieer realm"
+                            @click="copyToClipboard('.config-code', event, '.config-item')">
+                            <span class="copy-btn__label">Kopieer</span>
+                            <span class="copy-btn__copied">Gekopieerd!</span>
+                        </c-button>
+                    </div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">
+                        <c-icon icon="user" size="md" color="grijs-600" />
+                        <strong>Admin Gebruikersnaam</strong>
+                    </div>
+                    <div class="config-value config-value--inline">
+                        <code class="config-code">{{ kc_config.username }}</code>
+                        <c-button
+                            kind="tertiary"
+                            size="sm"
+                            showIcon="before"
+                            icon="document-blanco"
+                            class="copy-btn"
+                            aria-label="Kopieer gebruikersnaam"
+                            @click="copyToClipboard('.config-code', event, '.config-item')">
+                            <span class="copy-btn__label">Kopieer</span>
+                            <span class="copy-btn__copied">Gekopieerd!</span>
+                        </c-button>
+                    </div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">
+                        <c-icon icon="sleutel" size="md" color="rood" />
+                        <strong>Admin Wachtwoord</strong>
+                    </div>
+                    <div class="config-value">
+                        <c-secret-field value="{{ kc_config.password }}" />
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </c-layout-flow>
+    </c-card>
+    {% endif %}
+
     {# Services Section #}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
             <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Services & Integraties</c-heading>
             <p class="rvo-text--subtle">Geactiveerde services voor dit project</p>
-            
+
             {% if project.services %}
             <div class="services-grid">
                 {% for service in project.services %}

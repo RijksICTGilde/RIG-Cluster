@@ -6,6 +6,7 @@ including deployments, services, PVCs, and other manifest resources.
 """
 
 import re
+from datetime import UTC
 
 
 def generate_unique_name(deployment_name: str, component_name: str) -> str:
@@ -387,22 +388,36 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(schema, 63)  # PostgreSQL schema limit
 
 
-def generate_database_name(project_name: str, deployment_name: str) -> str:
+def generate_database_name(
+    project_name: str, deployment_name: str, generation: int | None = None
+) -> str:
     """
-    Generate a consistent database name.
+    Generate a consistent database name with optional generation suffix.
 
-    Format: {project}_{deployment} (no proj_ prefix)
+    Format: {project}_{deployment} or {project}_{deployment}_v{generation}
 
     Args:
         project_name: Name of the project
         deployment_name: Name of the deployment
+        generation: Generation number for database versioning:
+            - None: no version suffix (default, for resources without generation tracking)
+            - 0: no version suffix (backward compatibility)
+            - >0: adds _v{generation} suffix
 
     Returns:
         Database name string
+
+    Example:
+        generate_database_name("amt", "prod") -> "amt_prod"
+        generate_database_name("amt", "prod", 0) -> "amt_prod"
+        generate_database_name("amt", "prod", 1) -> "amt_prod_v1"
+        generate_database_name("amt", "prod", 2) -> "amt_prod_v2"
     """
     project_clean = _sanitize_for_identifier(project_name)
     deployment_clean = _sanitize_for_identifier(deployment_name)
     database = f"{project_clean}_{deployment_clean}"
+    if generation is not None and generation > 0:
+        database = f"{database}_v{generation}"
     return _truncate_if_needed(database, 63)  # PostgreSQL database limit
 
 
@@ -425,22 +440,36 @@ def generate_minio_username(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(username, 63)  # MinIO username limit
 
 
-def generate_bucket_name(project_name: str, deployment_name: str) -> str:
+def generate_bucket_name(
+    project_name: str, deployment_name: str, generation: int | None = None
+) -> str:
     """
-    Generate a consistent S3/MinIO bucket name.
+    Generate a consistent S3/MinIO bucket name with optional generation suffix.
 
-    Format: {project}-{deployment} (no proj_ prefix, hyphen separated, lowercase)
+    Format: {project}-{deployment} or {project}-{deployment}-v{generation}
 
     Args:
         project_name: Name of the project
         deployment_name: Name of the deployment
+        generation: Generation number for bucket versioning:
+            - None: no version suffix (default, for resources without generation tracking)
+            - 0: no version suffix (backward compatibility)
+            - >0: adds -v{generation} suffix
 
     Returns:
         Bucket name string (lowercase with hyphens)
+
+    Example:
+        generate_bucket_name("amt", "prod") -> "amt-prod"
+        generate_bucket_name("amt", "prod", 0) -> "amt-prod"
+        generate_bucket_name("amt", "prod", 1) -> "amt-prod-v1"
+        generate_bucket_name("amt", "prod", 2) -> "amt-prod-v2"
     """
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
     bucket = f"{project_clean}-{deployment_clean}"
+    if generation is not None and generation > 0:
+        bucket = f"{bucket}-v{generation}"
     return _truncate_if_needed(bucket, 63)  # S3 bucket name limit
 
 
@@ -745,6 +774,63 @@ def generate_public_url(hostname: str, use_https: bool = True) -> str:
     """
     protocol = "https" if use_https else "http"
     return f"{protocol}://{hostname}"
+
+
+def ensure_url_has_protocol(url: str, use_https: bool = True) -> str:
+    """
+    Ensure a URL has a protocol prefix.
+
+    If the URL already has http:// or https://, it is returned unchanged.
+    Otherwise, the appropriate protocol prefix is added.
+
+    Args:
+        url: The URL or hostname (e.g., "example.com" or "https://example.com")
+        use_https: Whether to use HTTPS protocol if adding (default: True)
+
+    Returns:
+        URL with protocol prefix
+
+    Example:
+        ensure_url_has_protocol("example.com")
+        -> "https://example.com"
+
+        ensure_url_has_protocol("http://example.com")
+        -> "http://example.com"
+    """
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    protocol = "https" if use_https else "http"
+    return f"{protocol}://{url}"
+
+
+def extract_domain_from_url(url: str) -> str:
+    """
+    Extract the domain/hostname from a URL, stripping any protocol prefix.
+
+    Args:
+        url: The URL or hostname (e.g., "https://example.com" or "example.com")
+
+    Returns:
+        Domain without protocol
+
+    Example:
+        extract_domain_from_url("https://example.com")
+        -> "example.com"
+
+        extract_domain_from_url("http://example.com:8080/path")
+        -> "example.com:8080"
+
+        extract_domain_from_url("example.com")
+        -> "example.com"
+    """
+    if url.startswith("https://"):
+        url = url[8:]
+    elif url.startswith("http://"):
+        url = url[7:]
+    # Remove any path component
+    if "/" in url:
+        url = url.split("/")[0]
+    return url
 
 
 def make_argocd_repository_url_unique(repo_url: str, project_name: str) -> str:
@@ -1573,6 +1659,6 @@ def generate_backup_run_id() -> str:
         >>> generate_backup_run_id()
         '20260116163045'
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    return datetime.now(UTC).strftime("%Y%m%d%H%M%S")

@@ -26,6 +26,23 @@ class MinioManager:
         """
         self.project_manager = project_manager
 
+    def _get_deployment_bucket_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
+        """
+        Get the bucket generation for a deployment from the project file.
+
+        Reads from the deployment-level services block:
+        deployments[name].services.minio-storage.generation
+
+        Args:
+            project_data: The project configuration data
+            deployment_name: Name of the deployment
+
+        Returns:
+            Generation number if set, None otherwise
+        """
+        project_file_handler = self.project_manager._project_file_handler
+        return project_file_handler.get_deployment_bucket_generation(project_data, deployment_name)
+
     def _get_minio_service_config(self, project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
         """
         Extract minio-storage service configuration for a deployment.
@@ -154,7 +171,21 @@ class MinioManager:
         clone_from = deployment.get("clone-from")
         # Use runtime override if True, otherwise fall back to deployment config
         force_clone = force_clone_override or deployment.get("force-clone", False)
-        if clone_from:
+
+        # Check if clone should be skipped (completed "once" mode clone)
+        should_skip_clone = False
+        if clone_from and isinstance(clone_from, dict):
+            clone_mode = clone_from.get("mode")
+            clone_status = clone_from.get("status", {})
+            clone_completed = clone_status.get("completed", False) if isinstance(clone_status, dict) else False
+            if clone_mode == "once" and clone_completed and not force_clone:
+                logger.info(
+                    f"Skipping clone for {deployment_name}: mode is 'once' and already completed. "
+                    "Proceeding with normal resource creation."
+                )
+                should_skip_clone = True
+
+        if clone_from and not should_skip_clone:
             # Handle clone-from configuration - can be dict (new format) or string (legacy)
             if isinstance(clone_from, dict):
                 clone_type = clone_from.get("type")
@@ -203,9 +234,16 @@ class MinioManager:
             if not alias_configured:
                 raise RuntimeError(f"Failed to configure MinIO alias '{alias_name}' for {settings.MINIO_HOST}")
 
+            # Get the generation from project file if set (for versioned buckets after restore)
+            generation = self._get_deployment_bucket_generation(project_data, deployment_name)
+            if generation is not None and generation > 0:
+                logger.info(f"Using bucket generation {generation} for {deployment_name}")
+
             # Generate consistent MinIO identifiers
+            # Username is never versioned (same user accesses all versions)
+            # Bucket uses generation if set (for versioned restore)
             minio_username = generate_minio_username(project_name, deployment_name)
-            bucket_name = generate_bucket_name(project_name, deployment_name)
+            bucket_name = generate_bucket_name(project_name, deployment_name, generation)
 
             # STEP 1: Check if MinIO secret already exists in Kubernetes
             existing_minio_secret = await self._get_existing_minio_credentials_from_k8s(deployment_name, deployment)
@@ -460,7 +498,7 @@ class MinioManager:
                 return deletion_results
 
             minio_username = generate_minio_username(project_name, deployment_name)
-            bucket_name = generate_bucket_name(project_name, deployment_name)
+            bucket_name = generate_bucket_name(project_name, deployment_name, None)
 
             # Remove bucket access from user first
             try:
@@ -737,14 +775,14 @@ class MinioManager:
         """
         Clone MinIO resources from source deployment to target deployment.
 
-        This method only clones on initial setup when target resources don't exist yet,
-        unless force_clone=True is specified.
+        Uses generational approach: instead of destroying existing buckets, creates
+        new versioned buckets when force_clone is used. This preserves old data and
+        allows for rollback.
 
         Args:
             project_data: The project configuration data
             target_deployment: The target deployment configuration
             source_deployment_name: Name of the source deployment to clone from
-            force_clone: If True, clone even if target resources already exist (default: False)
         """
         project_name = await self.project_manager.get_name()
         target_deployment_name = target_deployment["name"]
@@ -771,10 +809,17 @@ class MinioManager:
         if not alias_configured:
             raise RuntimeError(f"Failed to configure MinIO alias '{alias_name}' for {settings.MINIO_HOST}")
 
-        # Use existing naming utilities
-        source_bucket = generate_bucket_name(project_name, source_deployment_name)
+        # Get current generation from project file (generational approach)
+        current_generation = self._get_deployment_bucket_generation(project_data, target_deployment_name)
+
+        # Source bucket - use base name (source might not be versioned)
+        source_bucket = generate_bucket_name(project_name, source_deployment_name, None)
+
+        # Target uses generation from project file
         target_username = generate_minio_username(project_name, target_deployment_name)
-        target_bucket = generate_bucket_name(project_name, target_deployment_name)
+        target_bucket = generate_bucket_name(project_name, target_deployment_name, current_generation)
+
+        logger.info(f"Target bucket will be: {target_bucket} (generation={current_generation})")
 
         # Check if source bucket exists before attempting clone
         source_bucket_exists = await self._check_bucket_exists(minio_connector, alias_name, source_bucket)
@@ -801,31 +846,47 @@ class MinioManager:
             target_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
             target_username_final = target_username
 
-        # Handle bucket creation/deletion based on existence and force_clone flag
+        # Handle bucket creation based on existence and force_clone flag
+        # Generational approach: never delete, increment generation instead
         if target_bucket_exists and not force_clone:
             logger.info(
                 f"Target MinIO bucket '{target_bucket}' already exists for {target_deployment_name}, "
                 "skipping clone (use force_clone=True to override)"
             )
             # Ensure secret is still created even though we skip cloning
-        else:
-            # For cloning operations, always delete existing resources first to ensure clean state
-            if target_bucket_exists:
-                logger.info(f"Target MinIO bucket '{target_bucket}' exists, deleting before clone")
-                # Only delete user if we don't have existing valid credentials
-                await self._delete_existing_target_resources(
-                    minio_connector,
-                    alias_name,
-                    project_name,
-                    target_deployment_name,
-                    delete_user=not bool(existing_credentials),
-                )
-            else:
-                logger.info(
-                    f"No existing target MinIO bucket found for {target_deployment_name}, proceeding with fresh clone"
-                )
+        elif target_bucket_exists and force_clone:
+            # Generational approach: increment generation and create new versioned bucket
+            new_generation = (current_generation or 0) + 1
+            target_bucket = generate_bucket_name(project_name, target_deployment_name, new_generation)
 
-            # Create user and bucket fresh for cloning
+            logger.info(
+                f"force_clone=True: Using generational approach. "
+                f"Creating new bucket {target_bucket} (generation {current_generation} -> {new_generation})"
+            )
+
+            # Create new versioned bucket (old bucket is preserved)
+            await self._create_user_and_bucket_for_clone(
+                minio_connector, alias_name, target_username_final, target_password, target_bucket, existing_credentials
+            )
+
+            # Copy data from source bucket to new versioned target bucket
+            if source_bucket_exists:
+                logger.info(f"Copying data from bucket {source_bucket} to {target_bucket}")
+                await self._copy_bucket_data(minio_connector, alias_name, source_bucket, target_bucket)
+            else:
+                logger.info(f"Skipping data copy - source bucket {source_bucket} does not exist")
+
+            # Update generation in project file
+            project_file_handler = self.project_manager._project_file_handler
+            project_file_handler.set_deployment_bucket_generation(project_data, target_deployment_name, new_generation)
+            logger.info(f"Updated bucket generation in project file: {new_generation}")
+        else:
+            # Fresh clone - no existing bucket
+            logger.info(
+                f"No existing target MinIO bucket found for {target_deployment_name}, proceeding with fresh clone"
+            )
+
+            # Create user and bucket for cloning
             await self._create_user_and_bucket_for_clone(
                 minio_connector, alias_name, target_username_final, target_password, target_bucket, existing_credentials
             )
@@ -974,7 +1035,7 @@ class MinioManager:
             delete_user: If True, also delete the user (only when credentials are invalid)
         """
         target_username = generate_minio_username(project_name, deployment_name)
-        target_bucket = generate_bucket_name(project_name, deployment_name)
+        target_bucket = generate_bucket_name(project_name, deployment_name, None)
 
         if delete_user:
             logger.info(
@@ -1068,9 +1129,9 @@ class MinioManager:
 
         logger.info(f"Found existing MinIO credentials for {deployment_name}, validating...")
 
-        # Generate resource identifiers
+        # Generate resource identifiers (base names without generation)
         username = generate_minio_username(project_name, deployment_name)
-        bucket_name = generate_bucket_name(project_name, deployment_name)
+        bucket_name = generate_bucket_name(project_name, deployment_name, None)
 
         # Test existing credentials
         credentials_valid = await self._test_minio_connection(
@@ -1531,9 +1592,14 @@ class MinioManager:
                 result["operations"].append({"type": "target_validation", "status": "failed", "error": str(e)})
                 return result
 
-            # STEP 3: Resolve target credentials (reuse existing method)
+            # STEP 3: Resolve target credentials and generation (generational approach)
             target_username = generate_minio_username(project_name, deployment_name)
-            target_bucket = generate_bucket_name(project_name, deployment_name)
+
+            # Get current generation from project file
+            current_generation = self._get_deployment_bucket_generation(project_data, deployment_name)
+            target_bucket = generate_bucket_name(project_name, deployment_name, current_generation)
+            generation_was_incremented = False
+            new_generation = current_generation  # Will be updated if incremented
 
             try:
                 minio_connector = create_minio_connector()
@@ -1575,28 +1641,35 @@ class MinioManager:
                 result["operations"].append({"type": "credentials_resolved", "status": "failed", "error": str(e)})
                 return result
 
-            # STEP 4: Handle force_clone (drop + recreate bucket and user)
-            if force_clone:
-                try:
-                    logger.info(f"force_clone=True: Deleting existing MinIO resources for {deployment_name}")
-                    # Only delete user if we don't have existing valid credentials
-                    await self._delete_existing_target_resources(
-                        minio_connector,
-                        alias_name,
-                        project_name,
-                        deployment_name,
-                        delete_user=not bool(existing_credentials),
-                    )
-                    result["operations"].append({"type": "resources_deleted", "status": "success"})
-                except Exception as e:
-                    logger.error(f"Force clone preparation failed: {e}")
-                    result["errors"].append(f"Force clone preparation failed: {e!s}")
-                    result["operations"].append({"type": "resources_deleted", "status": "failed", "error": str(e)})
-                    return result
+            # STEP 4: Handle bucket creation with generational approach
+            # Check if target bucket already exists
+            target_bucket_exists = await self._check_bucket_exists(minio_connector, alias_name, target_bucket)
+
+            if target_bucket_exists and force_clone:
+                # Generational approach: increment generation and create new versioned bucket
+                new_generation = (current_generation or 0) + 1
+                target_bucket = generate_bucket_name(project_name, deployment_name, new_generation)
+                generation_was_incremented = True
+
+                logger.info(
+                    f"force_clone=True: Using generational approach. "
+                    f"Creating new bucket {target_bucket} (generation {current_generation} -> {new_generation})"
+                )
+                result["operations"].append(
+                    {
+                        "type": "generation_incremented",
+                        "status": "success",
+                        "old_generation": current_generation,
+                        "new_generation": new_generation,
+                    }
+                )
+
+                # Update result target with new bucket name
+                result["target"]["bucket"] = target_bucket
 
             # STEP 5: Prepare target (reuse existing clone method)
             try:
-                logger.info(f"Preparing target bucket and user for {deployment_name}")
+                logger.info(f"Preparing target bucket and user for {deployment_name}: {target_bucket}")
 
                 # Reuse the existing method that properly creates user, bucket, and permissions
                 await self._create_user_and_bucket_for_clone(
@@ -1669,34 +1742,51 @@ class MinioManager:
                     except Exception as cleanup_error:
                         logger.warning(f"Failed to cleanup temporary alias {temp_source_alias}: {cleanup_error}")
 
-            # STEP 7: Store credentials in memory map ONLY if they're new (not reused)
-            credentials_are_new = existing_credentials is None
-            if credentials_are_new:
+            # STEP 7: Update project file if generation was incremented
+            if generation_was_incremented:
                 try:
-                    logger.info(f"Storing NEW credentials for {deployment_name} (will sync to Git)")
-                    cluster = deployment["cluster"]
-                    minio_secret = MinIOSecret(
-                        host=get_minio_host(cluster),
-                        port=get_minio_port(cluster),
-                        access_key=target_username_final,
-                        secret_key=target_password,
-                        bucket_name=target_bucket,
-                        region=settings.MINIO_REGION,
-                    )
-                    self.project_manager._add_secret_to_create(deployment_name, "minio", minio_secret)
-                    result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})
-                except Exception as e:
-                    logger.warning(f"Failed to store credentials in memory (clone succeeded): {e}")
+                    project_file_handler = self.project_manager._project_file_handler
+                    project_file_handler.set_deployment_bucket_generation(project_data, deployment_name, new_generation)
+                    logger.info(f"Updated bucket generation in project file: {new_generation}")
                     result["operations"].append(
-                        {"type": "credentials_stored_in_memory", "status": "warning", "error": str(e)}
+                        {
+                            "type": "generation_updated_in_project",
+                            "status": "success",
+                            "generation": new_generation,
+                        }
                     )
-            else:
-                logger.info(f"Reusing existing credentials for {deployment_name} (no Git sync needed)")
+                except Exception as e:
+                    logger.warning(f"Failed to update generation in project file: {e}")
+                    result["operations"].append(
+                        {
+                            "type": "generation_updated_in_project",
+                            "status": "warning",
+                            "error": str(e),
+                        }
+                    )
+
+            # STEP 8: Always store secret (bucket name might have changed due to generation)
+            # With generational approach, we always need fresh secrets with correct bucket name
+            try:
+                logger.info(f"Storing credentials for {deployment_name} with bucket {target_bucket}")
+                cluster = deployment["cluster"]
+                minio_secret = MinIOSecret(
+                    host=get_minio_host(cluster),
+                    port=get_minio_port(cluster),
+                    access_key=target_username_final,
+                    secret_key=target_password,
+                    bucket_name=target_bucket,
+                    region=settings.MINIO_REGION,
+                )
+                self.project_manager._add_secret_to_create(deployment_name, "minio", minio_secret)
+                result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})
+            except Exception as e:
+                logger.warning(f"Failed to store credentials in memory (clone succeeded): {e}")
                 result["operations"].append(
-                    {"type": "credentials_reused", "status": "success", "message": "Existing credentials reused"}
+                    {"type": "credentials_stored_in_memory", "status": "warning", "error": str(e)}
                 )
 
-            # STEP 8: Sync secrets to Git ONLY if credentials were NEW
+            # STEP 9: Sync secrets to Git
             if deployment_name in self.project_manager._secrets_to_create:
                 logger.info(f"External clone updated secrets for {deployment_name}, syncing to Git for ArgoCD")
                 try:

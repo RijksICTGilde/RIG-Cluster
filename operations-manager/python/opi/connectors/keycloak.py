@@ -1560,6 +1560,44 @@ class KeycloakConnector:
         self.admin.update_realm(realm_name=realm_name, payload=realm_flow_update)
         logger.info(f"Set '{flow_alias}' as Browser Flow for realm {realm_name}")
 
+    async def ensure_browser_flow(self, realm_name: str, flow_alias: str) -> bool:
+        """
+        Ensure the realm's browser flow is set to the specified flow.
+
+        This is idempotent - if the flow is already set, no change is made.
+
+        Args:
+            realm_name: Name of the realm
+            flow_alias: Alias of the flow to set as browser flow (e.g., "browser", "External IDP Redirector")
+
+        Returns:
+            True if flow was changed, False if already correct
+        """
+        try:
+            # Get current realm config
+            realm_config = await self.get_realm(realm_name)
+            if not realm_config:
+                logger.warning(f"Realm {realm_name} not found, cannot set browser flow")
+                return False
+
+            current_flow = realm_config.get("browserFlow")
+            if current_flow == flow_alias:
+                logger.debug(f"Realm {realm_name} browser flow already set to '{flow_alias}'")
+                return False
+
+            # Update the browser flow
+            self.admin.change_current_realm(realm_name)
+            self.admin.update_realm(realm_name=realm_name, payload={"browserFlow": flow_alias})
+            self.admin.change_current_realm("master")
+
+            logger.info(f"Updated realm {realm_name} browser flow from '{current_flow}' to '{flow_alias}'")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to set browser flow for realm {realm_name}: {e}")
+            self.admin.change_current_realm("master")
+            raise
+
     async def _add_execution_with_requirement(
         self, realm_name: str, flow_alias: str, provider: str, requirement: str
     ) -> None:
@@ -2119,6 +2157,7 @@ class KeycloakConnector:
         client_id: str,
         role_name: str,
         error_message: str = "${accessDeniedNoPermission}",
+        skip_clients: list[str] | None = None,
     ) -> None:
         """
         Create a post-broker login flow that restricts access to users with a specific client role.
@@ -2136,6 +2175,7 @@ class KeycloakConnector:
             client_id: Client ID for the role check
             role_name: Client role name that grants access
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
+            skip_clients: List of OAuth client IDs that should bypass this role check (e.g., invite client)
         """
         logger.info(
             f"Creating post-broker login flow '{flow_alias}' for client '{client_id}' in realm '{realm_name}'"
@@ -2170,6 +2210,7 @@ class KeycloakConnector:
                 client_id=client_id,
                 role_name=role_name,
                 error_message=error_message,
+                skip_clients=skip_clients,
             )
 
             self.admin.change_current_realm("master")
@@ -2254,6 +2295,7 @@ class KeycloakConnector:
         client_id: str,
         role_name: str,
         error_message: str,
+        skip_clients: list[str] | None = None,
     ) -> None:
         """
         Add the custom RequireClientRoleAuthenticator to a flow.
@@ -2261,6 +2303,7 @@ class KeycloakConnector:
         This authenticator checks if the user has a specific client role and:
         - Calls success() if the user has the role (allowing the flow to complete)
         - Calls failure() with an error page if the user lacks the role
+        - Skips the role check if the OAuth client is in the skip_clients list
 
         This approach works correctly for post-broker login flows, unlike conditional
         sub-flows which fail when skipped.
@@ -2270,6 +2313,7 @@ class KeycloakConnector:
             client_id: Client ID for the role check
             role_name: Client role name that grants access
             error_message: Error message in ${key} format for theme resolution
+            skip_clients: List of OAuth client IDs that should bypass this role check
         """
         logger.debug(f"Adding RequireClientRoleAuthenticator to flow '{flow_alias}'")
 
@@ -2317,7 +2361,7 @@ class KeycloakConnector:
             self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=flow_alias)
             logger.debug("Set RequireClientRoleAuthenticator to REQUIRED")
 
-        # Step 3: Configure the authenticator with client ID, role name, and error message
+        # Step 3: Configure the authenticator with client ID, role name, error message, and skip clients
         execution_id = authenticator_execution.get("id")
         existing_config_id = authenticator_execution.get("authenticationConfig")
         config_alias = f"require-role-{client_id}-{role_name}"
@@ -2329,6 +2373,11 @@ class KeycloakConnector:
                 "errorMessage": error_message,
             },
         }
+
+        # Add skipClients if provided
+        if skip_clients:
+            config_data["config"]["skipClients"] = ",".join(skip_clients)
+            logger.debug(f"Configuring skipClients: {skip_clients}")
 
         if existing_config_id:
             # Update existing config
@@ -2909,7 +2958,9 @@ class KeycloakConnector:
             logger.error(f"Failed to assign realm management roles: {e}")
             raise
 
-    async def assign_realm_roles_to_user(self, realm_name: str, user_id: str, role_names: list[str]) -> bool:
+    async def assign_realm_roles_to_user(
+        self, realm_name: str, user_id: str, role_names: list[str]
+    ) -> dict[str, list[str]]:
         """
         Assign realm roles to a user.
 
@@ -2919,9 +2970,14 @@ class KeycloakConnector:
             role_names: List of role names to assign
 
         Returns:
-            True if roles were assigned successfully
+            Dict with 'assigned' and 'not_found' lists of role names
+
+        Raises:
+            KeycloakError: If role assignment fails
         """
         logger.info(f"Assigning realm roles {role_names} to user {user_id} in realm {realm_name}")
+
+        result: dict[str, list[str]] = {"assigned": [], "not_found": []}
 
         try:
             # Switch to target realm
@@ -2930,22 +2986,28 @@ class KeycloakConnector:
             # Get all realm roles
             all_roles = self.admin.get_realm_roles()
 
-            # Filter to requested roles
+            # Filter to requested roles and track what's missing
             roles_to_assign = []
-            for role in all_roles:
-                if role["name"] in role_names:
-                    roles_to_assign.append(role)
+            for role_name in role_names:
+                matching_role = next((r for r in all_roles if r["name"] == role_name), None)
+                if matching_role:
+                    roles_to_assign.append(matching_role)
+                    result["assigned"].append(role_name)
+                else:
+                    result["not_found"].append(role_name)
+                    logger.warning(f"Realm role '{role_name}' not found in realm '{realm_name}'")
 
             if roles_to_assign:
                 self.admin.assign_realm_roles(user_id=user_id, roles=roles_to_assign)
                 logger.info(f"Assigned {len(roles_to_assign)} realm roles to user {user_id}")
-            else:
-                logger.warning(f"No matching realm roles found for: {role_names}")
+
+            if result["not_found"]:
+                logger.error(f"Realm roles not found: {result['not_found']}")
 
             # Switch back to master
             self.admin.change_current_realm("master")
 
-            return True
+            return result
 
         except KeycloakError as e:
             logger.error(f"Failed to assign realm roles: {e}")

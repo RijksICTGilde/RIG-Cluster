@@ -74,7 +74,7 @@ spec:
 
           # Show snapshot info
           echo "Snapshot details:"
-          kopia snapshot show "$SNAPSHOT_ID" || true
+          kopia show "$SNAPSHOT_ID" || true
 
           # Ensure target bucket exists
           echo "Ensuring target bucket exists..."
