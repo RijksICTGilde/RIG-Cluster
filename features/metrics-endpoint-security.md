@@ -14,7 +14,7 @@ These endpoints should **never** be publicly accessible and must be restricted t
 ## Affected Components
 
 ### Current
-- **Keycloak** - `/metrics` endpoint on port 8080 (same port as public UI)
+- **Keycloak** - `/metrics` endpoint on management port 9000 (separate from public UI on 8080) ✅ Secured by default
 
 ### Future (applications deployed via platform)
 - User applications with Prometheus metrics

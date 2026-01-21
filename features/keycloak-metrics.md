@@ -22,14 +22,26 @@ env:
     value: "true"
 ```
 
-Prometheus scrapes metrics via pod annotations:
+**Important**: Keycloak exposes metrics on a separate **management interface** running on **port 9000** (not the main port 8080). This provides security isolation between the main application and observability endpoints.
+
+Prometheus scrapes metrics via pod annotations pointing to the management port:
 
 ```yaml
 annotations:
   prometheus.io/scrape: "true"
-  prometheus.io/port: "8080"
+  prometheus.io/port: "9000"
   prometheus.io/path: "/metrics"
 ```
+
+### Additional Configuration Options
+
+| Option | Environment Variable | Default | Description |
+|--------|---------------------|---------|-------------|
+| `metrics-enabled` | `KC_METRICS_ENABLED` | `false` | Enable metrics endpoint |
+| `http-management-port` | `KC_HTTP_MANAGEMENT_PORT` | `9000` | Management interface port |
+| `cache-metrics-histograms-enabled` | `KC_CACHE_METRICS_HISTOGRAMS_ENABLED` | `false` | Enable cache histograms |
+| `http-metrics-histograms-enabled` | `KC_HTTP_METRICS_HISTOGRAMS_ENABLED` | `false` | Enable HTTP request histograms |
+| `http-metrics-slos` | `KC_HTTP_METRICS_SLOS` | - | Custom SLO buckets (ms) |
 
 ## Available Metrics
 
@@ -183,9 +195,11 @@ annotations:
 
 Once deployed, metrics are available at:
 
-- **Direct endpoint**: `http://keycloak:8080/metrics`
+- **Management interface (internal)**: `http://keycloak:9000/metrics`
 - **Via Prometheus**: Query through the Prometheus API or Grafana
 - **Operations Manager**: Future integration via the metrics dashboard
+
+**Note**: The metrics endpoint is only accessible on the management port (9000), not on the main HTTP port (8080). This is by design for security reasons - the management interface is not exposed via ingress.
 
 ## Troubleshooting
 
@@ -193,8 +207,15 @@ Once deployed, metrics are available at:
 
 1. Verify `KC_METRICS_ENABLED=true` is set in the deployment
 2. Check pod annotations are present: `kubectl get pod -n rig-system -l app=keycloak -o yaml`
-3. Test metrics endpoint directly: `kubectl exec -n rig-system deployment/keycloak -- curl localhost:8080/metrics`
+3. Test metrics endpoint directly on the management port:
+   ```bash
+   kubectl exec -n rig-system deployment/keycloak -- curl -s localhost:9000/metrics | head -20
+   ```
 4. Check Prometheus targets: Access Prometheus UI and verify keycloak target is UP
+5. Verify the management interface is running:
+   ```bash
+   kubectl exec -n rig-system deployment/keycloak -- curl -s localhost:9000/health
+   ```
 
 ### Missing realm metrics
 
