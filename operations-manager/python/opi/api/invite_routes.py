@@ -73,6 +73,7 @@ def _build_realm_auth_url(
     redirect_uri: str,
     state: str,
     code_challenge: str,
+    idp_hint: str | None = None,
 ) -> str:
     """
     Build the Keycloak authorization URL for a project realm.
@@ -83,6 +84,7 @@ def _build_realm_auth_url(
         redirect_uri: OAuth callback URL
         state: OAuth state parameter
         code_challenge: PKCE code challenge
+        idp_hint: Optional IDP alias to skip login screen and go directly to IDP
 
     Returns:
         Full authorization URL
@@ -97,6 +99,10 @@ def _build_realm_auth_url(
         "code_challenge_method": "S256",
         "prompt": "login",  # Force login screen even if user has existing Keycloak session
     }
+
+    # Add kc_idp_hint to skip Keycloak login screen and go directly to the IDP
+    if idp_hint:
+        params["kc_idp_hint"] = idp_hint
 
     auth_endpoint = f"{keycloak_url}/realms/{realm_name}/protocol/openid-connect/auth"
     return f"{auth_endpoint}?{urlencode(params)}"
@@ -447,6 +453,85 @@ async def invite_sso_start(request: Request, key: str) -> Response:
     return RedirectResponse(url=auth_url, status_code=302)
 
 
+@invite_router.get("/{key}/idp/{idp_alias}")
+async def invite_idp_start(request: Request, key: str, idp_alias: str) -> Response:
+    """
+    Initiate SSO authentication flow for a specific identity provider.
+
+    Redirects directly to the chosen IDP, skipping the Keycloak login screen.
+    Uses kc_idp_hint to tell Keycloak which IDP to use.
+
+    Args:
+        request: FastAPI request
+        key: The invite key
+        idp_alias: The Keycloak identity provider alias (e.g., 'sso-rijk')
+
+    Returns:
+        Redirect to project realm's Keycloak authorization endpoint with IDP hint
+    """
+    # Find and validate invite
+    result = await _find_project_by_invite_key(key)
+    if not result:
+        raise HTTPException(status_code=404, detail="Invite not found")
+
+    project_name, project_data, invite, cluster = result
+    invite_manager = InviteManager()
+
+    try:
+        invite_manager.validate_invite(project_data, invite)
+        invite_manager.validate_auth_method(project_data, invite, "sso")
+    except InviteError as e:
+        raise HTTPException(status_code=400, detail=e.message) from e
+
+    # Validate that the IDP alias exists in the realm
+    realm_name = generate_project_realm_name(project_name, cluster)
+    realm_auth = await invite_manager.get_realm_auth_methods(realm_name)
+    identity_providers = realm_auth.get("identity_providers", [])
+
+    valid_aliases = [idp["alias"] for idp in identity_providers]
+    if idp_alias not in valid_aliases:
+        logger.warning(f"Invalid IDP alias '{idp_alias}' for invite '{key}'. Valid: {valid_aliases}")
+        raise HTTPException(status_code=404, detail=f"Identity provider '{idp_alias}' not found")
+
+    # Generate PKCE pair for secure public client flow
+    code_verifier, code_challenge = _generate_pkce_pair()
+
+    # Generate state for CSRF protection
+    state = secrets.token_urlsafe(16)
+
+    # Get project realm info
+    keycloak_url = _get_keycloak_url_for_cluster(cluster)
+
+    # Build callback URL (reuse the same callback as regular SSO)
+    callback_url = str(request.url_for("invite_sso_callback", key=key))
+
+    # Store invite flow state in session (including PKCE verifier)
+    request.session["invite_flow"] = {
+        "key": key,
+        "project_name": project_name,
+        "cluster": cluster,
+        "realm_name": realm_name,
+        "keycloak_url": keycloak_url,
+        "code_verifier": code_verifier,
+        "state": state,
+        "redirect_uri": callback_url,
+    }
+
+    # Build authorization URL with IDP hint to skip login screen
+    auth_url = _build_realm_auth_url(
+        keycloak_url=keycloak_url,
+        realm_name=realm_name,
+        redirect_uri=callback_url,
+        state=state,
+        code_challenge=code_challenge,
+        idp_hint=idp_alias,
+    )
+
+    logger.info(f"Starting invite IDP flow for key '{key}', realm: {realm_name}, idp: {idp_alias}")
+
+    return RedirectResponse(url=auth_url, status_code=302)
+
+
 @invite_router.get("/{key}/sso/callback")
 async def invite_sso_callback(request: Request, key: str) -> Response:
     """
@@ -736,9 +821,7 @@ async def invite_register_submit(request: Request, key: str) -> Response:
             errors["password"] = error_messages["password_no_digit"]
 
     # Password confirmation
-    if form_data["password"] and form_data["password"] != password_confirm:
-        errors["password_confirm"] = error_messages["password_mismatch"]
-    elif not password_confirm:
+    if (form_data["password"] and form_data["password"] != password_confirm) or not password_confirm:
         errors["password_confirm"] = error_messages["password_mismatch"]
 
     if errors:

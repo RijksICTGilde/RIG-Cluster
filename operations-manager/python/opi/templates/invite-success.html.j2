@@ -11,7 +11,7 @@
 <c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive">
     {# Header #}
     <c-header
-        text="Zelfservice voor Applicatie Deployment"
+        text="RIG Cluster"
         subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
         link="/"/>
 
@@ -38,25 +38,11 @@
                             <c-heading type="h2" textContent="{% if language == 'nl' %}Uw toegang{% else %}Your access{% endif %}" />
 
                             {% if email %}
-                            <div>
                                 <p class="rvo-paragraph"><strong>{% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %}:</strong> {{ email }}</p>
-                            </div>
                             {% endif %}
 
                             {% if application_url %}
-                            <c-layout-flow gap="md">
-                                <p class="rvo-paragraph">
-                                    {% if language == 'nl' %}
-                                    Klik op de onderstaande knop om naar de applicatie te gaan.
-                                    {% else %}
-                                    Click the button below to go to the application.
-                                    {% endif %}
-                                </p>
-                                <a href="{{ application_url }}" class="rvo-button rvo-button--primary rvo-button--md">
-                                    {{ success_button }}
-                                    <span class="rvo-icon rvo-icon--pijl-naar-rechts rvo-icon--md rvo-icon--wit" aria-hidden="true"></span>
-                                </a>
-                            </c-layout-flow>
+                            <c-button kind="primary" label="{% if language == 'nl' %}Ga naar applicatie{% else %}Go to application{% endif %}" showIcon="after" icon="pijl-naar-rechts" @click="window.location.href='{{ application_url }}'" />
                             {% endif %}
                         </c-layout-flow>
                     </c-card>
