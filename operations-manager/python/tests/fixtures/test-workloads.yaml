@@ -1,0 +1,102 @@
+---
+# Test workloads for integration testing
+#
+# These resources are deployed to the Kind cluster during integration tests
+# to provide real Kubernetes resources for testing kubectl operations.
+#
+# Components:
+# - test-project namespace
+# - log-generator deployment (generates logs every second)
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-project
+  labels:
+    app.kubernetes.io/managed-by: integration-tests
+    purpose: integration-testing
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-generator
+  namespace: test-project
+  labels:
+    app: log-generator
+    app.kubernetes.io/managed-by: integration-tests
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: log-generator
+  template:
+    metadata:
+      labels:
+        app: log-generator
+    spec:
+      containers:
+        - name: log-generator
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "$(date -Iseconds) INFO: Log generator starting..."
+              echo "$(date -Iseconds) INFO: Namespace: test-project"
+              echo "$(date -Iseconds) INFO: Pod: $HOSTNAME"
+              counter=0
+              while true; do
+                counter=$((counter + 1))
+                echo "$(date -Iseconds) INFO: Test log message #$counter"
+                if [ $((counter % 10)) -eq 0 ]; then
+                  echo "$(date -Iseconds) DEBUG: Processed $counter messages"
+                fi
+                if [ $((counter % 50)) -eq 0 ]; then
+                  echo "$(date -Iseconds) WARN: High message count: $counter"
+                fi
+                sleep 1
+              done
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "10m"
+            limits:
+              memory: "32Mi"
+              cpu: "50m"
+---
+# Second deployment for testing multi-deployment scenarios
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-server
+  namespace: test-project
+  labels:
+    app: web-server
+    app.kubernetes.io/managed-by: integration-tests
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-server
+  template:
+    metadata:
+      labels:
+        app: web-server
+    spec:
+      containers:
+        - name: web-server
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "$(date -Iseconds) INFO: Web server starting..."
+              while true; do
+                echo "$(date -Iseconds) INFO: Handling request"
+                sleep 5
+              done
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "10m"
+            limits:
+              memory: "32Mi"
+              cpu: "50m"
