@@ -135,7 +135,9 @@ async def file_change_handler(file_path: str, content: dict) -> None:
         project_manager = ProjectManager()
         try:
             if not project_manager.has_deployments_for_current_cluster(content):
-                logger.info(f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster")
+                logger.info(
+                    f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
+                )
                 return
 
             # Task 1: Check and create namespaces for deployments
