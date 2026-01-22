@@ -7,6 +7,8 @@ This module provides comprehensive unit tests for:
 - Connection limits and rate limiting
 - Log streaming functionality
 - Component switching
+- Log sanitization
+- Session expiration handling
 """
 
 import asyncio
@@ -15,15 +17,16 @@ import unittest
 from collections import defaultdict
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from itsdangerous import BadSignature, SignatureExpired
+
 
 class TestSendMessage(unittest.IsolatedAsyncioTestCase):
     """Test cases for the send_message utility function."""
 
     async def test_send_message_success(self):
         """Test successful message sending over WebSocket."""
-        from starlette.websockets import WebSocketState
-
         from opi.api.logs_websocket_router import send_message
+        from starlette.websockets import WebSocketState
 
         mock_websocket = MagicMock()
         mock_websocket.client_state = WebSocketState.CONNECTED
@@ -45,9 +48,8 @@ class TestSendMessage(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_message_disconnected(self):
         """Test message sending when websocket is disconnected."""
-        from starlette.websockets import WebSocketState
-
         from opi.api.logs_websocket_router import send_message
+        from starlette.websockets import WebSocketState
 
         mock_websocket = MagicMock()
         mock_websocket.client_state = WebSocketState.DISCONNECTED
@@ -58,9 +60,8 @@ class TestSendMessage(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_message_exception(self):
         """Test message sending when an exception occurs."""
-        from starlette.websockets import WebSocketState
-
         from opi.api.logs_websocket_router import send_message
+        from starlette.websockets import WebSocketState
 
         mock_websocket = MagicMock()
         mock_websocket.client_state = WebSocketState.CONNECTED
@@ -88,10 +89,10 @@ class TestSessionExtraction(unittest.TestCase):
 
     @patch("opi.api.logs_websocket_router.settings")
     def test_get_session_no_secret_key(self, mock_settings):
-        """Test when SESSION_SECRET_KEY is not configured."""
+        """Test when SECRET_KEY is not configured."""
         from opi.api.logs_websocket_router import _get_session_from_cookie
 
-        mock_settings.SESSION_SECRET_KEY = None
+        mock_settings.SECRET_KEY = None
         mock_websocket = MagicMock()
         mock_websocket.cookies = {"session": "some_cookie"}
 
@@ -105,7 +106,7 @@ class TestSessionExtraction(unittest.TestCase):
         """Test extraction of valid session cookie."""
         from opi.api.logs_websocket_router import _get_session_from_cookie
 
-        mock_settings.SESSION_SECRET_KEY = "test_secret"
+        mock_settings.SECRET_KEY = "test_secret"
         mock_serializer = MagicMock()
         mock_serializer.loads.return_value = {"user": {"email": "test@example.com"}}
         mock_serializer_class.return_value = mock_serializer
@@ -118,19 +119,43 @@ class TestSessionExtraction(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["user"]["email"], "test@example.com")
 
+        # Verify max_age and salt are passed
+        mock_serializer.loads.assert_called_once()
+        call_kwargs = mock_serializer.loads.call_args[1]
+        self.assertIn("max_age", call_kwargs)
+        self.assertEqual(call_kwargs["salt"], "cookie-session")
+
     @patch("opi.api.logs_websocket_router.settings")
     @patch("opi.api.logs_websocket_router.URLSafeTimedSerializer")
     def test_get_session_invalid_cookie(self, mock_serializer_class, mock_settings):
-        """Test handling of invalid/tampered session cookie."""
+        """Test handling of invalid/tampered session cookie (BadSignature)."""
         from opi.api.logs_websocket_router import _get_session_from_cookie
 
-        mock_settings.SESSION_SECRET_KEY = "test_secret"
+        mock_settings.SECRET_KEY = "test_secret"
         mock_serializer = MagicMock()
-        mock_serializer.loads.side_effect = Exception("Invalid signature")
+        mock_serializer.loads.side_effect = BadSignature("Invalid signature")
         mock_serializer_class.return_value = mock_serializer
 
         mock_websocket = MagicMock()
         mock_websocket.cookies = {"session": "tampered_cookie"}
+
+        result = _get_session_from_cookie(mock_websocket)
+
+        self.assertIsNone(result)
+
+    @patch("opi.api.logs_websocket_router.settings")
+    @patch("opi.api.logs_websocket_router.URLSafeTimedSerializer")
+    def test_get_session_expired_cookie(self, mock_serializer_class, mock_settings):
+        """Test handling of expired session cookie (SignatureExpired)."""
+        from opi.api.logs_websocket_router import _get_session_from_cookie
+
+        mock_settings.SECRET_KEY = "test_secret"
+        mock_serializer = MagicMock()
+        mock_serializer.loads.side_effect = SignatureExpired("Signature has expired")
+        mock_serializer_class.return_value = mock_serializer
+
+        mock_websocket = MagicMock()
+        mock_websocket.cookies = {"session": "expired_cookie"}
 
         result = _get_session_from_cookie(mock_websocket)
 
@@ -168,7 +193,7 @@ class TestUserExtraction(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class TestConnectionLimits(unittest.TestCase):
+class TestConnectionLimits(unittest.IsolatedAsyncioTestCase):
     """Test cases for connection limit enforcement."""
 
     def setUp(self):
@@ -178,16 +203,16 @@ class TestConnectionLimits(unittest.TestCase):
         router._active_connections = defaultdict(set)
         router._global_connections = set()
 
-    def test_register_connection_success(self):
+    async def test_register_connection_success(self):
         """Test successful connection registration."""
         from opi.api.logs_websocket_router import _register_connection
 
         mock_websocket = MagicMock()
-        result = _register_connection("user@example.com", mock_websocket)
+        result = await _register_connection("user@example.com", mock_websocket)
 
         self.assertTrue(result)
 
-    def test_register_connection_user_limit(self):
+    async def test_register_connection_user_limit(self):
         """Test connection rejected when user limit exceeded."""
         from opi.api.logs_websocket_router import (
             MAX_CONNECTIONS_PER_USER,
@@ -198,16 +223,16 @@ class TestConnectionLimits(unittest.TestCase):
         for i in range(MAX_CONNECTIONS_PER_USER):
             mock_ws = MagicMock()
             mock_ws.__hash__ = lambda self, i=i: i
-            _register_connection("user@example.com", mock_ws)
+            await _register_connection("user@example.com", mock_ws)
 
         # Try to add one more
         mock_websocket = MagicMock()
         mock_websocket.__hash__ = lambda self: 999
-        result = _register_connection("user@example.com", mock_websocket)
+        result = await _register_connection("user@example.com", mock_websocket)
 
         self.assertFalse(result)
 
-    def test_register_connection_global_limit(self):
+    async def test_register_connection_global_limit(self):
         """Test connection rejected when global limit exceeded."""
         from opi.api.logs_websocket_router import (
             MAX_GLOBAL_CONNECTIONS,
@@ -218,16 +243,16 @@ class TestConnectionLimits(unittest.TestCase):
         for i in range(MAX_GLOBAL_CONNECTIONS):
             mock_ws = MagicMock()
             mock_ws.__hash__ = lambda self, i=i: i
-            _register_connection(f"user{i}@example.com", mock_ws)
+            await _register_connection(f"user{i}@example.com", mock_ws)
 
         # Try to add one more
         mock_websocket = MagicMock()
         mock_websocket.__hash__ = lambda self: 99999
-        result = _register_connection("newuser@example.com", mock_websocket)
+        result = await _register_connection("newuser@example.com", mock_websocket)
 
         self.assertFalse(result)
 
-    def test_unregister_connection(self):
+    async def test_unregister_connection(self):
         """Test connection unregistration."""
         from opi.api.logs_websocket_router import (
             _active_connections,
@@ -237,12 +262,12 @@ class TestConnectionLimits(unittest.TestCase):
         )
 
         mock_websocket = MagicMock()
-        _register_connection("user@example.com", mock_websocket)
+        await _register_connection("user@example.com", mock_websocket)
 
         self.assertEqual(len(_active_connections["user@example.com"]), 1)
         self.assertEqual(len(_global_connections), 1)
 
-        _unregister_connection("user@example.com", mock_websocket)
+        await _unregister_connection("user@example.com", mock_websocket)
 
         self.assertNotIn("user@example.com", _active_connections)
         self.assertEqual(len(_global_connections), 0)
@@ -257,10 +282,11 @@ class TestRateLimiter(unittest.IsolatedAsyncioTestCase):
 
         limiter = RateLimiter(rate=10, burst=5)
 
-        # Should allow burst
+        # Should allow burst, acquire returns (allowed, dropped_count)
         for _ in range(5):
-            result = await limiter.acquire()
-            self.assertTrue(result)
+            allowed, dropped = limiter.acquire()
+            self.assertTrue(allowed)
+            self.assertEqual(dropped, 0)  # No dropped messages yet
 
     async def test_rate_limiter_blocks_after_burst(self):
         """Test that rate limiter blocks after burst is exhausted."""
@@ -270,11 +296,12 @@ class TestRateLimiter(unittest.IsolatedAsyncioTestCase):
 
         # Exhaust burst
         for _ in range(5):
-            await limiter.acquire()
+            limiter.acquire()
 
         # Should be blocked
-        result = await limiter.acquire()
-        self.assertFalse(result)
+        allowed, dropped = limiter.acquire()
+        self.assertFalse(allowed)
+        self.assertEqual(dropped, 0)  # Not returned when blocked
 
     async def test_rate_limiter_refills(self):
         """Test that rate limiter refills over time."""
@@ -284,14 +311,121 @@ class TestRateLimiter(unittest.IsolatedAsyncioTestCase):
 
         # Exhaust burst
         for _ in range(5):
-            await limiter.acquire()
+            limiter.acquire()
 
         # Wait a bit for refill
         await asyncio.sleep(0.1)
 
         # Should be allowed again
-        result = await limiter.acquire()
-        self.assertTrue(result)
+        allowed, _dropped = limiter.acquire()
+        self.assertTrue(allowed)
+
+    async def test_rate_limiter_tracks_dropped_messages(self):
+        """Test that rate limiter tracks how many messages were dropped."""
+        from opi.api.logs_websocket_router import RateLimiter
+
+        limiter = RateLimiter(rate=10, burst=3)
+
+        # Exhaust burst
+        for _ in range(3):
+            limiter.acquire()
+
+        # These should be blocked and tracked
+        for _ in range(5):
+            allowed, _dropped = limiter.acquire()
+            self.assertFalse(allowed)
+
+        # Wait for refill
+        await asyncio.sleep(0.2)
+
+        # Now we should get the dropped count
+        allowed, dropped = limiter.acquire()
+        self.assertTrue(allowed)
+        self.assertEqual(dropped, 5)  # 5 messages were dropped
+
+
+class TestLogSanitization(unittest.TestCase):
+    """Test cases for log line sanitization."""
+
+    def test_sanitize_normal_log_line(self):
+        """Test that normal log lines pass through unchanged."""
+        from opi.api.logs_websocket_router import _sanitize_log_line
+
+        line = "2024-01-22 10:30:00 INFO Processing request"
+        result = _sanitize_log_line(line)
+
+        self.assertEqual(result, line)
+
+    def test_sanitize_html_escape(self):
+        """Test that HTML characters are escaped to prevent XSS."""
+        from opi.api.logs_websocket_router import _sanitize_log_line
+
+        line = '<script>alert("XSS")</script>'
+        result = _sanitize_log_line(line)
+
+        self.assertNotIn("<script>", result)
+        self.assertIn("&lt;script&gt;", result)
+
+    def test_sanitize_html_entities(self):
+        """Test that all dangerous HTML entities are escaped."""
+        from opi.api.logs_websocket_router import _sanitize_log_line
+
+        line = 'User input: <img src="x" onerror="alert(1)">'
+        result = _sanitize_log_line(line)
+
+        self.assertNotIn("<img", result)
+        self.assertIn("&lt;img", result)
+
+    def test_sanitize_control_characters(self):
+        """Test that control characters are replaced."""
+        from opi.api.logs_websocket_router import _sanitize_log_line
+
+        # Control characters that should be replaced
+        line = "Hello\x00World\x07Bell\x1b[31mRed"
+        result = _sanitize_log_line(line)
+
+        # Control chars should be replaced with ?
+        self.assertNotIn("\x00", result)
+        self.assertNotIn("\x07", result)
+        self.assertNotIn("\x1b", result)
+        self.assertIn("?", result)
+
+    def test_sanitize_preserves_tabs_and_newlines(self):
+        """Test that tabs and newlines are preserved."""
+        from opi.api.logs_websocket_router import _sanitize_log_line
+
+        line = "Column1\tColumn2\nLine2"
+        result = _sanitize_log_line(line)
+
+        self.assertIn("\t", result)
+        self.assertIn("\n", result)
+
+    def test_sanitize_long_line_truncation(self):
+        """Test that very long lines are truncated."""
+        from opi.api.logs_websocket_router import _sanitize_log_line
+
+        # Create a line longer than 10000 characters
+        line = "A" * 15000
+        result = _sanitize_log_line(line)
+
+        self.assertLess(len(result), 15000)
+        self.assertIn("[truncated]", result)
+
+    def test_sanitize_empty_line(self):
+        """Test that empty lines are handled."""
+        from opi.api.logs_websocket_router import _sanitize_log_line
+
+        result = _sanitize_log_line("")
+        self.assertEqual(result, "")
+
+    def test_sanitize_ampersand(self):
+        """Test that ampersands are escaped."""
+        from opi.api.logs_websocket_router import _sanitize_log_line
+
+        line = "Tom & Jerry"
+        result = _sanitize_log_line(line)
+
+        self.assertEqual(result, "Tom &amp; Jerry")
 
 
 class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
@@ -436,8 +570,9 @@ class TestSecurityIntegration(unittest.TestCase):
         # 1. _get_session_from_cookie is called
         # 2. User validation happens
         # 3. websocket.accept() is only called after auth passes
-        from opi.api.logs_websocket_router import stream_logs
         import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
 
         source = inspect.getsource(stream_logs)
 
@@ -451,23 +586,88 @@ class TestSecurityIntegration(unittest.TestCase):
 
     def test_authorization_check_exists(self):
         """Verify that project authorization check is present."""
-        from opi.api.logs_websocket_router import stream_logs
         import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
 
         source = inspect.getsource(stream_logs)
 
-        self.assertIn("is_user_authorized_for_project", source,
-                      "Project authorization check not found")
+        self.assertIn("is_user_authorized_for_project", source, "Project authorization check not found")
 
     def test_connection_limit_check_exists(self):
         """Verify that connection limit check is present."""
-        from opi.api.logs_websocket_router import stream_logs
         import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
 
         source = inspect.getsource(stream_logs)
 
-        self.assertIn("_register_connection", source,
-                      "Connection limit check not found")
+        self.assertIn("_register_connection", source, "Connection limit check not found")
+
+    def test_generic_error_messages(self):
+        """Verify that generic error messages are used to prevent info leakage."""
+        import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
+
+        source = inspect.getsource(stream_logs)
+
+        # Check that we use generic error messages instead of specific ones
+        self.assertIn("Access denied", source, "Generic access denied message expected")
+        self.assertIn("Resource not found", source, "Generic not found message expected")
+
+        # Verify we don't leak project names in error messages
+        self.assertNotIn('f"Project {project_name} not found"', source, "Should not leak project name in error")
+        self.assertNotIn('f"User {user_email} not authorized"', source, "Should not leak user email in error")
+
+    def test_rate_limiting_exists(self):
+        """Verify that rate limiting is implemented."""
+        import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
+
+        source = inspect.getsource(stream_logs)
+
+        self.assertIn("RateLimiter", source, "Rate limiter not found")
+        self.assertIn("rate_limiter.acquire", source, "Rate limiter not used")
+
+    def test_log_sanitization_exists(self):
+        """Verify that log sanitization is implemented."""
+        import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
+
+        source = inspect.getsource(stream_logs)
+
+        self.assertIn("_sanitize_log_line", source, "Log sanitization not found")
+
+    def test_heartbeat_exists(self):
+        """Verify that heartbeat mechanism is implemented."""
+        import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
+
+        source = inspect.getsource(stream_logs)
+
+        self.assertIn("heartbeat", source, "Heartbeat mechanism not found")
+
+    def test_session_max_age_constant(self):
+        """Verify that session max age is defined."""
+        from opi.api.logs_websocket_router import SESSION_MAX_AGE_SECONDS
+
+        # Session should expire in reasonable time (24 hours or less)
+        self.assertGreater(SESSION_MAX_AGE_SECONDS, 0)
+        self.assertLessEqual(SESSION_MAX_AGE_SECONDS, 86400)  # 24 hours
+
+    def test_process_lock_exists(self):
+        """Verify that process access is protected by a lock."""
+        import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
+
+        source = inspect.getsource(stream_logs)
+
+        self.assertIn("process_lock", source, "Process lock not found")
 
 
 if __name__ == "__main__":

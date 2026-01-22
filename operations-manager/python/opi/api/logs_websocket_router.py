@@ -9,26 +9,33 @@ Security features:
 - Project-level authorization check
 - Connection limits per user and globally
 - Rate limiting on log messages
+- Log content sanitization
+
+Note on multi-worker deployments:
+Connection limits are per-worker. For true global limits across workers,
+use Redis or a shared state backend. Current implementation provides
+per-worker protection which is sufficient for most deployments.
 """
 
 import asyncio
 import contextlib
+import html
 import json
 import logging
+import time
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from itsdangerous import URLSafeTimedSerializer
-from starlette.websockets import WebSocketState
-
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
+from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +45,19 @@ logs_websocket_router: APIRouter = APIRouter(
 )
 
 # Connection tracking for rate limiting
+# Note: This is per-worker state. In multi-worker deployments, limits are per-worker.
 _active_connections: dict[str, set[WebSocket]] = defaultdict(set)  # user_email -> set of websockets
 _global_connections: set[WebSocket] = set()
+_connection_lock = asyncio.Lock()  # Protect concurrent access within a worker
 
 # Limits
 MAX_CONNECTIONS_PER_USER = 5
 MAX_GLOBAL_CONNECTIONS = 100
 MAX_MESSAGES_PER_SECOND = 100  # Rate limit for log messages
+SESSION_MAX_AGE_SECONDS = 86400  # 24 hours - sessions older than this are rejected
+
+# Heartbeat interval
+HEARTBEAT_INTERVAL_SECONDS = 30
 
 
 async def send_message(websocket: WebSocket, msg_type: str, **kwargs: Any) -> bool:
@@ -63,8 +76,8 @@ def _get_session_from_cookie(websocket: WebSocket) -> dict[str, Any] | None:
     """
     Extract and validate session data from WebSocket cookies.
 
-    This replicates the session extraction done by Starlette's SessionMiddleware
-    for regular HTTP requests.
+    This replicates the session extraction done by Starlette's SessionMiddleware.
+    Starlette uses itsdangerous.URLSafeTimedSerializer with the SECRET_KEY.
 
     Returns:
         Session data dict if valid, None otherwise
@@ -78,16 +91,29 @@ def _get_session_from_cookie(websocket: WebSocket) -> dict[str, Any] | None:
             logger.debug("No session cookie found in WebSocket request")
             return None
 
-        # Decode the session using the same secret key as SessionMiddleware
-        # Starlette uses itsdangerous for session signing
-        secret_key = settings.SESSION_SECRET_KEY
+        # Use the same SECRET_KEY as Starlette's SessionMiddleware
+        secret_key = settings.SECRET_KEY
         if not secret_key:
-            logger.error("SESSION_SECRET_KEY not configured")
+            logger.error("SECRET_KEY not configured")
             return None
 
+        # Starlette's SessionMiddleware uses URLSafeTimedSerializer
+        # with "cookie-session" as the salt (default)
         serializer = URLSafeTimedSerializer(secret_key)
-        # Session cookies don't have max_age validation in our case
-        session_data = serializer.loads(session_cookie)
+
+        # Validate with max_age to prevent replay of old sessions
+        try:
+            session_data = serializer.loads(
+                session_cookie,
+                max_age=SESSION_MAX_AGE_SECONDS,
+                salt="cookie-session",  # Starlette's default salt
+            )
+        except SignatureExpired:
+            logger.warning("Session cookie has expired")
+            return None
+        except BadSignature:
+            logger.warning("Session cookie has invalid signature")
+            return None
 
         if isinstance(session_data, dict):
             return session_data
@@ -107,34 +133,40 @@ def _get_user_from_session(session: dict[str, Any] | None) -> dict[str, Any] | N
     return session.get("user")
 
 
-def _register_connection(user_email: str, websocket: WebSocket) -> bool:
+async def _register_connection(user_email: str, websocket: WebSocket) -> bool:
     """
     Register a new connection. Returns False if limits exceeded.
+    Thread-safe within a single worker.
     """
-    # Check global limit
-    if len(_global_connections) >= MAX_GLOBAL_CONNECTIONS:
-        logger.warning(f"Global connection limit reached ({MAX_GLOBAL_CONNECTIONS})")
-        return False
+    async with _connection_lock:
+        # Check global limit
+        if len(_global_connections) >= MAX_GLOBAL_CONNECTIONS:
+            logger.warning(f"Global connection limit reached ({MAX_GLOBAL_CONNECTIONS})")
+            return False
 
-    # Check per-user limit
-    if len(_active_connections[user_email]) >= MAX_CONNECTIONS_PER_USER:
-        logger.warning(f"User {user_email} connection limit reached ({MAX_CONNECTIONS_PER_USER})")
-        return False
+        # Check per-user limit
+        if len(_active_connections[user_email]) >= MAX_CONNECTIONS_PER_USER:
+            logger.warning(f"User {user_email} connection limit reached ({MAX_CONNECTIONS_PER_USER})")
+            return False
 
-    _global_connections.add(websocket)
-    _active_connections[user_email].add(websocket)
-    logger.info(f"Registered connection for {user_email}. User: {len(_active_connections[user_email])}, Global: {len(_global_connections)}")
-    return True
+        _global_connections.add(websocket)
+        _active_connections[user_email].add(websocket)
+        logger.info(
+            f"Registered connection for {user_email}. "
+            f"User: {len(_active_connections[user_email])}, Global: {len(_global_connections)}"
+        )
+        return True
 
 
-def _unregister_connection(user_email: str, websocket: WebSocket) -> None:
-    """Unregister a connection."""
-    _global_connections.discard(websocket)
-    _active_connections[user_email].discard(websocket)
-    # Clean up empty sets
-    if not _active_connections[user_email]:
-        del _active_connections[user_email]
-    logger.debug(f"Unregistered connection for {user_email}")
+async def _unregister_connection(user_email: str, websocket: WebSocket) -> None:
+    """Unregister a connection. Thread-safe within a single worker."""
+    async with _connection_lock:
+        _global_connections.discard(websocket)
+        _active_connections[user_email].discard(websocket)
+        # Clean up empty sets
+        if user_email in _active_connections and not _active_connections[user_email]:
+            del _active_connections[user_email]
+        logger.debug(f"Unregistered connection for {user_email}")
 
 
 class RateLimiter:
@@ -143,12 +175,18 @@ class RateLimiter:
     def __init__(self, rate: float, burst: int = 10):
         self.rate = rate  # messages per second
         self.burst = burst
-        self.tokens = burst
-        self.last_update = asyncio.get_event_loop().time()
+        self.tokens = float(burst)
+        self.last_update = time.monotonic()  # Use monotonic instead of deprecated get_event_loop
+        self._dropped_count = 0
 
-    async def acquire(self) -> bool:
-        """Try to acquire a token. Returns True if allowed, False if rate limited."""
-        now = asyncio.get_event_loop().time()
+    def acquire(self) -> tuple[bool, int]:
+        """
+        Try to acquire a token.
+
+        Returns:
+            Tuple of (allowed: bool, dropped_since_last_success: int)
+        """
+        now = time.monotonic()
         elapsed = now - self.last_update
         self.last_update = now
 
@@ -157,8 +195,34 @@ class RateLimiter:
 
         if self.tokens >= 1:
             self.tokens -= 1
-            return True
-        return False
+            dropped = self._dropped_count
+            self._dropped_count = 0
+            return True, dropped
+        else:
+            self._dropped_count += 1
+            return False, 0
+
+
+def _sanitize_log_line(line: str) -> str:
+    """
+    Sanitize log line to prevent injection attacks.
+
+    - Escapes HTML entities to prevent XSS if client renders as HTML
+    - Removes/escapes control characters
+    - Limits line length
+    """
+    # Limit line length to prevent memory issues
+    max_length = 10000
+    if len(line) > max_length:
+        line = line[:max_length] + "... [truncated]"
+
+    # Escape HTML entities to prevent XSS
+    line = html.escape(line)
+
+    # Remove control characters except newline and tab
+    line = "".join(char if char >= " " or char in "\t\n" else "?" for char in line)
+
+    return line
 
 
 @logs_websocket_router.websocket("/stream/{project_name}")
@@ -183,6 +247,7 @@ async def stream_logs(  # noqa: C901
     """
     user_email: str | None = None
     process: asyncio.subprocess.Process | None = None
+    connection_registered = False
 
     try:
         # === AUTHENTICATION ===
@@ -191,7 +256,8 @@ async def stream_logs(  # noqa: C901
         user = _get_user_from_session(session)
 
         if not user or not user.get("email"):
-            logger.warning(f"WebSocket connection rejected: no authenticated user for {project_name}")
+            # Generic error to prevent information leakage
+            logger.warning(f"WebSocket auth failed: no valid session for {project_name}")
             await websocket.close(code=4001, reason="Authentication required")
             return
 
@@ -201,7 +267,8 @@ async def stream_logs(  # noqa: C901
         # Check if user is in allowed list
         user_service = get_user_service()
         if not user_service.is_email_allowed(user_email):
-            logger.warning(f"WebSocket connection rejected: user {user_email} not in allowlist")
+            # Generic error to prevent enumeration
+            logger.warning(f"WebSocket auth failed: user {user_email} not allowed")
             await websocket.close(code=4003, reason="Access denied")
             return
 
@@ -210,19 +277,22 @@ async def stream_logs(  # noqa: C901
 
         # Check if user has access to this project
         if not project_service.is_user_authorized_for_project(project_name, user_email):
-            logger.warning(f"WebSocket connection rejected: user {user_email} not authorized for project {project_name}")
-            await websocket.close(code=4003, reason="Not authorized for this project")
+            # Generic error to prevent project enumeration
+            logger.warning(f"WebSocket auth failed: user {user_email} not authorized for {project_name}")
+            await websocket.close(code=4003, reason="Access denied")
             return
 
         # === CONNECTION LIMITS ===
-        if not _register_connection(user_email, websocket):
-            logger.warning(f"WebSocket connection rejected: connection limit exceeded for {user_email}")
+        if not await _register_connection(user_email, websocket):
+            logger.warning(f"WebSocket rejected: connection limit for {user_email}")
             await websocket.close(code=4029, reason="Too many connections")
             return
 
+        connection_registered = True
+
         # Accept the connection after all security checks pass
         await websocket.accept()
-        logger.info(f"WebSocket connection accepted for {user_email}: {project_name}/{deployment}/{component}")
+        logger.info(f"WebSocket accepted for {user_email}: {project_name}/{deployment}/{component}")
 
         # === VALIDATION ===
         kubectl = KubectlConnector()
@@ -230,34 +300,29 @@ async def stream_logs(  # noqa: C901
 
         all_projects = project_service.get_all_projects()
         if project_name not in all_projects:
-            await send_message(websocket, "error", message=f"Project '{project_name}' not found")
+            await send_message(websocket, "error", message="Resource not found")
             await websocket.close(code=4004)
             return
 
         project_info = all_projects[project_name]
         project_data = project_info.data or {}
-        deployments = project_data.get("deployments", [])
+        deployments_list = project_data.get("deployments", [])
 
         # Find the deployment
         target_deployment = None
-        for depl in deployments:
+        for depl in deployments_list:
             if depl.get("name") == deployment:
                 target_deployment = depl
                 break
 
         if not target_deployment:
-            await send_message(websocket, "error", message=f"Deployment '{deployment}' not found")
+            await send_message(websocket, "error", message="Resource not found")
             await websocket.close(code=4004)
             return
 
         # Check if deployment is on current cluster
         if target_deployment.get("cluster") != current_cluster:
-            cluster = target_deployment.get("cluster")
-            await send_message(
-                websocket,
-                "error",
-                message=f"Deployment '{deployment}' is on cluster '{cluster}', not '{current_cluster}'",
-            )
+            await send_message(websocket, "error", message="Resource not available on this cluster")
             await websocket.close(code=4003)
             return
 
@@ -270,8 +335,7 @@ async def stream_logs(  # noqa: C901
                 break
 
         if not target_component:
-            msg = f"Component '{component}' not found in deployment '{deployment}'"
-            await send_message(websocket, "error", message=msg)
+            await send_message(websocket, "error", message="Resource not found")
             await websocket.close(code=4004)
             return
 
@@ -283,21 +347,24 @@ async def stream_logs(  # noqa: C901
             websocket,
             "status",
             status="connected",
-            message=f"Connected to {k8s_deployment_name} in {namespace}",
+            message="Connected to log stream",
             deployment=deployment,
             component=component,
-            namespace=namespace,
-            user=user_email,
         )
 
         # === START LOG STREAMING ===
         # Rate limiter for outgoing messages
         rate_limiter = RateLimiter(rate=MAX_MESSAGES_PER_SECOND, burst=50)
 
-        # Event to signal component switch
-        switch_event = asyncio.Event()
+        # Shared state for tasks
         current_component = component
         current_k8s_name = k8s_deployment_name
+        sequence = 0
+        paused = False
+        running = True
+
+        # Use a lock to coordinate process access between tasks
+        process_lock = asyncio.Lock()
 
         process = await kubectl.stream_deployment_logs(
             deployment_name=current_k8s_name,
@@ -312,50 +379,47 @@ async def stream_logs(  # noqa: C901
 
         await send_message(websocket, "status", status="streaming", message="Log streaming started")
 
-        sequence = 0
-        paused = False
-        running = True
-
         async def read_logs() -> None:
             """Read logs from kubectl process and send to client."""
-            nonlocal sequence, process, current_k8s_name, running
+            nonlocal sequence, running
 
             while running:
-                # Check if we need to switch to a new process
-                if switch_event.is_set():
-                    switch_event.clear()
-                    # Process was already switched in handle_client_messages
-                    if process is None or process.stdout is None:
+                async with process_lock:
+                    current_process = process
+                    if current_process is None or current_process.stdout is None:
+                        await asyncio.sleep(0.1)
+                        continue
+
+                    try:
+                        line = await asyncio.wait_for(current_process.stdout.readline(), timeout=0.5)
+                    except TimeoutError:
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Error reading log line: {e}")
                         break
-                    continue
-
-                if process is None or process.stdout is None:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                try:
-                    # Use wait_for to allow checking switch_event periodically
-                    line = await asyncio.wait_for(process.stdout.readline(), timeout=0.5)
-                except TimeoutError:
-                    continue
-                except Exception as e:
-                    logger.debug(f"Error reading log line: {e}")
-                    break
 
                 if not line:
-                    # Process ended, wait a bit and check if we should continue
                     await asyncio.sleep(0.5)
                     continue
 
                 if paused:
                     continue
 
-                # Rate limiting
-                if not await rate_limiter.acquire():
-                    # Skip this message if rate limited
+                # Rate limiting with notification
+                allowed, dropped = rate_limiter.acquire()
+                if not allowed:
                     continue
 
+                # Notify if messages were dropped
+                if dropped > 0:
+                    await send_message(
+                        websocket,
+                        "warning",
+                        message=f"Rate limited: {dropped} log lines skipped",
+                    )
+
                 decoded_line = line.decode("utf-8", errors="replace").rstrip()
+                sanitized_line = _sanitize_log_line(decoded_line)
                 sequence += 1
                 timestamp = datetime.now(UTC).isoformat()
 
@@ -364,7 +428,7 @@ async def stream_logs(  # noqa: C901
                     "log",
                     deployment=deployment,
                     component=current_component,
-                    line=decoded_line,
+                    line=sanitized_line,
                     timestamp=timestamp,
                     sequence=sequence,
                 )
@@ -375,33 +439,36 @@ async def stream_logs(  # noqa: C901
 
         async def read_stderr() -> None:
             """Read and log stderr from kubectl process to prevent buffer deadlock."""
-            nonlocal process, running
+            nonlocal running
 
             while running:
-                if process is None or process.stderr is None:
-                    await asyncio.sleep(0.1)
-                    continue
+                async with process_lock:
+                    current_process = process
+                    if current_process is None or current_process.stderr is None:
+                        await asyncio.sleep(0.1)
+                        continue
 
-                try:
-                    line = await asyncio.wait_for(process.stderr.readline(), timeout=0.5)
-                    if line:
-                        stderr_text = line.decode("utf-8", errors="replace").rstrip()
-                        logger.warning(f"kubectl stderr: {stderr_text}")
-                        # Optionally send stderr to client as well
-                        await send_message(
-                            websocket,
-                            "log",
-                            deployment=deployment,
-                            component=current_component,
-                            line=f"[STDERR] {stderr_text}",
-                            timestamp=datetime.now(UTC).isoformat(),
-                            sequence=0,
-                            level="error",
-                        )
-                except TimeoutError:
-                    continue
-                except Exception:
-                    break
+                    try:
+                        line = await asyncio.wait_for(current_process.stderr.readline(), timeout=0.5)
+                    except TimeoutError:
+                        continue
+                    except Exception:
+                        break
+
+                if line:
+                    stderr_text = line.decode("utf-8", errors="replace").rstrip()
+                    sanitized_text = _sanitize_log_line(stderr_text)
+                    logger.warning(f"kubectl stderr: {sanitized_text}")
+                    await send_message(
+                        websocket,
+                        "log",
+                        deployment=deployment,
+                        component=current_component,
+                        line=f"[STDERR] {sanitized_text}",
+                        timestamp=datetime.now(UTC).isoformat(),
+                        sequence=0,
+                        level="error",
+                    )
 
         async def handle_client_messages() -> None:
             """Handle incoming messages from client."""
@@ -424,57 +491,76 @@ async def stream_logs(  # noqa: C901
                     elif action == "switch":
                         new_component = data.get("component")
                         if new_component and new_component != current_component:
-                            # Validate new component exists
+                            # Re-fetch project data to get current components
+                            fresh_projects = project_service.get_all_projects()
+                            if project_name not in fresh_projects:
+                                await send_message(websocket, "error", message="Project no longer exists")
+                                running = False
+                                break
+
+                            fresh_project = fresh_projects[project_name]
+                            fresh_data = fresh_project.data or {}
+                            fresh_deployments = fresh_data.get("deployments", [])
+
+                            fresh_deployment = None
+                            for depl in fresh_deployments:
+                                if depl.get("name") == deployment:
+                                    fresh_deployment = depl
+                                    break
+
+                            if not fresh_deployment:
+                                await send_message(websocket, "error", message="Deployment no longer exists")
+                                running = False
+                                break
+
+                            fresh_components = fresh_deployment.get("components", [])
                             new_target = None
-                            for comp in components:
+                            for comp in fresh_components:
                                 if comp.get("reference") == new_component:
                                     new_target = comp
                                     break
 
                             if not new_target:
-                                await send_message(
-                                    websocket, "error", message=f"Component '{new_component}' not found"
-                                )
+                                await send_message(websocket, "error", message="Component not found")
                                 continue
 
-                            # Stop current process
-                            if process:
-                                process.terminate()
-                                with contextlib.suppress(Exception):
-                                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                            # Stop current process and start new one
+                            async with process_lock:
+                                if process:
+                                    process.terminate()
+                                    with contextlib.suppress(Exception):
+                                        await asyncio.wait_for(process.wait(), timeout=2.0)
 
-                            current_component = new_component
-                            current_k8s_name = generate_unique_name(deployment, current_component)
-                            sequence = 0
+                                current_component = new_component
+                                current_k8s_name = generate_unique_name(deployment, current_component)
+                                sequence = 0
 
-                            await send_message(
-                                websocket,
-                                "status",
-                                status="switching",
-                                message=f"Switching to {new_component}",
-                            )
-
-                            # Start new process
-                            process = await kubectl.stream_deployment_logs(
-                                deployment_name=current_k8s_name,
-                                namespace=namespace,
-                                lines=lines,
-                            )
-
-                            if process and process.stdout:
-                                # Signal the read_logs task to use new process
-                                switch_event.set()
                                 await send_message(
                                     websocket,
                                     "status",
-                                    status="streaming",
-                                    message=f"Now streaming {new_component}",
-                                    component=new_component,
+                                    status="switching",
+                                    message=f"Switching to {new_component}",
                                 )
-                            else:
-                                await send_message(
-                                    websocket, "error", message=f"Failed to start stream for {new_component}"
+
+                                # Start new process
+                                process = await kubectl.stream_deployment_logs(
+                                    deployment_name=current_k8s_name,
+                                    namespace=namespace,
+                                    lines=lines,
                                 )
+
+                                if process and process.stdout:
+                                    await send_message(
+                                        websocket,
+                                        "status",
+                                        status="streaming",
+                                        message=f"Now streaming {new_component}",
+                                        component=new_component,
+                                    )
+                                else:
+                                    await send_message(
+                                        websocket, "error", message="Failed to start stream for component"
+                                    )
 
                 except TimeoutError:
                     continue
@@ -489,14 +575,28 @@ async def stream_logs(  # noqa: C901
                     running = False
                     break
 
+        async def heartbeat() -> None:
+            """Send periodic heartbeat to detect dead connections."""
+            nonlocal running
+
+            while running:
+                await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+                if running:
+                    success = await send_message(websocket, "heartbeat", timestamp=datetime.now(UTC).isoformat())
+                    if not success:
+                        logger.info("Heartbeat failed, closing connection")
+                        running = False
+                        break
+
         # Run all tasks concurrently
         log_task = asyncio.create_task(read_logs())
         stderr_task = asyncio.create_task(read_stderr())
         client_task = asyncio.create_task(handle_client_messages())
+        heartbeat_task = asyncio.create_task(heartbeat())
 
         try:
             _done, pending = await asyncio.wait(
-                [log_task, stderr_task, client_task],
+                [log_task, stderr_task, client_task, heartbeat_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -513,6 +613,7 @@ async def stream_logs(  # noqa: C901
             log_task.cancel()
             stderr_task.cancel()
             client_task.cancel()
+            heartbeat_task.cancel()
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for {user_email}: {project_name}/{deployment}/{component}")
@@ -535,13 +636,13 @@ async def stream_logs(  # noqa: C901
             except Exception as e:
                 logger.error(f"Error terminating kubectl process: {e}")
 
-        # Unregister connection
-        if user_email:
-            _unregister_connection(user_email, websocket)
+        # Unregister connection only if it was registered
+        if connection_registered and user_email:
+            await _unregister_connection(user_email, websocket)
 
         # Close WebSocket if still open
         with contextlib.suppress(Exception):
             if websocket.client_state == WebSocketState.CONNECTED:
                 await websocket.close()
 
-        logger.info(f"WebSocket connection closed for {user_email}: {project_name}/{deployment}/{component}")
+        logger.info(f"WebSocket closed for {user_email}: {project_name}/{deployment}/{component}")
