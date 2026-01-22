@@ -418,6 +418,18 @@
                         </c-layout-row>
                         {% endif %}
 
+                        {# View Logs Button #}
+                        {% if deployment.components %}
+                        <div style="margin-top: var(--rvo-space-sm);">
+                            <button type="button" class="log-viewer-btn"
+                                    onclick="openLogViewer('{{ project.name }}', '{{ deployment.name }}', '{{ deployment.components[0].reference }}', {{ deployment.components | tojson | e }})"
+                                    title="Bekijk live logs voor deze deployment">
+                                <c-icon icon="document-blanco" size="sm" />
+                                <span>View Logs</span>
+                            </button>
+                        </div>
+                        {% endif %}
+
                         {# Operation Status (if running or failed) #}
                         {% if status.get('operation_phase') and status.operation_phase not in ['Succeeded', None] %}
                         {% set op_bg = '#e3f2fd' if status.operation_phase == 'Running' else '#ffebee' %}
@@ -1489,6 +1501,52 @@
     {% endif %}
 
 </c-layout-flow>
+
+{# Log Viewer Slide-Out Panel #}
+<div id="log-viewer-backdrop" class="log-viewer-backdrop" onclick="closeLogViewer()"></div>
+<div id="log-viewer-panel" class="log-viewer-panel">
+    <div class="log-viewer-header">
+        <div class="log-viewer-title">
+            <c-icon icon="document-blanco" size="lg" color="wit" />
+            <div>
+                <h3 id="log-viewer-heading">Logs</h3>
+                <div class="log-viewer-subtitle">
+                    <span id="log-viewer-deployment"></span>
+                    <select id="log-component-selector" class="log-component-select" onchange="switchLogComponent(this.value)">
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="log-viewer-controls">
+            <button type="button" class="log-control-btn" id="log-pause-btn" onclick="toggleLogPause()" title="Pause/Resume">
+                <c-icon icon="pauze" size="sm" id="log-pause-icon" />
+            </button>
+            <button type="button" class="log-control-btn" onclick="clearLogs()" title="Clear">
+                <c-icon icon="prullenbak" size="sm" />
+            </button>
+            <button type="button" class="log-control-btn" onclick="copyLogs()" title="Copy">
+                <c-icon icon="document-blanco" size="sm" />
+            </button>
+            <button type="button" class="log-control-btn" onclick="downloadLogs()" title="Download">
+                <c-icon icon="download" size="sm" />
+            </button>
+            <button type="button" class="log-close-btn" onclick="closeLogViewer()" title="Close">
+                <c-icon icon="kruis" size="md" />
+            </button>
+        </div>
+    </div>
+    <div class="log-viewer-status" id="log-viewer-status">
+        <span class="log-status-indicator" id="log-status-indicator"></span>
+        <span id="log-status-text">Connecting...</span>
+        <span id="log-line-count" class="log-line-count"></span>
+    </div>
+    <div class="log-viewer-content" id="log-viewer-content">
+        <div class="log-empty-state" id="log-empty-state">
+            <c-icon icon="document-blanco" size="xl" color="grijs-500" />
+            <p>Connecting to log stream...</p>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block additional_styles %}
@@ -2063,6 +2121,284 @@
             flex-direction: column;
         }
     }
+
+    /* Log Viewer Button */
+    .log-viewer-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: var(--rvo-color-hemelblauw);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background-color 0.2s, transform 0.1s;
+    }
+
+    .log-viewer-btn:hover {
+        background: var(--rvo-color-donkerblauw);
+    }
+
+    .log-viewer-btn:active {
+        transform: scale(0.98);
+    }
+
+    /* Log Viewer Backdrop */
+    .log-viewer-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 999;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.3s, visibility 0.3s;
+    }
+
+    .log-viewer-backdrop.is-open {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    /* Log Viewer Panel */
+    .log-viewer-panel {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 60%;
+        max-width: 1000px;
+        min-width: 400px;
+        height: 100vh;
+        background: #1a1a2e;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        transform: translateX(100%);
+        transition: transform 0.3s ease-out;
+        box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .log-viewer-panel.is-open {
+        transform: translateX(0);
+    }
+
+    @media (max-width: 768px) {
+        .log-viewer-panel {
+            width: 100%;
+            min-width: unset;
+        }
+    }
+
+    /* Log Viewer Header */
+    .log-viewer-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background: #16213e;
+        border-bottom: 1px solid #0f3460;
+    }
+
+    .log-viewer-title {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: white;
+    }
+
+    .log-viewer-title h3 {
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+
+    .log-viewer-subtitle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+        color: #94a3b8;
+        margin-top: 2px;
+    }
+
+    .log-component-select {
+        background: #0f3460;
+        color: #e2e8f0;
+        border: 1px solid #1e3a5f;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+
+    .log-component-select:focus {
+        outline: 2px solid var(--rvo-color-hemelblauw);
+        outline-offset: 1px;
+    }
+
+    /* Log Viewer Controls */
+    .log-viewer-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .log-control-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        background: #0f3460;
+        color: #e2e8f0;
+        border: 1px solid #1e3a5f;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+
+    .log-control-btn:hover {
+        background: #1e3a5f;
+    }
+
+    .log-control-btn.is-active {
+        background: var(--rvo-color-oranje);
+        border-color: var(--rvo-color-oranje);
+    }
+
+    .log-close-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        background: transparent;
+        color: #94a3b8;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-left: 8px;
+        transition: color 0.2s, background-color 0.2s;
+    }
+
+    .log-close-btn:hover {
+        color: white;
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    /* Log Viewer Status Bar */
+    .log-viewer-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 20px;
+        background: #0f3460;
+        font-size: 0.8rem;
+        color: #94a3b8;
+    }
+
+    .log-status-indicator {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #6b7280;
+    }
+
+    .log-status-indicator.is-streaming {
+        background: #22c55e;
+        animation: pulse 2s infinite;
+    }
+
+    .log-status-indicator.is-paused {
+        background: #f59e0b;
+    }
+
+    .log-status-indicator.is-error {
+        background: #ef4444;
+    }
+
+    .log-status-indicator.is-connecting {
+        background: #3b82f6;
+        animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.5;
+        }
+    }
+
+    .log-line-count {
+        margin-left: auto;
+        color: #64748b;
+    }
+
+    /* Log Viewer Content */
+    .log-viewer-content {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: auto;
+        padding: 12px 0;
+        font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+        font-size: 0.8rem;
+        line-height: 1.5;
+        background: #1a1a2e;
+    }
+
+    .log-empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: #64748b;
+        gap: 12px;
+    }
+
+    .log-empty-state.is-hidden {
+        display: none;
+    }
+
+    .log-line {
+        padding: 2px 20px;
+        white-space: pre;
+        color: #e2e8f0;
+    }
+
+    .log-line:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    .log-line.log-error {
+        color: #f87171;
+        background: rgba(239, 68, 68, 0.1);
+    }
+
+    .log-line.log-warn {
+        color: #fbbf24;
+    }
+
+    .log-line.log-info {
+        color: #4ade80;
+    }
+
+    .log-line.log-debug {
+        color: #60a5fa;
+    }
+
+    .log-timestamp {
+        color: #64748b;
+        margin-right: 8px;
+        font-size: 0.75rem;
+    }
 </style>
 
 <script>
@@ -2096,6 +2432,323 @@
             button.setAttribute('aria-expanded', 'false');
         }
     }
+
+    /**
+     * Log Viewer WebSocket Client
+     */
+    (function() {
+        // Log viewer state
+        let logSocket = null;
+        let logPaused = false;
+        let currentProject = null;
+        let currentDeployment = null;
+        let currentComponent = null;
+        let components = [];
+        let logLines = [];
+        const MAX_LOG_LINES = 10000;
+
+        // DOM elements
+        const backdrop = document.getElementById('log-viewer-backdrop');
+        const panel = document.getElementById('log-viewer-panel');
+        const heading = document.getElementById('log-viewer-heading');
+        const deploymentLabel = document.getElementById('log-viewer-deployment');
+        const componentSelector = document.getElementById('log-component-selector');
+        const statusIndicator = document.getElementById('log-status-indicator');
+        const statusText = document.getElementById('log-status-text');
+        const lineCount = document.getElementById('log-line-count');
+        const content = document.getElementById('log-viewer-content');
+        const emptyState = document.getElementById('log-empty-state');
+        const pauseBtn = document.getElementById('log-pause-btn');
+
+        /**
+         * Open the log viewer panel
+         */
+        window.openLogViewer = function(project, deployment, component, comps) {
+            currentProject = project;
+            currentDeployment = deployment;
+            currentComponent = component;
+            components = comps || [];
+
+            // Update UI
+            heading.textContent = `Logs - ${deployment}`;
+            deploymentLabel.textContent = deployment;
+
+            // Populate component selector
+            componentSelector.innerHTML = '';
+            components.forEach(comp => {
+                const option = document.createElement('option');
+                option.value = comp.reference;
+                option.textContent = comp.reference;
+                if (comp.reference === component) {
+                    option.selected = true;
+                }
+                componentSelector.appendChild(option);
+            });
+
+            // Clear previous logs
+            clearLogs();
+
+            // Show panel
+            backdrop.classList.add('is-open');
+            panel.classList.add('is-open');
+            document.body.style.overflow = 'hidden';
+
+            // Connect WebSocket
+            connectLogWebSocket();
+        };
+
+        /**
+         * Close the log viewer panel
+         */
+        window.closeLogViewer = function() {
+            // Disconnect WebSocket
+            if (logSocket) {
+                logSocket.close();
+                logSocket = null;
+            }
+
+            // Hide panel
+            backdrop.classList.remove('is-open');
+            panel.classList.remove('is-open');
+            document.body.style.overflow = '';
+
+            // Reset state
+            logPaused = false;
+            pauseBtn.classList.remove('is-active');
+        };
+
+        /**
+         * Connect to the WebSocket log stream
+         */
+        function connectLogWebSocket() {
+            updateStatus('connecting', 'Connecting...');
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/logs/stream/${currentProject}?deployment=${encodeURIComponent(currentDeployment)}&component=${encodeURIComponent(currentComponent)}&lines=100`;
+
+            logSocket = new WebSocket(wsUrl);
+
+            logSocket.onopen = function() {
+                updateStatus('connecting', 'Connected, waiting for logs...');
+            };
+
+            logSocket.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleLogMessage(data);
+                } catch (e) {
+                    console.error('Failed to parse log message:', e);
+                }
+            };
+
+            logSocket.onclose = function(event) {
+                if (event.code === 1000) {
+                    updateStatus('paused', 'Connection closed');
+                } else {
+                    updateStatus('error', `Disconnected (code: ${event.code})`);
+                }
+            };
+
+            logSocket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateStatus('error', 'Connection error');
+            };
+        }
+
+        /**
+         * Handle incoming log messages
+         */
+        function handleLogMessage(data) {
+            switch (data.type) {
+                case 'log':
+                    appendLogLine(data);
+                    break;
+                case 'status':
+                    if (data.status === 'streaming') {
+                        updateStatus('streaming', data.message || 'Streaming logs...');
+                    } else if (data.status === 'paused') {
+                        updateStatus('paused', data.message || 'Paused');
+                    } else if (data.status === 'connected') {
+                        updateStatus('connecting', data.message || 'Connected');
+                    } else if (data.status === 'switching') {
+                        updateStatus('connecting', data.message || 'Switching...');
+                    }
+                    if (data.component) {
+                        currentComponent = data.component;
+                        componentSelector.value = data.component;
+                    }
+                    break;
+                case 'error':
+                    updateStatus('error', data.message || 'Error');
+                    break;
+            }
+        }
+
+        /**
+         * Append a log line to the viewer
+         */
+        function appendLogLine(data) {
+            // Hide empty state on first log
+            if (logLines.length === 0) {
+                emptyState.classList.add('is-hidden');
+            }
+
+            // Store log line
+            logLines.push(data);
+
+            // Remove old lines if over limit
+            if (logLines.length > MAX_LOG_LINES) {
+                logLines.shift();
+                const firstLine = content.querySelector('.log-line');
+                if (firstLine) {
+                    firstLine.remove();
+                }
+            }
+
+            // Create log line element
+            const lineEl = document.createElement('div');
+            lineEl.className = 'log-line';
+
+            // Detect log level for coloring
+            const line = data.line || '';
+            if (/\berror\b|\bERROR\b|\bfatal\b|\bFATAL\b|\bpanic\b|\bPANIC\b/i.test(line)) {
+                lineEl.classList.add('log-error');
+            } else if (/\bwarn\b|\bWARN\b|\bwarning\b|\bWARNING\b/i.test(line)) {
+                lineEl.classList.add('log-warn');
+            } else if (/\binfo\b|\bINFO\b/i.test(line)) {
+                lineEl.classList.add('log-info');
+            } else if (/\bdebug\b|\bDEBUG\b|\btrace\b|\bTRACE\b/i.test(line)) {
+                lineEl.classList.add('log-debug');
+            }
+
+            lineEl.textContent = line;
+
+            // Append and auto-scroll
+            content.appendChild(lineEl);
+            if (!logPaused) {
+                content.scrollTop = content.scrollHeight;
+            }
+
+            // Update line count
+            lineCount.textContent = `${logLines.length} lines`;
+        }
+
+        /**
+         * Update the status indicator
+         */
+        function updateStatus(status, message) {
+            statusIndicator.className = 'log-status-indicator';
+            if (status === 'streaming') {
+                statusIndicator.classList.add('is-streaming');
+            } else if (status === 'paused') {
+                statusIndicator.classList.add('is-paused');
+            } else if (status === 'error') {
+                statusIndicator.classList.add('is-error');
+            } else if (status === 'connecting') {
+                statusIndicator.classList.add('is-connecting');
+            }
+            statusText.textContent = message;
+        }
+
+        /**
+         * Toggle log pause/resume
+         */
+        window.toggleLogPause = function() {
+            logPaused = !logPaused;
+
+            if (logSocket && logSocket.readyState === WebSocket.OPEN) {
+                logSocket.send(JSON.stringify({
+                    action: logPaused ? 'pause' : 'resume'
+                }));
+            }
+
+            if (logPaused) {
+                pauseBtn.classList.add('is-active');
+                updateStatus('paused', 'Paused');
+            } else {
+                pauseBtn.classList.remove('is-active');
+                updateStatus('streaming', 'Streaming logs...');
+                // Scroll to bottom when resuming
+                content.scrollTop = content.scrollHeight;
+            }
+        };
+
+        /**
+         * Clear all logs
+         */
+        window.clearLogs = function() {
+            logLines = [];
+            content.innerHTML = '';
+            content.appendChild(emptyState);
+            emptyState.classList.remove('is-hidden');
+            emptyState.querySelector('p').textContent = 'No logs yet...';
+            lineCount.textContent = '';
+        };
+
+        /**
+         * Copy logs to clipboard
+         */
+        window.copyLogs = function() {
+            const text = logLines.map(l => l.line).join('\n');
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = statusText.textContent;
+                statusText.textContent = 'Copied to clipboard!';
+                setTimeout(() => {
+                    statusText.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        };
+
+        /**
+         * Download logs as file
+         */
+        window.downloadLogs = function() {
+            const text = logLines.map(l => l.line).join('\n');
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `logs-${currentDeployment}-${currentComponent}-${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+
+        /**
+         * Switch to a different component
+         */
+        window.switchLogComponent = function(component) {
+            if (component === currentComponent) return;
+
+            // Clear current logs
+            clearLogs();
+            emptyState.querySelector('p').textContent = 'Switching component...';
+
+            // Send switch command via WebSocket
+            if (logSocket && logSocket.readyState === WebSocket.OPEN) {
+                logSocket.send(JSON.stringify({
+                    action: 'switch',
+                    component: component
+                }));
+                currentComponent = component;
+                updateStatus('connecting', `Switching to ${component}...`);
+            } else {
+                // Reconnect with new component
+                currentComponent = component;
+                connectLogWebSocket();
+            }
+        };
+
+        // Close on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && panel.classList.contains('is-open')) {
+                closeLogViewer();
+            }
+        });
+    })();
 </script>
 {% endblock %}
 
