@@ -112,3 +112,29 @@ data:
         static_configs:
           - targets: ['minio.rig-system:9000']
         metrics_path: /minio/v2/metrics/cluster
+
+      # Scrape Keycloak RIG custom metrics (user counts, login events per realm)
+      - job_name: 'keycloak-rig-metrics'
+        scrape_interval: 2h
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - rig-system
+        relabel_configs:
+          # Only scrape Keycloak pods by label
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: keycloak
+          # Use main Keycloak port 8080
+          - source_labels: [__address__]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:8080
+          # Add namespace and pod labels
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+        metrics_path: /realms/master/rig-metrics

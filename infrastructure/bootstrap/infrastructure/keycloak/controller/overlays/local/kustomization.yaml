@@ -61,8 +61,10 @@ patches:
         value:
           name: KC_TRUSTSTORE_PATHS
           value: "/opt/keycloak/conf/truststores/kind-local-ca.crt"
-      # DEV ONLY: Pull theme from local HTTP server (run: cd keycloak-theme/output && python3 -m http.server 8888)
-      # Also download custom mapper/authenticator from GitHub releases
+      # Download theme and custom mapper from GitHub releases
+      # For local theme development, replace the theme wget with:
+      #   wget http://host.docker.internal:8888/keycloak-nl-design-system.jar
+      # And run: cd keycloak-theme/output && python3 -m http.server 8888
       - op: replace
         path: /spec/template/spec/initContainers/0/command
         value:
@@ -70,7 +72,7 @@ patches:
           - -c
           - |
             cd /tmp
-            wget http://host.docker.internal:8888/keycloak-nl-design-system.jar
+            wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.2.1/keycloak-nl-design-system.jar
             cp keycloak-nl-design-system.jar /opt/keycloak/providers/
             wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar
             cp keycloak-saml-nameid-mapper-1.0.0.jar /opt/keycloak/providers/
