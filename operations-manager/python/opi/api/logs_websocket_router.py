@@ -5,11 +5,13 @@ This module provides a WebSocket endpoint that streams deployment logs
 in real-time using kubectl logs -f.
 
 Security features:
+- CSRF protection via Origin header validation
 - Session-based authentication (same as web UI)
 - Project-level authorization check
 - Connection limits per user and globally
 - Rate limiting on log messages
 - Log content sanitization
+- Client message size limits
 
 Note on multi-worker deployments:
 Connection limits are per-worker. For true global limits across workers,
@@ -19,7 +21,6 @@ per-worker protection which is sufficient for most deployments.
 
 import asyncio
 import contextlib
-import html
 import json
 import logging
 import time
@@ -55,9 +56,54 @@ MAX_CONNECTIONS_PER_USER = 5
 MAX_GLOBAL_CONNECTIONS = 100
 MAX_MESSAGES_PER_SECOND = 100  # Rate limit for log messages
 SESSION_MAX_AGE_SECONDS = 86400  # 24 hours - sessions older than this are rejected
+MAX_CLIENT_MESSAGE_SIZE = 1024  # 1KB max for client messages (actions like pause/resume/switch)
 
 # Heartbeat interval
 HEARTBEAT_INTERVAL_SECONDS = 30
+
+
+def _validate_origin(websocket: WebSocket) -> bool:
+    """
+    Validate the Origin header to prevent Cross-Site WebSocket Hijacking (CSWSH).
+
+    WebSocket connections are not subject to same-origin policy, so a malicious
+    website could attempt to open a WebSocket connection using the victim's cookies.
+    This validates that the Origin header matches our expected host.
+
+    Returns:
+        True if origin is valid or not provided (same-origin requests may omit it),
+        False if origin is provided but doesn't match expected hosts.
+    """
+    origin = websocket.headers.get("origin", "")
+
+    # If no origin header, it's likely a same-origin request or non-browser client
+    # We allow this since authentication still applies
+    if not origin:
+        return True
+
+    # Get the expected host from settings or from the request
+    expected_host = websocket.headers.get("host", "")
+    if not expected_host:
+        # No host header - this shouldn't happen in valid HTTP
+        logger.warning("WebSocket request missing Host header")
+        return False
+
+    # Build allowed origins (both http and https)
+    # Note: In production, you may want to only allow https
+    allowed_origins = [
+        f"https://{expected_host}",
+        f"http://{expected_host}",
+    ]
+
+    # Also allow configured external URL if set
+    if hasattr(settings, "EXTERNAL_URL") and settings.EXTERNAL_URL:
+        allowed_origins.append(settings.EXTERNAL_URL.rstrip("/"))
+
+    if origin not in allowed_origins:
+        logger.warning(f"WebSocket CSRF check failed: origin '{origin}' not in allowed list")
+        return False
+
+    return True
 
 
 async def send_message(websocket: WebSocket, msg_type: str, **kwargs: Any) -> bool:
@@ -207,17 +253,18 @@ def _sanitize_log_line(line: str) -> str:
     """
     Sanitize log line to prevent injection attacks.
 
-    - Escapes HTML entities to prevent XSS if client renders as HTML
-    - Removes/escapes control characters
+    - Removes control characters (except tab/newline)
     - Limits line length
+    - Does NOT HTML-escape: the client uses textContent (safe) or escapeHtml() for highlighting
+
+    Note: HTML escaping is intentionally NOT done here because the JavaScript client
+    handles it safely using textContent for plain rendering or explicit escapeHtml()
+    when adding search highlights. Double-escaping would cause display issues.
     """
     # Limit line length to prevent memory issues
     max_length = 10000
     if len(line) > max_length:
         line = line[:max_length] + "... [truncated]"
-
-    # Escape HTML entities to prevent XSS
-    line = html.escape(line)
 
     # Remove control characters except newline and tab
     line = "".join(char if char >= " " or char in "\t\n" else "?" for char in line)
@@ -250,6 +297,13 @@ async def stream_logs(  # noqa: C901
     connection_registered = False
 
     try:
+        # === CSRF PROTECTION ===
+        # Validate Origin header to prevent Cross-Site WebSocket Hijacking
+        if not _validate_origin(websocket):
+            logger.warning(f"WebSocket rejected: CSRF check failed for {project_name}")
+            await websocket.close(code=4003, reason="Access denied")
+            return
+
         # === AUTHENTICATION ===
         # Extract session from cookies (same session as web UI)
         session = _get_session_from_cookie(websocket)
@@ -504,6 +558,15 @@ async def stream_logs(  # noqa: C901
             while running:
                 try:
                     message = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+
+                    # Validate message size to prevent memory exhaustion
+                    if len(message) > MAX_CLIENT_MESSAGE_SIZE:
+                        logger.warning(
+                            f"Client message too large: {len(message)} bytes (max {MAX_CLIENT_MESSAGE_SIZE})"
+                        )
+                        await send_message(websocket, "error", message="Message too large")
+                        continue
+
                     data = json.loads(message)
                     action = data.get("action")
 
