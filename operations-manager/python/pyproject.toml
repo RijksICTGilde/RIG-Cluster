@@ -100,8 +100,8 @@ task-tags = ["TODO"]
 ignore = ["TRY003"]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests can use asserts, dynamic types, subprocess calls, and hardcoded test secrets
-"tests/**.py" = ["S101", "S105", "S603", "S607", "ANN201", "ANN401", "TRY300"]
+# Tests can use asserts, dynamic types, subprocess calls, hardcoded test secrets, and complex helper functions
+"tests/**.py" = ["S101", "S105", "S603", "S607", "ANN201", "ANN401", "TRY300", "C901"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 8
