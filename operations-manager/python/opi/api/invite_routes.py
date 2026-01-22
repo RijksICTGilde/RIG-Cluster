@@ -176,7 +176,6 @@ async def _get_userinfo(keycloak_url: str, realm_name: str, access_token: str) -
         response.raise_for_status()
         return response.json()
 
-
 invite_router = APIRouter(prefix="/invite", tags=["invites"])
 
 

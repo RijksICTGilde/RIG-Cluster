@@ -280,7 +280,9 @@ class InviteManager:
         client_roles_raw = invite.get("client_roles", {})
         if client_roles_raw and isinstance(client_roles_raw, dict):
             client_roles = cast(dict[str, Any], client_roles_raw)
-            client_result = await self._assign_client_roles(keycloak, realm_name, user_id, client_roles)
+            client_result = await self._assign_client_roles(
+                keycloak, realm_name, user_id, client_roles
+            )
             assigned["client_roles"] = client_result["assigned"]
             if client_result["errors"]:
                 errors.extend(client_result["errors"])

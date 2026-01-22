@@ -395,9 +395,7 @@ class KeycloakYamlHandler:
         logger.debug(f"Processing {len(items)} authentication flow items")
 
         for item in items:
-            logger.debug(
-                f"Processing flow item: alias={item.get('alias')}, setAsBrowserFlow={item.get('setAsBrowserFlow')}"
-            )
+            logger.debug(f"Processing flow item: alias={item.get('alias')}, setAsBrowserFlow={item.get('setAsBrowserFlow')}")
 
             if item.get("setAsBrowserFlow"):
                 # Extract provider alias from the identity-provider-redirector execution config
@@ -583,9 +581,7 @@ class KeycloakYamlHandler:
                     logger.info(f"Created client '{client_id}' in realm '{realm_name}'")
                 except Exception as e:
                     if "409" in str(e) or "Conflict" in str(e):
-                        logger.info(
-                            f"Client '{client_id}' already exists in realm '{realm_name}', updating redirect URIs"
-                        )
+                        logger.info(f"Client '{client_id}' already exists in realm '{realm_name}', updating redirect URIs")
                         # Find existing client and update redirect URIs and web origins
                         await self._update_existing_client(realm_name, client_id, client_data)
                     else:
@@ -620,7 +616,9 @@ class KeycloakYamlHandler:
                 self.keycloak.admin.change_current_realm("master")
                 raise
 
-    async def _update_existing_client(self, realm_name: str, client_id: str, client_data: dict[str, Any]) -> None:
+    async def _update_existing_client(
+        self, realm_name: str, client_id: str, client_data: dict[str, Any]
+    ) -> None:
         """Update an existing client with new redirect URIs and web origins.
 
         This is used to fix clients that were created with incorrect URLs

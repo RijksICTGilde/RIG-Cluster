@@ -148,9 +148,7 @@ class KeycloakManager:
                     logger.info(f"Added hostname for helmfile deployment: {helmfile_hostname}")
 
             if not all_ingress_hosts:
-                logger.info(
-                    f"No SSO-enabled components, helm-charts, or helmfiles found in deployment {deployment_name}, skipping"
-                )
+                logger.info(f"No SSO-enabled components, helm-charts, or helmfiles found in deployment {deployment_name}, skipping")
                 return
 
             logger.info(
@@ -556,7 +554,9 @@ class KeycloakManager:
             logger.exception(f"Error checking Keycloak service for component {component_reference}: {e}")
             return False
 
-    def _deployment_uses_keycloak_via_helm_charts(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+    def _deployment_uses_keycloak_via_helm_charts(
+        self, project_data: dict[str, Any], deployment_name: str
+    ) -> bool:
         """
         Check if a deployment uses Keycloak service via helm-charts.
 
@@ -598,7 +598,9 @@ class KeycloakManager:
 
         return False
 
-    def _deployment_uses_keycloak_via_helmfile(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+    def _deployment_uses_keycloak_via_helmfile(
+        self, project_data: dict[str, Any], deployment_name: str
+    ) -> bool:
         """
         Check if a deployment uses Keycloak service via helmfile.
 
@@ -691,12 +693,18 @@ class KeycloakManager:
                 if await verify_keycloak.realm_exists(realm_name):
                     logger.info(f"Verified project realm {realm_name} exists in Keycloak")
                     # Always ensure authentication flow is correctly configured (idempotent)
-                    await self._ensure_realm_authentication_flow(realm_name, keycloak_host, config)
+                    await self._ensure_realm_authentication_flow(
+                        realm_name, keycloak_host, config
+                    )
                     # Always ensure IdP and platform client have correct URLs (idempotent)
                     # Uses keycloak_url (expected correct URL) not keycloak_host (may have old value)
-                    await self._ensure_idp_and_platform_client_configuration(project_name, cluster, keycloak_url)
+                    await self._ensure_idp_and_platform_client_configuration(
+                        project_name, cluster, keycloak_url
+                    )
                     # Always ensure clients from YAML template are created (idempotent)
-                    await self._ensure_realm_clients(project_name, cluster, realm_name, keycloak_host, config)
+                    await self._ensure_realm_clients(
+                        project_name, cluster, realm_name, keycloak_host, config
+                    )
                 else:
                     logger.warning(
                         f"Project realm config exists but realm {realm_name} not found in Keycloak - will recreate"
@@ -1215,7 +1223,9 @@ class KeycloakManager:
 
         # 2. Check and update platform client redirect URI in rig-platform realm
         try:
-            expected_redirect_uri = f"{expected_keycloak_url}/realms/{realm_name}/broker/{idp_alias}/endpoint/*"
+            expected_redirect_uri = (
+                f"{expected_keycloak_url}/realms/{realm_name}/broker/{idp_alias}/endpoint/*"
+            )
 
             # Find the platform client in rig-platform realm
             client = await keycloak.find_client_by_client_id(platform_client_id, platform_realm)
@@ -1227,7 +1237,8 @@ class KeycloakManager:
                 if expected_redirect_uri not in current_redirect_uris:
                     # Build new redirect URIs list - replace any old broker endpoint URIs
                     new_redirect_uris = [
-                        uri for uri in current_redirect_uris if f"/broker/{idp_alias}/endpoint" not in uri
+                        uri for uri in current_redirect_uris
+                        if f"/broker/{idp_alias}/endpoint" not in uri
                     ]
                     new_redirect_uris.append(expected_redirect_uri)
 
@@ -1243,7 +1254,9 @@ class KeycloakManager:
                     )
                     keycloak.admin.change_current_realm("master")
 
-                    logger.info(f"Successfully updated platform client redirect URI to: {expected_redirect_uri}")
+                    logger.info(
+                        f"Successfully updated platform client redirect URI to: {expected_redirect_uri}"
+                    )
                 else:
                     logger.debug(f"Platform client '{platform_client_id}' redirect URIs are already correct")
             else:
@@ -1404,7 +1417,9 @@ class KeycloakManager:
 
         # Assign realm management permissions for the project realm
         # This grants full admin access to the specific realm via the {realm}-realm client in master
-        await keycloak.assign_realm_admin_from_master(target_realm_name=realm_name, user_id=user_info["id"])
+        await keycloak.assign_realm_admin_from_master(
+            target_realm_name=realm_name, user_id=user_info["id"]
+        )
         logger.info(f"Assigned realm management permissions for {realm_name} to {admin_username}")
 
         # Store in project config

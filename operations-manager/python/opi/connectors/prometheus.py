@@ -331,7 +331,9 @@ class PrometheusConnector:
             logger.error(f"Failed to execute custom query: {e}")
             raise PrometheusQueryError(f"Failed to execute custom query: {e}") from e
 
-    def query_range(self, query: str, start_time: str, end_time: str, step: str) -> list[dict[str, Any]]:
+    def query_range(
+        self, query: str, start_time: str, end_time: str, step: str
+    ) -> list[dict[str, Any]]:
         """
         Execute a range query to get time-series data.
 
@@ -360,7 +362,9 @@ class PrometheusConnector:
             logger.error(f"Failed to execute range query: {e}")
             raise PrometheusQueryError(f"Failed to execute range query: {e}") from e
 
-    def get_component_metrics(self, namespace: str, pod_prefix: str, time_range: str = "6h") -> dict[str, float | None]:
+    def get_component_metrics(
+        self, namespace: str, pod_prefix: str, time_range: str = "6h"
+    ) -> dict[str, float | None]:
         """
         Get aggregated metrics for a specific component (identified by pod name prefix).
 
@@ -394,9 +398,9 @@ class PrometheusConnector:
         try:
             # CPU usage (average over time range, in cores)
             cpu_query = (
-                f"avg(rate(container_cpu_usage_seconds_total{{"
+                f'avg(rate(container_cpu_usage_seconds_total{{'
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
-                f"}}[{time_range}]))"
+                f'}}[{time_range}]))'
             )
             cpu_result: list[dict[str, Any]] = self.prom.custom_query(cpu_query)
             if cpu_result and len(cpu_result) > 0:
@@ -404,7 +408,9 @@ class PrometheusConnector:
 
             # Memory usage (current, in bytes)
             memory_query = (
-                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
+                f'sum(container_memory_usage_bytes{{'
+                f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
+                f'}})'
             )
             memory_result: list[dict[str, Any]] = self.prom.custom_query(memory_query)
             if memory_result and len(memory_result) > 0:
@@ -419,7 +425,11 @@ class PrometheusConnector:
                 "http_server_requests_seconds_count",
                 "promhttp_metric_handler_requests_total",
             ]:
-                req_query = f'sum(rate({req_metric}{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{time_range}]))'
+                req_query = (
+                    f'sum(rate({req_metric}{{'
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
+                    f'}}[{time_range}]))'
+                )
                 try:
                     req_result: list[dict[str, Any]] = self.prom.custom_query(req_query)
                     if req_result and len(req_result) > 0:
@@ -484,20 +494,11 @@ class PrometheusConnector:
 
         if not PrometheusConnector.is_connected:
             return {
-                "cpu": [],
-                "memory": [],
-                "requests": [],
-                "network_in": [],
-                "network_out": [],
-                "disk_read": [],
-                "disk_write": [],
-                "cpu_limit": None,
-                "memory_limit": None,
-                "cpu_timestamps": [],
-                "memory_timestamps": [],
-                "requests_timestamps": [],
-                "network_timestamps": [],
-                "disk_timestamps": [],
+                "cpu": [], "memory": [], "requests": [],
+                "network_in": [], "network_out": [], "disk_read": [], "disk_write": [],
+                "cpu_limit": None, "memory_limit": None,
+                "cpu_timestamps": [], "memory_timestamps": [], "requests_timestamps": [],
+                "network_timestamps": [], "disk_timestamps": [],
             }
 
         end_time = datetime.now(UTC)
@@ -505,28 +506,19 @@ class PrometheusConnector:
         step = f"{step_minutes}m"
 
         result: dict[str, Any] = {
-            "cpu": [],
-            "memory": [],
-            "requests": [],
-            "network_in": [],
-            "network_out": [],
-            "disk_read": [],
-            "disk_write": [],
-            "cpu_limit": None,
-            "memory_limit": None,
-            "cpu_timestamps": [],
-            "memory_timestamps": [],
-            "requests_timestamps": [],
-            "network_timestamps": [],
-            "disk_timestamps": [],
+            "cpu": [], "memory": [], "requests": [],
+            "network_in": [], "network_out": [], "disk_read": [], "disk_write": [],
+            "cpu_limit": None, "memory_limit": None,
+            "cpu_timestamps": [], "memory_timestamps": [], "requests_timestamps": [],
+            "network_timestamps": [], "disk_timestamps": [],
         }
 
         try:
             # CPU usage time-series (in cores, we'll convert to millicores)
             cpu_query = (
-                f"sum(rate(container_cpu_usage_seconds_total{{"
+                f'sum(rate(container_cpu_usage_seconds_total{{'
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
-                f"}}[{step}]))"
+                f'}}[{step}]))'
             )
             logger.debug(f"Prometheus CPU query: {cpu_query}")
             cpu_result = self.prom.custom_query_range(
@@ -540,16 +532,16 @@ class PrometheusConnector:
             if cpu_result and len(cpu_result) > 0 and "values" in cpu_result[0]:
                 for ts, value in cpu_result[0]["values"]:
                     cpu_millicores = float(value) * 1000  # Convert to millicores
-                    result["cpu"].append(
-                        {
-                            "timestamp": ts,
-                            "value": round(cpu_millicores, 2),
-                        }
-                    )
+                    result["cpu"].append({
+                        "timestamp": ts,
+                        "value": round(cpu_millicores, 2),
+                    })
 
             # Memory usage time-series (in bytes, we'll convert to MB)
             memory_query = (
-                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
+                f'sum(container_memory_usage_bytes{{'
+                f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
+                f'}})'
             )
             memory_result = self.prom.custom_query_range(
                 query=memory_query,
@@ -561,16 +553,16 @@ class PrometheusConnector:
             if memory_result and len(memory_result) > 0 and "values" in memory_result[0]:
                 for ts, value in memory_result[0]["values"]:
                     memory_mb = float(value) / (1024 * 1024)  # Convert to MB
-                    result["memory"].append(
-                        {
-                            "timestamp": ts,
-                            "value": round(memory_mb, 1),
-                        }
-                    )
+                    result["memory"].append({
+                        "timestamp": ts,
+                        "value": round(memory_mb, 1),
+                    })
 
             # HTTP requests per minute time-series (rate * 60 for better readability)
             requests_query = (
-                f'sum(rate(http_requests_total{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{step}])) * 60'
+                f'sum(rate(http_requests_total{{'
+                f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
+                f'}}[{step}])) * 60'
             )
             requests_result = self.prom.custom_query_range(
                 query=requests_query,
@@ -583,19 +575,17 @@ class PrometheusConnector:
             if requests_result and len(requests_result) > 0 and "values" in requests_result[0]:
                 for ts, value in requests_result[0]["values"]:
                     rpm = float(value)  # requests per minute
-                    result["requests"].append(
-                        {
-                            "timestamp": ts,
-                            "value": round(rpm, 1),
-                        }
-                    )
+                    result["requests"].append({
+                        "timestamp": ts,
+                        "value": round(rpm, 1),
+                    })
                 logger.debug(f"Processed {len(result['requests'])} request data points")
 
             # Network receive (bytes/sec, convert to KB/s)
             network_in_query = (
-                f"sum(rate(container_network_receive_bytes_total{{"
+                f'sum(rate(container_network_receive_bytes_total{{'
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f"}}[{step}])) / 1024"
+                f'}}[{step}])) / 1024'
             )
             network_in_result = self.prom.custom_query_range(
                 query=network_in_query,
@@ -606,18 +596,16 @@ class PrometheusConnector:
 
             if network_in_result and len(network_in_result) > 0 and "values" in network_in_result[0]:
                 for ts, value in network_in_result[0]["values"]:
-                    result["network_in"].append(
-                        {
-                            "timestamp": ts,
-                            "value": round(float(value), 2),
-                        }
-                    )
+                    result["network_in"].append({
+                        "timestamp": ts,
+                        "value": round(float(value), 2),
+                    })
 
             # Network transmit (bytes/sec, convert to KB/s)
             network_out_query = (
-                f"sum(rate(container_network_transmit_bytes_total{{"
+                f'sum(rate(container_network_transmit_bytes_total{{'
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f"}}[{step}])) / 1024"
+                f'}}[{step}])) / 1024'
             )
             network_out_result = self.prom.custom_query_range(
                 query=network_out_query,
@@ -628,18 +616,16 @@ class PrometheusConnector:
 
             if network_out_result and len(network_out_result) > 0 and "values" in network_out_result[0]:
                 for ts, value in network_out_result[0]["values"]:
-                    result["network_out"].append(
-                        {
-                            "timestamp": ts,
-                            "value": round(float(value), 2),
-                        }
-                    )
+                    result["network_out"].append({
+                        "timestamp": ts,
+                        "value": round(float(value), 2),
+                    })
 
             # Disk read (bytes/sec, convert to KB/s)
             disk_read_query = (
-                f"sum(rate(container_fs_reads_bytes_total{{"
+                f'sum(rate(container_fs_reads_bytes_total{{'
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f"}}[{step}])) / 1024"
+                f'}}[{step}])) / 1024'
             )
             disk_read_result = self.prom.custom_query_range(
                 query=disk_read_query,
@@ -650,18 +636,16 @@ class PrometheusConnector:
 
             if disk_read_result and len(disk_read_result) > 0 and "values" in disk_read_result[0]:
                 for ts, value in disk_read_result[0]["values"]:
-                    result["disk_read"].append(
-                        {
-                            "timestamp": ts,
-                            "value": round(float(value), 2),
-                        }
-                    )
+                    result["disk_read"].append({
+                        "timestamp": ts,
+                        "value": round(float(value), 2),
+                    })
 
             # Disk write (bytes/sec, convert to KB/s)
             disk_write_query = (
-                f"sum(rate(container_fs_writes_bytes_total{{"
+                f'sum(rate(container_fs_writes_bytes_total{{'
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f"}}[{step}])) / 1024"
+                f'}}[{step}])) / 1024'
             )
             disk_write_result = self.prom.custom_query_range(
                 query=disk_write_query,
@@ -672,12 +656,10 @@ class PrometheusConnector:
 
             if disk_write_result and len(disk_write_result) > 0 and "values" in disk_write_result[0]:
                 for ts, value in disk_write_result[0]["values"]:
-                    result["disk_write"].append(
-                        {
-                            "timestamp": ts,
-                            "value": round(float(value), 2),
-                        }
-                    )
+                    result["disk_write"].append({
+                        "timestamp": ts,
+                        "value": round(float(value), 2),
+                    })
 
             # Extract timestamps for each metric (will be converted to local time in browser)
             result["cpu_timestamps"] = [item["timestamp"] for item in result["cpu"]]
@@ -689,9 +671,9 @@ class PrometheusConnector:
             # Fetch resource limits (current values, not time-series)
             # CPU limit in cores, convert to millicores
             cpu_limit_query = (
-                f"sum(kube_pod_container_resource_limits{{"
+                f'sum(kube_pod_container_resource_limits{{'
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu"'
-                f"}})"
+                f'}})'
             )
             cpu_limit_result = self.prom.custom_query(cpu_limit_query)
             if cpu_limit_result and len(cpu_limit_result) > 0:
@@ -700,9 +682,9 @@ class PrometheusConnector:
 
             # Memory limit in bytes, convert to MB
             memory_limit_query = (
-                f"sum(kube_pod_container_resource_limits{{"
+                f'sum(kube_pod_container_resource_limits{{'
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory"'
-                f"}})"
+                f'}})'
             )
             memory_limit_result = self.prom.custom_query(memory_limit_query)
             if memory_limit_result and len(memory_limit_result) > 0:
@@ -864,7 +846,8 @@ class PrometheusConnector:
             second_last = parts[-2]
 
             # Deployment pattern: last two parts are hashes
-            if len(last_part) == 5 and last_part.isalnum() and len(second_last) >= 5 and second_last.isalnum():
+            if (len(last_part) == 5 and last_part.isalnum() and
+                len(second_last) >= 5 and second_last.isalnum()):
                 return "-".join(parts[:-2])
 
         # Job pattern or unknown: just remove last hash-like part
