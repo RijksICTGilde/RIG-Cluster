@@ -2692,9 +2692,7 @@ class ProjectManager:
                 )
 
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
-                logger.info(
-                    f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
-                )
+                logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
                 # Create network policy for ACME HTTP-01 challenge
                 # This allows ingress on port 80 to all pods, required for the ACME solver
@@ -3000,9 +2998,7 @@ class ProjectManager:
                 logger.info(f"Created CMP environment file: {cmp_env_path}")
 
             # Extract base helm-values from helmfile definition
-            base_values = await self._project_file_handler.extract_helmfile_values(
-                project_data, helmfile_reference
-            )
+            base_values = await self._project_file_handler.extract_helmfile_values(project_data, helmfile_reference)
 
             # Extract deployment-level helm-values
             deployment_values = await self._project_file_handler.extract_deployment_helmfile_values(
@@ -3080,9 +3076,7 @@ class ProjectManager:
                 )
 
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
-                logger.info(
-                    f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
-                )
+                logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
                 # Create network policy for ACME HTTP-01 challenge
                 network_policy_template_path = os.path.join(
@@ -3105,9 +3099,7 @@ class ProjectManager:
                 regular_files.append(f"{network_policy_filename}.yaml")
                 logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
             else:
-                logger.warning(
-                    f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured"
-                )
+                logger.warning(f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured")
 
         # Create kustomization.yaml for additional resources (Issuer, NetworkPolicy, Secrets)
         # The CMP plugin will run BOTH kustomize build AND helmfile template
