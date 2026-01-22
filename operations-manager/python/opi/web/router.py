@@ -722,7 +722,9 @@ async def project_details(request: Request, project_name: str):
             for kc_config in project_data_decrypted["config"]["keycloak"]:
                 if kc_config.get("password"):
                     try:
-                        kc_config["password"] = await decrypt_password_smart(kc_config["password"], project_private_key)
+                        kc_config["password"] = await decrypt_password_smart(
+                            kc_config["password"], project_private_key
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
                         kc_config["password"] = None
@@ -1132,7 +1134,9 @@ async def project_details(request: Request, project_name: str):
                 k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
 
                 try:
-                    snapshots = await backup_manager.list_snapshots(cluster, k8s_namespace, project_name=project_name)
+                    snapshots = await backup_manager.list_snapshots(
+                        cluster, k8s_namespace, project_name=project_name
+                    )
                     if snapshots:
                         deployment_backups[deployment_name] = [
                             {

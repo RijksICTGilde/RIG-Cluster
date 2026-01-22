@@ -169,6 +169,7 @@ ignore = [
     "PT009",    # Use pytest.raises
     "PT011",    # pytest.raises too broad
     "PT015",    # Assert always fails
+    "PT027",    # Use pytest.raises instead of assertRaises
     # UP rules - pyupgrade
     "UP022",    # Replace stdout/stderr capture
     "UP038",    # Use X | Y in isinstance

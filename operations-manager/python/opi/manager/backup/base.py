@@ -170,7 +170,7 @@ class BackupLock:
                     elif age_seconds < timeout_seconds:
                         # Lock is fresh and pod exists, cannot acquire
                         logger.warning(
-                            f"Backup lock held by {locked_by} since {locked_at_str} ({age_seconds:.0f}s ago)"
+                            f"Backup lock held by {locked_by} " f"since {locked_at_str} ({age_seconds:.0f}s ago)"
                         )
                         return False
                     else:

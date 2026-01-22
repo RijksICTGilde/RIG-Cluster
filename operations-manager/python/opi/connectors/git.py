@@ -1339,7 +1339,8 @@ class GitConnector:
                 # Last attempt failed
                 server_info = self._get_server_context()
                 raise RuntimeError(
-                    f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
+                    f"Failed to push changes to {target_branch} on {server_info} "
+                    f"after {max_retries} attempts: {stderr}"
                 )
 
     async def commit_and_push_changes(

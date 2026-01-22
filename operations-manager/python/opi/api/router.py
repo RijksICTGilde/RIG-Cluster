@@ -604,7 +604,8 @@ async def update_deployment_image(
         service_actions = None
         if image_data.services:
             service_actions = {
-                service_type: service_ref.model_dump() for service_type, service_ref in image_data.services.items()
+                service_type: service_ref.model_dump()
+                for service_type, service_ref in image_data.services.items()
             }
             logger.info(f"Service actions requested: {service_actions}")
 

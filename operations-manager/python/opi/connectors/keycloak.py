@@ -2177,7 +2177,9 @@ class KeycloakConnector:
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
             skip_clients: List of OAuth client IDs that should bypass this role check (e.g., invite client)
         """
-        logger.info(f"Creating post-broker login flow '{flow_alias}' for client '{client_id}' in realm '{realm_name}'")
+        logger.info(
+            f"Creating post-broker login flow '{flow_alias}' for client '{client_id}' in realm '{realm_name}'"
+        )
 
         try:
             self.admin.change_current_realm(realm_name)
@@ -2248,7 +2250,9 @@ class KeycloakConnector:
         }
 
         try:
-            self.admin.create_authentication_flow_subflow(payload=subflow_data, flow_alias=flow_alias, skip_exists=True)
+            self.admin.create_authentication_flow_subflow(
+                payload=subflow_data, flow_alias=flow_alias, skip_exists=True
+            )
             logger.debug(f"Created conditional sub-flow '{subflow_alias}'")
         except KeycloakPostError as e:
             if "409" in str(e) or "Conflict" in str(e):
@@ -2325,7 +2329,9 @@ class KeycloakConnector:
         # Only create if it doesn't exist
         if not authenticator_execution:
             execution_data = {"provider": "require-client-role-authenticator"}
-            self.admin.create_authentication_flow_execution(payload=execution_data, flow_alias=flow_alias)
+            self.admin.create_authentication_flow_execution(
+                payload=execution_data, flow_alias=flow_alias
+            )
             logger.debug("Added RequireClientRoleAuthenticator execution")
 
             # Re-fetch executions to get the newly created one
@@ -2397,7 +2403,9 @@ class KeycloakConnector:
             provider_alias: Alias of the identity provider
             flow_alias: Alias of the post-broker login flow to use
         """
-        logger.info(f"Setting post-broker login flow '{flow_alias}' for IdP '{provider_alias}' in realm '{realm_name}'")
+        logger.info(
+            f"Setting post-broker login flow '{flow_alias}' for IdP '{provider_alias}' in realm '{realm_name}'"
+        )
 
         try:
             self.admin.change_current_realm(realm_name)
@@ -2412,7 +2420,9 @@ class KeycloakConnector:
             idp["postBrokerLoginFlowAlias"] = flow_alias
 
             self.admin.update_idp(idp_alias=provider_alias, payload=idp)
-            logger.info(f"Set post-broker login flow to '{flow_alias}' for IdP '{provider_alias}'")
+            logger.info(
+                f"Set post-broker login flow to '{flow_alias}' for IdP '{provider_alias}'"
+            )
 
             self.admin.change_current_realm("master")
 
@@ -2893,7 +2903,10 @@ class KeycloakConnector:
         Returns:
             True if roles were assigned successfully
         """
-        logger.info(f"Assigning realm management permissions for '{target_realm_name}' to master realm user {user_id}")
+        logger.info(
+            f"Assigning realm management permissions for '{target_realm_name}' "
+            f"to master realm user {user_id}"
+        )
 
         try:
             # Ensure we're in master realm

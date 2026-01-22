@@ -734,7 +734,6 @@ class BackupManager:
                     storage_name = storage.get("name")
                     if not storage_name:
                         from opi.utils.naming import generate_storage_name
-
                         mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
                         storage_name = generate_storage_name(mount_path, idx)
 
