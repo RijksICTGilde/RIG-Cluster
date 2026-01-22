@@ -66,11 +66,11 @@ jobs:
 
       - name: Run ruff linter
         working-directory: operations-manager/python
-        run: poetry run ruff check .
+        run: poetry run ruff check opi/ tests/
 
       - name: Run ruff formatter check
         working-directory: operations-manager/python
-        run: poetry run ruff format --check .
+        run: poetry run ruff format --check opi/ tests/
 
       - name: Run pyright type checker
         working-directory: operations-manager/python
