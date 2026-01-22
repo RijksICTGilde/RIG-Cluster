@@ -24,12 +24,13 @@ import contextlib
 import json
 import logging
 import time
+from base64 import b64decode
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from itsdangerous import BadSignature, TimestampSigner
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
@@ -123,7 +124,7 @@ def _get_session_from_cookie(websocket: WebSocket) -> dict[str, Any] | None:
     Extract and validate session data from WebSocket cookies.
 
     This replicates the session extraction done by Starlette's SessionMiddleware.
-    Starlette uses itsdangerous.URLSafeTimedSerializer with the SECRET_KEY.
+    Starlette uses itsdangerous.TimestampSigner with base64-encoded JSON.
 
     Returns:
         Session data dict if valid, None otherwise
@@ -143,20 +144,15 @@ def _get_session_from_cookie(websocket: WebSocket) -> dict[str, Any] | None:
             logger.error("SECRET_KEY not configured")
             return None
 
-        # Starlette's SessionMiddleware uses URLSafeTimedSerializer
-        # with "cookie-session" as the salt (default)
-        serializer = URLSafeTimedSerializer(secret_key)
+        # Starlette's SessionMiddleware uses TimestampSigner (not URLSafeTimedSerializer)
+        # The cookie value is: base64(json(session_data)) + signature
+        signer = TimestampSigner(str(secret_key))
 
-        # Validate with max_age to prevent replay of old sessions
         try:
-            session_data = serializer.loads(
-                session_cookie,
-                max_age=SESSION_MAX_AGE_SECONDS,
-                salt="cookie-session",  # Starlette's default salt
-            )
-        except SignatureExpired:
-            logger.warning("Session cookie has expired")
-            return None
+            # Unsign and validate with max_age
+            data = signer.unsign(session_cookie.encode("utf-8"), max_age=SESSION_MAX_AGE_SECONDS)
+            # Decode base64 and parse JSON
+            session_data = json.loads(b64decode(data))
         except BadSignature:
             logger.warning("Session cookie has invalid signature")
             return None

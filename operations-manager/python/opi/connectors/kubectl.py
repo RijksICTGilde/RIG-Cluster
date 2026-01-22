@@ -687,6 +687,9 @@ class KubectlConnector:
         """
         Get logs from all pods belonging to a deployment.
 
+        Uses label selector instead of deployment/ to avoid needing deployment
+        get permissions - only requires pods and pods/log permissions.
+
         Args:
             deployment_name: Name of the deployment
             namespace: Namespace containing the deployment
@@ -698,8 +701,8 @@ class KubectlConnector:
         logger.debug(f"Getting logs for deployment {deployment_name} in namespace {namespace}")
 
         try:
-            # Get logs from deployment (kubectl will aggregate from all pods)
-            args = ["logs", f"deployment/{deployment_name}", "-n", namespace, f"--tail={lines}"]
+            # Use label selector instead of deployment/ to only require pod permissions
+            args = ["logs", "-l", f"app={deployment_name}", "-n", namespace, f"--tail={lines}"]
             stdout, stderr, code = await self._run_kubectl_command(args)
 
             if code != 0:
@@ -720,6 +723,9 @@ class KubectlConnector:
         """
         Start streaming logs from a deployment using kubectl logs -f.
 
+        Uses label selector instead of deployment/ to avoid needing deployment
+        get permissions - only requires pods and pods/log permissions.
+
         This returns a subprocess that streams logs in real-time. The caller
         is responsible for reading from process.stdout and terminating the
         process when done.
@@ -739,11 +745,13 @@ class KubectlConnector:
         logger.debug(f"Starting log stream for deployment {deployment_name} in namespace {namespace}")
 
         try:
+            # Use label selector instead of deployment/ to only require pod permissions
             cmd = [
                 "kubectl",
                 "logs",
                 "-f",
-                f"deployment/{deployment_name}",
+                "-l",
+                f"app={deployment_name}",
                 "-n",
                 namespace,
                 f"--tail={lines}",
