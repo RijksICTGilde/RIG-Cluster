@@ -253,7 +253,7 @@ public final class PrometheusExporter {
             @SuppressWarnings("unchecked")
             List<Object[]> results = query.getResultList();
 
-            int federatedTotal = 0;
+            long federatedTotal = 0;
             for (Object[] row : results) {
                 String idpAlias = (String) row[0];
                 long count = (Long) row[1];
@@ -263,7 +263,7 @@ public final class PrometheusExporter {
 
             // Local users = total users - federated users
             int totalUsers = session.users().getUsersCount(realm);
-            int localCount = totalUsers - federatedTotal;
+            int localCount = totalUsers - (int) federatedTotal;
             if (localCount > 0) {
                 idpCounts.put(IDP_LOCAL, localCount);
             }
