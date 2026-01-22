@@ -384,19 +384,24 @@ async def stream_logs(  # noqa: C901
             nonlocal sequence, running
 
             while running:
+                # Get current process reference under lock, but release before I/O
                 async with process_lock:
                     current_process = process
-                    if current_process is None or current_process.stdout is None:
-                        await asyncio.sleep(0.1)
-                        continue
+                    current_stdout = current_process.stdout if current_process else None
 
-                    try:
-                        line = await asyncio.wait_for(current_process.stdout.readline(), timeout=0.5)
-                    except TimeoutError:
-                        continue
-                    except Exception as e:
-                        logger.debug(f"Error reading log line: {e}")
-                        break
+                if current_stdout is None:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # Perform blocking I/O outside the lock
+                try:
+                    line = await asyncio.wait_for(current_stdout.readline(), timeout=0.5)
+                except TimeoutError:
+                    continue
+                except Exception as e:
+                    logger.debug(f"Error reading log line: {e}")
+                    await asyncio.sleep(0.1)
+                    continue
 
                 if not line:
                     await asyncio.sleep(0.5)
@@ -437,28 +442,50 @@ async def stream_logs(  # noqa: C901
                     running = False
                     break
 
+        # Separate rate limiter for stderr to prevent stderr flooding bypass
+        stderr_rate_limiter = RateLimiter(rate=MAX_MESSAGES_PER_SECOND, burst=20)
+
         async def read_stderr() -> None:
             """Read and log stderr from kubectl process to prevent buffer deadlock."""
             nonlocal running
 
             while running:
+                # Get current process reference under lock, but release before I/O
                 async with process_lock:
                     current_process = process
-                    if current_process is None or current_process.stderr is None:
-                        await asyncio.sleep(0.1)
-                        continue
+                    current_stderr = current_process.stderr if current_process else None
 
-                    try:
-                        line = await asyncio.wait_for(current_process.stderr.readline(), timeout=0.5)
-                    except TimeoutError:
-                        continue
-                    except Exception:
-                        break
+                if current_stderr is None:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # Perform blocking I/O outside the lock
+                try:
+                    line = await asyncio.wait_for(current_stderr.readline(), timeout=0.5)
+                except TimeoutError:
+                    continue
+                except Exception:
+                    await asyncio.sleep(0.1)
+                    continue
 
                 if line:
+                    # Apply rate limiting to stderr as well
+                    allowed, dropped = stderr_rate_limiter.acquire()
+                    if not allowed:
+                        continue
+
                     stderr_text = line.decode("utf-8", errors="replace").rstrip()
                     sanitized_text = _sanitize_log_line(stderr_text)
                     logger.warning(f"kubectl stderr: {sanitized_text}")
+
+                    # Notify if stderr messages were dropped
+                    if dropped > 0:
+                        await send_message(
+                            websocket,
+                            "warning",
+                            message=f"Rate limited: {dropped} stderr lines skipped",
+                        )
+
                     await send_message(
                         websocket,
                         "log",
@@ -490,6 +517,11 @@ async def stream_logs(  # noqa: C901
 
                     elif action == "switch":
                         new_component = data.get("component")
+                        # Validate component name length to prevent memory issues
+                        if new_component and len(new_component) > 256:
+                            logger.warning("Component name too long in switch request")
+                            await send_message(websocket, "error", message="Invalid component name")
+                            continue
                         if new_component and new_component != current_component:
                             # Re-fetch project data to get current components
                             fresh_projects = project_service.get_all_projects()
