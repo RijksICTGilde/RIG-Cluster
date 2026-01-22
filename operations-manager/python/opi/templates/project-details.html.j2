@@ -422,7 +422,7 @@
                         {% if deployment.components %}
                         <div style="margin-top: var(--rvo-space-sm);">
                             <button type="button" class="log-viewer-btn"
-                                    onclick="openLogViewer('{{ project.name }}', '{{ deployment.name }}', '{{ deployment.components[0].reference }}', {{ deployment.components | tojson | e }})"
+                                    onclick='openLogViewer({{ project.name | tojson }}, {{ deployment.name | tojson }}, {{ deployment.components[0].reference | tojson }}, {{ deployment.components | tojson }})'
                                     title="Bekijk live logs voor deze deployment">
                                 <c-icon icon="document-blanco" size="sm" />
                                 <span>View Logs</span>
@@ -1519,16 +1519,16 @@
         </div>
         <div class="log-viewer-controls">
             <button type="button" class="log-control-btn" id="log-pause-btn" onclick="toggleLogPause()" title="Pause/Resume">
-                <c-icon icon="pauze" size="sm" id="log-pause-icon" />
+                <c-icon icon="wachtend-persoon" size="sm" id="log-pause-icon" />
             </button>
             <button type="button" class="log-control-btn" onclick="clearLogs()" title="Clear">
-                <c-icon icon="prullenbak" size="sm" />
+                <c-icon icon="verwijderen" size="sm" />
             </button>
             <button type="button" class="log-control-btn" onclick="copyLogs()" title="Copy">
                 <c-icon icon="document-blanco" size="sm" />
             </button>
             <button type="button" class="log-control-btn" onclick="downloadLogs()" title="Download">
-                <c-icon icon="download" size="sm" />
+                <c-icon icon="downloaden" size="sm" />
             </button>
             <button type="button" class="log-close-btn" onclick="closeLogViewer()" title="Close">
                 <c-icon icon="kruis" size="md" />
