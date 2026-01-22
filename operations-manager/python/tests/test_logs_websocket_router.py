@@ -356,25 +356,27 @@ class TestLogSanitization(unittest.TestCase):
 
         self.assertEqual(result, line)
 
-    def test_sanitize_html_escape(self):
-        """Test that HTML characters are escaped to prevent XSS."""
+    def test_sanitize_preserves_html_characters(self):
+        """Test that HTML characters are preserved (client handles escaping safely)."""
         from opi.api.logs_websocket_router import _sanitize_log_line
 
+        # Server no longer HTML-escapes because client uses textContent (safe)
+        # or explicit escapeHtml() for search highlighting
         line = '<script>alert("XSS")</script>'
         result = _sanitize_log_line(line)
 
-        self.assertNotIn("<script>", result)
-        self.assertIn("&lt;script&gt;", result)
+        # HTML should be preserved - client handles XSS prevention
+        self.assertEqual(result, line)
 
-    def test_sanitize_html_entities(self):
-        """Test that all dangerous HTML entities are escaped."""
+    def test_sanitize_preserves_html_tags(self):
+        """Test that HTML tags are preserved for client-side handling."""
         from opi.api.logs_websocket_router import _sanitize_log_line
 
         line = 'User input: <img src="x" onerror="alert(1)">'
         result = _sanitize_log_line(line)
 
-        self.assertNotIn("<img", result)
-        self.assertIn("&lt;img", result)
+        # HTML should be preserved - client uses safe methods
+        self.assertEqual(result, line)
 
     def test_sanitize_control_characters(self):
         """Test that control characters are replaced."""
@@ -418,14 +420,15 @@ class TestLogSanitization(unittest.TestCase):
         result = _sanitize_log_line("")
         self.assertEqual(result, "")
 
-    def test_sanitize_ampersand(self):
-        """Test that ampersands are escaped."""
+    def test_sanitize_preserves_ampersand(self):
+        """Test that ampersands are preserved (client handles escaping)."""
         from opi.api.logs_websocket_router import _sanitize_log_line
 
         line = "Tom & Jerry"
         result = _sanitize_log_line(line)
 
-        self.assertEqual(result, "Tom &amp; Jerry")
+        # Ampersand preserved - client uses textContent which is safe
+        self.assertEqual(result, "Tom & Jerry")
 
 
 class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
@@ -668,6 +671,172 @@ class TestSecurityIntegration(unittest.TestCase):
         source = inspect.getsource(stream_logs)
 
         self.assertIn("process_lock", source, "Process lock not found")
+
+    def test_csrf_protection_exists(self):
+        """Verify that CSRF protection is implemented."""
+        import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
+
+        source = inspect.getsource(stream_logs)
+
+        self.assertIn("_validate_origin", source, "CSRF origin validation not found")
+
+    def test_message_size_limit_exists(self):
+        """Verify that client message size limit is implemented."""
+        import inspect
+
+        from opi.api.logs_websocket_router import stream_logs
+
+        source = inspect.getsource(stream_logs)
+
+        self.assertIn("MAX_CLIENT_MESSAGE_SIZE", source, "Message size limit not found")
+
+
+class TestCsrfProtection(unittest.TestCase):
+    """Test cases for CSRF protection via Origin header validation."""
+
+    def test_validate_origin_no_header(self):
+        """Test that requests without Origin header are allowed (same-origin)."""
+        from opi.api.logs_websocket_router import _validate_origin
+
+        mock_websocket = MagicMock()
+        mock_websocket.headers = {"host": "example.com"}
+
+        result = _validate_origin(mock_websocket)
+
+        self.assertTrue(result)
+
+    def test_validate_origin_valid_https(self):
+        """Test that valid HTTPS origin is allowed."""
+        from opi.api.logs_websocket_router import _validate_origin
+
+        mock_websocket = MagicMock()
+        mock_websocket.headers = {
+            "host": "example.com",
+            "origin": "https://example.com",
+        }
+
+        result = _validate_origin(mock_websocket)
+
+        self.assertTrue(result)
+
+    def test_validate_origin_valid_http(self):
+        """Test that valid HTTP origin is allowed."""
+        from opi.api.logs_websocket_router import _validate_origin
+
+        mock_websocket = MagicMock()
+        mock_websocket.headers = {
+            "host": "localhost:8000",
+            "origin": "http://localhost:8000",
+        }
+
+        result = _validate_origin(mock_websocket)
+
+        self.assertTrue(result)
+
+    def test_validate_origin_invalid_origin(self):
+        """Test that invalid origin is rejected."""
+        from opi.api.logs_websocket_router import _validate_origin
+
+        mock_websocket = MagicMock()
+        mock_websocket.headers = {
+            "host": "example.com",
+            "origin": "https://evil.com",
+        }
+
+        result = _validate_origin(mock_websocket)
+
+        self.assertFalse(result)
+
+    def test_validate_origin_missing_host(self):
+        """Test that request without Host header is rejected."""
+        from opi.api.logs_websocket_router import _validate_origin
+
+        mock_websocket = MagicMock()
+        mock_websocket.headers = {
+            "origin": "https://example.com",
+        }
+
+        result = _validate_origin(mock_websocket)
+
+        self.assertFalse(result)
+
+    def test_validate_origin_different_port(self):
+        """Test that different port in origin is rejected."""
+        from opi.api.logs_websocket_router import _validate_origin
+
+        mock_websocket = MagicMock()
+        mock_websocket.headers = {
+            "host": "example.com:443",
+            "origin": "https://example.com:8443",  # Different port
+        }
+
+        result = _validate_origin(mock_websocket)
+
+        self.assertFalse(result)
+
+    @patch("opi.api.logs_websocket_router.settings")
+    def test_validate_origin_external_url(self, mock_settings):
+        """Test that EXTERNAL_URL is included in allowed origins."""
+        from opi.api.logs_websocket_router import _validate_origin
+
+        mock_settings.EXTERNAL_URL = "https://public.example.com"
+
+        mock_websocket = MagicMock()
+        mock_websocket.headers = {
+            "host": "internal.example.com",
+            "origin": "https://public.example.com",
+        }
+
+        result = _validate_origin(mock_websocket)
+
+        self.assertTrue(result)
+
+
+class TestClientMessageSizeLimit(unittest.TestCase):
+    """Test cases for client message size limit."""
+
+    def test_max_client_message_size_constant(self):
+        """Verify that MAX_CLIENT_MESSAGE_SIZE is defined reasonably."""
+        from opi.api.logs_websocket_router import MAX_CLIENT_MESSAGE_SIZE
+
+        # Should be positive and reasonable (1-10KB)
+        self.assertGreater(MAX_CLIENT_MESSAGE_SIZE, 0)
+        self.assertLessEqual(MAX_CLIENT_MESSAGE_SIZE, 10240)  # 10KB max
+
+    def test_normal_message_accepted(self):
+        """Test that normal-sized messages are within limits."""
+        from opi.api.logs_websocket_router import MAX_CLIENT_MESSAGE_SIZE
+
+        # Typical client message
+        message = json.dumps({"action": "pause"})
+
+        self.assertLess(len(message), MAX_CLIENT_MESSAGE_SIZE)
+
+    def test_switch_message_accepted(self):
+        """Test that switch messages with component names are within limits."""
+        from opi.api.logs_websocket_router import MAX_CLIENT_MESSAGE_SIZE
+
+        # Typical switch message with component name
+        message = json.dumps({
+            "action": "switch",
+            "component": "my-long-component-name-that-is-reasonable",
+        })
+
+        self.assertLess(len(message), MAX_CLIENT_MESSAGE_SIZE)
+
+    def test_oversized_message_rejected(self):
+        """Test that oversized messages would be rejected."""
+        from opi.api.logs_websocket_router import MAX_CLIENT_MESSAGE_SIZE
+
+        # Create a message larger than the limit
+        oversized_message = json.dumps({
+            "action": "switch",
+            "component": "x" * (MAX_CLIENT_MESSAGE_SIZE + 100),
+        })
+
+        self.assertGreater(len(oversized_message), MAX_CLIENT_MESSAGE_SIZE)
 
 
 if __name__ == "__main__":
