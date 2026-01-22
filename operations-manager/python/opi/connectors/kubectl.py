@@ -714,6 +714,55 @@ class KubectlConnector:
             logger.error(f"Error getting deployment logs: {e}")
             return []
 
+    async def stream_deployment_logs(
+        self, deployment_name: str, namespace: str, lines: int = 100
+    ) -> asyncio.subprocess.Process | None:
+        """
+        Start streaming logs from a deployment using kubectl logs -f.
+
+        This returns a subprocess that streams logs in real-time. The caller
+        is responsible for reading from process.stdout and terminating the
+        process when done.
+
+        Args:
+            deployment_name: Name of the deployment
+            namespace: Namespace containing the deployment
+            lines: Number of historical lines to retrieve initially (default: 100)
+
+        Returns:
+            Subprocess with stdout stream, or None if failed to start
+        """
+        if not KubectlConnector.isConnected:
+            logger.error("kubectl connection is not available for log streaming")
+            return None
+
+        logger.debug(f"Starting log stream for deployment {deployment_name} in namespace {namespace}")
+
+        try:
+            cmd = [
+                "kubectl",
+                "logs",
+                "-f",
+                f"deployment/{deployment_name}",
+                "-n",
+                namespace,
+                f"--tail={lines}",
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self.env,
+            )
+
+            logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid})")
+            return process
+
+        except Exception as e:
+            logger.error(f"Error starting log stream for {deployment_name}: {e}")
+            return None
+
     async def get_namespace_events(self, namespace: str, limit: int = 50) -> list[dict[str, str]]:
         """
         Get recent events from a namespace.
