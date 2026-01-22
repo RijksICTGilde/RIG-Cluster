@@ -70,10 +70,10 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.name }}
-  namespace: {{ .Values.namespace }}
+  name: {{ name }}
+  namespace: {{ namespace }}
 data:
-  environment: {{ .Values.environment }}
+  environment: {{ environment }}
 """
         variables = {
             "name": "templated-configmap",
