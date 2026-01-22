@@ -17,6 +17,7 @@ import pytest
 @pytest.mark.slow
 @pytest.mark.kind
 @pytest.mark.integration
+@pytest.mark.asyncio
 class TestKubectlLogsReal:
     """
     Integration tests using a real Kind cluster.
@@ -131,6 +132,7 @@ class TestKubectlLogsReal:
 @pytest.mark.slow
 @pytest.mark.kind
 @pytest.mark.integration
+@pytest.mark.asyncio
 class TestKubectlCommandsReal:
     """Integration tests for kubectl commands with real Kind cluster."""
 
@@ -175,6 +177,7 @@ class TestKubectlCommandsReal:
 @pytest.mark.slow
 @pytest.mark.kind
 @pytest.mark.integration
+@pytest.mark.asyncio
 class TestConnectionRecovery:
     """Integration tests for kubectl connection recovery."""
 

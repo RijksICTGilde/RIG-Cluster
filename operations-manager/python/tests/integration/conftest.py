@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
 
 def is_kind_available() -> bool:
@@ -241,7 +242,7 @@ def kubectl_env(kubeconfig_file: str) -> dict[str, str]:
     return env
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def connected_kubectl_connector(kind_cluster: str) -> Any:
     """
     Get a KubectlConnector that is connected to the Kind test cluster.
