@@ -399,85 +399,137 @@ This creates:
 - MinIO deployment with S3-compatible API
 - Default credentials: `backup-admin` / `backup-secret-key-local`
 
-## PVC Generation System (Project-Based Restore)
+## Generational Versioning System
 
-For RIG-managed projects, PVCs use a generation-based naming system that enables zero-downtime restore operations with automatic ArgoCD integration.
+For RIG-managed projects, all stateful resources (PVCs, databases, buckets) use a consistent generation-based naming system. This enables zero-downtime restore and clone operations with automatic ArgoCD integration.
 
-### How It Works
+### Important: Version Suffix Behavior
+
+The versioning system follows a consistent pattern across all resource types:
+
+| Generation Value | Name Suffix | Description |
+|-----------------|-------------|-------------|
+| Not set / `null` | No suffix | Original resource (e.g., `my-bucket`) |
+| `0` | No suffix | Explicitly unversioned (e.g., `my-bucket`) |
+| `1` | `-v1` or `_v1` | First versioned resource (e.g., `my-bucket-v1`) |
+| `2` | `-v2` or `_v2` | Second version (e.g., `my-bucket-v2`) |
+| `N` | `-vN` or `_vN` | Nth version |
+
+**Key behavior**: When you first set a generation value (e.g., `generation: 1`), the system creates a NEW versioned resource. The original unversioned resource is preserved but no longer referenced. This means:
+
+- Setting `generation: 1` creates `my-bucket-v1`, leaving original `my-bucket` intact
+- Data must be migrated or restored to the new versioned resource
+- To use the original resource, set `generation: 0` or remove the generation field
+
+### Naming Conventions by Resource Type
+
+| Resource Type | No Generation / 0 | Generation 1+ |
+|---------------|-------------------|---------------|
+| **PVC** | `{deployment}-{component}-{storage}-pvc` | `{deployment}-{component}-{storage}-pvc-v{N}` |
+| **Database** | `{project}_{deployment}` | `{project}_{deployment}_v{N}` |
+| **Bucket** | `{project}-{deployment}` | `{project}-{deployment}-v{N}` |
+
+**Examples:**
+
+```
+# PVC naming
+generation: null  -> frontend-webapp-data-pvc
+generation: 0     -> frontend-webapp-data-pvc
+generation: 1     -> frontend-webapp-data-pvc-v1
+generation: 2     -> frontend-webapp-data-pvc-v2
+
+# Database naming (underscore separator)
+generation: null  -> myproject_staging
+generation: 0     -> myproject_staging
+generation: 1     -> myproject_staging_v1
+generation: 2     -> myproject_staging_v2
+
+# Bucket naming (hyphen separator)
+generation: null  -> myproject-staging
+generation: 0     -> myproject-staging
+generation: 1     -> myproject-staging-v1
+generation: 2     -> myproject-staging-v2
+```
+
+### How Restore/Clone Works
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Initial State                                                       │
-│  - PVC: my-app-data-pvc (generation 0, no suffix)                   │
-│  - Project file: no generation field (defaults to 0)                │
+│  - Resource: my-bucket (no generation set)                          │
+│  - Project file: no generation field                                │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Restore Triggered                                                   │
-│  1. Create new PVC: my-app-data-pvc-v1 (generation 1)               │
-│  2. Restore backup data to new PVC                                  │
-│  3. Update project file: generation = 1                             │
-│  4. Commit & push project file                                      │
-│  5. Trigger project refresh                                         │
+│  Restore/Clone with Versioning                                       │
+│  1. Read current generation (null/0 = no suffix)                    │
+│  2. Increment generation: null -> 1                                 │
+│  3. Create new resource: my-bucket-v1                               │
+│  4. Restore/copy data to new resource                               │
+│  5. Update project file: generation = 1                             │
+│  6. Commit & push project file                                      │
+│  7. Trigger project refresh                                         │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  ArgoCD Syncs                                                        │
-│  - New manifest points to my-app-data-pvc-v1                        │
-│  - PVC already exists (created during restore) → ArgoCD adopts it   │
-│  - Old PVC (my-app-data-pvc) no longer in manifest → ArgoCD prunes  │
-│  - Deployment restarts with new PVC containing restored data        │
+│  - New manifest points to my-bucket-v1                              │
+│  - Resource already exists (created during restore)                 │
+│  - Old resource (my-bucket) needs manual cleanup                    │
+│  - Application uses new versioned resource                          │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### PVC Naming Convention
-
-| Generation | PVC Name |
-|------------|----------|
-| 0 (default) | `{deployment}-{component}-{storage}-pvc` |
-| 1 | `{deployment}-{component}-{storage}-pvc-v1` |
-| 2 | `{deployment}-{component}-{storage}-pvc-v2` |
-| N | `{deployment}-{component}-{storage}-pvc-vN` |
-
 ### Project File Structure
 
-The generation is stored in the project.yaml under the component's storage configuration:
+Generation is stored at different levels depending on resource type:
 
+**PVC Generation** (component-level):
 ```yaml
 deployments:
   - name: production
     components:
-      - name: my-app
+      - reference: my-app
         storage:
           - mount-path: /data
-            size: 10Gi
-            generation: 2  # Added after restore, incremented each time
+            generation: 2  # PVC generation
+```
+
+**Database/Bucket Generation** (deployment-level):
+```yaml
+deployments:
+  - name: production
+    services:
+      - reference: minio-storage
+        config:
+          generation: 1  # Bucket generation
+      - reference: database
+        config:
+          generation: 1  # Database generation
 ```
 
 ### Benefits
 
-- **Zero-downtime**: Application keeps running on old PVC until ArgoCD switches
-- **Atomic switch**: Deployment restarts with fully restored data
-- **Easy rollback**: Decrement generation in project file to switch back
+- **Zero-downtime**: Application keeps running on old resource until switch
+- **Atomic switch**: Application restarts with fully restored data
+- **Rollback capability**: Change generation in project file to switch versions
 - **GitOps compatible**: All changes tracked in git
-- **ArgoCD adoption**: New PVC has `argocd.argoproj.io/sync-options: Replace=false` annotation
+- **Data preservation**: Old versions preserved until explicitly cleaned up
+- **Consistent pattern**: Same versioning logic for PVC, database, and bucket
 
-### Finding Storage Name
+### Finding Storage/Reference Names
 
-The `storage_name` parameter in the restore API is derived from the mount path:
+**PVC storage_name** (derived from mount path):
 
 | Mount Path | Storage Name |
 |------------|--------------|
 | `/data` | `data` |
-| `/var/lib/mysql` | `var-lib-mysql` |
-| `/app/uploads` | `app-uploads` |
+| `/var/lib/mysql` | `varlibmysql` |
+| `/app/uploads` | `appuploads` |
 
-For multiple storages in the same component, an index suffix is added:
-- First storage: `data`
-- Second storage: `data-1`
-- Third storage: `data-2`
+**Database/Bucket reference_name**: Use the service reference name from your deployment configuration (e.g., `minio-storage`, `database`).
 
 ## Backup Strategies
 

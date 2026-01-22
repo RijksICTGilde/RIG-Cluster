@@ -24,10 +24,8 @@ public final class PrometheusExporter {
     private static final Logger logger = Logger.getLogger(PrometheusExporter.class);
     private static PrometheusExporter INSTANCE;
 
-    // Identity provider type constants
+    // Identity provider constant for users without federated identity
     public static final String IDP_LOCAL = "local";
-    public static final String IDP_SAML = "saml";
-    public static final String IDP_OIDC = "oidc";
 
     // Counters: key = "realm|idp_type|client_id" or similar composite key
     private final Map<String, AtomicLong> loginCounters = new ConcurrentHashMap<>();
@@ -196,7 +194,7 @@ public final class PrometheusExporter {
             sb.append("# TYPE rig_keycloak_users_total gauge\n");
 
             StringBuilder usersByIdpSb = new StringBuilder();
-            usersByIdpSb.append("# HELP rig_keycloak_users_by_idp_total Total users per realm and identity provider type\n");
+            usersByIdpSb.append("# HELP rig_keycloak_users_by_idp_total Total users per realm and identity provider\n");
             usersByIdpSb.append("# TYPE rig_keycloak_users_by_idp_total gauge\n");
 
             session.realms().getRealmsStream()
@@ -208,14 +206,12 @@ public final class PrometheusExporter {
                         int userCount = session.users().getUsersCount(realm);
                         sb.append(String.format("rig_keycloak_users_total{realm=\"%s\"} %d%n", escape(realmName), userCount));
 
-                        // Users by IDP type
-                        int[] counts = countUsersByIdpType(session, realm);
-                        usersByIdpSb.append(String.format("rig_keycloak_users_by_idp_total{realm=\"%s\",idp_type=\"%s\"} %d%n",
-                            escape(realmName), IDP_LOCAL, counts[0]));
-                        usersByIdpSb.append(String.format("rig_keycloak_users_by_idp_total{realm=\"%s\",idp_type=\"%s\"} %d%n",
-                            escape(realmName), IDP_SAML, counts[1]));
-                        usersByIdpSb.append(String.format("rig_keycloak_users_by_idp_total{realm=\"%s\",idp_type=\"%s\"} %d%n",
-                            escape(realmName), IDP_OIDC, counts[2]));
+                        // Users by IDP (actual IDP alias like "digid", "eherkenning", etc.)
+                        Map<String, Integer> idpCounts = countUsersByIdp(session, realm);
+                        for (Map.Entry<String, Integer> entry : idpCounts.entrySet()) {
+                            usersByIdpSb.append(String.format("rig_keycloak_users_by_idp_total{realm=\"%s\",idp=\"%s\"} %d%n",
+                                escape(realmName), escape(entry.getKey()), entry.getValue()));
+                        }
 
                     } catch (Exception e) {
                         logger.warnf("Error collecting metrics for realm %s: %s", realmName, e.getMessage());
@@ -233,26 +229,22 @@ public final class PrometheusExporter {
     }
 
     /**
-     * Count users by identity provider type for a realm using efficient JPA queries.
-     * Returns array: [localCount, samlCount, oidcCount]
+     * Count users by identity provider for a realm.
+     * Returns a map of IDP alias to user count (e.g., "digid" -> 5, "eherkenning" -> 3, "local" -> 2)
      */
-    private int[] countUsersByIdpType(KeycloakSession session, RealmModel realm) {
-        int localCount = 0;
-        int samlCount = 0;
-        int oidcCount = 0;
+    private Map<String, Integer> countUsersByIdp(KeycloakSession session, RealmModel realm) {
+        Map<String, Integer> idpCounts = new java.util.LinkedHashMap<>();
 
         try {
             EntityManager em = session.getProvider(JpaConnectionProvider.class).getEntityManager();
             String realmId = realm.getId();
 
-            // Count users WITH federated identity (grouped by provider type)
-            // FederatedIdentityEntity links to IdentityProviderEntity which has providerId
+            // Count users by federated identity provider alias
             String federatedQuery = """
-                SELECT ip.providerId, COUNT(DISTINCT fi.userId)
+                SELECT fi.identityProvider, COUNT(DISTINCT fi.userId)
                 FROM FederatedIdentityEntity fi
-                JOIN IdentityProviderEntity ip ON fi.identityProvider = ip.internalId AND fi.realmId = ip.realmId
                 WHERE fi.realmId = :realmId
-                GROUP BY ip.providerId
+                GROUP BY fi.identityProvider
                 """;
 
             Query query = em.createQuery(federatedQuery);
@@ -263,32 +255,31 @@ public final class PrometheusExporter {
 
             int federatedTotal = 0;
             for (Object[] row : results) {
-                String providerId = (String) row[0];
+                String idpAlias = (String) row[0];
                 long count = (Long) row[1];
                 federatedTotal += count;
-
-                if (providerId != null && providerId.contains("saml")) {
-                    samlCount += (int) count;
-                } else {
-                    oidcCount += (int) count;
-                }
+                idpCounts.put(idpAlias, (int) count);
             }
 
             // Local users = total users - federated users
             int totalUsers = session.users().getUsersCount(realm);
-            localCount = totalUsers - federatedTotal;
+            int localCount = totalUsers - federatedTotal;
+            if (localCount > 0) {
+                idpCounts.put(IDP_LOCAL, localCount);
+            }
 
         } catch (Exception e) {
             logger.warnf("Error counting users by IDP for realm %s: %s", realm.getName(), e.getMessage());
             // Fallback: return total as local if query fails
             try {
-                localCount = session.users().getUsersCount(realm);
+                int totalUsers = session.users().getUsersCount(realm);
+                idpCounts.put(IDP_LOCAL, totalUsers);
             } catch (Exception ex) {
                 logger.warnf("Fallback count also failed for realm %s", realm.getName());
             }
         }
 
-        return new int[]{localCount, samlCount, oidcCount};
+        return idpCounts;
     }
 
     // Key building and parsing utilities
