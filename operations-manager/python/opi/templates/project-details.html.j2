@@ -1535,6 +1535,40 @@
             </button>
         </div>
     </div>
+    <div class="log-viewer-toolbar">
+        <div class="log-search-container">
+            <c-icon icon="zoek" size="sm" color="grijs-500" />
+            <input type="text" id="log-search-input" class="log-search-input" placeholder="Search logs..." oninput="filterLogs()" />
+            <span id="log-search-count" class="log-search-count"></span>
+            <button type="button" class="log-search-clear" id="log-search-clear" onclick="clearSearch()" title="Clear search">
+                <c-icon icon="kruis" size="sm" />
+            </button>
+        </div>
+        <div class="log-toolbar-divider"></div>
+        <div class="log-level-filters">
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-error" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-error">Error</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-warn" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-warn">Warn</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-info" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-info">Info</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-debug" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-debug">Debug</span>
+            </label>
+        </div>
+        <div class="log-toolbar-divider"></div>
+        <label class="log-wrap-toggle" title="Toggle word wrap">
+            <input type="checkbox" id="log-word-wrap" onchange="toggleWordWrap()" />
+            <span class="log-wrap-label">Wrap</span>
+        </label>
+    </div>
     <div class="log-viewer-status" id="log-viewer-status">
         <span class="log-status-indicator" id="log-status-indicator"></span>
         <span id="log-status-text">Connecting...</span>
@@ -2341,6 +2375,208 @@
         color: #64748b;
     }
 
+    /* Log Viewer Toolbar */
+    .log-viewer-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 20px;
+        background: #16213e;
+        border-bottom: 1px solid #0f3460;
+        flex-wrap: wrap;
+    }
+
+    .log-search-container {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+        min-width: 200px;
+        max-width: 400px;
+        background: #0f3460;
+        border: 1px solid #1e3a5f;
+        border-radius: 4px;
+        padding: 4px 10px;
+    }
+
+    .log-search-container:focus-within {
+        border-color: var(--rvo-color-hemelblauw);
+        box-shadow: 0 0 0 2px rgba(0, 119, 200, 0.2);
+    }
+
+    .log-search-input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        color: #e2e8f0;
+        font-size: 0.85rem;
+        outline: none;
+    }
+
+    .log-search-input::placeholder {
+        color: #64748b;
+    }
+
+    .log-search-count {
+        font-size: 0.75rem;
+        color: #64748b;
+        white-space: nowrap;
+    }
+
+    .log-search-clear {
+        display: none;
+        background: transparent;
+        border: none;
+        color: #64748b;
+        cursor: pointer;
+        padding: 2px;
+        line-height: 0;
+    }
+
+    .log-search-clear.is-visible {
+        display: block;
+    }
+
+    .log-search-clear:hover {
+        color: #e2e8f0;
+    }
+
+    .log-toolbar-divider {
+        width: 1px;
+        height: 24px;
+        background: #1e3a5f;
+    }
+
+    .log-level-filters {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .log-level-filter {
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+    }
+
+    .log-level-filter input {
+        display: none;
+    }
+
+    .log-level-badge {
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        opacity: 0.4;
+        transition: opacity 0.2s;
+    }
+
+    .log-level-filter input:checked + .log-level-badge {
+        opacity: 1;
+    }
+
+    .log-level-error {
+        background: rgba(239, 68, 68, 0.2);
+        color: #f87171;
+    }
+
+    .log-level-warn {
+        background: rgba(251, 191, 36, 0.2);
+        color: #fbbf24;
+    }
+
+    .log-level-info {
+        background: rgba(74, 222, 128, 0.2);
+        color: #4ade80;
+    }
+
+    .log-level-debug {
+        background: rgba(96, 165, 250, 0.2);
+        color: #60a5fa;
+    }
+
+    .log-wrap-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        color: #64748b;
+        font-size: 0.8rem;
+        user-select: none;
+    }
+
+    .log-wrap-toggle input {
+        display: none;
+    }
+
+    .log-wrap-label {
+        padding: 4px 10px;
+        background: #0f3460;
+        border: 1px solid #1e3a5f;
+        border-radius: 4px;
+        transition: background-color 0.2s, color 0.2s;
+    }
+
+    .log-wrap-toggle input:checked + .log-wrap-label {
+        background: var(--rvo-color-hemelblauw);
+        border-color: var(--rvo-color-hemelblauw);
+        color: white;
+    }
+
+    .log-wrap-toggle:hover .log-wrap-label {
+        background: #1e3a5f;
+    }
+
+    .log-wrap-toggle input:checked + .log-wrap-label:hover {
+        background: var(--rvo-color-donkerblauw);
+    }
+
+    /* Log line word wrap mode */
+    .log-viewer-content.word-wrap .log-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+
+    /* Log line hidden by filter */
+    .log-line.is-hidden {
+        display: none;
+    }
+
+    /* Search highlight */
+    .log-line .search-highlight {
+        background: rgba(251, 191, 36, 0.4);
+        color: #fef3c7;
+        border-radius: 2px;
+        padding: 0 2px;
+    }
+
+    @media (max-width: 768px) {
+        .log-viewer-toolbar {
+            gap: 8px;
+            padding: 8px 12px;
+        }
+
+        .log-search-container {
+            min-width: 150px;
+            order: 1;
+            flex-basis: 100%;
+        }
+
+        .log-level-filters {
+            order: 2;
+        }
+
+        .log-wrap-toggle {
+            order: 3;
+        }
+
+        .log-toolbar-divider {
+            display: none;
+        }
+    }
+
     /* Log Viewer Content */
     .log-viewer-content {
         flex: 1;
@@ -2459,6 +2695,16 @@
         const content = document.getElementById('log-viewer-content');
         const emptyState = document.getElementById('log-empty-state');
         const pauseBtn = document.getElementById('log-pause-btn');
+
+        // Filter elements
+        const searchInput = document.getElementById('log-search-input');
+        const searchCount = document.getElementById('log-search-count');
+        const searchClear = document.getElementById('log-search-clear');
+        const filterError = document.getElementById('filter-error');
+        const filterWarn = document.getElementById('filter-warn');
+        const filterInfo = document.getElementById('filter-info');
+        const filterDebug = document.getElementById('filter-debug');
+        const wordWrapToggle = document.getElementById('log-word-wrap');
 
         /**
          * Open the log viewer panel
@@ -2585,6 +2831,97 @@
         }
 
         /**
+         * Detect log level from line content
+         */
+        function detectLogLevel(line) {
+            if (/\berror\b|\bERROR\b|\bfatal\b|\bFATAL\b|\bpanic\b|\bPANIC\b|\[STDERR\]/i.test(line)) {
+                return 'error';
+            } else if (/\bwarn\b|\bWARN\b|\bwarning\b|\bWARNING\b/i.test(line)) {
+                return 'warn';
+            } else if (/\binfo\b|\bINFO\b/i.test(line)) {
+                return 'info';
+            } else if (/\bdebug\b|\bDEBUG\b|\btrace\b|\bTRACE\b/i.test(line)) {
+                return 'debug';
+            }
+            return 'other';
+        }
+
+        /**
+         * Check if a log line should be visible based on current filters
+         */
+        function shouldShowLine(logData) {
+            const level = logData.level || 'other';
+
+            // Check level filters
+            if (level === 'error' && !filterError.checked) return false;
+            if (level === 'warn' && !filterWarn.checked) return false;
+            if (level === 'info' && !filterInfo.checked) return false;
+            if (level === 'debug' && !filterDebug.checked) return false;
+
+            // Check search filter
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            if (searchTerm && !logData.line.toLowerCase().includes(searchTerm)) {
+                return false;
+            }
+
+            return true;
+        }
+
+        /**
+         * Create a log line DOM element
+         */
+        function createLogLineElement(data, searchTerm) {
+            const lineEl = document.createElement('div');
+            lineEl.className = 'log-line';
+
+            const level = data.level || 'other';
+            if (level === 'error') lineEl.classList.add('log-error');
+            else if (level === 'warn') lineEl.classList.add('log-warn');
+            else if (level === 'info') lineEl.classList.add('log-info');
+            else if (level === 'debug') lineEl.classList.add('log-debug');
+
+            // Apply search highlighting if there's a search term
+            if (searchTerm) {
+                const line = data.line || '';
+                const lowerLine = line.toLowerCase();
+                const lowerSearch = searchTerm.toLowerCase();
+                let result = '';
+                let lastIndex = 0;
+                let index = lowerLine.indexOf(lowerSearch);
+
+                while (index !== -1) {
+                    // Add text before match
+                    result += escapeHtml(line.substring(lastIndex, index));
+                    // Add highlighted match
+                    result += `<span class="search-highlight">${escapeHtml(line.substring(index, index + searchTerm.length))}</span>`;
+                    lastIndex = index + searchTerm.length;
+                    index = lowerLine.indexOf(lowerSearch, lastIndex);
+                }
+                // Add remaining text
+                result += escapeHtml(line.substring(lastIndex));
+                lineEl.innerHTML = result;
+            } else {
+                lineEl.textContent = data.line || '';
+            }
+
+            // Check if should be hidden
+            if (!shouldShowLine(data)) {
+                lineEl.classList.add('is-hidden');
+            }
+
+            return lineEl;
+        }
+
+        /**
+         * Escape HTML for safe insertion
+         */
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        /**
          * Append a log line to the viewer
          */
         function appendLogLine(data) {
@@ -2592,6 +2929,10 @@
             if (logLines.length === 0) {
                 emptyState.classList.add('is-hidden');
             }
+
+            // Detect and store log level with the data
+            const line = data.line || '';
+            data.level = detectLogLevel(line);
 
             // Store log line
             logLines.push(data);
@@ -2606,31 +2947,30 @@
             }
 
             // Create log line element
-            const lineEl = document.createElement('div');
-            lineEl.className = 'log-line';
-
-            // Detect log level for coloring
-            const line = data.line || '';
-            if (/\berror\b|\bERROR\b|\bfatal\b|\bFATAL\b|\bpanic\b|\bPANIC\b/i.test(line)) {
-                lineEl.classList.add('log-error');
-            } else if (/\bwarn\b|\bWARN\b|\bwarning\b|\bWARNING\b/i.test(line)) {
-                lineEl.classList.add('log-warn');
-            } else if (/\binfo\b|\bINFO\b/i.test(line)) {
-                lineEl.classList.add('log-info');
-            } else if (/\bdebug\b|\bDEBUG\b|\btrace\b|\bTRACE\b/i.test(line)) {
-                lineEl.classList.add('log-debug');
-            }
-
-            lineEl.textContent = line;
+            const searchTerm = searchInput.value.trim();
+            const lineEl = createLogLineElement(data, searchTerm);
 
             // Append and auto-scroll
             content.appendChild(lineEl);
-            if (!logPaused) {
+            if (!logPaused && shouldShowLine(data)) {
                 content.scrollTop = content.scrollHeight;
             }
 
             // Update line count
-            lineCount.textContent = `${logLines.length} lines`;
+            updateLineCount();
+        }
+
+        /**
+         * Update the visible/total line count display
+         */
+        function updateLineCount() {
+            const visibleCount = content.querySelectorAll('.log-line:not(.is-hidden)').length;
+            const totalCount = logLines.length;
+            if (visibleCount === totalCount) {
+                lineCount.textContent = `${totalCount} lines`;
+            } else {
+                lineCount.textContent = `${visibleCount} / ${totalCount} lines`;
+            }
         }
 
         /**
@@ -2649,6 +2989,88 @@
             }
             statusText.textContent = message;
         }
+
+        /**
+         * Filter logs based on search term and level filters
+         */
+        window.filterLogs = function() {
+            const searchTerm = searchInput.value.trim();
+            const logLineEls = content.querySelectorAll('.log-line');
+            let matchCount = 0;
+
+            // Show/hide clear button
+            if (searchTerm) {
+                searchClear.classList.add('is-visible');
+            } else {
+                searchClear.classList.remove('is-visible');
+            }
+
+            // Re-render all log lines to apply/remove highlighting and filters
+            logLineEls.forEach((el, index) => {
+                if (index < logLines.length) {
+                    const data = logLines[index];
+                    const shouldShow = shouldShowLine(data);
+
+                    if (shouldShow) {
+                        el.classList.remove('is-hidden');
+                        matchCount++;
+
+                        // Update highlighting
+                        if (searchTerm) {
+                            const line = data.line || '';
+                            const lowerLine = line.toLowerCase();
+                            const lowerSearch = searchTerm.toLowerCase();
+                            let result = '';
+                            let lastIndex = 0;
+                            let idx = lowerLine.indexOf(lowerSearch);
+
+                            while (idx !== -1) {
+                                result += escapeHtml(line.substring(lastIndex, idx));
+                                result += `<span class="search-highlight">${escapeHtml(line.substring(idx, idx + searchTerm.length))}</span>`;
+                                lastIndex = idx + searchTerm.length;
+                                idx = lowerLine.indexOf(lowerSearch, lastIndex);
+                            }
+                            result += escapeHtml(line.substring(lastIndex));
+                            el.innerHTML = result;
+                        } else {
+                            el.textContent = data.line || '';
+                        }
+                    } else {
+                        el.classList.add('is-hidden');
+                    }
+                }
+            });
+
+            // Update search count
+            if (searchTerm) {
+                searchCount.textContent = `${matchCount} match${matchCount !== 1 ? 'es' : ''}`;
+            } else {
+                searchCount.textContent = '';
+            }
+
+            // Update line count
+            updateLineCount();
+        };
+
+        /**
+         * Clear search input
+         */
+        window.clearSearch = function() {
+            searchInput.value = '';
+            filterLogs();
+            searchInput.focus();
+        };
+
+        /**
+         * Toggle word wrap
+         */
+        window.toggleWordWrap = function() {
+            if (wordWrapToggle.checked) {
+                content.classList.add('word-wrap');
+            } else {
+                content.classList.remove('word-wrap');
+            }
+        };
 
         /**
          * Toggle log pause/resume
@@ -2683,6 +3105,11 @@
             emptyState.classList.remove('is-hidden');
             emptyState.querySelector('p').textContent = 'No logs yet...';
             lineCount.textContent = '';
+
+            // Reset search
+            searchInput.value = '';
+            searchCount.textContent = '';
+            searchClear.classList.remove('is-visible');
         };
 
         /**
@@ -2742,10 +3169,24 @@
             }
         };
 
-        // Close on Escape key
+        // Keyboard shortcuts
         document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && panel.classList.contains('is-open')) {
-                closeLogViewer();
+            if (!panel.classList.contains('is-open')) return;
+
+            // Close on Escape (or clear search if search is active)
+            if (e.key === 'Escape') {
+                if (document.activeElement === searchInput && searchInput.value) {
+                    clearSearch();
+                } else {
+                    closeLogViewer();
+                }
+            }
+
+            // Focus search on Ctrl/Cmd + F
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
             }
         });
     })();
