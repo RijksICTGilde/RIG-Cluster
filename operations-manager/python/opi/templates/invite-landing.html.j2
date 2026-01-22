@@ -11,13 +11,11 @@
 {# Pre-compute language-specific strings #}
 {% set heading_text = "Kies hoe u wilt inloggen" if language == 'nl' else "Choose how to sign in" %}
 {% set intro_text = "Selecteer een van de onderstaande opties om toegang te krijgen tot " ~ display_name ~ "." if language == 'nl' else "Select one of the options below to get access to " ~ display_name ~ "." %}
-{% set sso_heading = "SSO-Rijk" %}
-{% set sso_description = "Login met uw rijksoverheid account via SSO-Rijk." if language == 'nl' else "Sign in with your government account via SSO-Rijk." %}
-{% set sso_button_label = "Inloggen met SSO-Rijk" if language == 'nl' else "Sign in with SSO-Rijk" %}
+{% set sso_heading = "Single Sign-On" %}
+{% set sso_description = "Login met uw organisatie account." if language == 'nl' else "Sign in with your organization account." %}
 {% set local_heading = "Lokaal Account" if language == 'nl' else "Local Account" %}
 {% set local_description = "Maak een nieuw account aan met een e-mailadres en wachtwoord." if language == 'nl' else "Create a new account with an email address and password." %}
 {% set local_button_label = "Account aanmaken" if language == 'nl' else "Create Account" %}
-{% set sso_url = "/invite/" ~ invite_key ~ "/sso" %}
 {% set register_url = "/invite/" ~ invite_key ~ "/register" %}
 {% set help_heading = "Hulp nodig?" if language == 'nl' else "Need help?" %}
 {% set no_auth_heading = "Geen authenticatiemethoden beschikbaar" if language == 'nl' else "No authentication methods available" %}
@@ -26,7 +24,7 @@
 <c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive">
     {# Header #}
     <c-header
-        text="Zelfservice voor Applicatie Deployment"
+        text="RIG Cluster"
         subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
         link="/"/>
 
@@ -47,12 +45,18 @@
                         <p class="rvo-paragraph">{{ intro_text }}</p>
 
                         <c-layout-flow gap="md">
-                            {% if allow_sso %}
+                            {% if allow_sso and identity_providers %}
                             <c-card outline="true" padding="md">
                                 <c-layout-flow gap="sm">
                                     <c-heading type="h3" textContent="{{ sso_heading }}" />
                                     <p class="rvo-paragraph">{{ sso_description }}</p>
-                                    <c-button kind="primary" label="{{ sso_button_label }}" showIcon="after" icon="pijl-naar-rechts" @click="window.location.href='{{ sso_url }}'" />
+                                    <c-layout-flow gap="sm">
+                                        {% for idp in identity_providers %}
+                                        {% set idp_url = "/invite/" ~ invite_key ~ "/idp/" ~ idp.alias %}
+                                        {% set idp_label = ("Inloggen met " if language == 'nl' else "Sign in with ") ~ idp.displayName %}
+                                        <c-button kind="primary" label="{{ idp_label }}" showIcon="after" icon="pijl-naar-rechts" @click="window.location.href='{{ idp_url }}'" />
+                                        {% endfor %}
+                                    </c-layout-flow>
                                 </c-layout-flow>
                             </c-card>
                             {% endif %}
