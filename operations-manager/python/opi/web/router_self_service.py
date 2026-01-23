@@ -8,6 +8,7 @@ import logging
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from opi.api.router import IPRateLimiter
 from opi.connectors.subdomain import (
     create_subdomain_connector,
     validate_base_domain,
@@ -20,6 +21,10 @@ from opi.utils.csrf import ensure_csrf_token
 from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
+
+# Rate limiter for web subdomain checks (same limits as API endpoint: 30 requests/minute per client)
+# Even though SSO-protected, we still rate limit to prevent abuse by authenticated users
+web_subdomain_check_rate_limiter = IPRateLimiter(requests_per_minute=30, burst=10)
 
 
 def get_cluster_options_for_template() -> list[dict]:
@@ -135,6 +140,8 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
     This endpoint requires the user to be authenticated via SSO, preventing
     unauthenticated enumeration attacks on the subdomain registry.
 
+    Rate limited to prevent abuse even by authenticated users.
+
     Query Parameters:
         subdomain: The subdomain to check (e.g., "myapp")
         base_domain: The base domain (e.g., "rijks.app")
@@ -142,6 +149,14 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
     Returns:
         JSON response with availability status and optional validation error code
     """
+    # Rate limiting check - use robust client identification
+    client_id = IPRateLimiter.get_client_identifier(request)
+    if not web_subdomain_check_rate_limiter.is_allowed(client_id):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please wait before checking again.",
+        )
+
     subdomain = request.query_params.get("subdomain", "")
     base_domain = request.query_params.get("base_domain", "")
 
