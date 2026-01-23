@@ -87,12 +87,7 @@
                                             label="Cluster"
                                             helperText="Selecteer het gewenste cluster voor uw project"
                                             required="true"
-                                            :options="[
-                                                {'value': '', 'label': 'Selecteer een cluster'},
-                                                {'value': 'local', 'label': 'Lokaal'},
-                                                {'value': 'odcn-staging', 'label': 'Staging Cluster (ODC-Noord)'},
-                                                {'value': 'odcn-production', 'label': 'Productie Cluster (ODC-Noord)'}
-                                            ]"></c-select-field>
+                                            :options="{{ cluster_options | tojson }}"></c-select-field>
                                     </c-layout-flow>
                                 </c-fieldset>
 
@@ -720,21 +715,8 @@ Available variables depend on selected services:
         }
       }
 
-      // Base domain options per cluster
-      const clusterBaseDomains = {
-        'local': [
-          {'value': 'kind', 'label': 'kind (lokaal)'},
-          {'value': 'local', 'label': 'local (lokaal)'}
-        ],
-        'odcn-staging': [
-          {'value': 'rijks.app', 'label': 'rijks.app'},
-          {'value': 'rijksapps.nl', 'label': 'rijksapps.nl'}
-        ],
-        'odcn-production': [
-          {'value': 'rijks.app', 'label': 'rijks.app'},
-          {'value': 'rijksapps.nl', 'label': 'rijksapps.nl'}
-        ]
-      };
+      // Base domain options per cluster (from server config)
+      const clusterBaseDomains = {{ cluster_base_domains_json | safe }};
 
       // Update base domain options based on selected cluster
       function updateBaseDomainOptions() {
