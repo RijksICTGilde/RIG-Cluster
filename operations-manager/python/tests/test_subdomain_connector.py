@@ -5,14 +5,13 @@ Tests the SubdomainConnector class that manages globally unique subdomains
 for the nice URL feature.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from opi.connectors.subdomain import (
     RESERVED_SUBDOMAINS,
     SUBDOMAIN_REGISTRY_TABLE_SQL,
     SubdomainConnector,
-    SubdomainError,
     SubdomainNotAvailableError,
     SubdomainValidationError,
     create_subdomain_connector,
@@ -423,3 +422,273 @@ class TestSubdomainValidationInRegister:
             )
 
         assert "gereserveerd" in str(exc_info.value).lower()  # Dutch: "is een gereserveerd subdomein"
+
+
+class TestValidateBaseDomain:
+    """Tests for validate_base_domain function."""
+
+    def test_valid_base_domain_local(self):
+        """Valid base domain for local cluster passes validation."""
+        from opi.connectors.subdomain import validate_base_domain
+
+        is_valid, error = validate_base_domain("kind", "local")
+        assert is_valid is True
+        assert error is None
+
+    def test_valid_base_domain_production(self):
+        """Valid base domain for production cluster passes validation."""
+        from opi.connectors.subdomain import validate_base_domain
+
+        is_valid, error = validate_base_domain("rijks.app", "odcn-production")
+        assert is_valid is True
+        assert error is None
+
+    def test_invalid_base_domain(self):
+        """Invalid base domain fails validation."""
+        from opi.connectors.subdomain import validate_base_domain
+
+        is_valid, error = validate_base_domain("invalid.domain", "local")
+        assert is_valid is False
+        assert "ondersteund" in error.lower()  # Dutch: "geen ondersteund base domain"
+
+    def test_empty_base_domain(self):
+        """Empty base domain fails validation."""
+        from opi.connectors.subdomain import validate_base_domain
+
+        is_valid, error = validate_base_domain("", "local")
+        assert is_valid is False
+        assert "leeg" in error.lower()  # Dutch: "mag niet leeg zijn"
+
+    def test_case_insensitive(self):
+        """Base domain validation is case insensitive."""
+        from opi.connectors.subdomain import validate_base_domain
+
+        is_valid, error = validate_base_domain("RIJKS.APP", "odcn-production")
+        assert is_valid is True
+        assert error is None
+
+    def test_all_clusters_validation(self):
+        """Base domain validation without cluster checks against all supported domains."""
+        from opi.connectors.subdomain import validate_base_domain
+
+        # rijks.app should be valid when no cluster specified
+        is_valid, error = validate_base_domain("rijks.app")
+        assert is_valid is True
+
+        # kind should be valid when no cluster specified
+        is_valid, error = validate_base_domain("kind")
+        assert is_valid is True
+
+
+class TestGetSupportedBaseDomains:
+    """Tests for get_supported_base_domains function."""
+
+    def test_local_cluster_domains(self):
+        """get_supported_base_domains returns correct domains for local cluster."""
+        from opi.connectors.subdomain import get_supported_base_domains
+
+        domains = get_supported_base_domains("local")
+        assert "kind" in domains
+        assert "local" in domains
+
+    def test_production_cluster_domains(self):
+        """get_supported_base_domains returns correct domains for production cluster."""
+        from opi.connectors.subdomain import get_supported_base_domains
+
+        domains = get_supported_base_domains("odcn-production")
+        assert "rijks.app" in domains
+        assert "rijksapps.nl" in domains
+
+    def test_all_clusters_domains(self):
+        """get_supported_base_domains returns all domains when no cluster specified."""
+        from opi.connectors.subdomain import get_supported_base_domains
+
+        domains = get_supported_base_domains()
+        assert "kind" in domains
+        assert "rijks.app" in domains
+        assert len(domains) >= 4
+
+
+class TestBaseDomainValidationInRegister:
+    """Tests for base domain validation in SubdomainConnector.register."""
+
+    @pytest.mark.asyncio
+    async def test_register_validates_base_domain(self):
+        """register raises BaseDomainValidationError for invalid base domain."""
+        from opi.connectors.subdomain import BaseDomainValidationError
+
+        connector = SubdomainConnector()
+
+        with pytest.raises(BaseDomainValidationError) as exc_info:
+            await connector.register(
+                subdomain="myapp",
+                base_domain="invalid.domain",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert "ondersteund" in str(exc_info.value).lower()
+
+
+class TestRegisterOrUpdateForDeployment:
+    """Tests for SubdomainConnector.register_or_update_for_deployment method."""
+
+    @pytest.mark.asyncio
+    async def test_register_new_subdomain(self):
+        """register_or_update creates new registration when none exists."""
+        connector = SubdomainConnector()
+
+        mock_result = {
+            "id": 1,
+            "subdomain": "myapp",
+            "base_domain": "kind",
+            "project_name": "my-project",
+            "deployment_name": "prod",
+            "cluster": "local",
+            "created_at": "2024-01-01T00:00:00Z",
+            "created_by": None,
+        }
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.side_effect = [
+            None,  # get_by_deployment returns None
+            mock_result,  # register returns result
+        ]
+        mock_conn.fetchval.return_value = None  # check_availability returns available
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with patch.object(connector, "_get_pool", return_value=mock_pool):
+            result = await connector.register_or_update_for_deployment(
+                subdomain="myapp",
+                base_domain="kind",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert result["subdomain"] == "myapp"
+
+    @pytest.mark.asyncio
+    async def test_returns_existing_when_unchanged(self):
+        """register_or_update returns existing registration when subdomain unchanged."""
+        connector = SubdomainConnector()
+
+        existing_result = {
+            "id": 1,
+            "subdomain": "myapp",
+            "base_domain": "kind",
+            "project_name": "my-project",
+            "deployment_name": "prod",
+            "cluster": "local",
+            "created_at": "2024-01-01T00:00:00Z",
+            "created_by": None,
+        }
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.return_value = existing_result  # get_by_deployment returns existing
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with patch.object(connector, "_get_pool", return_value=mock_pool):
+            result = await connector.register_or_update_for_deployment(
+                subdomain="myapp",
+                base_domain="kind",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert result["subdomain"] == "myapp"
+        # Should only call fetchrow once for get_by_deployment
+        assert mock_conn.fetchrow.call_count == 1
+
+
+class TestRegisterRaceCondition:
+    """Tests for race condition handling in register method."""
+
+    @pytest.mark.asyncio
+    async def test_register_handles_conflict_same_project(self):
+        """register returns existing registration on conflict from same project."""
+        connector = SubdomainConnector()
+
+        existing_result = {
+            "id": 1,
+            "subdomain": "myapp",
+            "base_domain": "kind",
+            "project_name": "my-project",
+            "deployment_name": "prod",
+            "cluster": "local",
+            "created_at": "2024-01-01T00:00:00Z",
+            "created_by": None,
+        }
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = None  # check_availability says available
+        mock_conn.fetchrow.side_effect = [
+            None,  # INSERT ... ON CONFLICT returns None (conflict)
+            existing_result,  # get_by_subdomain returns existing
+        ]
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with patch.object(connector, "_get_pool", return_value=mock_pool):
+            result = await connector.register(
+                subdomain="myapp",
+                base_domain="kind",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert result["subdomain"] == "myapp"
+
+    @pytest.mark.asyncio
+    async def test_register_raises_on_conflict_different_project(self):
+        """register raises error on conflict from different project."""
+        from opi.connectors.subdomain import SubdomainNotAvailableError
+
+        connector = SubdomainConnector()
+
+        existing_result = {
+            "id": 1,
+            "subdomain": "myapp",
+            "base_domain": "kind",
+            "project_name": "other-project",  # Different project
+            "deployment_name": "prod",
+            "cluster": "local",
+            "created_at": "2024-01-01T00:00:00Z",
+            "created_by": None,
+        }
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = None  # check_availability says available
+        mock_conn.fetchrow.side_effect = [
+            None,  # INSERT ... ON CONFLICT returns None (conflict)
+            existing_result,  # get_by_subdomain returns existing from other project
+        ]
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with (
+            patch.object(connector, "_get_pool", return_value=mock_pool),
+            pytest.raises(SubdomainNotAvailableError) as exc_info,
+        ):
+            await connector.register(
+                subdomain="myapp",
+                base_domain="kind",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert "zojuist geregistreerd" in str(exc_info.value).lower()  # Dutch: "was just registered"

@@ -3534,35 +3534,28 @@ class ProjectManager:
         base_domain = deployment.get("base-domain")
 
         if domain_mode == "nice-url" and subdomain and base_domain:
-            from opi.connectors.subdomain import SubdomainNotAvailableError, SubdomainValidationError
+            from opi.connectors.subdomain import (
+                BaseDomainValidationError,
+                SubdomainNotAvailableError,
+                SubdomainValidationError,
+            )
 
             subdomain_connector = SubdomainConnector()
-            # Check availability first
-            is_available = await subdomain_connector.check_availability(subdomain, base_domain)
-            if is_available:
-                # This will raise SubdomainValidationError or SubdomainNotAvailableError on failure
-                await subdomain_connector.register(
-                    subdomain=subdomain,
-                    base_domain=base_domain,
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    cluster=cluster,
-                    created_by=None,  # Could be enhanced to track user in future
-                )
-                logger.info(f"Registered subdomain '{subdomain}.{base_domain}' for project '{project_name}'")
-            else:
-                # Check if it's already registered to this project
-                existing = await subdomain_connector.get_by_subdomain(subdomain, base_domain)
-                if existing and existing.get("project_name") == project_name:
-                    logger.info(
-                        f"Subdomain '{subdomain}.{base_domain}' already registered to project '{project_name}'"
-                    )
-                else:
-                    # Fail deployment - subdomain is taken by another project
-                    raise SubdomainNotAvailableError(
-                        f"Subdomain '{subdomain}.{base_domain}' is already registered to project "
-                        f"'{existing.get('project_name') if existing else 'unknown'}'"
-                    )
+            # Use register_or_update to handle both new registrations and subdomain changes
+            # This method:
+            # 1. Checks if deployment already has a registration
+            # 2. If subdomain unchanged, returns existing
+            # 3. If subdomain changed, deletes old and registers new
+            # 4. Raises appropriate errors on validation/availability issues
+            await subdomain_connector.register_or_update_for_deployment(
+                subdomain=subdomain,
+                base_domain=base_domain,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=cluster,
+                created_by=None,  # Could be enhanced to track user in future
+            )
+            logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
 
             # Validate only one component has root: true for nice-url mode
             root_components = [c.get("reference") or c.get("name") for c in components if c.get("root") is True]
@@ -3571,6 +3564,18 @@ class ProjectManager:
                     f"Multiple components marked as root in deployment '{deployment_name}': {root_components}. "
                     f"Only one component can have 'root: true' for nice-url mode."
                 )
+
+            # Validate that root component has publish-on-web (required for root ingress creation)
+            if root_components:
+                root_component_name = root_components[0]
+                root_has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
+                    project_data, root_component_name
+                )
+                if not root_has_publish_on_web:
+                    raise ValueError(
+                        f"Component '{root_component_name}' is marked as root but does not have 'publish-on-web' enabled. "
+                        f"Root components must have a service exposed for the root URL to work."
+                    )
 
         # Collect registry configurations for all components in this deployment
         registry_configs_map: dict[str, dict[str, Any]] = {}  # registry_name -> registry_config

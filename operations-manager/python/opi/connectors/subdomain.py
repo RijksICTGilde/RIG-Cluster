@@ -11,8 +11,69 @@ from datetime import datetime
 from typing import Any
 
 from opi.core.database_pools import get_database_pool
+from opi.core.cluster_config import CLUSTER_CONFIG
 
 logger = logging.getLogger(__name__)
+
+
+def get_supported_base_domains(cluster: str | None = None) -> set[str]:
+    """Get all supported base domains for nice URLs.
+
+    Args:
+        cluster: Optional cluster name to get domains for specific cluster.
+                 If None, returns all supported domains across all clusters.
+
+    Returns:
+        Set of supported base domain strings
+    """
+    if cluster and cluster in CLUSTER_CONFIG:
+        nice_url_config = CLUSTER_CONFIG[cluster].get("nice_url", {})
+        return set(nice_url_config.get("supported_domains", []))
+
+    # Collect all supported domains from all clusters
+    all_domains = set()
+    for cluster_config in CLUSTER_CONFIG.values():
+        nice_url_config = cluster_config.get("nice_url", {})
+        all_domains.update(nice_url_config.get("supported_domains", []))
+    return all_domains
+
+
+def validate_base_domain(base_domain: str, cluster: str | None = None, language: str = "nl") -> tuple[bool, str | None]:
+    """Validate a base domain against configured supported domains.
+
+    Args:
+        base_domain: The base domain to validate
+        cluster: Optional cluster name for cluster-specific validation
+        language: Language for error messages ("nl" for Dutch, "en" for English)
+
+    Returns:
+        Tuple of (is_valid, error_message). If valid, error_message is None.
+    """
+    messages_nl = {
+        "empty": "Base domain mag niet leeg zijn",
+        "not_supported": "'{base_domain}' is geen ondersteund base domain. Ondersteunde domeinen: {supported}",
+    }
+
+    messages_en = {
+        "empty": "Base domain cannot be empty",
+        "not_supported": "'{base_domain}' is not a supported base domain. Supported domains: {supported}",
+    }
+
+    messages = messages_nl if language == "nl" else messages_en
+
+    if not base_domain:
+        return False, messages["empty"]
+
+    base_domain_lower = base_domain.lower()
+    supported_domains = get_supported_base_domains(cluster)
+
+    if base_domain_lower not in supported_domains:
+        return False, messages["not_supported"].format(
+            base_domain=base_domain_lower,
+            supported=", ".join(sorted(supported_domains))
+        )
+
+    return True, None
 
 # DNS subdomain validation constants
 SUBDOMAIN_MAX_LENGTH = 63
@@ -131,6 +192,10 @@ class SubdomainNotAvailableError(SubdomainError):
 
 class SubdomainValidationError(SubdomainError):
     """Exception raised when subdomain validation fails."""
+
+
+class BaseDomainValidationError(SubdomainError):
+    """Exception raised when base domain validation fails."""
 
 
 def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str | None]:
@@ -261,6 +326,7 @@ class SubdomainConnector:
 
         Raises:
             SubdomainValidationError: If the subdomain format is invalid
+            BaseDomainValidationError: If the base domain is not supported
             SubdomainNotAvailableError: If the subdomain is already taken
             SubdomainError: If registration fails
         """
@@ -271,6 +337,11 @@ class SubdomainConnector:
 
         subdomain_lower = subdomain.lower()
         base_domain_lower = base_domain.lower()
+
+        # Validate base domain against supported domains for this cluster
+        is_valid, error_message = validate_base_domain(base_domain_lower, cluster)
+        if not is_valid:
+            raise BaseDomainValidationError(error_message)
 
         # Check availability first
         if not await self.check_availability(subdomain_lower, base_domain_lower):
@@ -283,11 +354,14 @@ class SubdomainConnector:
         pool = self._get_pool()
         conn = await pool.acquire()
         try:
+            # Use INSERT ... ON CONFLICT to handle race conditions atomically
+            # This prevents the TOCTOU race between check_availability and register
             result = await conn.fetchrow(
                 f"""
                 INSERT INTO {self.TABLE_NAME}
                 (subdomain, base_domain, project_name, deployment_name, cluster, created_by)
                 VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (subdomain, base_domain) DO NOTHING
                 RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
                 """,
                 subdomain_lower,
@@ -298,18 +372,30 @@ class SubdomainConnector:
                 created_by,
             )
 
+            if result is None:
+                # Conflict occurred - subdomain was taken between check and register
+                existing = await self.get_by_subdomain(subdomain_lower, base_domain_lower)
+                if existing and existing.get("project_name") == project_name:
+                    # Same project - return existing registration
+                    logger.info(
+                        f"Subdomain '{subdomain_lower}.{base_domain_lower}' already registered "
+                        f"to same project '{project_name}'"
+                    )
+                    return existing
+                raise SubdomainNotAvailableError(
+                    f"Subdomain '{subdomain_lower}.{base_domain_lower}' werd zojuist geregistreerd "
+                    f"door een ander project"
+                )
+
             logger.info(
                 f"Registered subdomain '{subdomain_lower}.{base_domain_lower}' "
                 f"for project '{project_name}', deployment '{deployment_name}'"
             )
 
-            return dict(result) if result else {}
+            return dict(result)
+        except SubdomainNotAvailableError:
+            raise
         except Exception as e:
-            # Handle unique constraint violation
-            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
-                raise SubdomainNotAvailableError(
-                    f"Subdomain '{subdomain_lower}.{base_domain_lower}' is already registered"
-                ) from e
             logger.exception(f"Failed to register subdomain '{subdomain_lower}.{base_domain_lower}'")
             raise SubdomainError(f"Subdomain registration failed: {e}") from e
         finally:
@@ -477,6 +563,72 @@ class SubdomainConnector:
             return count
         finally:
             await pool.release(conn)
+
+    async def register_or_update_for_deployment(
+        self,
+        subdomain: str,
+        base_domain: str,
+        project_name: str,
+        deployment_name: str,
+        cluster: str,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Register a subdomain or update if the deployment's subdomain has changed.
+
+        This method handles the case where a deployment's subdomain configuration changes.
+        It will:
+        1. Check if the deployment already has a subdomain registration
+        2. If the subdomain hasn't changed, return the existing registration
+        3. If the subdomain has changed, delete the old registration and create a new one
+
+        Args:
+            subdomain: The new/current subdomain
+            base_domain: The base domain
+            project_name: The project name
+            deployment_name: The deployment name
+            cluster: The cluster
+            created_by: Optional creator identifier
+
+        Returns:
+            Dictionary with registration details
+
+        Raises:
+            SubdomainValidationError: If the subdomain format is invalid
+            BaseDomainValidationError: If the base domain is not supported
+            SubdomainNotAvailableError: If the new subdomain is already taken by another project
+        """
+        subdomain_lower = subdomain.lower()
+        base_domain_lower = base_domain.lower()
+
+        # Check if this deployment already has a registration
+        existing = await self.get_by_deployment(project_name, deployment_name)
+
+        if existing:
+            # Check if subdomain has changed
+            if existing["subdomain"] == subdomain_lower and existing["base_domain"] == base_domain_lower:
+                # No change - return existing
+                logger.debug(
+                    f"Subdomain '{subdomain_lower}.{base_domain_lower}' unchanged for "
+                    f"deployment '{project_name}/{deployment_name}'"
+                )
+                return existing
+
+            # Subdomain changed - delete old registration first
+            logger.info(
+                f"Subdomain changed from '{existing['subdomain']}.{existing['base_domain']}' to "
+                f"'{subdomain_lower}.{base_domain_lower}' for deployment '{project_name}/{deployment_name}'"
+            )
+            await self.delete(existing["subdomain"], existing["base_domain"])
+
+        # Register the new subdomain
+        return await self.register(
+            subdomain=subdomain,
+            base_domain=base_domain,
+            project_name=project_name,
+            deployment_name=deployment_name,
+            cluster=cluster,
+            created_by=created_by,
+        )
 
     async def update(
         self,
