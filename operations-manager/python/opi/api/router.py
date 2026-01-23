@@ -401,11 +401,12 @@ class SelfServiceProjectRequest(BaseModel):
     deployment_name: str = "main"  # Name for the deployment (defaults to "main")
 
     # Web Address Configuration
-    domain_mode: str = "component-specific"  # "component-specific", "deployment-name", or "custom"
+    domain_mode: str = "component-specific"  # "component-specific", "deployment-name", "custom", or "nice-url"
     subdomain: str | None = None  # Custom subdomain (required when domain_mode is "custom")
+    include_project_name: bool = False  # For nice-url mode: include project name in hostname
 
     # External Domain Configuration (for public domains with Let's Encrypt)
-    base_domain: str | None = None  # Apex domain (e.g., "rijksapp.com")
+    base_domain: str | None = None  # Apex domain (e.g., "rijks.app")
     issuer: str | None = None  # Certificate issuer: "letsencrypt", "letsencrypt-staging", or custom issuer name
     contact_email: str | None = None  # Contact email for Let's Encrypt (overrides cluster default)
 

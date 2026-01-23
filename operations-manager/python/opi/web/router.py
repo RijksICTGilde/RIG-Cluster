@@ -107,6 +107,7 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
         domain_mode = str(form_data.get("domain-mode", "component-specific")).strip()
         subdomain = str(form_data.get("subdomain", "")).strip() or None
         deployment_name = str(form_data.get("deployment-name", "main")).strip() or "main"
+        include_project_name = form_data.get("include-project-name") in ("true", "True", True, "on")
 
         # Extract external domain configuration
         base_domain = str(form_data.get("base-domain", "")).strip() or None
@@ -201,6 +202,7 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
             deployment_name=deployment_name,
             domain_mode=domain_mode,
             subdomain=subdomain,
+            include_project_name=include_project_name,
             base_domain=base_domain,
             issuer=issuer,
             contact_email=contact_email,
