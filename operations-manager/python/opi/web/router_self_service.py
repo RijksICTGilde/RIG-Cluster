@@ -217,6 +217,10 @@ def _get_validation_error_code(error_message: str | None) -> str:
     This allows the frontend to use its own translations instead of relying
     on fragile string matching.
 
+    NOTE: Reserved subdomains now return a generic "not available" message
+    to prevent enumeration attacks. The error code SUBDOMAIN_NOT_AVAILABLE
+    is used for both reserved and taken subdomains.
+
     Args:
         error_message: The validation error message (in Dutch or English)
 
@@ -228,7 +232,7 @@ def _get_validation_error_code(error_message: str | None) -> str:
 
     error_lower = error_message.lower()
 
-    # Check for common error patterns
+    # Check for common error patterns (order matters - check more specific patterns first)
     if "leeg" in error_lower or "empty" in error_lower:
         return "SUBDOMAIN_EMPTY"
     if "kort" in error_lower or "short" in error_lower or "minimaal" in error_lower:
@@ -241,9 +245,13 @@ def _get_validation_error_code(error_message: str | None) -> str:
         return "SUBDOMAIN_INVALID_END"
     if "kleine letters" in error_lower or "lowercase" in error_lower:
         return "SUBDOMAIN_INVALID_CHARS"
-    if "gereserveerd" in error_lower or "reserved" in error_lower:
-        return "SUBDOMAIN_RESERVED"
     if "ongeldige tekens" in error_lower or "invalid character" in error_lower:
         return "SUBDOMAIN_INVALID_CHARS"
+    # Generic "not available" for both reserved and taken subdomains (security: no enumeration)
+    if "niet beschikbaar" in error_lower or "not available" in error_lower:
+        return "SUBDOMAIN_NOT_AVAILABLE"
+    # Legacy patterns (kept for backwards compatibility)
+    if "gereserveerd" in error_lower or "reserved" in error_lower:
+        return "SUBDOMAIN_NOT_AVAILABLE"  # Changed from SUBDOMAIN_RESERVED
 
     return "SUBDOMAIN_INVALID"
