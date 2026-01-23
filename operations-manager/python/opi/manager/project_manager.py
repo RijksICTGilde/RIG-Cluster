@@ -3623,6 +3623,54 @@ class ProjectManager:
         subdomain_registered = False  # Track if we registered a new subdomain for rollback
         subdomain_connector = None  # Initialize for use in rollback
 
+        # Validate nice-url mode requirements BEFORE subdomain registration
+        # This prevents orphaned subdomain entries when validation fails
+        if domain_mode == "nice-url" and subdomain and base_domain:
+            # Validate only one component has root: true for nice-url mode
+            root_components = [c.get("reference") or c.get("name") for c in components if c.get("root") is True]
+            if len(root_components) > 1:
+                raise ValueError(
+                    f"Multiple components marked as root in deployment '{deployment_name}': {root_components}. "
+                    f"Only one component can have 'root: true' for nice-url mode."
+                )
+
+            # Validate that all components with publish-on-web have ports configured
+            # In nice-url mode, each component gets its own ingress at component.subdomain.base_domain
+            components_missing_ports = []
+            for component in components:
+                component_name = component.get("reference") or component.get("name")
+                if not component_name:
+                    continue
+
+                # Check if component has publish-on-web enabled
+                has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
+                    project_data, component_name
+                )
+                if has_publish_on_web:
+                    # Component needs a port for its ingress
+                    has_ports = self._project_file_handler.component_has_ports(project_data, component_name)
+                    if not has_ports:
+                        components_missing_ports.append(component_name)
+
+            if components_missing_ports:
+                raise ValueError(
+                    f"Components with 'publish-on-web' in nice-url mode must have at least one port configured. "
+                    f"Missing ports for: {', '.join(components_missing_ports)}. "
+                    f"Add 'ports.inbound' to the component definition."
+                )
+
+            # Validate that root component has publish-on-web (required for root ingress creation)
+            if root_components:
+                root_component_name = root_components[0]
+                root_has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
+                    project_data, root_component_name
+                )
+                if not root_has_publish_on_web:
+                    raise ValueError(
+                        f"Component '{root_component_name}' is marked as root but does not have 'publish-on-web' enabled. "
+                        f"Root components must have a service exposed for the root URL to work."
+                    )
+
         if domain_mode == "nice-url" and subdomain and base_domain:
             from opi.connectors.subdomain import (
                 BaseDomainValidationError,
@@ -3652,40 +3700,6 @@ class ProjectManager:
             )
             subdomain_registered = is_new_registration  # Mark for rollback only if new
             logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
-
-            # Validate only one component has root: true for nice-url mode
-            root_components = [c.get("reference") or c.get("name") for c in components if c.get("root") is True]
-            if len(root_components) > 1:
-                # Rollback before raising
-                if subdomain_registered:
-                    try:
-                        await subdomain_connector.delete_by_deployment(project_name, deployment_name)
-                        logger.info(f"Rolled back subdomain '{subdomain}.{base_domain}' due to validation failure")
-                    except Exception as rollback_err:
-                        logger.error(f"Failed to rollback subdomain: {rollback_err}")
-                raise ValueError(
-                    f"Multiple components marked as root in deployment '{deployment_name}': {root_components}. "
-                    f"Only one component can have 'root: true' for nice-url mode."
-                )
-
-            # Validate that root component has publish-on-web (required for root ingress creation)
-            if root_components:
-                root_component_name = root_components[0]
-                root_has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
-                    project_data, root_component_name
-                )
-                if not root_has_publish_on_web:
-                    # Rollback before raising
-                    if subdomain_registered:
-                        try:
-                            await subdomain_connector.delete_by_deployment(project_name, deployment_name)
-                            logger.info(f"Rolled back subdomain '{subdomain}.{base_domain}' due to validation failure")
-                        except Exception as rollback_err:
-                            logger.error(f"Failed to rollback subdomain: {rollback_err}")
-                    raise ValueError(
-                        f"Component '{root_component_name}' is marked as root but does not have 'publish-on-web' enabled. "
-                        f"Root components must have a service exposed for the root URL to work."
-                    )
 
         # Store rollback info for use in exception handler
         # These variables are used by _rollback_subdomain_on_failure if needed

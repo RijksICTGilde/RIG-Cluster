@@ -53,6 +53,7 @@
 
                         {# Main Form #}
                         <form id="project-form" method="post" action="/projects/new" autocomplete="off">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                             <c-layout-flow gap="xl">
 
                                 {# Section 1: Project Informatie #}
@@ -373,10 +374,10 @@
                                             id="domain-mode"
                                             name="domain-mode"
                                             :options="[
-                                                {'value': 'component-specific', 'label': 'Component-specifiek (standaard)'},
-                                                {'value': 'deployment-name', 'label': 'Deployment-naam (gedeeld domein)'},
-                                                {'value': 'custom', 'label': 'Aangepast subdomein'},
-                                                {'value': 'nice-url', 'label': 'Nice URL (punt-gescheiden)'}
+                                                {'value': 'component-specific', 'label': 'Component-specifiek (standaard) — bijv. frontend.mijnproject-staging.odcn.nl'},
+                                                {'value': 'deployment-name', 'label': 'Deployment-naam — bijv. staging.mijnproject.odcn.nl'},
+                                                {'value': 'custom', 'label': 'Aangepast subdomein — bijv. custom-subdomain.odcn.nl'},
+                                                {'value': 'nice-url', 'label': 'Eigen subdomein — bijv. frontend.mijnapp.rijks.app (root: mijnapp.rijks.app)'}
                                             ]"
                                             value="'component-specific'"
                                             @change="handleDomainModeChange()"/>
@@ -487,14 +488,20 @@
                                                         :value="'/'"
                                                         helperText="Het pad waarop dit component gepubliceerd wordt (bijvoorbeeld: /, /api, /aanleverapi). Bij gedeelde domeinen wordt dit pad gebruikt om verkeer naar het juiste component te routeren."/>
 
-                                                    <div class="root-component-checkbox" style="display: none;">
-                                                        <c-checkbox
-                                                            id="component-root-0"
-                                                            name="components[0][root]"
-                                                            value="true"
-                                                            @change="handleRootCheckboxChange(this)"
-                                                            label="Root component"
-                                                            helperText="Maak dit de hoofdcomponent die bereikbaar is op de basis-URL (bijv. mijnapp.rijks.app). Alleen 1 component kan root zijn. Kies hier typisch uw frontend of single-page app."/>
+                                                    <div class="root-component-radio" style="display: none;">
+                                                        <div class="rvo-form-field">
+                                                            <label class="rvo-form-field__label" for="component-root-0">
+                                                                <input
+                                                                    type="radio"
+                                                                    id="component-root-0"
+                                                                    name="root-component"
+                                                                    value="0"
+                                                                    class="rvo-radio"
+                                                                    @change="updateUrlPreview()"/>
+                                                                <span class="rvo-radio__label">Root component</span>
+                                                            </label>
+                                                            <p class="rvo-form-field__helper-text">Maak dit de hoofdcomponent die bereikbaar is op de basis-URL (bijv. mijnapp.rijks.app). Alleen 1 component kan root zijn. Kies hier typisch uw frontend of single-page app.</p>
+                                                        </div>
                                                     </div>
 
                                                     <c-layout-row gap="md">
@@ -728,30 +735,16 @@ Available variables depend on selected services:
           }
         }
 
-        // Toggle root component checkboxes visibility
-        toggleRootCheckboxes(domainMode === 'nice-url');
+        // Toggle root component radio buttons visibility
+        toggleRootRadios(domainMode === 'nice-url');
       }
 
-      // Show/hide root component checkboxes based on domain mode
-      function toggleRootCheckboxes(show) {
-        const rootCheckboxes = document.querySelectorAll('.root-component-checkbox');
-        rootCheckboxes.forEach(checkbox => {
-          checkbox.style.display = show ? 'block' : 'none';
+      // Show/hide root component radio buttons based on domain mode
+      function toggleRootRadios(show) {
+        const rootRadios = document.querySelectorAll('.root-component-radio');
+        rootRadios.forEach(radio => {
+          radio.style.display = show ? 'block' : 'none';
         });
-      }
-
-      // Handle root checkbox change - ensure only one can be selected (radio behavior)
-      function handleRootCheckboxChange(checkbox) {
-        if (checkbox.checked) {
-          // Uncheck all other root checkboxes
-          document.querySelectorAll('.root-component-checkbox input[type="checkbox"]').forEach(cb => {
-            if (cb !== checkbox && cb.checked) {
-              cb.checked = false;
-            }
-          });
-        }
-        // Update URL preview to reflect root selection
-        updateUrlPreview();
       }
 
       // Base domain options per cluster (from server config)
@@ -798,6 +791,34 @@ Available variables depend on selected services:
 
       // Check subdomain availability for nice-url mode
       let subdomainCheckTimeout = null;
+
+      // Error code to Dutch message mapping (for U3 fix - avoid fragile string matching)
+      const errorCodeTranslations = {
+        'SUBDOMAIN_EMPTY': 'Subdomein mag niet leeg zijn',
+        'SUBDOMAIN_TOO_SHORT': 'Subdomein is te kort',
+        'SUBDOMAIN_TOO_LONG': 'Maximaal 63 tekens toegestaan',
+        'SUBDOMAIN_INVALID_START': 'Mag niet beginnen met een streepje',
+        'SUBDOMAIN_INVALID_END': 'Mag niet eindigen met een streepje',
+        'SUBDOMAIN_INVALID_CHARS': 'Alleen kleine letters, cijfers en streepjes toegestaan',
+        'SUBDOMAIN_RESERVED': 'Dit subdomein is gereserveerd',
+        'SUBDOMAIN_INVALID': 'Ongeldig subdomein formaat',
+        'SUBDOMAIN_TAKEN': 'Al in gebruik door een ander project',
+        'INVALID_BASE_DOMAIN': 'Ongeldig base domain',
+        'UNKNOWN_ERROR': 'Onbekende fout'
+      };
+
+      function getErrorMessage(errorCode, fallbackMessage) {
+        return errorCodeTranslations[errorCode] || fallbackMessage || errorCodeTranslations['UNKNOWN_ERROR'];
+      }
+
+      // Show typing indicator during debounce (U2 fix)
+      function showTypingIndicator() {
+        const availabilityDiv = document.getElementById('subdomain-availability');
+        if (availabilityDiv) {
+          availabilityDiv.innerHTML = '<span style="color: #999;">Wachten op typen...</span>';
+        }
+      }
+
       async function checkSubdomainAvailability() {
         const subdomain = document.getElementById('nice-url-subdomain').value.trim().toLowerCase();
         const baseDomainField = document.getElementById('base-domain');
@@ -819,20 +840,14 @@ Available variables depend on selected services:
         availabilityDiv.innerHTML = '<span style="color: #666;">Beschikbaarheid controleren...</span>';
 
         try {
-          const response = await fetch(`/api/subdomains/check/${encodeURIComponent(subdomain)}?base_domain=${encodeURIComponent(baseDomain)}`);
+          // Use SSO-protected web endpoint instead of API endpoint
+          const response = await fetch(`/subdomains/check?subdomain=${encodeURIComponent(subdomain)}&base_domain=${encodeURIComponent(baseDomain)}`);
           const data = await response.json();
 
           if (data.validation_error) {
-            // Validation error (invalid format) - show in orange with Dutch message
-            // Map common English errors to Dutch
-            let dutchError = data.validation_error;
-            if (dutchError.includes('start with')) dutchError = 'Mag niet beginnen met een streepje';
-            else if (dutchError.includes('end with')) dutchError = 'Mag niet eindigen met een streepje';
-            else if (dutchError.includes('reserved')) dutchError = 'Dit subdomein is gereserveerd';
-            else if (dutchError.includes('characters')) dutchError = 'Alleen letters, cijfers en streepjes toegestaan';
-            else if (dutchError.includes('long')) dutchError = 'Maximaal 63 tekens toegestaan';
-            else if (dutchError.includes('empty')) dutchError = 'Subdomein mag niet leeg zijn';
-            availabilityDiv.innerHTML = `<span class="rvo-text--warning">&#x26A0; ${dutchError}</span>`;
+            // Use error_code for translation if available, fallback to validation_error
+            const errorMessage = getErrorMessage(data.error_code, data.validation_error);
+            availabilityDiv.innerHTML = `<span class="rvo-text--warning">&#x26A0; ${errorMessage}</span>`;
             document.getElementById('subdomain').value = '';
           } else if (data.available) {
             availabilityDiv.innerHTML = '<span class="rvo-text--success">&#x2714; Beschikbaar</span>';
@@ -840,7 +855,8 @@ Available variables depend on selected services:
             document.getElementById('subdomain').value = subdomain;
           } else {
             // Already taken by another project - show in red
-            availabilityDiv.innerHTML = '<span class="rvo-text--error">&#x2718; Al in gebruik door een ander project</span>';
+            const errorMessage = getErrorMessage(data.error_code, 'Al in gebruik door een ander project');
+            availabilityDiv.innerHTML = `<span class="rvo-text--error">&#x2718; ${errorMessage}</span>`;
             document.getElementById('subdomain').value = '';
           }
         } catch (error) {
@@ -873,8 +889,8 @@ Available variables depend on selected services:
             if (select.value) componentTypes.push(select.value.toLowerCase());
           });
 
-          // Check if any component is marked as root
-          const hasRootComponent = document.querySelector('.component-item input[name*="[root]"]:checked') !== null;
+          // Check if any component is marked as root (via radio button)
+          const hasRootComponent = document.querySelector('input[name="root-component"]:checked') !== null;
 
           let previewHtml = '';
           if (componentTypes.length > 0) {
@@ -919,7 +935,13 @@ Available variables depend on selected services:
             if (subdomainCheckTimeout) {
               clearTimeout(subdomainCheckTimeout);
             }
-            // Debounce the check to avoid too many API calls
+            // Show typing indicator immediately (U2 fix)
+            if (this.value.trim()) {
+              showTypingIndicator();
+            } else {
+              document.getElementById('subdomain-availability').innerHTML = '';
+            }
+            // Debounce the check to avoid too many requests
             subdomainCheckTimeout = setTimeout(checkSubdomainAvailability, 500);
           });
         }
@@ -978,11 +1000,13 @@ Available variables depend on selected services:
             availabilityDiv.innerHTML = '<span style="color: orange;">Beschikbaarheid controleren...</span>';
 
             try {
-              const response = await fetch(`/api/subdomains/check/${encodeURIComponent(subdomain)}?base_domain=${encodeURIComponent(baseDomain)}`);
+              // Use SSO-protected web endpoint
+              const response = await fetch(`/subdomains/check?subdomain=${encodeURIComponent(subdomain)}&base_domain=${encodeURIComponent(baseDomain)}`);
               const data = await response.json();
 
               if (data.validation_error) {
-                availabilityDiv.innerHTML = `<span style="color: red;">&#x2718; ${data.validation_error}</span>`;
+                const errorMessage = getErrorMessage(data.error_code, data.validation_error);
+                availabilityDiv.innerHTML = `<span style="color: red;">&#x2718; ${errorMessage}</span>`;
                 return;
               } else if (!data.available) {
                 availabilityDiv.innerHTML = '<span style="color: red;">&#x2718; Niet meer beschikbaar - kies een ander subdomein</span>';
@@ -1067,6 +1091,10 @@ Available variables depend on selected services:
           // Clear values
           if (element.type === 'checkbox') {
             element.checked = false;
+          } else if (element.type === 'radio' && element.name === 'root-component') {
+            // Update radio button value to new component index and uncheck
+            element.value = String(componentCount - 1);
+            element.checked = false;
           } else {
             element.value = '';
           }
@@ -1089,11 +1117,11 @@ Available variables depend on selected services:
         // Update component services based on selected main services
         updateComponentServices(newComponent, componentCount - 1);
 
-        // Toggle root checkbox visibility based on current domain mode
+        // Toggle root radio visibility based on current domain mode
         const domainMode = document.getElementById('domain-mode').value;
-        const rootCheckbox = newComponent.querySelector('.root-component-checkbox');
-        if (rootCheckbox) {
-          rootCheckbox.style.display = domainMode === 'nice-url' ? 'block' : 'none';
+        const rootRadio = newComponent.querySelector('.root-component-radio');
+        if (rootRadio) {
+          rootRadio.style.display = domainMode === 'nice-url' ? 'block' : 'none';
         }
 
         // Focus on the new component type field
@@ -1457,6 +1485,35 @@ Available variables depend on selected services:
             .concept-diagram svg text[font-size="11"] {
                 font-size: 8px !important;
             }
+        }
+
+        /* Root component radio button styling */
+        .root-component-radio {
+            margin-top: var(--rvo-space-md);
+            padding: var(--rvo-space-md);
+            background-color: var(--rvo-color-grijs-50);
+            border-radius: 4px;
+        }
+
+        .root-component-radio .rvo-form-field__label {
+            display: flex;
+            align-items: center;
+            gap: var(--rvo-space-sm);
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .root-component-radio .rvo-radio {
+            width: 18px;
+            height: 18px;
+            margin: 0;
+        }
+
+        .root-component-radio .rvo-form-field__helper-text {
+            margin-top: var(--rvo-space-xs);
+            margin-left: calc(18px + var(--rvo-space-sm));
+            color: var(--rvo-color-grijs-600);
+            font-size: 0.875rem;
         }
 
     </style>
