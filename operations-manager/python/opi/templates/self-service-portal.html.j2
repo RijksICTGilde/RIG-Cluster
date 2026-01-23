@@ -364,6 +364,12 @@
                                                         <c-p>Alle componenten delen een door u opgegeven domeinnaam (bijvoorbeeld <code>myapp.example.com</code>), met verschillende paden.</c-p>
                                                         <c-p class="rvo-text--sm rvo-text--subtle">Dit geeft u volledige controle over de URL-structuur.</c-p>
                                                     </div>
+
+                                                    <div>
+                                                        <c-p><strong>4. Nice URL (punt-gescheiden)</strong></c-p>
+                                                        <c-p>Elk component krijgt een mooie punt-gescheiden URL zoals <code>frontend.prod.rijks.app</code>. Optioneel kunt u de projectnaam toevoegen voor <code>frontend.prod.myapp.rijks.app</code>.</c-p>
+                                                        <c-p class="rvo-text--sm rvo-text--subtle">Vereist een base-domein zoals rijks.app of rijksapps.nl.</c-p>
+                                                    </div>
                                                 </c-layout-flow>
                                             </div>
                                         </div>
@@ -374,7 +380,8 @@
                                             :options="[
                                                 {'value': 'component-specific', 'label': 'Component-specifiek (standaard)'},
                                                 {'value': 'deployment-name', 'label': 'Deployment-naam (gedeeld domein)'},
-                                                {'value': 'custom', 'label': 'Aangepast subdomein'}
+                                                {'value': 'custom', 'label': 'Aangepast subdomein'},
+                                                {'value': 'nice-url', 'label': 'Nice URL (punt-gescheiden)'}
                                             ]"
                                             value="'component-specific'"
                                             @change="handleDomainModeChange()"/>
@@ -386,6 +393,15 @@
                                             helperText="Geef een custom subdomein op (bijvoorbeeld: myapp). Dit zal worden gebruikt als basis voor alle component URLs."
                                             placeholder="myapp"
                                             style="display: none;"/>
+
+                                        <div id="include-project-name-container" style="display: none;">
+                                            <c-checkbox
+                                                id="include-project-name"
+                                                name="include-project-name"
+                                                label="Projectnaam opnemen in URL"
+                                                value="true"
+                                                helperText="Wanneer aangevinkt, wordt de projectnaam opgenomen in de URL (bijv. frontend.prod.myproject.rijks.app in plaats van frontend.prod.rijks.app)."/>
+                                        </div>
                                     </c-layout-flow>
                                 </c-fieldset>
 
@@ -637,19 +653,22 @@ Available variables depend on selected services:
         const domainMode = document.getElementById('domain-mode').value;
         const subdomainField = document.getElementById('subdomain').closest('c-text-input-field');
         const displayNameField = document.getElementById('display-name');
+        const includeProjectNameContainer = document.getElementById('include-project-name-container');
+
+        // Hide both optional fields by default
+        if (subdomainField) {
+          subdomainField.style.display = 'none';
+        }
+        if (includeProjectNameContainer) {
+          includeProjectNameContainer.style.display = 'none';
+        }
 
         if (domainMode === 'component-specific') {
           // Hide subdomain field
-          if (subdomainField) {
-            subdomainField.style.display = 'none';
-          }
           document.getElementById('subdomain').value = '';
           document.getElementById('subdomain').removeAttribute('required');
         } else if (domainMode === 'deployment-name') {
           // Hide subdomain field but populate it from display name
-          if (subdomainField) {
-            subdomainField.style.display = 'none';
-          }
           // Auto-populate with deployment name (convert to lowercase, replace spaces with hyphens)
           const deploymentName = displayNameField.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
           document.getElementById('subdomain').value = deploymentName;
@@ -660,6 +679,13 @@ Available variables depend on selected services:
             subdomainField.style.display = 'block';
           }
           document.getElementById('subdomain').setAttribute('required', 'true');
+        } else if (domainMode === 'nice-url') {
+          // Show include-project-name checkbox for nice-url mode
+          if (includeProjectNameContainer) {
+            includeProjectNameContainer.style.display = 'block';
+          }
+          document.getElementById('subdomain').value = '';
+          document.getElementById('subdomain').removeAttribute('required');
         }
       }
 

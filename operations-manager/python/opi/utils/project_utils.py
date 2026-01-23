@@ -183,6 +183,10 @@ dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
             deployment_config["subdomain"] = deployment_name
         elif project_data.domain_mode == "custom" and project_data.subdomain:
             deployment_config["subdomain"] = project_data.subdomain
+        elif project_data.domain_mode == "nice-url":
+            deployment_config["domain-mode"] = "nice-url"
+            if hasattr(project_data, "include_project_name") and project_data.include_project_name:
+                deployment_config["include-project-name"] = True
         # For "component-specific" mode, don't add subdomain field
 
         # Add external domain configuration if specified
@@ -209,6 +213,10 @@ dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
             deployment_config["subdomain"] = deployment_name
         elif project_data.domain_mode == "custom" and project_data.subdomain:
             deployment_config["subdomain"] = project_data.subdomain
+        elif project_data.domain_mode == "nice-url":
+            deployment_config["domain-mode"] = "nice-url"
+            if hasattr(project_data, "include_project_name") and project_data.include_project_name:
+                deployment_config["include-project-name"] = True
         # For "component-specific" mode, don't add subdomain field
 
         # Add external domain configuration if specified

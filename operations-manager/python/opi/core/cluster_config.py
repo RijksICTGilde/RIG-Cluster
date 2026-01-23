@@ -46,6 +46,9 @@ CLUSTER_CONFIG = {
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
+        "nice_url": {
+            "supported_domains": ["kind", "local"],  # Domains that support nice URL pattern
+        },
     },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
@@ -73,6 +76,9 @@ CLUSTER_CONFIG = {
         "uses_capsule": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
+        },
+        "nice_url": {
+            "supported_domains": ["rijks.app", "rijksapps.nl"],  # Domains that support nice URL pattern
         },
     },
 }
@@ -616,3 +622,64 @@ def get_ca_certificate_config(cluster_name: str) -> dict | None:
         "hash": ca_hash,
         "env_vars": ca_config.get("env_vars", {}),
     }
+
+
+def get_nice_url_config(cluster_name: str) -> dict | None:
+    """
+    Get the nice URL configuration for a specific cluster.
+
+    Nice URLs use dot-separated patterns like component.deployment.base_domain
+    instead of the default dash-separated patterns.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Dictionary containing nice URL configuration with keys:
+        - supported_domains: List of domains that support the nice URL pattern
+
+        Returns None if nice URLs are not configured for this cluster.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("nice_url")
+
+
+def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
+    """
+    Get the list of domains that support nice URLs for a specific cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        List of domain strings that support nice URL pattern.
+        Returns empty list if nice URLs are not configured.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return []
+    return nice_url_config.get("supported_domains", [])
+
+
+def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
+    """
+    Check if a specific base domain supports nice URLs on a cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+        base_domain: The base domain to check (e.g., "rijks.app")
+
+    Returns:
+        True if the domain supports nice URLs on this cluster, False otherwise.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    supported_domains = get_nice_url_supported_domains(cluster_name)
+    return base_domain in supported_domains
