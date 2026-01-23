@@ -497,11 +497,10 @@ class SubdomainConnector:
         #
         # This approach gives us both good UX (informative errors) and security (atomic ops).
         if not await self.check_availability(subdomain_lower, base_domain_lower):
-            # Note: Don't expose which project owns the subdomain in error messages
-            # to prevent information disclosure to unauthenticated users
+            # Use generic error message to prevent information disclosure
+            # (don't reveal whether subdomain is taken by another project or reserved)
             raise SubdomainNotAvailableError(
-                f"Subdomein '{subdomain_lower}.{base_domain_lower}' is al geregistreerd "
-                f"door een ander project"
+                f"Subdomein '{subdomain_lower}.{base_domain_lower}' is niet beschikbaar"
             )
 
         pool = self._get_pool()
@@ -536,9 +535,9 @@ class SubdomainConnector:
                         f"to same project '{project_name}'"
                     )
                     return existing
+                # Use generic error message to prevent information disclosure
                 raise SubdomainNotAvailableError(
-                    f"Subdomain '{subdomain_lower}.{base_domain_lower}' werd zojuist geregistreerd "
-                    f"door een ander project"
+                    f"Subdomein '{subdomain_lower}.{base_domain_lower}' is niet beschikbaar"
                 )
 
             logger.info(
