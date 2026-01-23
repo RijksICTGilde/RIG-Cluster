@@ -339,7 +339,7 @@ class TestValidateSubdomain:
         """Empty subdomain fails validation."""
         is_valid, error = validate_subdomain("")
         assert is_valid is False
-        assert "empty" in error.lower()
+        assert "leeg" in error.lower()  # Dutch: "mag niet leeg zijn"
 
     def test_too_long_subdomain(self):
         """Subdomain exceeding 63 characters fails validation."""
@@ -352,13 +352,13 @@ class TestValidateSubdomain:
         """Subdomain starting with hyphen fails validation."""
         is_valid, error = validate_subdomain("-myapp")
         assert is_valid is False
-        assert "start" in error.lower()
+        assert "beginnen" in error.lower()  # Dutch: "mag niet beginnen met"
 
     def test_hyphen_at_end(self):
         """Subdomain ending with hyphen fails validation."""
         is_valid, error = validate_subdomain("myapp-")
         assert is_valid is False
-        assert "end" in error.lower()
+        assert "eindigen" in error.lower()  # Dutch: "mag niet eindigen met"
 
     def test_invalid_characters(self):
         """Subdomain with invalid characters fails validation."""
@@ -379,7 +379,7 @@ class TestValidateSubdomain:
         for subdomain in reserved_examples:
             is_valid, error = validate_subdomain(subdomain)
             assert is_valid is False, f"'{subdomain}' is reserved"
-            assert "reserved" in error.lower()
+            assert "gereserveerd" in error.lower()  # Dutch: "is een gereserveerd subdomein"
 
     def test_reserved_subdomains_are_defined(self):
         """RESERVED_SUBDOMAINS contains expected entries."""
@@ -406,7 +406,7 @@ class TestSubdomainValidationInRegister:
                 cluster="local",
             )
 
-        assert "start" in str(exc_info.value).lower()
+        assert "beginnen" in str(exc_info.value).lower()  # Dutch: "mag niet beginnen met"
 
     @pytest.mark.asyncio
     async def test_register_rejects_reserved_subdomain(self):
@@ -422,4 +422,4 @@ class TestSubdomainValidationInRegister:
                 cluster="local",
             )
 
-        assert "reserved" in str(exc_info.value).lower()
+        assert "gereserveerd" in str(exc_info.value).lower()  # Dutch: "is een gereserveerd subdomein"

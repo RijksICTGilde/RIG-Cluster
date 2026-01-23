@@ -723,7 +723,7 @@ Available variables depend on selected services:
             // Copy to the main subdomain field for form submission
             document.getElementById('subdomain').value = subdomain;
           } else {
-            availabilityDiv.innerHTML = `<span style="color: red;">&#x2718; Niet beschikbaar (in gebruik door: ${data.registered_to || 'onbekend'})</span>`;
+            availabilityDiv.innerHTML = '<span style="color: red;">&#x2718; Niet beschikbaar</span>';
             document.getElementById('subdomain').value = '';
           }
         } catch (error) {

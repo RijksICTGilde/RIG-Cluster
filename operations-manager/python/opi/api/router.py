@@ -1,5 +1,6 @@
 import logging
 import time
+from collections import defaultdict
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Request
@@ -15,6 +16,43 @@ from opi.utils.project_utils import generate_self_service_project_yaml, validate
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+# Simple IP-based rate limiter for subdomain check endpoint
+class IPRateLimiter:
+    """Simple token bucket rate limiter per IP address."""
+
+    def __init__(self, requests_per_minute: int = 30, burst: int = 10):
+        self.rate = requests_per_minute / 60.0  # requests per second
+        self.burst = burst
+        self._tokens: dict[str, float] = defaultdict(lambda: float(burst))
+        self._last_update: dict[str, float] = defaultdict(time.monotonic)
+
+    def is_allowed(self, ip: str) -> bool:
+        """Check if request from IP is allowed."""
+        now = time.monotonic()
+        elapsed = now - self._last_update[ip]
+        self._last_update[ip] = now
+
+        # Add tokens based on time elapsed
+        self._tokens[ip] = min(self.burst, self._tokens[ip] + elapsed * self.rate)
+
+        if self._tokens[ip] >= 1:
+            self._tokens[ip] -= 1
+            return True
+        return False
+
+    def cleanup_old_entries(self, max_age_seconds: int = 3600) -> None:
+        """Remove entries older than max_age_seconds to prevent memory leak."""
+        now = time.monotonic()
+        to_remove = [ip for ip, last in self._last_update.items() if now - last > max_age_seconds]
+        for ip in to_remove:
+            del self._tokens[ip]
+            del self._last_update[ip]
+
+
+# Global rate limiter instance for subdomain checks (30 requests/minute per IP)
+subdomain_check_rate_limiter = IPRateLimiter(requests_per_minute=30, burst=10)
 
 
 class ProjectProcessRequest(BaseModel):
@@ -1439,14 +1477,19 @@ class SubdomainRegistration(BaseModel):
         200: {"description": "Subdomain availability check result"},
     },
 )
-async def check_subdomain_availability(subdomain: str, base_domain: str) -> SubdomainCheckResponse:
+async def check_subdomain_availability(
+    request: Request, subdomain: str, base_domain: str
+) -> SubdomainCheckResponse:
     """
     Check if a subdomain is available for registration.
 
     This endpoint is used by the self-service portal to validate subdomain
     availability before project creation in nice-url mode.
 
+    Rate limited to 30 requests per minute per IP address.
+
     Args:
+        request: The FastAPI request object
         subdomain: The subdomain to check (e.g., "myapp")
         base_domain: The base domain (e.g., "rijks.app")
 
@@ -1458,6 +1501,14 @@ async def check_subdomain_availability(subdomain: str, base_domain: str) -> Subd
     curl "http://localhost:9595/api/subdomains/check/myapp?base_domain=rijks.app"
     ```
     """
+    # Rate limiting check
+    client_ip = request.client.host if request.client else "unknown"
+    if not subdomain_check_rate_limiter.is_allowed(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please wait before checking again.",
+        )
+
     try:
         # Validate subdomain format first
         is_valid, validation_error = validate_subdomain(subdomain)
@@ -1473,17 +1524,13 @@ async def check_subdomain_availability(subdomain: str, base_domain: str) -> Subd
         connector = create_subdomain_connector()
         is_available = await connector.check_availability(subdomain, base_domain)
 
-        registered_to = None
-        if not is_available:
-            existing = await connector.get_by_subdomain(subdomain, base_domain)
-            if existing:
-                registered_to = existing.get("project_name")
-
+        # Note: We intentionally don't expose registered_to for privacy reasons
+        # This prevents enumeration of which projects own which subdomains
         return SubdomainCheckResponse(
             subdomain=subdomain.lower(),
             base_domain=base_domain.lower(),
             available=is_available,
-            registered_to=registered_to,
+            registered_to=None,  # Hidden for privacy - don't expose project names
             validation_error=None,
         )
     except Exception as e:

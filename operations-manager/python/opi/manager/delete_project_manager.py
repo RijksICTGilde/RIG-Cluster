@@ -1601,6 +1601,35 @@ class DeleteProjectManager:
                 deletion_results["errors"].append(f"Error removing deployment from project file: {e}")
                 logger.exception(f"Error removing deployment '{deployment_name}' from project file")
 
+            # Clean up subdomain registration for this deployment
+            try:
+                subdomain_connector = SubdomainConnector()
+                deleted_subdomains = await subdomain_connector.delete_by_deployment(project_name, deployment_name)
+                if deleted_subdomains:
+                    deletion_results["operations"].append(
+                        {
+                            "type": "subdomain_cleanup",
+                            "target": f"deployment '{project_name}/{deployment_name}'",
+                            "status": "success",
+                            "count": deleted_subdomains,
+                            "message": f"Deleted {deleted_subdomains} subdomain registration(s)",
+                        }
+                    )
+                    logger.info(
+                        f"Deleted {deleted_subdomains} subdomain registration(s) for deployment "
+                        f"'{project_name}/{deployment_name}'"
+                    )
+                else:
+                    logger.debug(f"No subdomain registrations found for deployment '{project_name}/{deployment_name}'")
+            except Exception as e:
+                error_msg = f"Error cleaning up subdomain registrations for deployment: {e}"
+                deletion_results["errors"].append(error_msg)
+                deletion_results["operations"].append(
+                    {"type": "subdomain_cleanup", "status": "error", "error": str(e)}
+                )
+                logger.warning(error_msg)
+                # Don't fail the deletion for subdomain cleanup errors
+
             # Update success status - in force mode, we may still have errors but continue
             if force:
                 # In force mode, mark as partial success if there were some errors but we continued

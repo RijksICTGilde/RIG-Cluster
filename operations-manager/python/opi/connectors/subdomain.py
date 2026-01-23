@@ -133,11 +133,12 @@ class SubdomainValidationError(SubdomainError):
     """Exception raised when subdomain validation fails."""
 
 
-def validate_subdomain(subdomain: str) -> tuple[bool, str | None]:
+def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str | None]:
     """Validate a subdomain for DNS compatibility.
 
     Args:
         subdomain: The subdomain to validate
+        language: Language for error messages ("nl" for Dutch, "en" for English)
 
     Returns:
         Tuple of (is_valid, error_message). If valid, error_message is None.
@@ -148,26 +149,50 @@ def validate_subdomain(subdomain: str) -> tuple[bool, str | None]:
         - Cannot start or end with a hyphen
         - Cannot be a reserved subdomain
     """
+    # Dutch error messages (default)
+    messages_nl = {
+        "empty": "Subdomein mag niet leeg zijn",
+        "too_short": f"Subdomein moet minimaal {SUBDOMAIN_MIN_LENGTH} teken(s) bevatten",
+        "too_long": f"Subdomein mag maximaal {SUBDOMAIN_MAX_LENGTH} tekens bevatten",
+        "reserved": "'{subdomain}' is een gereserveerd subdomein en kan niet worden gebruikt",
+        "start_hyphen": "Subdomein mag niet beginnen met een koppelteken",
+        "end_hyphen": "Subdomein mag niet eindigen met een koppelteken",
+        "invalid_chars": "Subdomein mag alleen kleine letters (a-z), cijfers (0-9) en koppeltekens (-) bevatten",
+    }
+
+    # English error messages
+    messages_en = {
+        "empty": "Subdomain cannot be empty",
+        "too_short": f"Subdomain must be at least {SUBDOMAIN_MIN_LENGTH} character(s)",
+        "too_long": f"Subdomain cannot exceed {SUBDOMAIN_MAX_LENGTH} characters",
+        "reserved": "'{subdomain}' is a reserved subdomain and cannot be used",
+        "start_hyphen": "Subdomain cannot start with a hyphen",
+        "end_hyphen": "Subdomain cannot end with a hyphen",
+        "invalid_chars": "Subdomain can only contain lowercase letters (a-z), numbers (0-9), and hyphens (-)",
+    }
+
+    messages = messages_nl if language == "nl" else messages_en
+
     if not subdomain:
-        return False, "Subdomain cannot be empty"
+        return False, messages["empty"]
 
     subdomain_lower = subdomain.lower()
 
     if len(subdomain_lower) < SUBDOMAIN_MIN_LENGTH:
-        return False, f"Subdomain must be at least {SUBDOMAIN_MIN_LENGTH} character(s)"
+        return False, messages["too_short"]
 
     if len(subdomain_lower) > SUBDOMAIN_MAX_LENGTH:
-        return False, f"Subdomain cannot exceed {SUBDOMAIN_MAX_LENGTH} characters"
+        return False, messages["too_long"]
 
     if subdomain_lower in RESERVED_SUBDOMAINS:
-        return False, f"'{subdomain_lower}' is a reserved subdomain and cannot be used"
+        return False, messages["reserved"].format(subdomain=subdomain_lower)
 
     if not SUBDOMAIN_PATTERN.match(subdomain_lower):
         if subdomain_lower.startswith("-"):
-            return False, "Subdomain cannot start with a hyphen"
+            return False, messages["start_hyphen"]
         if subdomain_lower.endswith("-"):
-            return False, "Subdomain cannot end with a hyphen"
-        return False, "Subdomain can only contain lowercase letters (a-z), numbers (0-9), and hyphens (-)"
+            return False, messages["end_hyphen"]
+        return False, messages["invalid_chars"]
 
     return True, None
 
@@ -418,6 +443,37 @@ class SubdomainConnector:
             count = int(result.split()[-1]) if result else 0
             if count > 0:
                 logger.info(f"Deleted {count} subdomain registration(s) for project '{project_name}'")
+            return count
+        finally:
+            await pool.release(conn)
+
+    async def delete_by_deployment(self, project_name: str, deployment_name: str) -> int:
+        """Delete all subdomain registrations for a specific deployment.
+
+        Args:
+            project_name: The project name
+            deployment_name: The deployment name
+
+        Returns:
+            Number of registrations deleted
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.execute(
+                f"""
+                DELETE FROM {self.TABLE_NAME}
+                WHERE project_name = $1 AND deployment_name = $2
+                """,
+                project_name,
+                deployment_name,
+            )
+            # Parse "DELETE N" to get count
+            count = int(result.split()[-1]) if result else 0
+            if count > 0:
+                logger.info(
+                    f"Deleted {count} subdomain registration(s) for deployment '{project_name}/{deployment_name}'"
+                )
             return count
         finally:
             await pool.release(conn)
