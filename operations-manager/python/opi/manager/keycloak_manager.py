@@ -97,10 +97,9 @@ class KeycloakManager:
             subdomain = deployment.get("subdomain")
             base_domain = deployment.get("base-domain")
             domain_mode = deployment.get("domain-mode")
-            include_project_name = deployment.get("include-project-name", False)
 
             if domain_mode == "nice-url":
-                logger.info(f"Using nice-url mode for deployment {deployment_name}: base-domain={base_domain}")
+                logger.info(f"Using nice-url mode for deployment {deployment_name}: subdomain={subdomain}, base-domain={base_domain}")
             elif subdomain:
                 logger.info(f"Using subdomain mode for deployment {deployment_name}: subdomain={subdomain}")
             else:
@@ -124,7 +123,6 @@ class KeycloakManager:
                 subdomain=subdomain,
                 base_domain=base_domain,
                 domain_mode=domain_mode,
-                include_project_name=include_project_name,
             )
             if all_ingress_hosts:
                 logger.info(f"Generated hostnames for components: {all_ingress_hosts}")

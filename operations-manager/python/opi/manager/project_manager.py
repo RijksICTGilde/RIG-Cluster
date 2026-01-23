@@ -3698,7 +3698,6 @@ class ProjectManager:
             base_domain = deployment.get("base-domain")
             issuer_config = deployment.get("issuer")
             domain_mode = deployment.get("domain-mode")
-            include_project_name = deployment.get("include-project-name", False)
             logger.info(
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
                 f"issuer: {issuer_config}, domain-mode: {domain_mode}"
@@ -3713,7 +3712,6 @@ class ProjectManager:
                 subdomain=subdomain,
                 base_domain=base_domain,
                 domain_mode=domain_mode,
-                include_project_name=include_project_name,
             )
             hostname = next(iter(ingress_map.values()))
 

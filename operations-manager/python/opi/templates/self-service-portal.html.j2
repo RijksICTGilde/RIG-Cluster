@@ -394,13 +394,14 @@
                                             placeholder="myapp"
                                             style="display: none;"/>
 
-                                        <div id="include-project-name-container" style="display: none;">
-                                            <c-checkbox
-                                                id="include-project-name"
-                                                name="include-project-name"
-                                                label="Projectnaam opnemen in URL"
-                                                value="true"
-                                                helperText="Wanneer aangevinkt, wordt de projectnaam opgenomen in de URL (bijv. frontend.prod.myproject.rijks.app in plaats van frontend.prod.rijks.app)."/>
+                                        <div id="nice-url-subdomain-container" style="display: none;">
+                                            <c-text-input-field
+                                                id="nice-url-subdomain"
+                                                name="subdomain"
+                                                label="Subdomein (globaal uniek)"
+                                                placeholder="mijnapp"
+                                                helperText="Kies een uniek subdomein voor uw project. Dit wordt gebruikt als basis voor alle component URLs (bijv. frontend.mijnapp.rijks.app)."/>
+                                            <div id="subdomain-availability" style="margin-top: 0.5rem;"></div>
                                         </div>
                                     </c-layout-flow>
                                 </c-fieldset>
@@ -653,14 +654,14 @@ Available variables depend on selected services:
         const domainMode = document.getElementById('domain-mode').value;
         const subdomainField = document.getElementById('subdomain').closest('c-text-input-field');
         const displayNameField = document.getElementById('display-name');
-        const includeProjectNameContainer = document.getElementById('include-project-name-container');
+        const niceUrlSubdomainContainer = document.getElementById('nice-url-subdomain-container');
 
         // Hide both optional fields by default
         if (subdomainField) {
           subdomainField.style.display = 'none';
         }
-        if (includeProjectNameContainer) {
-          includeProjectNameContainer.style.display = 'none';
+        if (niceUrlSubdomainContainer) {
+          niceUrlSubdomainContainer.style.display = 'none';
         }
 
         if (domainMode === 'component-specific') {
@@ -680,16 +681,56 @@ Available variables depend on selected services:
           }
           document.getElementById('subdomain').setAttribute('required', 'true');
         } else if (domainMode === 'nice-url') {
-          // Show include-project-name checkbox for nice-url mode
-          if (includeProjectNameContainer) {
-            includeProjectNameContainer.style.display = 'block';
+          // Show nice-url subdomain input for globally unique subdomain
+          if (niceUrlSubdomainContainer) {
+            niceUrlSubdomainContainer.style.display = 'block';
           }
+          // Clear the custom subdomain field and use nice-url-subdomain
           document.getElementById('subdomain').value = '';
           document.getElementById('subdomain').removeAttribute('required');
+          const niceUrlSubdomain = document.getElementById('nice-url-subdomain');
+          if (niceUrlSubdomain) {
+            niceUrlSubdomain.setAttribute('required', 'true');
+          }
+        }
+      }
+
+      // Check subdomain availability for nice-url mode
+      let subdomainCheckTimeout = null;
+      async function checkSubdomainAvailability() {
+        const subdomain = document.getElementById('nice-url-subdomain').value.trim().toLowerCase();
+        const baseDomain = document.getElementById('base-domain')?.value || 'rijks.app';
+        const availabilityDiv = document.getElementById('subdomain-availability');
+
+        if (!subdomain) {
+          availabilityDiv.innerHTML = '';
+          return;
+        }
+
+        // Show checking status
+        availabilityDiv.innerHTML = '<span style="color: #666;">Beschikbaarheid controleren...</span>';
+
+        try {
+          const response = await fetch(`/api/subdomains/check/${encodeURIComponent(subdomain)}?base_domain=${encodeURIComponent(baseDomain)}`);
+          const data = await response.json();
+
+          if (data.available) {
+            availabilityDiv.innerHTML = '<span style="color: green;">&#x2714; Beschikbaar</span>';
+            // Copy to the main subdomain field for form submission
+            document.getElementById('subdomain').value = subdomain;
+          } else {
+            availabilityDiv.innerHTML = `<span style="color: red;">&#x2718; Niet beschikbaar (in gebruik door: ${data.registered_to || 'onbekend'})</span>`;
+            document.getElementById('subdomain').value = '';
+          }
+        } catch (error) {
+          availabilityDiv.innerHTML = '<span style="color: orange;">&#x26A0; Kon beschikbaarheid niet controleren</span>';
+          // Still allow form submission
+          document.getElementById('subdomain').value = subdomain;
         }
       }
 
       // Update subdomain when deployment name changes (if deployment-name mode is selected)
+      // Also add event listener for nice-url subdomain availability check
       document.addEventListener('DOMContentLoaded', function() {
         const displayNameField = document.getElementById('display-name');
         if (displayNameField) {
@@ -698,6 +739,30 @@ Available variables depend on selected services:
             if (domainMode === 'deployment-name') {
               const deploymentName = this.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
               document.getElementById('subdomain').value = deploymentName;
+            }
+          });
+        }
+
+        // Add debounced availability check for nice-url subdomain
+        const niceUrlSubdomain = document.getElementById('nice-url-subdomain');
+        if (niceUrlSubdomain) {
+          niceUrlSubdomain.addEventListener('input', function() {
+            // Clear previous timeout
+            if (subdomainCheckTimeout) {
+              clearTimeout(subdomainCheckTimeout);
+            }
+            // Debounce the check to avoid too many API calls
+            subdomainCheckTimeout = setTimeout(checkSubdomainAvailability, 500);
+          });
+        }
+
+        // Also check availability when base domain changes
+        const baseDomainField = document.getElementById('base-domain');
+        if (baseDomainField) {
+          baseDomainField.addEventListener('change', function() {
+            const domainMode = document.getElementById('domain-mode').value;
+            if (domainMode === 'nice-url' && document.getElementById('nice-url-subdomain').value.trim()) {
+              checkSubdomainAvailability();
             }
           });
         }
