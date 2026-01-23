@@ -13,6 +13,8 @@ from opi.core.database_pools import get_database_pool
 from opi.core.cluster_config import CLUSTER_CONFIG
 
 logger = logging.getLogger(__name__)
+# Dedicated audit logger for subdomain operations
+audit_logger = logging.getLogger("opi.audit.subdomain")
 
 
 def get_supported_base_domains(cluster: str | None = None) -> set[str]:
@@ -344,10 +346,11 @@ class SubdomainConnector:
 
         # Check availability first
         if not await self.check_availability(subdomain_lower, base_domain_lower):
-            existing = await self.get_by_subdomain(subdomain_lower, base_domain_lower)
+            # Note: Don't expose which project owns the subdomain in error messages
+            # to prevent information disclosure to unauthenticated users
             raise SubdomainNotAvailableError(
                 f"Subdomein '{subdomain_lower}.{base_domain_lower}' is al geregistreerd "
-                f"door project '{existing.get('project_name') if existing else 'onbekend'}'"
+                f"door een ander project"
             )
 
         pool = self._get_pool()
@@ -389,6 +392,11 @@ class SubdomainConnector:
             logger.info(
                 f"Registered subdomain '{subdomain_lower}.{base_domain_lower}' "
                 f"for project '{project_name}', deployment '{deployment_name}'"
+            )
+            # Audit log for subdomain registration
+            audit_logger.info(
+                f"SUBDOMAIN_REGISTERED: {subdomain_lower}.{base_domain_lower} "
+                f"project={project_name} deployment={deployment_name} cluster={cluster}"
             )
 
             return dict(result)
@@ -501,6 +509,8 @@ class SubdomainConnector:
             deleted = result == "DELETE 1"
             if deleted:
                 logger.info(f"Deleted subdomain registration '{subdomain.lower()}.{base_domain.lower()}'")
+                # Audit log for subdomain deletion
+                audit_logger.info(f"SUBDOMAIN_DELETED: {subdomain.lower()}.{base_domain.lower()}")
             return deleted
         finally:
             await pool.release(conn)
@@ -528,6 +538,8 @@ class SubdomainConnector:
             count = int(result.split()[-1]) if result else 0
             if count > 0:
                 logger.info(f"Deleted {count} subdomain registration(s) for project '{project_name}'")
+                # Audit log for subdomain deletion by project
+                audit_logger.info(f"SUBDOMAINS_DELETED_BY_PROJECT: project={project_name} count={count}")
             return count
         finally:
             await pool.release(conn)
@@ -558,6 +570,11 @@ class SubdomainConnector:
             if count > 0:
                 logger.info(
                     f"Deleted {count} subdomain registration(s) for deployment '{project_name}/{deployment_name}'"
+                )
+                # Audit log for subdomain deletion by deployment
+                audit_logger.info(
+                    f"SUBDOMAINS_DELETED_BY_DEPLOYMENT: project={project_name} "
+                    f"deployment={deployment_name} count={count}"
                 )
             return count
         finally:
@@ -677,6 +694,22 @@ class SubdomainConnector:
                 *params,
             )
             return dict(result) if result else None
+        finally:
+            await pool.release(conn)
+
+    async def count_all(self) -> int:
+        """Count total number of subdomain registrations.
+
+        Returns:
+            Total count of registrations
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {self.TABLE_NAME}"
+            )
+            return result or 0
         finally:
             await pool.release(conn)
 

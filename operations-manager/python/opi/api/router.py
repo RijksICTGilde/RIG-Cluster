@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import GitConnector
-from opi.connectors.subdomain import create_subdomain_connector, validate_subdomain
+from opi.connectors.subdomain import create_subdomain_connector, validate_base_domain, validate_subdomain
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
@@ -20,13 +20,51 @@ logger = logging.getLogger(__name__)
 
 # Simple IP-based rate limiter for subdomain check endpoint
 class IPRateLimiter:
-    """Simple token bucket rate limiter per IP address."""
+    """Simple token bucket rate limiter per IP address.
 
-    def __init__(self, requests_per_minute: int = 30, burst: int = 10):
+    Supports X-Forwarded-For header for clients behind reverse proxies.
+    Implements bounded memory usage with aggressive cleanup.
+    """
+
+    # Maximum number of tracked IPs to prevent memory exhaustion
+    MAX_TRACKED_IPS = 10000
+    # Cleanup threshold - trigger cleanup when approaching max
+    CLEANUP_THRESHOLD = 8000
+
+    def __init__(
+        self,
+        requests_per_minute: int = 30,
+        burst: int = 10,
+        cleanup_interval: float = 60.0,  # More aggressive: every 60 seconds instead of 300
+    ):
         self.rate = requests_per_minute / 60.0  # requests per second
         self.burst = burst
         self._tokens: dict[str, float] = defaultdict(lambda: float(burst))
         self._last_update: dict[str, float] = defaultdict(time.monotonic)
+        self._cleanup_interval = cleanup_interval
+        self._last_cleanup = time.monotonic()
+
+    @staticmethod
+    def get_client_ip(request: Request) -> str:
+        """Extract client IP from request, respecting X-Forwarded-For header.
+
+        X-Forwarded-For format: client, proxy1, proxy2, ...
+        We take the first (leftmost) IP which is the original client.
+
+        Security note: X-Forwarded-For can be spoofed by clients, but this is
+        acceptable for rate limiting as it's a defense-in-depth measure, not
+        the sole security control.
+        """
+        # Check X-Forwarded-For header first (set by reverse proxies)
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            # Take the first IP (original client)
+            client_ip = forwarded_for.split(",")[0].strip()
+            if client_ip:
+                return client_ip
+
+        # Fall back to direct connection IP
+        return request.client.host if request.client else "unknown"
 
     def is_allowed(self, ip: str) -> bool:
         """Check if request from IP is allowed."""
@@ -37,22 +75,52 @@ class IPRateLimiter:
         # Add tokens based on time elapsed
         self._tokens[ip] = min(self.burst, self._tokens[ip] + elapsed * self.rate)
 
-        # Periodic cleanup to prevent memory leak (every 1000 IPs)
-        if len(self._tokens) > 1000:
+        # Time-based periodic cleanup
+        if now - self._last_cleanup > self._cleanup_interval:
             self.cleanup_old_entries()
+            self._last_cleanup = now
+        # Emergency cleanup if approaching memory limit
+        elif len(self._tokens) > self.CLEANUP_THRESHOLD:
+            self.cleanup_old_entries(max_age_seconds=300)  # More aggressive: 5 min instead of 1 hour
+            # If still over limit after cleanup, do aggressive purge
+            if len(self._tokens) > self.MAX_TRACKED_IPS:
+                self._emergency_purge()
 
         if self._tokens[ip] >= 1:
             self._tokens[ip] -= 1
             return True
         return False
 
-    def cleanup_old_entries(self, max_age_seconds: int = 3600) -> None:
-        """Remove entries older than max_age_seconds to prevent memory leak."""
+    def cleanup_old_entries(self, max_age_seconds: int = 600) -> None:
+        """Remove entries older than max_age_seconds to prevent memory leak.
+
+        Default reduced to 10 minutes (was 1 hour) for more aggressive cleanup.
+        """
         now = time.monotonic()
         to_remove = [ip for ip, last in self._last_update.items() if now - last > max_age_seconds]
         for ip in to_remove:
             del self._tokens[ip]
             del self._last_update[ip]
+        if to_remove:
+            logger.debug(f"Rate limiter cleanup: removed {len(to_remove)} stale entries")
+
+    def _emergency_purge(self) -> None:
+        """Emergency purge when memory limit exceeded.
+
+        Removes oldest 50% of entries to quickly reduce memory usage.
+        """
+        if not self._last_update:
+            return
+
+        # Sort by last update time and remove oldest half
+        sorted_ips = sorted(self._last_update.items(), key=lambda x: x[1])
+        purge_count = len(sorted_ips) // 2
+
+        for ip, _ in sorted_ips[:purge_count]:
+            del self._tokens[ip]
+            del self._last_update[ip]
+
+        logger.warning(f"Rate limiter emergency purge: removed {purge_count} entries")
 
 
 # Global rate limiter instance for subdomain checks (30 requests/minute per IP)
@@ -489,6 +557,7 @@ class SelfServiceComponent(BaseModel):
     env_vars: str | None = None  # Environment variables in KEY=value format
     aliases: str | None = None  # Aliases for system-provided variables (not encoded)
     services: list[str] | None = None  # ["keycloak", "postgres", "minio"]
+    root: bool = False  # Whether this component receives the root path in nice-url mode
 
 
 class SelfServiceProjectRequest(BaseModel):
@@ -1416,6 +1485,7 @@ async def create_self_service_project(
     """
     start_time = time.time()
     project_manager = None
+    subdomain_registered = False  # Track if we registered a subdomain for rollback
     try:
         logger.info(f"Creating self-service project: {project_data.project_name}")
 
@@ -1426,10 +1496,31 @@ async def create_self_service_project(
                 detail="Project name must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
             )
 
-        # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
-        if project_data.domain_mode == "nice-url" and project_data.base_domain and not project_data.issuer:
-            project_data.issuer = "letsencrypt"
-            logger.info(f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{project_data.base_domain}'")
+        # Validate base domain for nice-url mode before auto-enabling Let's Encrypt
+        if project_data.domain_mode == "nice-url" and project_data.base_domain:
+            is_valid, error_message = validate_base_domain(project_data.base_domain, project_data.cluster)
+            if not is_valid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid base domain for cluster '{project_data.cluster}': {error_message}",
+                )
+
+            # Validate subdomain format early to fail fast
+            if project_data.subdomain:
+                is_valid, error_message = validate_subdomain(project_data.subdomain)
+                if not is_valid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid subdomain: {error_message}",
+                    )
+
+            # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
+            if not project_data.issuer:
+                project_data.issuer = "letsencrypt"
+                logger.info(f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{project_data.base_domain}'")
+
+            # Mark that we'll be registering a subdomain (for rollback tracking)
+            subdomain_registered = bool(project_data.subdomain)
 
         # Generate YAML content from self-service form data
         yaml_content = await generate_self_service_project_yaml(project_data)
@@ -1477,6 +1568,15 @@ async def create_self_service_project(
             }
             return JSONResponse(content=content, status_code=200)
         else:
+            # Processing failed - rollback subdomain registration if we registered one
+            if subdomain_registered and project_data.subdomain and project_data.base_domain:
+                await _rollback_subdomain_registration(
+                    project_data.project_name,
+                    project_data.deployment_name,
+                    project_data.subdomain,
+                    project_data.base_domain,
+                )
+
             elapsed_time = time.time() - start_time
             logger.warning(
                 f"Self-service project creation partially completed: {project_data.project_name} (took {elapsed_time:.2f} seconds)"
@@ -1497,12 +1597,47 @@ async def create_self_service_project(
     except HTTPException:
         raise
     except Exception as e:
+        # Rollback subdomain registration on exception
+        if subdomain_registered and project_data.subdomain and project_data.base_domain:
+            await _rollback_subdomain_registration(
+                project_data.project_name,
+                project_data.deployment_name,
+                project_data.subdomain,
+                project_data.base_domain,
+            )
+
         elapsed_time = time.time() - start_time
         logger.error(f"Error creating self-service project: {e!s} (took {elapsed_time:.2f} seconds)")
         raise HTTPException(status_code=500, detail=f"Error creating self-service project: {e!s}")
     finally:
         if project_manager:
             await project_manager.close()
+
+
+async def _rollback_subdomain_registration(
+    project_name: str, deployment_name: str, subdomain: str, base_domain: str
+) -> None:
+    """Rollback a subdomain registration after project creation failure.
+
+    This is a best-effort cleanup - errors are logged but not raised.
+    """
+    try:
+        connector = create_subdomain_connector()
+        deleted = await connector.delete_by_deployment(project_name, deployment_name)
+        if deleted:
+            logger.info(
+                f"Rolled back subdomain registration '{subdomain}.{base_domain}' "
+                f"for failed project '{project_name}'"
+            )
+        else:
+            logger.debug(
+                f"No subdomain registration to rollback for '{project_name}/{deployment_name}'"
+            )
+    except Exception as rollback_error:
+        # Log but don't raise - rollback is best-effort
+        logger.error(
+            f"Failed to rollback subdomain registration for '{project_name}': {rollback_error}"
+        )
 
 
 # Subdomain API endpoints for nice URL feature
@@ -1563,13 +1698,19 @@ async def check_subdomain_availability(
     curl "http://localhost:9595/api/subdomains/check/myapp?base_domain=rijks.app"
     ```
     """
-    # Rate limiting check
-    client_ip = request.client.host if request.client else "unknown"
+    # Rate limiting check - use proper IP extraction for clients behind proxies
+    client_ip = IPRateLimiter.get_client_ip(request)
     if not subdomain_check_rate_limiter.is_allowed(client_ip):
         raise HTTPException(
             status_code=429,
             detail="Too many requests. Please wait before checking again.",
         )
+
+    # Audit log for subdomain availability checks (sanitize input to prevent log injection)
+    safe_subdomain = subdomain[:64].replace("\n", "").replace("\r", "") if subdomain else ""
+    safe_base_domain = base_domain[:64].replace("\n", "").replace("\r", "") if base_domain else ""
+    # Note: IP logging may have GDPR implications - consider anonymization in production
+    logger.info(f"AUDIT: Subdomain check - subdomain={safe_subdomain}, base_domain={safe_base_domain}")
 
     try:
         # Validate subdomain format first
@@ -1596,50 +1737,89 @@ async def check_subdomain_availability(
         raise HTTPException(status_code=500, detail=f"Error checking subdomain availability: {e}")
 
 
+class SubdomainListResponse(BaseModel):
+    """Paginated response for subdomain registrations."""
+
+    items: list[SubdomainRegistration] = Field(..., description="List of subdomain registrations")
+    total: int = Field(..., description="Total count of matching registrations")
+    limit: int = Field(..., description="Maximum items returned per page")
+    offset: int = Field(..., description="Number of items skipped")
+
+
 @api_router.get(
     "/subdomains",
-    response_model=list[SubdomainRegistration],
+    response_model=SubdomainListResponse,
     responses={
-        200: {"description": "List of subdomain registrations"},
+        200: {"description": "Paginated list of subdomain registrations"},
     },
 )
 @validate_api_token
-async def list_subdomains(request: Request, project_name: str | None = None) -> list[dict]:
+async def list_subdomains(
+    request: Request,
+    project_name: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> SubdomainListResponse:
     """
-    List subdomain registrations.
+    List subdomain registrations with pagination support.
 
     Args:
         project_name: Optional filter by project name
+        limit: Maximum number of results to return (default: 100, max: 1000)
+        offset: Number of results to skip for pagination (default: 0)
 
     Returns:
-        List of subdomain registrations
+        Paginated list of subdomain registrations with total count
 
     Example:
     ```bash
-    # List all subdomains
-    curl "http://localhost:9595/api/subdomains"
+    # List first page of all subdomains
+    curl "http://localhost:9595/api/subdomains?limit=50&offset=0"
+
+    # List second page
+    curl "http://localhost:9595/api/subdomains?limit=50&offset=50"
 
     # List subdomains for a specific project
-    curl "http://localhost:9595/api/subdomains?project_name=my-project"
+    curl "http://localhost:9595/api/subdomains?project_name=my-project&limit=20"
     ```
     """
+    # Validate and cap limit to prevent excessive queries
+    if limit < 1:
+        limit = 1
+    elif limit > 1000:
+        limit = 1000
+
+    if offset < 0:
+        offset = 0
+
     try:
         connector = create_subdomain_connector()
 
         if project_name:
-            registrations = await connector.get_by_project(project_name)
+            # For project-specific queries, get all and slice (pagination less critical here)
+            all_registrations = await connector.get_by_project(project_name)
+            total = len(all_registrations)
+            registrations = all_registrations[offset : offset + limit]
         else:
-            registrations = await connector.list_all()
+            # For full list, use database-level pagination
+            registrations = await connector.list_all(limit=limit, offset=offset)
+            # Get total count for pagination info
+            total = await connector.count_all()
 
         # Convert datetime objects to strings for JSON serialization
-        result = []
+        items = []
         for reg in registrations:
             reg_dict = dict(reg)
             if reg_dict.get("created_at"):
                 reg_dict["created_at"] = reg_dict["created_at"].isoformat()
-            result.append(reg_dict)
+            items.append(reg_dict)
 
-        return result
+        return SubdomainListResponse(
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
     except Exception as e:
         logger.error(f"Error listing subdomains: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing subdomains: {e}")

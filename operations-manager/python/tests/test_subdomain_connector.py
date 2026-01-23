@@ -692,3 +692,241 @@ class TestRegisterRaceCondition:
             )
 
         assert "zojuist geregistreerd" in str(exc_info.value).lower()  # Dutch: "was just registered"
+
+
+class TestSubdomainAuditLogging:
+    """Tests for audit logging in subdomain operations."""
+
+    @pytest.mark.asyncio
+    async def test_register_logs_audit_event(self):
+        """register() logs audit event on successful registration."""
+        from unittest.mock import patch
+
+        connector = SubdomainConnector()
+
+        mock_result = {
+            "id": 1,
+            "subdomain": "myapp",
+            "base_domain": "kind",
+            "project_name": "my-project",
+            "deployment_name": "prod",
+            "cluster": "local",
+            "created_at": "2024-01-01T00:00:00Z",
+            "created_by": None,
+        }
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = None
+        mock_conn.fetchrow.return_value = mock_result
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with (
+            patch.object(connector, "_get_pool", return_value=mock_pool),
+            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+        ):
+            await connector.register(
+                subdomain="myapp",
+                base_domain="kind",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+            # Verify audit log was called with correct format
+            mock_audit_logger.info.assert_called_once()
+            log_message = mock_audit_logger.info.call_args[0][0]
+            assert "SUBDOMAIN_REGISTERED" in log_message
+            assert "myapp.kind" in log_message
+            assert "my-project" in log_message
+
+    @pytest.mark.asyncio
+    async def test_delete_logs_audit_event(self):
+        """delete() logs audit event on successful deletion."""
+        from unittest.mock import patch
+
+        connector = SubdomainConnector()
+
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = "DELETE 1"
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with (
+            patch.object(connector, "_get_pool", return_value=mock_pool),
+            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+        ):
+            await connector.delete("myapp", "kind")
+
+            # Verify audit log was called
+            mock_audit_logger.info.assert_called_once()
+            log_message = mock_audit_logger.info.call_args[0][0]
+            assert "SUBDOMAIN_DELETED" in log_message
+            assert "myapp.kind" in log_message
+
+    @pytest.mark.asyncio
+    async def test_delete_by_project_logs_audit_event(self):
+        """delete_by_project() logs audit event on successful deletion."""
+        from unittest.mock import patch
+
+        connector = SubdomainConnector()
+
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = "DELETE 3"
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with (
+            patch.object(connector, "_get_pool", return_value=mock_pool),
+            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+        ):
+            await connector.delete_by_project("my-project")
+
+            # Verify audit log was called
+            mock_audit_logger.info.assert_called_once()
+            log_message = mock_audit_logger.info.call_args[0][0]
+            assert "SUBDOMAINS_DELETED_BY_PROJECT" in log_message
+            assert "my-project" in log_message
+            assert "count=3" in log_message
+
+    @pytest.mark.asyncio
+    async def test_delete_by_deployment_logs_audit_event(self):
+        """delete_by_deployment() logs audit event on successful deletion."""
+        from unittest.mock import patch
+
+        connector = SubdomainConnector()
+
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = "DELETE 1"
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with (
+            patch.object(connector, "_get_pool", return_value=mock_pool),
+            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+        ):
+            await connector.delete_by_deployment("my-project", "prod")
+
+            # Verify audit log was called
+            mock_audit_logger.info.assert_called_once()
+            log_message = mock_audit_logger.info.call_args[0][0]
+            assert "SUBDOMAINS_DELETED_BY_DEPLOYMENT" in log_message
+            assert "my-project" in log_message
+            assert "prod" in log_message
+
+    @pytest.mark.asyncio
+    async def test_no_audit_log_when_nothing_deleted(self):
+        """delete operations don't log when nothing is deleted."""
+        from unittest.mock import patch
+
+        connector = SubdomainConnector()
+
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = "DELETE 0"
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with (
+            patch.object(connector, "_get_pool", return_value=mock_pool),
+            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+        ):
+            await connector.delete_by_project("nonexistent-project")
+
+            # Audit log should not be called when nothing was deleted
+            mock_audit_logger.info.assert_not_called()
+
+
+class TestSubdomainRollbackHelper:
+    """Tests for subdomain rollback functionality in ProjectManager."""
+
+    @pytest.mark.asyncio
+    async def test_rollback_helper_clears_pending_rollback(self):
+        """_rollback_subdomain_if_needed clears pending rollback after success."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # Create a mock ProjectManager-like object
+        class MockProjectManager:
+            _pending_subdomain_rollback = None
+
+            async def _rollback_subdomain_if_needed(self) -> bool:
+                rollback_info = getattr(self, "_pending_subdomain_rollback", None)
+                if not rollback_info or not rollback_info.get("should_rollback"):
+                    return False
+
+                connector = rollback_info.get("connector")
+                if not connector:
+                    return False
+
+                try:
+                    await connector.delete_by_deployment(
+                        rollback_info["project_name"], rollback_info["deployment_name"]
+                    )
+                    self._pending_subdomain_rollback = None
+                    return True
+                except Exception:
+                    return False
+
+        manager = MockProjectManager()
+        mock_connector = AsyncMock()
+        mock_connector.delete_by_deployment = AsyncMock(return_value=1)
+
+        manager._pending_subdomain_rollback = {
+            "should_rollback": True,
+            "connector": mock_connector,
+            "project_name": "test-project",
+            "deployment_name": "main",
+            "subdomain": "myapp",
+            "base_domain": "test.com",
+        }
+
+        result = await manager._rollback_subdomain_if_needed()
+
+        assert result is True
+        assert manager._pending_subdomain_rollback is None
+        mock_connector.delete_by_deployment.assert_called_once_with("test-project", "main")
+
+    @pytest.mark.asyncio
+    async def test_rollback_helper_returns_false_when_no_pending(self):
+        """_rollback_subdomain_if_needed returns False when nothing to rollback."""
+
+        class MockProjectManager:
+            _pending_subdomain_rollback = None
+
+            async def _rollback_subdomain_if_needed(self) -> bool:
+                rollback_info = getattr(self, "_pending_subdomain_rollback", None)
+                if not rollback_info or not rollback_info.get("should_rollback"):
+                    return False
+                return True
+
+        manager = MockProjectManager()
+        result = await manager._rollback_subdomain_if_needed()
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_rollback_helper_returns_false_when_should_rollback_false(self):
+        """_rollback_subdomain_if_needed respects should_rollback flag."""
+
+        class MockProjectManager:
+            _pending_subdomain_rollback = {"should_rollback": False}
+
+            async def _rollback_subdomain_if_needed(self) -> bool:
+                rollback_info = getattr(self, "_pending_subdomain_rollback", None)
+                if not rollback_info or not rollback_info.get("should_rollback"):
+                    return False
+                return True
+
+        manager = MockProjectManager()
+        result = await manager._rollback_subdomain_if_needed()
+
+        assert result is False

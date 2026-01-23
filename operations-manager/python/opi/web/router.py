@@ -158,6 +158,7 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
             comp_env_vars = str(form_data.get(f"components[{component_index}][env_vars]", "")).strip()
             comp_aliases = str(form_data.get(f"components[{component_index}][aliases]", "")).strip()
             comp_services = form_data.getlist(f"components[{component_index}][services][]")
+            comp_root = str(form_data.get(f"components[{component_index}][root]", "")).strip().lower() == "true"
 
             # Parse port as integer
             try:
@@ -175,6 +176,7 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
                 env_vars=comp_env_vars or None,
                 aliases=comp_aliases or None,
                 services=comp_services or None,
+                root=comp_root,
             )
             components.append(component)
             component_index += 1
@@ -197,6 +199,25 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
                     f"Duplicate paths found: {', '.join(duplicate_paths)}. "
                     f"Please assign different paths to each component (e.g., /, /api, /admin).",
                 )
+
+        # Validate root component for nice-url mode
+        if domain_mode == "nice-url" and components:
+            root_components = [i for i, comp in enumerate(components) if comp.root]
+            if len(root_components) > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="In nice-url mode, only one component can be marked as root. "
+                    "Please select only one component to receive the root path.",
+                )
+            # Validate that root component has a port (needed for publish-on-web)
+            if root_components:
+                root_idx = root_components[0]
+                root_comp = components[root_idx]
+                if root_comp.port is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Component marked as root must have a port specified for web publishing.",
+                    )
 
         # Create the request object
         project_data = SelfServiceProjectRequest(
