@@ -914,6 +914,55 @@ class KubectlConnector:
             logger.error(f"Error deleting {resource_type} {resource_name}: {e}")
             return False
 
+    async def get_resources_by_label(
+        self, resource_type: str, namespace: str, label_selector: str
+    ) -> list[dict[str, Any]]:
+        """
+        Get Kubernetes resources matching a label selector.
+
+        Args:
+            resource_type: The type of resource to get (e.g., 'ingress', 'deployment', 'service')
+            namespace: The namespace to search in
+            label_selector: Label selector string (e.g., 'app.kubernetes.io/part-of=myapp')
+
+        Returns:
+            List of resource dictionaries with metadata
+        """
+        logger.debug(f"Getting {resource_type} resources in namespace {namespace} with selector: {label_selector}")
+
+        try:
+            args = [
+                "get",
+                resource_type,
+                "-n",
+                namespace,
+                "-l",
+                label_selector,
+                "-o",
+                "json",
+            ]
+
+            stdout, stderr, code = await self._run_kubectl_command(args)
+
+            if code != 0:
+                if "No resources found" in stderr or not stdout.strip():
+                    logger.debug(f"No {resource_type} resources found with selector {label_selector}")
+                    return []
+                else:
+                    logger.error(f"Failed to get {resource_type} resources: {stderr}")
+                    return []
+
+            import json
+
+            result = json.loads(stdout)
+            items = result.get("items", [])
+            logger.debug(f"Found {len(items)} {resource_type} resources with selector {label_selector}")
+            return items
+
+        except Exception as e:
+            logger.error(f"Error getting {resource_type} resources: {e}")
+            return []
+
 
 # TODO: remove this method and make direct calles to create KubectlConnector()
 def create_kubectl_connector() -> KubectlConnector:

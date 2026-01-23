@@ -640,6 +640,83 @@ class ProjectManager:
         logger.debug(f"Alias '{alias_name}' categorized as service='{service_category}', source='{source_type}'")
         return service_category, source_type
 
+    async def _cleanup_deployment_ingresses(self, deployment_name: str, namespace: str) -> int:
+        """
+        Delete existing ingresses for a deployment before regenerating.
+
+        This is used when domain mode changes to ensure orphaned ingresses from the
+        old configuration are cleaned up before creating new ones.
+
+        Args:
+            deployment_name: Name of the deployment
+            namespace: Kubernetes namespace
+
+        Returns:
+            Number of ingresses deleted
+        """
+        logger.info(f"Cleaning up existing ingresses for deployment '{deployment_name}' in namespace '{namespace}'")
+
+        try:
+            # Get all ingresses with the deployment label
+            label_selector = f"app.kubernetes.io/part-of={deployment_name}"
+            ingresses = await self._kubectl_connector.get_resources_by_label(
+                "ingress", namespace=namespace, label_selector=label_selector
+            )
+
+            deleted_count = 0
+            for ingress in ingresses:
+                name = ingress.get("metadata", {}).get("name")
+                if name:
+                    success = await self._kubectl_connector.delete_resource("ingress", name, namespace)
+                    if success:
+                        deleted_count += 1
+                        logger.info(f"Deleted ingress '{name}' from namespace '{namespace}'")
+                    else:
+                        logger.warning(f"Failed to delete ingress '{name}'")
+
+            logger.info(f"Cleaned up {deleted_count} ingress(es) for deployment '{deployment_name}'")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"Error cleaning up ingresses for deployment '{deployment_name}': {e}")
+            return 0
+
+    async def _rollback_subdomain_if_needed(self) -> bool:
+        """
+        Rollback subdomain registration if one is pending.
+
+        This is called when manifest creation fails after subdomain was registered.
+        Uses the rollback info stored in self._pending_subdomain_rollback.
+
+        Returns:
+            True if rollback was performed, False otherwise
+        """
+        rollback_info = getattr(self, "_pending_subdomain_rollback", None)
+        if not rollback_info or not rollback_info.get("should_rollback"):
+            return False
+
+        connector = rollback_info.get("connector")
+        project_name = rollback_info.get("project_name")
+        deployment_name = rollback_info.get("deployment_name")
+        subdomain = rollback_info.get("subdomain")
+        base_domain = rollback_info.get("base_domain")
+
+        if not connector:
+            logger.warning("Cannot rollback subdomain: no connector available")
+            return False
+
+        try:
+            await connector.delete_by_deployment(project_name, deployment_name)
+            logger.info(
+                f"Rolled back subdomain '{subdomain}.{base_domain}' for {project_name}/{deployment_name} "
+                f"due to deployment failure"
+            )
+            self._pending_subdomain_rollback = None
+            return True
+        except Exception as e:
+            logger.error(f"Failed to rollback subdomain '{subdomain}.{base_domain}': {e}")
+            return False
+
     async def _collect_deployment_aliases(self, deployment_name: str) -> dict[str, dict[str, dict[str, str]]]:
         """
         Scan all components in a deployment and collect aliases, categorized by source type and service.
@@ -2214,7 +2291,12 @@ class ProjectManager:
         # This allows deployment-level secrets to include aliases from all components
         self._deployment_aliases[deployment_name] = await self._collect_deployment_aliases(deployment_name)
 
-        await self.create_application_manifests(deployment, git_connector, deployment_path)
+        try:
+            await self.create_application_manifests(deployment, git_connector, deployment_path)
+        except Exception as e:
+            # Rollback subdomain registration if manifest creation fails
+            await self._rollback_subdomain_if_needed()
+            raise
 
         # Note: SSO and user secrets are already created in create_application_manifests above
 
@@ -3528,10 +3610,18 @@ class ProjectManager:
             logger.warning(f"No components found in deployment {deployment_name}, skipping")
             return []
 
-        # Register subdomain for nice-url mode
+        # Clean up existing ingresses before regenerating manifests
+        # This handles domain mode changes where old ingresses would become orphaned
+        deleted_ingress_count = await self._cleanup_deployment_ingresses(deployment_name, namespace)
+        if deleted_ingress_count > 0:
+            logger.info(f"Cleaned up {deleted_ingress_count} existing ingress(es) before regenerating")
+
+        # Register subdomain for nice-url mode (with rollback on failure)
         domain_mode = deployment.get("domain-mode")
         subdomain = deployment.get("subdomain")
         base_domain = deployment.get("base-domain")
+        subdomain_registered = False  # Track if we registered a new subdomain for rollback
+        subdomain_connector = None  # Initialize for use in rollback
 
         if domain_mode == "nice-url" and subdomain and base_domain:
             from opi.connectors.subdomain import (
@@ -3541,6 +3631,11 @@ class ProjectManager:
             )
 
             subdomain_connector = SubdomainConnector()
+
+            # Check if this is a new registration (for rollback purposes)
+            existing_registration = await subdomain_connector.get_by_deployment(project_name, deployment_name)
+            is_new_registration = existing_registration is None
+
             # Use register_or_update to handle both new registrations and subdomain changes
             # This method:
             # 1. Checks if deployment already has a registration
@@ -3555,11 +3650,19 @@ class ProjectManager:
                 cluster=cluster,
                 created_by=None,  # Could be enhanced to track user in future
             )
+            subdomain_registered = is_new_registration  # Mark for rollback only if new
             logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
 
             # Validate only one component has root: true for nice-url mode
             root_components = [c.get("reference") or c.get("name") for c in components if c.get("root") is True]
             if len(root_components) > 1:
+                # Rollback before raising
+                if subdomain_registered:
+                    try:
+                        await subdomain_connector.delete_by_deployment(project_name, deployment_name)
+                        logger.info(f"Rolled back subdomain '{subdomain}.{base_domain}' due to validation failure")
+                    except Exception as rollback_err:
+                        logger.error(f"Failed to rollback subdomain: {rollback_err}")
                 raise ValueError(
                     f"Multiple components marked as root in deployment '{deployment_name}': {root_components}. "
                     f"Only one component can have 'root: true' for nice-url mode."
@@ -3572,10 +3675,28 @@ class ProjectManager:
                     project_data, root_component_name
                 )
                 if not root_has_publish_on_web:
+                    # Rollback before raising
+                    if subdomain_registered:
+                        try:
+                            await subdomain_connector.delete_by_deployment(project_name, deployment_name)
+                            logger.info(f"Rolled back subdomain '{subdomain}.{base_domain}' due to validation failure")
+                        except Exception as rollback_err:
+                            logger.error(f"Failed to rollback subdomain: {rollback_err}")
                     raise ValueError(
                         f"Component '{root_component_name}' is marked as root but does not have 'publish-on-web' enabled. "
                         f"Root components must have a service exposed for the root URL to work."
                     )
+
+        # Store rollback info for use in exception handler
+        # These variables are used by _rollback_subdomain_on_failure if needed
+        self._pending_subdomain_rollback = {
+            "should_rollback": subdomain_registered,
+            "connector": subdomain_connector,
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "subdomain": subdomain,
+            "base_domain": base_domain,
+        } if subdomain_registered else None
 
         # Collect registry configurations for all components in this deployment
         registry_configs_map: dict[str, dict[str, Any]] = {}  # registry_name -> registry_config
@@ -4475,6 +4596,8 @@ class ProjectManager:
                         f"Component {component_name} uses MinIO but no object storage credentials found in deployment {deployment_name}"
                     )
 
+        # Clear rollback info on success
+        self._pending_subdomain_rollback = None
         return created_files
 
     # TODO: this should be moved to manifests.py

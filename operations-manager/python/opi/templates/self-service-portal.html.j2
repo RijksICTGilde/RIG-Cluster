@@ -362,8 +362,8 @@
 
                                                     <div>
                                                         <c-p><strong>4. Nice URL (punt-gescheiden)</strong></c-p>
-                                                        <c-p>Elk component krijgt een mooie punt-gescheiden URL zoals <code>frontend.prod.rijks.app</code>. Optioneel kunt u de projectnaam toevoegen voor <code>frontend.prod.myapp.rijks.app</code>.</c-p>
-                                                        <c-p class="rvo-text--sm rvo-text--subtle">Vereist een base-domein zoals rijks.app of rijksapps.nl.</c-p>
+                                                        <c-p>Elk component krijgt een mooie punt-gescheiden URL zoals <code>frontend.mijnapp.rijks.app</code>. U kiest een uniek subdomein (bijv. <code>mijnapp</code>) dat voor alle componenten wordt gebruikt.</c-p>
+                                                        <c-p class="rvo-text--sm rvo-text--subtle">Vereist een base-domein zoals rijks.app of rijksapps.nl. Optioneel kunt u een component als "root" markeren voor directe toegang via <code>mijnapp.rijks.app</code>.</c-p>
                                                     </div>
                                                 </c-layout-flow>
                                             </div>
@@ -409,6 +409,10 @@
                                                 placeholder="mijnapp"
                                                 helperText="Kies een uniek subdomein voor uw project. Dit wordt gebruikt als basis voor alle component URLs (bijv. frontend.mijnapp.rijks.app)."/>
                                             <div id="subdomain-availability" style="margin-top: 0.5rem;"></div>
+                                            <div id="url-preview" style="display: none; margin-top: 1rem; padding: 0.75rem; background-color: #f5f5f5; border-radius: 4px; border-left: 3px solid #007bc7;">
+                                                <p style="margin: 0 0 0.5rem 0; font-weight: bold; color: #333;">Uw URLs worden:</p>
+                                                <code id="url-preview-text" style="font-size: 0.9rem; color: #154273;"></code>
+                                            </div>
                                         </div>
                                     </c-layout-flow>
                                 </c-fieldset>
@@ -482,6 +486,16 @@
                                                         placeholder="/"
                                                         :value="'/'"
                                                         helperText="Het pad waarop dit component gepubliceerd wordt (bijvoorbeeld: /, /api, /aanleverapi). Bij gedeelde domeinen wordt dit pad gebruikt om verkeer naar het juiste component te routeren."/>
+
+                                                    <div class="root-component-checkbox" style="display: none;">
+                                                        <c-checkbox
+                                                            id="component-root-0"
+                                                            name="components[0][root]"
+                                                            value="true"
+                                                            @change="handleRootCheckboxChange(this)"
+                                                            label="Root component"
+                                                            helperText="Maak dit de hoofdcomponent die bereikbaar is op de basis-URL (bijv. mijnapp.rijks.app). Alleen 1 component kan root zijn. Kies hier typisch uw frontend of single-page app."/>
+                                                    </div>
 
                                                     <c-layout-row gap="md">
                                                         <c-layout-column size="md-6">
@@ -713,6 +727,31 @@ Available variables depend on selected services:
             baseDomainField.removeAttribute('required');
           }
         }
+
+        // Toggle root component checkboxes visibility
+        toggleRootCheckboxes(domainMode === 'nice-url');
+      }
+
+      // Show/hide root component checkboxes based on domain mode
+      function toggleRootCheckboxes(show) {
+        const rootCheckboxes = document.querySelectorAll('.root-component-checkbox');
+        rootCheckboxes.forEach(checkbox => {
+          checkbox.style.display = show ? 'block' : 'none';
+        });
+      }
+
+      // Handle root checkbox change - ensure only one can be selected (radio behavior)
+      function handleRootCheckboxChange(checkbox) {
+        if (checkbox.checked) {
+          // Uncheck all other root checkboxes
+          document.querySelectorAll('.root-component-checkbox input[type="checkbox"]').forEach(cb => {
+            if (cb !== checkbox && cb.checked) {
+              cb.checked = false;
+            }
+          });
+        }
+        // Update URL preview to reflect root selection
+        updateUrlPreview();
       }
 
       // Base domain options per cluster (from server config)
@@ -784,21 +823,77 @@ Available variables depend on selected services:
           const data = await response.json();
 
           if (data.validation_error) {
-            // Validation error - show the error message
-            availabilityDiv.innerHTML = `<span style="color: red;">&#x2718; ${data.validation_error}</span>`;
+            // Validation error (invalid format) - show in orange with Dutch message
+            // Map common English errors to Dutch
+            let dutchError = data.validation_error;
+            if (dutchError.includes('start with')) dutchError = 'Mag niet beginnen met een streepje';
+            else if (dutchError.includes('end with')) dutchError = 'Mag niet eindigen met een streepje';
+            else if (dutchError.includes('reserved')) dutchError = 'Dit subdomein is gereserveerd';
+            else if (dutchError.includes('characters')) dutchError = 'Alleen letters, cijfers en streepjes toegestaan';
+            else if (dutchError.includes('long')) dutchError = 'Maximaal 63 tekens toegestaan';
+            else if (dutchError.includes('empty')) dutchError = 'Subdomein mag niet leeg zijn';
+            availabilityDiv.innerHTML = `<span class="rvo-text--warning">&#x26A0; ${dutchError}</span>`;
             document.getElementById('subdomain').value = '';
           } else if (data.available) {
-            availabilityDiv.innerHTML = '<span style="color: green;">&#x2714; Beschikbaar</span>';
+            availabilityDiv.innerHTML = '<span class="rvo-text--success">&#x2714; Beschikbaar</span>';
             // Copy to the main subdomain field for form submission
             document.getElementById('subdomain').value = subdomain;
           } else {
-            availabilityDiv.innerHTML = '<span style="color: red;">&#x2718; Niet beschikbaar</span>';
+            // Already taken by another project - show in red
+            availabilityDiv.innerHTML = '<span class="rvo-text--error">&#x2718; Al in gebruik door een ander project</span>';
             document.getElementById('subdomain').value = '';
           }
         } catch (error) {
           availabilityDiv.innerHTML = '<span style="color: orange;">&#x26A0; Kon beschikbaarheid niet controleren</span>';
           // Still allow form submission
           document.getElementById('subdomain').value = subdomain;
+        }
+        // Update URL preview after availability check
+        updateUrlPreview();
+      }
+
+      // Update URL preview for nice-url mode
+      function updateUrlPreview() {
+        const domainMode = document.getElementById('domain-mode').value;
+        const previewDiv = document.getElementById('url-preview');
+        const previewText = document.getElementById('url-preview-text');
+
+        if (!previewDiv || !previewText || domainMode !== 'nice-url') {
+          if (previewDiv) previewDiv.style.display = 'none';
+          return;
+        }
+
+        const subdomain = document.getElementById('nice-url-subdomain')?.value?.trim().toLowerCase();
+        const baseDomain = document.getElementById('base-domain')?.value;
+
+        if (subdomain && baseDomain) {
+          // Get component types to show realistic URLs
+          const componentTypes = [];
+          document.querySelectorAll('.component-item select[name*="[type]"]').forEach(select => {
+            if (select.value) componentTypes.push(select.value.toLowerCase());
+          });
+
+          // Check if any component is marked as root
+          const hasRootComponent = document.querySelector('.component-item input[name*="[root]"]:checked') !== null;
+
+          let previewHtml = '';
+          if (componentTypes.length > 0) {
+            componentTypes.forEach(type => {
+              previewHtml += `https://${type}.${subdomain}.${baseDomain}<br>`;
+            });
+            if (hasRootComponent) {
+              previewHtml += `<br><em>Root component: https://${subdomain}.${baseDomain}</em>`;
+            }
+          } else {
+            previewHtml = `https://[componentnaam].${subdomain}.${baseDomain}`;
+            if (hasRootComponent) {
+              previewHtml += `<br><em>Root component: https://${subdomain}.${baseDomain}</em>`;
+            }
+          }
+          previewText.innerHTML = previewHtml;
+          previewDiv.style.display = 'block';
+        } else {
+          previewDiv.style.display = 'none';
         }
       }
 
@@ -834,8 +929,11 @@ Available variables depend on selected services:
         if (baseDomainField) {
           baseDomainField.addEventListener('change', function() {
             const domainMode = document.getElementById('domain-mode').value;
-            if (domainMode === 'nice-url' && document.getElementById('nice-url-subdomain').value.trim()) {
-              checkSubdomainAvailability();
+            if (domainMode === 'nice-url') {
+              updateUrlPreview();
+              if (document.getElementById('nice-url-subdomain').value.trim()) {
+                checkSubdomainAvailability();
+              }
             }
           });
         }
@@ -990,6 +1088,13 @@ Available variables depend on selected services:
 
         // Update component services based on selected main services
         updateComponentServices(newComponent, componentCount - 1);
+
+        // Toggle root checkbox visibility based on current domain mode
+        const domainMode = document.getElementById('domain-mode').value;
+        const rootCheckbox = newComponent.querySelector('.root-component-checkbox');
+        if (rootCheckbox) {
+          rootCheckbox.style.display = domainMode === 'nice-url' ? 'block' : 'none';
+        }
 
         // Focus on the new component type field
         const newTypeField = newComponent.querySelector('select');
