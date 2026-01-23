@@ -1449,9 +1449,6 @@ class SubdomainCheckResponse(BaseModel):
     subdomain: str = Field(..., description="The subdomain that was checked", example="myapp")
     base_domain: str = Field(..., description="The base domain", example="rijks.app")
     available: bool = Field(..., description="Whether the subdomain is available", example=True)
-    registered_to: str | None = Field(
-        None, description="Project name if subdomain is already registered", example="other-project"
-    )
     validation_error: str | None = Field(
         None, description="Validation error message if subdomain format is invalid", example=None
     )
@@ -1517,20 +1514,16 @@ async def check_subdomain_availability(
                 subdomain=subdomain.lower(),
                 base_domain=base_domain.lower(),
                 available=False,
-                registered_to=None,
                 validation_error=validation_error,
             )
 
         connector = create_subdomain_connector()
         is_available = await connector.check_availability(subdomain, base_domain)
 
-        # Note: We intentionally don't expose registered_to for privacy reasons
-        # This prevents enumeration of which projects own which subdomains
         return SubdomainCheckResponse(
             subdomain=subdomain.lower(),
             base_domain=base_domain.lower(),
             available=is_available,
-            registered_to=None,  # Hidden for privacy - don't expose project names
             validation_error=None,
         )
     except Exception as e:

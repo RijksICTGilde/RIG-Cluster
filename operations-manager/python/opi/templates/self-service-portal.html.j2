@@ -770,6 +770,55 @@ Available variables depend on selected services:
             }
           });
         }
+
+        // Add form submit validation for nice-url subdomain
+        const projectForm = document.getElementById('project-form');
+        if (projectForm) {
+          projectForm.addEventListener('submit', async function(e) {
+            const domainMode = document.getElementById('domain-mode').value;
+            if (domainMode !== 'nice-url') {
+              return; // No validation needed for other modes
+            }
+
+            const subdomain = document.getElementById('nice-url-subdomain').value.trim().toLowerCase();
+            const baseDomain = document.getElementById('base-domain')?.value || 'rijks.app';
+            const availabilityDiv = document.getElementById('subdomain-availability');
+
+            if (!subdomain) {
+              e.preventDefault();
+              availabilityDiv.innerHTML = '<span style="color: red;">&#x2718; Subdomein is verplicht</span>';
+              return;
+            }
+
+            // Re-validate before submit to handle stale availability
+            e.preventDefault();
+            availabilityDiv.innerHTML = '<span style="color: orange;">Beschikbaarheid controleren...</span>';
+
+            try {
+              const response = await fetch(`/api/subdomains/check/${encodeURIComponent(subdomain)}?base_domain=${encodeURIComponent(baseDomain)}`);
+              const data = await response.json();
+
+              if (data.validation_error) {
+                availabilityDiv.innerHTML = `<span style="color: red;">&#x2718; ${data.validation_error}</span>`;
+                return;
+              } else if (!data.available) {
+                availabilityDiv.innerHTML = '<span style="color: red;">&#x2718; Niet meer beschikbaar - kies een ander subdomein</span>';
+                document.getElementById('subdomain').value = '';
+                return;
+              }
+
+              // Available - proceed with submission
+              document.getElementById('subdomain').value = subdomain;
+              projectForm.submit();
+            } catch (error) {
+              // Allow submission on network error but warn user
+              if (confirm('Kon beschikbaarheid niet controleren. Toch doorgaan?')) {
+                document.getElementById('subdomain').value = subdomain;
+                projectForm.submit();
+              }
+            }
+          });
+        }
       });
 
       function addUserRow() {
