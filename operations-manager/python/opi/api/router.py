@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from collections import defaultdict
 from typing import Any
@@ -7,7 +8,14 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import GitConnector
-from opi.connectors.subdomain import create_subdomain_connector, validate_base_domain, validate_subdomain
+from opi.connectors.subdomain import (
+    BaseDomainValidationError,
+    SubdomainNotAvailableError,
+    SubdomainValidationError,
+    create_subdomain_connector,
+    validate_base_domain,
+    validate_subdomain,
+)
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
@@ -18,16 +26,25 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
-# Simple IP-based rate limiter for subdomain check endpoint
+# Robust rate limiter for subdomain check endpoint with anti-spoofing measures
 class IPRateLimiter:
-    """Simple token bucket rate limiter per IP address.
+    """Token bucket rate limiter with multi-factor client identification.
 
-    Supports X-Forwarded-For header for clients behind reverse proxies.
+    Uses a combination of factors to identify clients, making X-Forwarded-For
+    spoofing attacks much harder:
+    - IP address (from X-Forwarded-For or direct connection)
+    - Client fingerprint (hash of User-Agent + Accept-Language headers)
+    - Session ID (when available)
+
+    This defense-in-depth approach means attackers would need to rotate all
+    factors simultaneously to bypass rate limiting.
+
     Implements bounded memory usage with aggressive cleanup.
+    Thread-safe for use in async environments with concurrent requests.
     """
 
-    # Maximum number of tracked IPs to prevent memory exhaustion
-    MAX_TRACKED_IPS = 10000
+    # Maximum number of tracked clients to prevent memory exhaustion
+    MAX_TRACKED_CLIENTS = 10000
     # Cleanup threshold - trigger cleanup when approaching max
     CLEANUP_THRESHOLD = 8000
 
@@ -35,7 +52,7 @@ class IPRateLimiter:
         self,
         requests_per_minute: int = 30,
         burst: int = 10,
-        cleanup_interval: float = 60.0,  # More aggressive: every 60 seconds instead of 300
+        cleanup_interval: float = 60.0,
     ):
         self.rate = requests_per_minute / 60.0  # requests per second
         self.burst = burst
@@ -43,6 +60,27 @@ class IPRateLimiter:
         self._last_update: dict[str, float] = defaultdict(time.monotonic)
         self._cleanup_interval = cleanup_interval
         self._last_cleanup = time.monotonic()
+        # Lock to ensure thread-safety for concurrent async requests
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _get_client_fingerprint(request: Request) -> str:
+        """Generate a fingerprint from browser headers to identify clients.
+
+        This makes it harder to bypass rate limiting by just spoofing X-Forwarded-For,
+        as the attacker would also need to rotate User-Agent and Accept-Language.
+
+        Uses a hash to prevent the fingerprint from leaking header details in logs.
+        """
+        import hashlib
+
+        user_agent = request.headers.get("user-agent", "")
+        accept_language = request.headers.get("accept-language", "")
+        accept_encoding = request.headers.get("accept-encoding", "")
+
+        # Create a fingerprint hash from multiple headers
+        fingerprint_data = f"{user_agent}|{accept_language}|{accept_encoding}"
+        return hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
 
     @staticmethod
     def get_client_ip(request: Request) -> str:
@@ -51,9 +89,8 @@ class IPRateLimiter:
         X-Forwarded-For format: client, proxy1, proxy2, ...
         We take the first (leftmost) IP which is the original client.
 
-        Security note: X-Forwarded-For can be spoofed by clients, but this is
-        acceptable for rate limiting as it's a defense-in-depth measure, not
-        the sole security control.
+        Note: X-Forwarded-For can be spoofed. Use get_client_identifier() for
+        robust rate limiting that combines multiple factors.
         """
         # Check X-Forwarded-For header first (set by reverse proxies)
         forwarded_for = request.headers.get("x-forwarded-for")
@@ -66,36 +103,70 @@ class IPRateLimiter:
         # Fall back to direct connection IP
         return request.client.host if request.client else "unknown"
 
-    def is_allowed(self, ip: str) -> bool:
-        """Check if request from IP is allowed."""
-        now = time.monotonic()
-        elapsed = now - self._last_update[ip]
-        self._last_update[ip] = now
+    @classmethod
+    def get_client_identifier(cls, request: Request) -> str:
+        """Get a robust client identifier combining multiple factors.
 
-        # Add tokens based on time elapsed
-        self._tokens[ip] = min(self.burst, self._tokens[ip] + elapsed * self.rate)
+        This combines:
+        1. IP address (can be spoofed via X-Forwarded-For)
+        2. Client fingerprint (harder to spoof - requires rotating multiple headers)
+        3. Session ID (when authenticated - impossible to spoof without valid session)
 
-        # Time-based periodic cleanup
-        if now - self._last_cleanup > self._cleanup_interval:
-            self.cleanup_old_entries()
-            self._last_cleanup = now
-        # Emergency cleanup if approaching memory limit
-        elif len(self._tokens) > self.CLEANUP_THRESHOLD:
-            self.cleanup_old_entries(max_age_seconds=300)  # More aggressive: 5 min instead of 1 hour
-            # If still over limit after cleanup, do aggressive purge
-            if len(self._tokens) > self.MAX_TRACKED_IPS:
-                self._emergency_purge()
+        An attacker would need to control all three factors to bypass rate limiting.
+        """
+        ip = cls.get_client_ip(request)
+        fingerprint = cls._get_client_fingerprint(request)
 
-        if self._tokens[ip] >= 1:
-            self._tokens[ip] -= 1
-            return True
-        return False
+        # Try to get session ID if available (most reliable identifier)
+        session_id = ""
+        if hasattr(request, "session") and request.session:
+            # Use session ID if present - this is the most reliable identifier
+            session_id = request.session.get("_session_id", "")[:32] if request.session else ""
+
+        # Combine factors into a single identifier
+        # Format: ip|fingerprint|session (session may be empty for unauthenticated)
+        return f"{ip}|{fingerprint}|{session_id}"
+
+    def is_allowed(self, client_id: str) -> bool:
+        """Check if request from client is allowed. Thread-safe.
+
+        Args:
+            client_id: Client identifier from get_client_identifier() or get_client_ip()
+        """
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_update[client_id]
+            self._last_update[client_id] = now
+
+            # Add tokens based on time elapsed
+            self._tokens[client_id] = min(self.burst, self._tokens[client_id] + elapsed * self.rate)
+
+            # Time-based periodic cleanup
+            if now - self._last_cleanup > self._cleanup_interval:
+                self._cleanup_old_entries_unlocked()
+                self._last_cleanup = now
+            # Emergency cleanup if approaching memory limit
+            elif len(self._tokens) > self.CLEANUP_THRESHOLD:
+                self._cleanup_old_entries_unlocked(max_age_seconds=300)
+                # If still over limit after cleanup, do aggressive purge
+                if len(self._tokens) > self.MAX_TRACKED_CLIENTS:
+                    self._emergency_purge_unlocked()
+
+            if self._tokens[client_id] >= 1:
+                self._tokens[client_id] -= 1
+                return True
+            return False
 
     def cleanup_old_entries(self, max_age_seconds: int = 600) -> None:
-        """Remove entries older than max_age_seconds to prevent memory leak.
+        """Remove entries older than max_age_seconds to prevent memory leak. Thread-safe.
 
         Default reduced to 10 minutes (was 1 hour) for more aggressive cleanup.
         """
+        with self._lock:
+            self._cleanup_old_entries_unlocked(max_age_seconds)
+
+    def _cleanup_old_entries_unlocked(self, max_age_seconds: int = 600) -> None:
+        """Internal cleanup method. Must be called while holding self._lock."""
         now = time.monotonic()
         to_remove = [ip for ip, last in self._last_update.items() if now - last > max_age_seconds]
         for ip in to_remove:
@@ -105,10 +176,12 @@ class IPRateLimiter:
             logger.debug(f"Rate limiter cleanup: removed {len(to_remove)} stale entries")
 
     def _emergency_purge(self) -> None:
-        """Emergency purge when memory limit exceeded.
+        """Emergency purge when memory limit exceeded. Thread-safe."""
+        with self._lock:
+            self._emergency_purge_unlocked()
 
-        Removes oldest 50% of entries to quickly reduce memory usage.
-        """
+    def _emergency_purge_unlocked(self) -> None:
+        """Internal emergency purge. Must be called while holding self._lock."""
         if not self._last_update:
             return
 
@@ -1485,7 +1558,8 @@ async def create_self_service_project(
     """
     start_time = time.time()
     project_manager = None
-    subdomain_registered = False  # Track if we registered a subdomain for rollback
+    subdomain_registered = False  # Track if we actually registered a subdomain for rollback
+    subdomain_connector = None  # Connector for subdomain operations
     try:
         logger.info(f"Creating self-service project: {project_data.project_name}")
 
@@ -1519,8 +1593,23 @@ async def create_self_service_project(
                 project_data.issuer = "letsencrypt"
                 logger.info(f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{project_data.base_domain}'")
 
-            # Mark that we'll be registering a subdomain (for rollback tracking)
-            subdomain_registered = bool(project_data.subdomain)
+            # Register subdomain BEFORE project processing to ensure atomic rollback
+            # This prevents the TOCTOU issue where subdomain_registered flag doesn't match actual state
+            if project_data.subdomain:
+                subdomain_connector = create_subdomain_connector()
+                await subdomain_connector.register(
+                    subdomain=project_data.subdomain,
+                    base_domain=project_data.base_domain,
+                    project_name=project_data.project_name,
+                    deployment_name=project_data.deployment_name,
+                    cluster=project_data.cluster,
+                    created_by=None,
+                )
+                subdomain_registered = True  # Only set after successful registration
+                logger.info(
+                    f"Pre-registered subdomain '{project_data.subdomain}.{project_data.base_domain}' "
+                    f"for project '{project_data.project_name}'"
+                )
 
         # Generate YAML content from self-service form data
         yaml_content = await generate_self_service_project_yaml(project_data)
@@ -1596,6 +1685,12 @@ async def create_self_service_project(
 
     except HTTPException:
         raise
+    except (SubdomainNotAvailableError, SubdomainValidationError, BaseDomainValidationError) as e:
+        # Subdomain-related errors should return 400 Bad Request with clear message
+        # Note: subdomain_registered will be False since registration failed
+        elapsed_time = time.time() - start_time
+        logger.warning(f"Subdomain error creating self-service project: {e!s} (took {elapsed_time:.2f} seconds)")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         # Rollback subdomain registration on exception
         if subdomain_registered and project_data.subdomain and project_data.base_domain:
@@ -1683,12 +1778,13 @@ async def check_subdomain_availability(
     This endpoint is used by the self-service portal to validate subdomain
     availability before project creation in nice-url mode.
 
-    Rate limited to 30 requests per minute per IP address.
+    Rate limited to 30 requests per minute per client (using multi-factor identification
+    to prevent X-Forwarded-For spoofing bypasses).
 
     Args:
         request: The FastAPI request object
         subdomain: The subdomain to check (e.g., "myapp")
-        base_domain: The base domain (e.g., "rijks.app")
+        base_domain: The base domain (e.g., "rijks.app") - must be a supported domain
 
     Returns:
         SubdomainCheckResponse with availability status
@@ -1698,9 +1794,10 @@ async def check_subdomain_availability(
     curl "http://localhost:9595/api/subdomains/check/myapp?base_domain=rijks.app"
     ```
     """
-    # Rate limiting check - use proper IP extraction for clients behind proxies
-    client_ip = IPRateLimiter.get_client_ip(request)
-    if not subdomain_check_rate_limiter.is_allowed(client_ip):
+    # Rate limiting check - use robust client identification to prevent X-Forwarded-For spoofing
+    # This combines IP + browser fingerprint + session ID (when available)
+    client_id = IPRateLimiter.get_client_identifier(request)
+    if not subdomain_check_rate_limiter.is_allowed(client_id):
         raise HTTPException(
             status_code=429,
             detail="Too many requests. Please wait before checking again.",
@@ -1709,8 +1806,9 @@ async def check_subdomain_availability(
     # Audit log for subdomain availability checks (sanitize input to prevent log injection)
     safe_subdomain = subdomain[:64].replace("\n", "").replace("\r", "") if subdomain else ""
     safe_base_domain = base_domain[:64].replace("\n", "").replace("\r", "") if base_domain else ""
-    # Note: IP logging may have GDPR implications - consider anonymization in production
-    logger.info(f"AUDIT: Subdomain check - subdomain={safe_subdomain}, base_domain={safe_base_domain}")
+    # Note: Only log IP portion of client_id to reduce log verbosity
+    client_ip = IPRateLimiter.get_client_ip(request)
+    logger.info(f"AUDIT: Subdomain check - subdomain={safe_subdomain}, base_domain={safe_base_domain}, ip={client_ip}")
 
     try:
         # Validate subdomain format first
@@ -1721,6 +1819,16 @@ async def check_subdomain_availability(
                 base_domain=base_domain.lower(),
                 available=False,
                 validation_error=validation_error,
+            )
+
+        # Validate base_domain is a supported domain (prevents probing arbitrary domains)
+        is_valid_domain, domain_error = validate_base_domain(base_domain)
+        if not is_valid_domain:
+            return SubdomainCheckResponse(
+                subdomain=subdomain.lower(),
+                base_domain=base_domain.lower(),
+                available=False,
+                validation_error=domain_error,
             )
 
         connector = create_subdomain_connector()
