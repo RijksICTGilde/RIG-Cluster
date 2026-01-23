@@ -26,6 +26,30 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
+def sanitize_for_log(value: str | None, max_length: int = 64) -> str:
+    """Sanitize a value for safe inclusion in log messages.
+
+    Prevents log injection attacks by:
+    - Truncating to max_length
+    - Removing newlines and carriage returns
+    - Removing other control characters
+
+    Args:
+        value: The value to sanitize
+        max_length: Maximum length of the sanitized value (default: 64)
+
+    Returns:
+        Sanitized string safe for logging
+    """
+    if not value:
+        return ""
+    # Truncate, remove newlines/carriage returns, and strip control characters
+    sanitized = value[:max_length].replace("\n", "").replace("\r", "")
+    # Remove other ASCII control characters (0x00-0x1F except tab, 0x7F)
+    sanitized = "".join(c for c in sanitized if ord(c) >= 32 or c == "\t")
+    return sanitized
+
+
 # Robust rate limiter for subdomain check endpoint with anti-spoofing measures
 class IPRateLimiter:
     """Token bucket rate limiter with multi-factor client identification.
@@ -39,6 +63,11 @@ class IPRateLimiter:
     This defense-in-depth approach means attackers would need to rotate all
     factors simultaneously to bypass rate limiting.
 
+    Additionally implements:
+    - Per-IP secondary rate limiting (stricter limit applied even when fingerprint rotates)
+    - Gradual emergency purge (removes only truly stale entries, not arbitrary half)
+    - New client rate limiting (prevents rapid creation of new identifiers)
+
     Implements bounded memory usage with aggressive cleanup.
     Thread-safe for use in async environments with concurrent requests.
     """
@@ -47,12 +76,17 @@ class IPRateLimiter:
     MAX_TRACKED_CLIENTS = 10000
     # Cleanup threshold - trigger cleanup when approaching max
     CLEANUP_THRESHOLD = 8000
+    # Minimum age for emergency purge (only remove entries older than this)
+    EMERGENCY_PURGE_MIN_AGE_SECONDS = 60
+    # Maximum new clients per minute (to prevent identifier flooding)
+    MAX_NEW_CLIENTS_PER_MINUTE = 100
 
     def __init__(
         self,
         requests_per_minute: int = 30,
         burst: int = 10,
         cleanup_interval: float = 60.0,
+        per_ip_requests_per_minute: int | None = None,
     ):
         self.rate = requests_per_minute / 60.0  # requests per second
         self.burst = burst
@@ -62,6 +96,16 @@ class IPRateLimiter:
         self._last_cleanup = time.monotonic()
         # Lock to ensure thread-safety for concurrent async requests
         self._lock = threading.Lock()
+
+        # Secondary per-IP rate limiting (stricter, cannot be bypassed by rotating fingerprint)
+        # Default: 3x the normal rate to allow legitimate users with multiple sessions
+        self._per_ip_rate = (per_ip_requests_per_minute or (requests_per_minute * 3)) / 60.0
+        self._per_ip_burst = burst * 3
+        self._ip_tokens: dict[str, float] = defaultdict(lambda: float(self._per_ip_burst))
+        self._ip_last_update: dict[str, float] = defaultdict(time.monotonic)
+
+        # Track new client creation rate to detect flooding attacks
+        self._new_client_timestamps: list[float] = []
 
     @staticmethod
     def _get_client_fingerprint(request: Request) -> str:
@@ -127,14 +171,69 @@ class IPRateLimiter:
         # Format: ip|fingerprint|session (session may be empty for unauthenticated)
         return f"{ip}|{fingerprint}|{session_id}"
 
+    def _check_new_client_rate_unlocked(self) -> bool:
+        """Check if we're creating new clients too fast (flooding attack detection).
+
+        Must be called while holding self._lock.
+
+        Returns:
+            True if a new client can be created, False if rate exceeded.
+        """
+        now = time.monotonic()
+        # Remove timestamps older than 1 minute
+        self._new_client_timestamps = [ts for ts in self._new_client_timestamps if now - ts < 60]
+
+        if len(self._new_client_timestamps) >= self.MAX_NEW_CLIENTS_PER_MINUTE:
+            logger.warning(
+                f"New client rate limit exceeded: {len(self._new_client_timestamps)} new clients in last minute"
+            )
+            return False
+
+        return True
+
+    def _check_per_ip_limit_unlocked(self, ip: str) -> bool:
+        """Check secondary per-IP rate limit.
+
+        This provides a backstop against attackers who rotate fingerprints but
+        cannot rotate their actual IP address.
+
+        Must be called while holding self._lock.
+        """
+        now = time.monotonic()
+        elapsed = now - self._ip_last_update[ip]
+        self._ip_last_update[ip] = now
+
+        # Add tokens based on time elapsed
+        self._ip_tokens[ip] = min(self._per_ip_burst, self._ip_tokens[ip] + elapsed * self._per_ip_rate)
+
+        if self._ip_tokens[ip] >= 1:
+            self._ip_tokens[ip] -= 1
+            return True
+        return False
+
     def is_allowed(self, client_id: str) -> bool:
         """Check if request from client is allowed. Thread-safe.
+
+        Applies two levels of rate limiting:
+        1. Per-client-identifier limit (primary, based on IP+fingerprint+session)
+        2. Per-IP limit (secondary, cannot be bypassed by rotating fingerprint)
 
         Args:
             client_id: Client identifier from get_client_identifier() or get_client_ip()
         """
         with self._lock:
             now = time.monotonic()
+
+            # Extract IP from client_id for secondary rate limiting
+            ip = client_id.split("|")[0] if "|" in client_id else client_id
+
+            # Check if this is a new client (for flooding detection)
+            is_new_client = client_id not in self._last_update
+            if is_new_client:
+                if not self._check_new_client_rate_unlocked():
+                    return False  # Too many new clients being created
+                self._new_client_timestamps.append(now)
+
             elapsed = now - self._last_update[client_id]
             self._last_update[client_id] = now
 
@@ -148,14 +247,21 @@ class IPRateLimiter:
             # Emergency cleanup if approaching memory limit
             elif len(self._tokens) > self.CLEANUP_THRESHOLD:
                 self._cleanup_old_entries_unlocked(max_age_seconds=300)
-                # If still over limit after cleanup, do aggressive purge
+                # If still over limit after cleanup, do gradual purge
                 if len(self._tokens) > self.MAX_TRACKED_CLIENTS:
-                    self._emergency_purge_unlocked()
+                    self._gradual_purge_unlocked()
 
-            if self._tokens[client_id] >= 1:
-                self._tokens[client_id] -= 1
-                return True
-            return False
+            # Primary check: per-client-identifier limit
+            if self._tokens[client_id] < 1:
+                return False
+
+            # Secondary check: per-IP limit (cannot be bypassed by rotating fingerprint)
+            if not self._check_per_ip_limit_unlocked(ip):
+                logger.debug(f"Per-IP rate limit exceeded for {ip}")
+                return False
+
+            self._tokens[client_id] -= 1
+            return True
 
     def cleanup_old_entries(self, max_age_seconds: int = 600) -> None:
         """Remove entries older than max_age_seconds to prevent memory leak. Thread-safe.
@@ -172,28 +278,54 @@ class IPRateLimiter:
         for ip in to_remove:
             del self._tokens[ip]
             del self._last_update[ip]
-        if to_remove:
-            logger.debug(f"Rate limiter cleanup: removed {len(to_remove)} stale entries")
 
-    def _emergency_purge(self) -> None:
-        """Emergency purge when memory limit exceeded. Thread-safe."""
-        with self._lock:
-            self._emergency_purge_unlocked()
+        # Also cleanup per-IP tracking
+        ip_to_remove = [ip for ip, last in self._ip_last_update.items() if now - last > max_age_seconds]
+        for ip in ip_to_remove:
+            del self._ip_tokens[ip]
+            del self._ip_last_update[ip]
 
-    def _emergency_purge_unlocked(self) -> None:
-        """Internal emergency purge. Must be called while holding self._lock."""
+        if to_remove or ip_to_remove:
+            logger.debug(
+                f"Rate limiter cleanup: removed {len(to_remove)} client entries, {len(ip_to_remove)} IP entries"
+            )
+
+    def _gradual_purge_unlocked(self) -> None:
+        """Gradual purge when memory limit exceeded. Only removes truly stale entries.
+
+        Unlike emergency_purge which removed arbitrary half, this only removes entries
+        that are older than EMERGENCY_PURGE_MIN_AGE_SECONDS. This prevents attackers
+        from evicting legitimate users by flooding with new identifiers.
+
+        Must be called while holding self._lock.
+        """
         if not self._last_update:
             return
 
-        # Sort by last update time and remove oldest half
-        sorted_ips = sorted(self._last_update.items(), key=lambda x: x[1])
-        purge_count = len(sorted_ips) // 2
+        now = time.monotonic()
+        min_age = self.EMERGENCY_PURGE_MIN_AGE_SECONDS
 
-        for ip, _ in sorted_ips[:purge_count]:
-            del self._tokens[ip]
-            del self._last_update[ip]
+        # Only remove entries older than minimum age
+        to_remove = [
+            client_id
+            for client_id, last_update in self._last_update.items()
+            if now - last_update > min_age
+        ]
 
-        logger.warning(f"Rate limiter emergency purge: removed {purge_count} entries")
+        for client_id in to_remove:
+            del self._tokens[client_id]
+            del self._last_update[client_id]
+
+        if to_remove:
+            logger.warning(f"Rate limiter gradual purge: removed {len(to_remove)} stale entries (>{min_age}s old)")
+
+        # If still over limit after gradual purge, we have a real problem
+        # Log it but don't remove recent entries (they're likely legitimate)
+        if len(self._tokens) > self.MAX_TRACKED_CLIENTS:
+            logger.error(
+                f"Rate limiter still over limit ({len(self._tokens)} entries) after gradual purge. "
+                f"Possible DoS attack or configuration issue."
+            )
 
 
 # Global rate limiter instance for subdomain checks (30 requests/minute per IP)
@@ -571,21 +703,25 @@ class DeploymentDomainSettingsRequest(BaseModel):
         ...,
         description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
         example="nice-url",
+        max_length=32,
     )
     subdomain: str | None = Field(
         None,
         description="Subdomain for nice-url or custom mode",
         example="myapp",
+        max_length=63,  # DNS subdomain limit
     )
     base_domain: str | None = Field(
         None,
         description="Base domain for nice-url mode (e.g., 'rijks.app')",
         example="rijks.app",
+        max_length=255,  # DNS domain limit
     )
     root_component: str | None = Field(
         None,
         description="Component reference to mark as root (receives / path)",
         example="frontend",
+        max_length=63,  # Kubernetes name limit
     )
 
     model_config = {
@@ -621,34 +757,34 @@ class DeploymentDomainSettingsResponse(BaseModel):
 
 
 class SelfServiceComponent(BaseModel):
-    type: str  # "deployment", "cronjob", "daemonset"
-    port: int | None = None
-    image: str
-    path: str = "/"  # Publication path for ingress routing (e.g., "/", "/api", "/aanleverapi")
-    cpu_limit: str | None = None  # e.g., "100m", "1000m"
-    memory_limit: str | None = None  # e.g., "128Mi", "1Gi"
-    env_vars: str | None = None  # Environment variables in KEY=value format
-    aliases: str | None = None  # Aliases for system-provided variables (not encoded)
+    type: str = Field(..., max_length=32)  # "deployment", "cronjob", "daemonset"
+    port: int | None = Field(None, ge=1, le=65535)
+    image: str = Field(..., max_length=512)
+    path: str = Field("/", max_length=256)  # Publication path for ingress routing (e.g., "/", "/api", "/aanleverapi")
+    cpu_limit: str | None = Field(None, max_length=16)  # e.g., "100m", "1000m"
+    memory_limit: str | None = Field(None, max_length=16)  # e.g., "128Mi", "1Gi"
+    env_vars: str | None = Field(None, max_length=65536)  # Environment variables in KEY=value format
+    aliases: str | None = Field(None, max_length=4096)  # Aliases for system-provided variables (not encoded)
     services: list[str] | None = None  # ["keycloak", "postgres", "minio"]
     root: bool = False  # Whether this component receives the root path in nice-url mode
 
 
 class SelfServiceProjectRequest(BaseModel):
     # Project Details (from form fields)
-    project_name: str  # Generated technical name (short, compliant)
-    display_name: str  # User-friendly name from form (maps to name="display-name")
-    project_description: str | None = None  # Maps to name="project-description"
-    cluster: str  # Maps to name="cluster"
-    deployment_name: str = "main"  # Name for the deployment (defaults to "main")
+    project_name: str = Field(..., max_length=63)  # Generated technical name (short, compliant)
+    display_name: str = Field(..., max_length=128)  # User-friendly name from form (maps to name="display-name")
+    project_description: str | None = Field(None, max_length=1024)  # Maps to name="project-description"
+    cluster: str = Field(..., max_length=63)  # Maps to name="cluster"
+    deployment_name: str = Field("main", max_length=63)  # Name for the deployment (defaults to "main")
 
     # Web Address Configuration
-    domain_mode: str = "component-specific"  # "component-specific", "deployment-name", "custom", or "nice-url"
-    subdomain: str | None = None  # For nice-url mode: globally unique subdomain. For custom mode: custom subdomain
+    domain_mode: str = Field("component-specific", max_length=32)  # "component-specific", "deployment-name", "custom", or "nice-url"
+    subdomain: str | None = Field(None, max_length=63)  # For nice-url mode: globally unique subdomain. For custom mode: custom subdomain
 
     # External Domain Configuration (for public domains with Let's Encrypt)
-    base_domain: str | None = None  # Apex domain (e.g., "rijks.app")
-    issuer: str | None = None  # Certificate issuer: "letsencrypt", "letsencrypt-staging", or custom issuer name
-    contact_email: str | None = None  # Contact email for Let's Encrypt (overrides cluster default)
+    base_domain: str | None = Field(None, max_length=255)  # Apex domain (e.g., "rijks.app")
+    issuer: str | None = Field(None, max_length=64)  # Certificate issuer: "letsencrypt", "letsencrypt-staging", or custom issuer name
+    contact_email: str | None = Field(None, max_length=254)  # Contact email for Let's Encrypt (overrides cluster default)
 
     # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
@@ -1570,13 +1706,37 @@ async def create_self_service_project(
                 detail="Project name must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
             )
 
-        # Validate base domain for nice-url mode before auto-enabling Let's Encrypt
-        if project_data.domain_mode == "nice-url" and project_data.base_domain:
+        # Validate nice-url mode requirements
+        if project_data.domain_mode == "nice-url":
+            # Check if cluster supports nice-url mode at all
+            from opi.core.cluster_config import get_nice_url_supported_domains
+
+            supported_domains = get_nice_url_supported_domains(project_data.cluster)
+            if not supported_domains:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cluster '{sanitize_for_log(project_data.cluster)}' does not support nice-url mode. "
+                    f"Please select a different domain mode or cluster.",
+                )
+
+            # Require both subdomain and base_domain for nice-url mode
+            if not project_data.subdomain:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Subdomain is required for nice-url mode",
+                )
+            if not project_data.base_domain:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Base domain is required for nice-url mode",
+                )
+
+            # Validate base domain is supported for this cluster
             is_valid, error_message = validate_base_domain(project_data.base_domain, project_data.cluster)
             if not is_valid:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Invalid base domain for cluster '{project_data.cluster}': {error_message}",
+                    detail=f"Invalid base domain for cluster '{sanitize_for_log(project_data.cluster)}': {error_message}",
                 )
 
             # Validate subdomain format early to fail fast
@@ -1587,6 +1747,22 @@ async def create_self_service_project(
                         status_code=400,
                         detail=f"Invalid subdomain: {error_message}",
                     )
+
+            # F1: Validate root component has a port when nice-url mode is enabled
+            # This is critical for proper ingress routing - the root component receives
+            # traffic at subdomain.base_domain and must have a port to route to
+            if project_data.components:
+                root_components = [c for c in project_data.components if c.root]
+                if root_components:
+                    root_component = root_components[0]
+                    if root_component.port is None:
+                        # Find the component name/index for error message
+                        root_idx = project_data.components.index(root_component)
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Root component (component {root_idx + 1}) must have a port defined for nice-url mode. "
+                            f"The root component receives traffic at {project_data.subdomain}.{project_data.base_domain}",
+                        )
 
             # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
             if not project_data.issuer:
@@ -1769,17 +1945,21 @@ class SubdomainRegistration(BaseModel):
         200: {"description": "Subdomain availability check result"},
     },
 )
+@validate_api_token
 async def check_subdomain_availability(
     request: Request, subdomain: str, base_domain: str
 ) -> SubdomainCheckResponse:
     """
     Check if a subdomain is available for registration.
 
-    This endpoint is used by the self-service portal to validate subdomain
-    availability before project creation in nice-url mode.
+    This endpoint requires API token authentication to prevent unauthenticated
+    subdomain enumeration attacks.
 
     Rate limited to 30 requests per minute per client (using multi-factor identification
     to prevent X-Forwarded-For spoofing bypasses).
+
+    Headers:
+        X-API-Key: The API key for authentication (required)
 
     Args:
         request: The FastAPI request object
@@ -1791,7 +1971,8 @@ async def check_subdomain_availability(
 
     Example:
     ```bash
-    curl "http://localhost:9595/api/subdomains/check/myapp?base_domain=rijks.app"
+    curl "http://localhost:9595/api/subdomains/check/myapp?base_domain=rijks.app" \
+      -H "X-API-Key: your-api-key"
     ```
     """
     # Rate limiting check - use robust client identification to prevent X-Forwarded-For spoofing
@@ -1804,10 +1985,10 @@ async def check_subdomain_availability(
         )
 
     # Audit log for subdomain availability checks (sanitize input to prevent log injection)
-    safe_subdomain = subdomain[:64].replace("\n", "").replace("\r", "") if subdomain else ""
-    safe_base_domain = base_domain[:64].replace("\n", "").replace("\r", "") if base_domain else ""
+    safe_subdomain = sanitize_for_log(subdomain)
+    safe_base_domain = sanitize_for_log(base_domain)
     # Note: Only log IP portion of client_id to reduce log verbosity
-    client_ip = IPRateLimiter.get_client_ip(request)
+    client_ip = sanitize_for_log(IPRateLimiter.get_client_ip(request))
     logger.info(f"AUDIT: Subdomain check - subdomain={safe_subdomain}, base_domain={safe_base_domain}, ip={client_ip}")
 
     try:

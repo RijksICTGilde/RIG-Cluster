@@ -391,18 +391,14 @@
                                             style="display: none;"/>
 
                                         <div id="nice-url-subdomain-container" style="display: none;">
-                                            <c-select-field
-                                                id="base-domain"
-                                                name="base-domain"
-                                                label="Base Domain"
-                                                helperText="Selecteer het base domain voor uw nice URL"
-                                                :options="[
-                                                    {'value': '', 'label': 'Selecteer een base domain'},
-                                                    {'value': 'rijks.app', 'label': 'rijks.app (productie)'},
-                                                    {'value': 'rijksapps.nl', 'label': 'rijksapps.nl (productie)'},
-                                                    {'value': 'kind', 'label': 'kind (lokaal)'},
-                                                    {'value': 'local', 'label': 'local (lokaal)'}
-                                                ]"/>
+                                            <div class="rvo-form-field">
+                                                <label class="rvo-form-field__label" for="base-domain">Base Domain</label>
+                                                <select id="base-domain" name="base-domain" class="rvo-select-field">
+                                                    <option value="">Selecteer eerst een cluster</option>
+                                                    {# Options will be populated dynamically based on selected cluster #}
+                                                </select>
+                                                <p class="rvo-form-field__helper-text">Selecteer het base domain voor uw nice URL (afhankelijk van gekozen cluster)</p>
+                                            </div>
                                             <c-text-input-field
                                                 id="nice-url-subdomain"
                                                 name="subdomain"
@@ -490,14 +486,16 @@
 
                                                     <div class="root-component-radio" style="display: none;">
                                                         <div class="rvo-form-field">
+                                                            {# Hidden input for form submission - set to "true" when radio is selected #}
+                                                            <input type="hidden" id="component-root-hidden-0" name="components[0][root]" value="false" />
                                                             <label class="rvo-form-field__label" for="component-root-0">
                                                                 <input
                                                                     type="radio"
                                                                     id="component-root-0"
-                                                                    name="root-component"
+                                                                    name="root-component-selection"
                                                                     value="0"
-                                                                    class="rvo-radio"
-                                                                    @change="updateUrlPreview()"/>
+                                                                    class="rvo-radio root-radio-selector"
+                                                                    onchange="handleRootComponentChange(this)"/>
                                                                 <span class="rvo-radio__label">Root component</span>
                                                             </label>
                                                             <p class="rvo-form-field__helper-text">Maak dit de hoofdcomponent die bereikbaar is op de basis-URL (bijv. mijnapp.rijks.app). Alleen 1 component kan root zijn. Kies hier typisch uw frontend of single-page app.</p>
@@ -745,6 +743,42 @@ Available variables depend on selected services:
         rootRadios.forEach(radio => {
           radio.style.display = show ? 'block' : 'none';
         });
+        // Clear root selection when hiding
+        if (!show) {
+          clearRootComponentSelection();
+        }
+      }
+
+      // Handle root component radio button change
+      // Updates the hidden inputs that the backend expects (components[{index}][root])
+      function handleRootComponentChange(selectedRadio) {
+        const componentIndex = selectedRadio.value;
+
+        // Reset all hidden root inputs to "false"
+        document.querySelectorAll('input[name^="components["][name$="][root]"]').forEach(input => {
+          input.value = "false";
+        });
+
+        // Set the selected component's hidden root input to "true"
+        const hiddenInput = document.getElementById(`component-root-hidden-${componentIndex}`);
+        if (hiddenInput) {
+          hiddenInput.value = "true";
+        }
+
+        // Update URL preview
+        updateUrlPreview();
+      }
+
+      // Clear all root component selections (when switching away from nice-url mode)
+      function clearRootComponentSelection() {
+        // Uncheck all radio buttons
+        document.querySelectorAll('input[name="root-component-selection"]').forEach(radio => {
+          radio.checked = false;
+        });
+        // Reset all hidden inputs to false
+        document.querySelectorAll('input[name^="components["][name$="][root]"]').forEach(input => {
+          input.value = "false";
+        });
       }
 
       // Base domain options per cluster (from server config)
@@ -753,36 +787,35 @@ Available variables depend on selected services:
       // Update base domain options based on selected cluster
       function updateBaseDomainOptions() {
         const cluster = document.getElementById('cluster').value;
-        const baseDomainField = document.getElementById('base-domain');
+        const selectElement = document.getElementById('base-domain');
         const domainMode = document.getElementById('domain-mode').value;
 
-        if (!baseDomainField || domainMode !== 'nice-url') {
+        if (!selectElement) {
           return;
         }
 
         // Get options for this cluster
         const options = clusterBaseDomains[cluster] || [];
 
-        // Clear current options and add new ones
-        // Note: c-select-field uses Alpine.js :options binding, so we need to update the underlying select
-        const selectElement = baseDomainField.querySelector('select') || baseDomainField;
+        // Determine the placeholder message based on whether cluster is selected
+        const placeholder = cluster
+          ? (options.length > 0 ? 'Selecteer een base domain' : 'Geen base domains beschikbaar voor dit cluster')
+          : 'Selecteer eerst een cluster';
 
-        if (selectElement.tagName === 'SELECT') {
-          // Clear existing options except the first "select" option
-          selectElement.innerHTML = '<option value="">Selecteer een base domain</option>';
+        // Clear existing options and add placeholder
+        selectElement.innerHTML = `<option value="">${placeholder}</option>`;
 
-          // Add cluster-specific options
-          options.forEach(opt => {
-            const option = document.createElement('option');
-            option.value = opt.value;
-            option.textContent = opt.label;
-            selectElement.appendChild(option);
-          });
+        // Add cluster-specific options
+        options.forEach(opt => {
+          const option = document.createElement('option');
+          option.value = opt.value;
+          option.textContent = opt.label;
+          selectElement.appendChild(option);
+        });
 
-          // If only one option, auto-select it
-          if (options.length === 1) {
-            selectElement.value = options[0].value;
-          }
+        // If only one option, auto-select it
+        if (options.length === 1) {
+          selectElement.value = options[0].value;
         }
 
         // Clear availability check when base domain changes
@@ -793,6 +826,7 @@ Available variables depend on selected services:
       let subdomainCheckTimeout = null;
 
       // Error code to Dutch message mapping (for U3 fix - avoid fragile string matching)
+      // NOTE: All "not available" codes use the same generic message to prevent enumeration attacks
       const errorCodeTranslations = {
         'SUBDOMAIN_EMPTY': 'Subdomein mag niet leeg zijn',
         'SUBDOMAIN_TOO_SHORT': 'Subdomein is te kort',
@@ -800,9 +834,10 @@ Available variables depend on selected services:
         'SUBDOMAIN_INVALID_START': 'Mag niet beginnen met een streepje',
         'SUBDOMAIN_INVALID_END': 'Mag niet eindigen met een streepje',
         'SUBDOMAIN_INVALID_CHARS': 'Alleen kleine letters, cijfers en streepjes toegestaan',
-        'SUBDOMAIN_RESERVED': 'Dit subdomein is gereserveerd',
+        'SUBDOMAIN_NOT_AVAILABLE': 'Subdomein niet beschikbaar',  // Generic for both reserved and taken
+        'SUBDOMAIN_RESERVED': 'Subdomein niet beschikbaar',  // Legacy - same as NOT_AVAILABLE
         'SUBDOMAIN_INVALID': 'Ongeldig subdomein formaat',
-        'SUBDOMAIN_TAKEN': 'Al in gebruik door een ander project',
+        'SUBDOMAIN_TAKEN': 'Subdomein niet beschikbaar',  // Same as NOT_AVAILABLE
         'INVALID_BASE_DOMAIN': 'Ongeldig base domain',
         'UNKNOWN_ERROR': 'Onbekende fout'
       };
@@ -890,7 +925,7 @@ Available variables depend on selected services:
           });
 
           // Check if any component is marked as root (via radio button)
-          const hasRootComponent = document.querySelector('input[name="root-component"]:checked') !== null;
+          const hasRootComponent = document.querySelector('input[name="root-component-selection"]:checked') !== null;
 
           let previewHtml = '';
           if (componentTypes.length > 0) {
@@ -961,20 +996,48 @@ Available variables depend on selected services:
         }
 
         // Add cluster change listener to update base domain options
+        // U2: Show warning when cluster changes and user had selected a base domain
         const clusterField = document.getElementById('cluster');
         if (clusterField) {
           clusterField.addEventListener('change', function() {
+            const baseDomainField = document.getElementById('base-domain');
+            const domainMode = document.getElementById('domain-mode').value;
+            const previousBaseDomain = baseDomainField?.value;
+            const availabilityDiv = document.getElementById('subdomain-availability');
+
+            // Update options first
             updateBaseDomainOptions();
+
+            // Show warning if user had a selection and we're in nice-url mode
+            if (domainMode === 'nice-url' && previousBaseDomain && availabilityDiv) {
+              // Check if the previous selection is still available in the new cluster
+              const newBaseDomainValue = baseDomainField?.value;
+              if (!newBaseDomainValue || newBaseDomainValue !== previousBaseDomain) {
+                availabilityDiv.innerHTML = '<span style="color: orange;">&#x26A0; Base domain selectie is gereset door clusterwijziging. Selecteer opnieuw een base domain.</span>';
+              }
+            }
           });
         }
 
         // Add form submit validation for nice-url subdomain
         const projectForm = document.getElementById('project-form');
+        // Flag to prevent double-submission
+        let isSubmitting = false;
+
         if (projectForm) {
           projectForm.addEventListener('submit', async function(e) {
+            // Prevent double-submission
+            if (isSubmitting) {
+              e.preventDefault();
+              return;
+            }
+
             const domainMode = document.getElementById('domain-mode').value;
             if (domainMode !== 'nice-url') {
-              return; // No validation needed for other modes
+              // For non-nice-url modes, just set loading state and allow submission
+              isSubmitting = true;
+              setFormLoadingState(true);
+              return;
             }
 
             const subdomain = document.getElementById('nice-url-subdomain').value.trim().toLowerCase();
@@ -997,6 +1060,8 @@ Available variables depend on selected services:
 
             // Re-validate before submit to handle stale availability
             e.preventDefault();
+            isSubmitting = true;
+            setFormLoadingState(true);
             availabilityDiv.innerHTML = '<span style="color: orange;">Beschikbaarheid controleren...</span>';
 
             try {
@@ -1007,19 +1072,28 @@ Available variables depend on selected services:
               if (data.validation_error) {
                 const errorMessage = getErrorMessage(data.error_code, data.validation_error);
                 availabilityDiv.innerHTML = `<span style="color: red;">&#x2718; ${errorMessage}</span>`;
+                isSubmitting = false;
+                setFormLoadingState(false);
                 return;
               } else if (!data.available) {
                 availabilityDiv.innerHTML = '<span style="color: red;">&#x2718; Niet meer beschikbaar - kies een ander subdomein</span>';
                 document.getElementById('subdomain').value = '';
+                isSubmitting = false;
+                setFormLoadingState(false);
                 return;
               }
 
               // Available - proceed with submission
               document.getElementById('subdomain').value = subdomain;
+              availabilityDiv.innerHTML = '<span style="color: green;">&#x2714; Project wordt aangemaakt...</span>';
               projectForm.submit();
             } catch (error) {
+              isSubmitting = false;
+              setFormLoadingState(false);
               // Allow submission on network error but warn user
               if (confirm('Kon beschikbaarheid niet controleren. Toch doorgaan?')) {
+                isSubmitting = true;
+                setFormLoadingState(true);
                 document.getElementById('subdomain').value = subdomain;
                 projectForm.submit();
               }
@@ -1027,6 +1101,28 @@ Available variables depend on selected services:
           });
         }
       });
+
+      // Set loading state for the form (disable buttons, show spinner)
+      function setFormLoadingState(loading) {
+        // Find the submit button within c-action-group
+        const actionGroup = document.querySelector('c-action-group');
+        if (actionGroup) {
+          // Disable/enable the action group by adding a class
+          if (loading) {
+            actionGroup.style.opacity = '0.6';
+            actionGroup.style.pointerEvents = 'none';
+          } else {
+            actionGroup.style.opacity = '1';
+            actionGroup.style.pointerEvents = 'auto';
+          }
+        }
+
+        // Also disable all form inputs during submission to prevent edits
+        const formInputs = document.querySelectorAll('#project-form input, #project-form select, #project-form textarea');
+        formInputs.forEach(input => {
+          input.disabled = loading;
+        });
+      }
 
       function addUserRow() {
         userCount++;
@@ -1078,23 +1174,34 @@ Available variables depend on selected services:
         const template = container.querySelector('.component-item');
         const newComponent = template.cloneNode(true);
 
+        // Use 0-based index for array names and root input IDs
+        const newArrayIndex = componentCount - 1;
+
         // Update all IDs and names with new component index
         newComponent.querySelectorAll('input, select, textarea').forEach(element => {
           if (element.id) {
-            // Replace component number in ID (e.g., component-type-1 -> component-type-2)
-            element.id = element.id.replace(/-\d+/, `-${componentCount}`);
+            // Special handling for root hidden input - use 0-based index to match radio button value
+            if (element.id.startsWith('component-root-hidden-')) {
+              element.id = `component-root-hidden-${newArrayIndex}`;
+            } else {
+              // Other elements use 1-based display index (e.g., component-type-1 -> component-type-2)
+              element.id = element.id.replace(/-\d+/, `-${componentCount}`);
+            }
           }
           if (element.name) {
             // Replace array index in name (e.g., components[0][type] -> components[1][type])
-            element.name = element.name.replace(/\[\d+\]/, `[${componentCount - 1}]`);
+            element.name = element.name.replace(/\[\d+\]/, `[${newArrayIndex}]`);
           }
           // Clear values
           if (element.type === 'checkbox') {
             element.checked = false;
-          } else if (element.type === 'radio' && element.name === 'root-component') {
-            // Update radio button value to new component index and uncheck
-            element.value = String(componentCount - 1);
+          } else if (element.type === 'radio' && element.name === 'root-component-selection') {
+            // Update radio button value to new component index (0-based) and uncheck
+            element.value = String(newArrayIndex);
             element.checked = false;
+          } else if (element.type === 'hidden' && element.name && element.name.endsWith('[root]')) {
+            // Reset hidden root input to false for new component
+            element.value = 'false';
           } else {
             element.value = '';
           }
@@ -1102,8 +1209,15 @@ Available variables depend on selected services:
 
         // Update labels to reference new IDs
         newComponent.querySelectorAll('label').forEach(label => {
-          if (label.getAttribute('for')) {
-            label.setAttribute('for', label.getAttribute('for').replace(/-\d+/, `-${componentCount}`));
+          const forAttr = label.getAttribute('for');
+          if (forAttr) {
+            // Special handling for root radio label - use 0-based index
+            if (forAttr.startsWith('component-root-') && !forAttr.includes('hidden')) {
+              label.setAttribute('for', `component-root-${newArrayIndex}`);
+            } else {
+              // Other labels use 1-based display index
+              label.setAttribute('for', forAttr.replace(/-\d+/, `-${componentCount}`));
+            }
           }
         });
 

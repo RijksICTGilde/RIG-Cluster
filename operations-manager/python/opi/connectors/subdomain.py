@@ -354,22 +354,25 @@ def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str 
         - Cannot be a reserved subdomain
     """
     # Dutch error messages (default)
+    # NOTE: "reserved" uses the same message as "taken" to prevent information disclosure
+    # (attackers should not be able to enumerate which subdomains are reserved vs in-use)
     messages_nl = {
         "empty": "Subdomein mag niet leeg zijn",
         "too_short": f"Subdomein moet minimaal {SUBDOMAIN_MIN_LENGTH} teken(s) bevatten",
         "too_long": f"Subdomein mag maximaal {SUBDOMAIN_MAX_LENGTH} tekens bevatten",
-        "reserved": "'{subdomain}' is een gereserveerd subdomein en kan niet worden gebruikt",
+        "reserved": "Subdomein '{subdomain}' is niet beschikbaar",  # Generic to prevent enumeration
         "start_hyphen": "Subdomein mag niet beginnen met een koppelteken",
         "end_hyphen": "Subdomein mag niet eindigen met een koppelteken",
         "invalid_chars": "Subdomein mag alleen kleine letters (a-z), cijfers (0-9) en koppeltekens (-) bevatten",
     }
 
     # English error messages
+    # NOTE: "reserved" uses the same message as "taken" to prevent information disclosure
     messages_en = {
         "empty": "Subdomain cannot be empty",
         "too_short": f"Subdomain must be at least {SUBDOMAIN_MIN_LENGTH} character(s)",
         "too_long": f"Subdomain cannot exceed {SUBDOMAIN_MAX_LENGTH} characters",
-        "reserved": "'{subdomain}' is a reserved subdomain and cannot be used",
+        "reserved": "Subdomain '{subdomain}' is not available",  # Generic to prevent enumeration
         "start_hyphen": "Subdomain cannot start with a hyphen",
         "end_hyphen": "Subdomain cannot end with a hyphen",
         "invalid_chars": "Subdomain can only contain lowercase letters (a-z), numbers (0-9), and hyphens (-)",
@@ -741,10 +744,14 @@ class SubdomainConnector:
         """Register a subdomain or update if the deployment's subdomain has changed.
 
         This method handles the case where a deployment's subdomain configuration changes.
-        It will:
+        It uses a database transaction to ensure atomicity - if the new subdomain registration
+        fails, the old subdomain is preserved (not lost).
+
+        The method will:
         1. Check if the deployment already has a subdomain registration
         2. If the subdomain hasn't changed, return the existing registration
-        3. If the subdomain has changed, delete the old registration and create a new one
+        3. If the subdomain has changed, atomically delete the old and insert the new
+           within a transaction to prevent data loss on failure
 
         Args:
             subdomain: The new/current subdomain
@@ -762,8 +769,18 @@ class SubdomainConnector:
             BaseDomainValidationError: If the base domain is not supported
             SubdomainNotAvailableError: If the new subdomain is already taken by another project
         """
+        # Validate subdomain format first (before any DB operations)
+        is_valid, error_message = validate_subdomain(subdomain)
+        if not is_valid:
+            raise SubdomainValidationError(error_message)
+
         subdomain_lower = subdomain.lower()
         base_domain_lower = base_domain.lower()
+
+        # Validate base domain against supported domains for this cluster
+        is_valid, error_message = validate_base_domain(base_domain_lower, cluster)
+        if not is_valid:
+            raise BaseDomainValidationError(error_message)
 
         # Check if this deployment already has a registration
         existing = await self.get_by_deployment(project_name, deployment_name)
@@ -778,14 +795,25 @@ class SubdomainConnector:
                 )
                 return existing
 
-            # Subdomain changed - delete old registration first
+            # Subdomain changed - use atomic transaction to prevent data loss
+            # If new subdomain registration fails, old subdomain is preserved
             logger.info(
                 f"Subdomain changed from '{existing['subdomain']}.{existing['base_domain']}' to "
                 f"'{subdomain_lower}.{base_domain_lower}' for deployment '{project_name}/{deployment_name}'"
             )
-            await self.delete(existing["subdomain"], existing["base_domain"])
 
-        # Register the new subdomain
+            return await self._atomic_subdomain_change(
+                old_subdomain=existing["subdomain"],
+                old_base_domain=existing["base_domain"],
+                new_subdomain=subdomain_lower,
+                new_base_domain=base_domain_lower,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=cluster,
+                created_by=created_by,
+            )
+
+        # No existing registration - register the new subdomain
         return await self.register(
             subdomain=subdomain,
             base_domain=base_domain,
@@ -794,6 +822,111 @@ class SubdomainConnector:
             cluster=cluster,
             created_by=created_by,
         )
+
+    async def _atomic_subdomain_change(
+        self,
+        old_subdomain: str,
+        old_base_domain: str,
+        new_subdomain: str,
+        new_base_domain: str,
+        project_name: str,
+        deployment_name: str,
+        cluster: str,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomically change a deployment's subdomain within a transaction.
+
+        This ensures that if the new subdomain registration fails (e.g., already taken),
+        the old subdomain is preserved and not lost.
+
+        Args:
+            old_subdomain: The existing subdomain to delete
+            old_base_domain: The existing base domain
+            new_subdomain: The new subdomain to register
+            new_base_domain: The new base domain
+            project_name: The project name
+            deployment_name: The deployment name
+            cluster: The cluster
+            created_by: Optional creator identifier
+
+        Returns:
+            Dictionary with the new registration details
+
+        Raises:
+            SubdomainNotAvailableError: If the new subdomain is already taken
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            # Start transaction
+            async with conn.transaction():
+                # Step 1: Check if the new subdomain is available (within transaction)
+                existing_new = await conn.fetchval(
+                    f"""
+                    SELECT 1 FROM {self.TABLE_NAME}
+                    WHERE subdomain = $1 AND base_domain = $2
+                    """,
+                    new_subdomain,
+                    new_base_domain,
+                )
+
+                if existing_new is not None:
+                    # New subdomain is taken - transaction will rollback, old subdomain preserved
+                    raise SubdomainNotAvailableError(
+                        f"Subdomein '{new_subdomain}.{new_base_domain}' is niet beschikbaar"
+                    )
+
+                # Step 2: Delete the old subdomain registration
+                await conn.execute(
+                    f"""
+                    DELETE FROM {self.TABLE_NAME}
+                    WHERE subdomain = $1 AND base_domain = $2
+                    """,
+                    old_subdomain,
+                    old_base_domain,
+                )
+
+                # Step 3: Insert the new subdomain registration
+                result = await conn.fetchrow(
+                    f"""
+                    INSERT INTO {self.TABLE_NAME}
+                    (subdomain, base_domain, project_name, deployment_name, cluster, created_by)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                    """,
+                    new_subdomain,
+                    new_base_domain,
+                    project_name,
+                    deployment_name,
+                    cluster,
+                    created_by,
+                )
+
+                # Transaction commits here if no exception
+
+            # Log success after transaction commits
+            logger.info(
+                f"Atomically changed subdomain from '{old_subdomain}.{old_base_domain}' to "
+                f"'{new_subdomain}.{new_base_domain}' for deployment '{project_name}/{deployment_name}'"
+            )
+            audit_logger.info(
+                f"SUBDOMAIN_CHANGED: {old_subdomain}.{old_base_domain} -> {new_subdomain}.{new_base_domain} "
+                f"project={project_name} deployment={deployment_name} cluster={cluster}"
+            )
+
+            return dict(result)
+
+        except SubdomainNotAvailableError:
+            # Re-raise availability errors (transaction already rolled back)
+            raise
+        except Exception as e:
+            logger.exception(
+                f"Failed to atomically change subdomain from '{old_subdomain}.{old_base_domain}' to "
+                f"'{new_subdomain}.{new_base_domain}'"
+            )
+            raise SubdomainError(f"Subdomain change failed: {e}") from e
+        finally:
+            await pool.release(conn)
 
     async def update(
         self,

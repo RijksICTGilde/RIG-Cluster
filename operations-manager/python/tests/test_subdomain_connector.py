@@ -373,12 +373,17 @@ class TestValidateSubdomain:
         assert is_valid is True  # Gets lowercased to my-app which is valid
 
     def test_reserved_subdomains(self):
-        """Reserved subdomains fail validation."""
+        """Reserved subdomains fail validation with generic 'not available' message.
+
+        NOTE: Error message is intentionally generic to prevent enumeration attacks.
+        Attackers should not be able to distinguish reserved from taken subdomains.
+        """
         reserved_examples = ["www", "api", "admin", "mail"]
         for subdomain in reserved_examples:
             is_valid, error = validate_subdomain(subdomain)
             assert is_valid is False, f"'{subdomain}' is reserved"
-            assert "gereserveerd" in error.lower()  # Dutch: "is een gereserveerd subdomein"
+            # Generic error message - no "gereserveerd" to prevent enumeration
+            assert "niet beschikbaar" in error.lower()  # Dutch: "is niet beschikbaar"
 
     def test_reserved_subdomains_are_defined(self):
         """RESERVED_SUBDOMAINS contains expected entries."""
@@ -409,7 +414,10 @@ class TestSubdomainValidationInRegister:
 
     @pytest.mark.asyncio
     async def test_register_rejects_reserved_subdomain(self):
-        """register raises SubdomainValidationError for reserved subdomain."""
+        """register raises SubdomainValidationError for reserved subdomain.
+
+        NOTE: Error message is intentionally generic to prevent enumeration attacks.
+        """
         connector = SubdomainConnector()
 
         with pytest.raises(SubdomainValidationError) as exc_info:
@@ -421,7 +429,8 @@ class TestSubdomainValidationInRegister:
                 cluster="local",
             )
 
-        assert "gereserveerd" in str(exc_info.value).lower()  # Dutch: "is een gereserveerd subdomein"
+        # Generic error message - no "gereserveerd" to prevent enumeration
+        assert "niet beschikbaar" in str(exc_info.value).lower()  # Dutch: "is niet beschikbaar"
 
 
 class TestValidateBaseDomain:
