@@ -114,6 +114,11 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
         issuer = str(form_data.get("issuer", "")).strip() or None
         contact_email = str(form_data.get("contact-email", "")).strip() or None
 
+        # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
+        if domain_mode == "nice-url" and base_domain and not issuer:
+            issuer = "letsencrypt"
+            logger.info(f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{base_domain}'")
+
         if not display_name or not cluster:
             raise HTTPException(status_code=400, detail="Project name and cluster are required")
 
@@ -1701,17 +1706,23 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                 if domain_mode == "nice-url":
                     yaml_dep["subdomain"] = subdomain
                     yaml_dep["base-domain"] = base_domain
+                    # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
+                    yaml_dep["issuer"] = "letsencrypt"
                 elif domain_mode == "custom":
                     yaml_dep["subdomain"] = subdomain
-                    # Remove base-domain for custom mode
+                    # Remove base-domain and issuer for custom mode
                     if "base-domain" in yaml_dep:
                         del yaml_dep["base-domain"]
+                    if "issuer" in yaml_dep:
+                        del yaml_dep["issuer"]
                 else:
-                    # Remove subdomain and base-domain for other modes
+                    # Remove subdomain, base-domain, and issuer for other modes
                     if "subdomain" in yaml_dep:
                         del yaml_dep["subdomain"]
                     if "base-domain" in yaml_dep:
                         del yaml_dep["base-domain"]
+                    if "issuer" in yaml_dep:
+                        del yaml_dep["issuer"]
 
                 # Handle root component
                 for comp in yaml_dep.get("components", []):

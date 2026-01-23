@@ -1426,6 +1426,11 @@ async def create_self_service_project(
                 detail="Project name must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
             )
 
+        # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
+        if project_data.domain_mode == "nice-url" and project_data.base_domain and not project_data.issuer:
+            project_data.issuer = "letsencrypt"
+            logger.info(f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{project_data.base_domain}'")
+
         # Generate YAML content from self-service form data
         yaml_content = await generate_self_service_project_yaml(project_data)
 
