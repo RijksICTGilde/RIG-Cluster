@@ -423,6 +423,62 @@ class CloneBucketFromExternalRequest(BaseModel):
     }
 
 
+class DeploymentDomainSettingsRequest(BaseModel):
+    """Request model for updating deployment domain settings."""
+
+    domain_mode: str = Field(
+        ...,
+        description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
+        example="nice-url",
+    )
+    subdomain: str | None = Field(
+        None,
+        description="Subdomain for nice-url or custom mode",
+        example="myapp",
+    )
+    base_domain: str | None = Field(
+        None,
+        description="Base domain for nice-url mode (e.g., 'rijks.app')",
+        example="rijks.app",
+    )
+    root_component: str | None = Field(
+        None,
+        description="Component reference to mark as root (receives / path)",
+        example="frontend",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "domain_mode": "nice-url",
+                    "subdomain": "myapp",
+                    "base_domain": "rijks.app",
+                    "root_component": "frontend",
+                },
+                {
+                    "domain_mode": "component-specific",
+                },
+            ]
+        }
+    }
+
+
+class DeploymentDomainSettingsResponse(BaseModel):
+    """Response model for deployment domain settings."""
+
+    deployment_name: str = Field(..., description="Name of the deployment")
+    cluster: str = Field(..., description="Cluster where deployment runs")
+    domain_mode: str | None = Field(None, description="Current URL mode")
+    subdomain: str | None = Field(None, description="Current subdomain (if nice-url or custom)")
+    base_domain: str | None = Field(None, description="Current base domain (if nice-url)")
+    root_component: str | None = Field(None, description="Component marked as root")
+    components: list[dict] = Field(default_factory=list, description="List of components in deployment")
+    supported_base_domains: list[dict] = Field(
+        default_factory=list, description="Supported base domains for this cluster"
+    )
+
+
 class SelfServiceComponent(BaseModel):
     type: str  # "deployment", "cronjob", "daemonset"
     port: int | None = None

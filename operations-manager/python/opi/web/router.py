@@ -1255,6 +1255,11 @@ async def project_details(request: Request, project_name: str):
                                 f"Failed to generate ingress links for component {component['name']} in deployment {deployment['name']}: {ingress_error}"
                             )
 
+        # Get cluster base domains for domain settings modal
+        from opi.web.router_self_service import get_cluster_base_domains_for_template
+
+        cluster_base_domains = get_cluster_base_domains_for_template()
+
         return templates.TemplateResponse(
             "project-details.html.j2",
             {
@@ -1273,6 +1278,7 @@ async def project_details(request: Request, project_name: str):
                 "deployment_backups": deployment_backups,
                 "backups_available": backups_available,
                 "current_cluster": current_cluster,
+                "cluster_base_domains": cluster_base_domains,
             },
         )
 
@@ -1297,6 +1303,589 @@ async def project_details(request: Request, project_name: str):
                 error_msg += f"\nSource: {lines[line_num].strip()}"
 
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+
+
+@web_router.get("/projects/{project_name}/deployments/{deployment_name}/domain-settings")
+@requires_sso
+async def get_deployment_domain_settings(request: Request, project_name: str, deployment_name: str):
+    """
+    Get current domain settings for a deployment.
+
+    This endpoint returns the current domain configuration for a specific deployment,
+    including domain mode, subdomain, base domain, and component information.
+
+    Args:
+        request: The FastAPI request object
+        project_name: Name of the project
+        deployment_name: Name of the deployment
+
+    Returns:
+        JSON response with domain settings
+    """
+    from fastapi.responses import JSONResponse
+
+    from opi.api.router import DeploymentDomainSettingsResponse
+    from opi.services.project_service import get_project_service
+    from opi.web.router_self_service import get_cluster_base_domains_for_template
+
+    try:
+        user = get_current_user(request)
+        user_email = user.get("email", "").lower()
+
+        # Get project service to validate access
+        project_service = get_project_service()
+
+        # Check if user has access to this project
+        if not project_service.is_user_authorized_for_project(project_name, user_email):
+            logger.warning(f"User {user_email} not authorized to access project: {project_name}")
+            raise HTTPException(status_code=403, detail="You are not authorized to access this project")
+
+        # Get project details
+        project = project_service.get_project(project_name)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+        # === PATH TRAVERSAL PROTECTION ===
+        _validate_path_safe(project.filename)
+
+        project_data = project.data or {}
+
+        # Find the deployment
+        deployments = project_data.get("deployments", [])
+        deployment = None
+        for dep in deployments:
+            if dep.get("name") == deployment_name:
+                deployment = dep
+                break
+
+        if not deployment:
+            raise HTTPException(
+                status_code=404, detail=f"Deployment '{deployment_name}' not found in project '{project_name}'"
+            )
+
+        # Extract domain settings from deployment
+        cluster = deployment.get("cluster", "")
+        domain_mode = deployment.get("domain-mode")
+        subdomain = deployment.get("subdomain")
+        base_domain = deployment.get("base-domain")
+
+        # Find root component (if any)
+        root_component = None
+        components_list = []
+        for comp in deployment.get("components", []):
+            comp_ref = comp.get("reference")
+            is_root = comp.get("root", False)
+            if is_root and comp_ref:
+                root_component = comp_ref
+            if comp_ref:
+                components_list.append({"reference": comp_ref, "root": is_root})
+
+        # Get supported base domains for this cluster
+        cluster_base_domains = get_cluster_base_domains_for_template()
+        supported_domains = cluster_base_domains.get(cluster, [])
+
+        response_data = DeploymentDomainSettingsResponse(
+            deployment_name=deployment_name,
+            cluster=cluster,
+            domain_mode=domain_mode,
+            subdomain=subdomain,
+            base_domain=base_domain,
+            root_component=root_component,
+            components=components_list,
+            supported_base_domains=supported_domains,
+        )
+
+        return JSONResponse(content=response_data.model_dump())
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting domain settings for {project_name}/{deployment_name}: {e!s}")
+        # Don't expose internal error details to the user
+        raise HTTPException(status_code=500, detail="An error occurred while fetching domain settings.")
+
+
+def _validate_csrf_origin(request: Request) -> None:
+    """
+    Validate Origin/Referer header for CSRF protection.
+
+    For SSO-protected endpoints that modify data, we validate that the request
+    originates from our own domain to prevent cross-site request forgery.
+
+    Args:
+        request: The FastAPI request object
+
+    Raises:
+        HTTPException: If Origin/Referer validation fails
+    """
+    from urllib.parse import urlparse
+
+    from opi.core.config import settings
+
+    # Get the host from the request and strip whitespace
+    host = (request.headers.get("host") or "").strip()
+    origin = (request.headers.get("origin") or "").strip()
+    referer = (request.headers.get("referer") or "").strip()
+
+    # At least one of Origin or Referer must be present for POST requests
+    if not origin and not referer:
+        logger.warning("CSRF check failed: No Origin or Referer header present")
+        raise HTTPException(status_code=403, detail="Request rejected: missing origin information")
+
+    # Extract and validate request host (must be non-empty)
+    request_host = (host.split(":")[0] or "").strip()
+    if not request_host:
+        logger.warning("CSRF check failed: Request has empty or missing Host header")
+        raise HTTPException(status_code=403, detail="Request rejected: invalid request")
+
+    # Only allow localhost bypass in DEBUG mode
+    allow_localhost = settings.DEBUG
+
+    # Validate Origin header if present
+    if origin:
+        # Origin should match our host (with or without port)
+        parsed_origin = urlparse(origin)
+        origin_host = (parsed_origin.netloc.split(":")[0] or "").strip()
+
+        # Origin host must be non-empty and match request host
+        if not origin_host:
+            logger.warning(f"CSRF check failed: Origin '{origin}' has empty host")
+            raise HTTPException(status_code=403, detail="Request rejected: invalid origin")
+
+        # Check if origin matches request host (or localhost in debug mode)
+        origin_matches = origin_host == request_host
+        localhost_allowed = allow_localhost and origin_host == "localhost"
+
+        if not origin_matches and not localhost_allowed:
+            logger.warning(f"CSRF check failed: Origin '{origin}' does not match host '{host}'")
+            raise HTTPException(status_code=403, detail="Request rejected: invalid origin")
+
+    # Validate Referer header if Origin not present
+    elif referer:
+        parsed_referer = urlparse(referer)
+        referer_host = (parsed_referer.netloc.split(":")[0] or "").strip()
+
+        # Referer host must be non-empty and match request host
+        if not referer_host:
+            logger.warning(f"CSRF check failed: Referer '{referer}' has empty host")
+            raise HTTPException(status_code=403, detail="Request rejected: invalid referer")
+
+        # Check if referer matches request host (or localhost in debug mode)
+        referer_matches = referer_host == request_host
+        localhost_allowed = allow_localhost and referer_host == "localhost"
+
+        if not referer_matches and not localhost_allowed:
+            logger.warning(f"CSRF check failed: Referer '{referer}' does not match host '{host}'")
+            raise HTTPException(status_code=403, detail="Request rejected: invalid referer")
+
+
+def _validate_path_safe(filename: str) -> None:
+    """
+    Validate that a filename is safe and doesn't contain path traversal sequences.
+
+    Args:
+        filename: The filename to validate
+
+    Raises:
+        HTTPException: If the filename contains path traversal sequences
+    """
+    import os
+
+    # Check for path traversal patterns
+    if ".." in filename:
+        logger.warning(f"Path traversal attempt detected in filename: {filename}")
+        raise HTTPException(status_code=400, detail="Invalid project filename")
+
+    # Check for absolute paths
+    if os.path.isabs(filename):
+        logger.warning(f"Absolute path detected in filename: {filename}")
+        raise HTTPException(status_code=400, detail="Invalid project filename")
+
+    # Check for other dangerous patterns
+    dangerous_patterns = ["//", "\\", "\x00"]
+    for pattern in dangerous_patterns:
+        if pattern in filename:
+            logger.warning(f"Dangerous pattern '{pattern}' detected in filename: {filename}")
+            raise HTTPException(status_code=400, detail="Invalid project filename")
+
+
+@web_router.post("/projects/{project_name}/deployments/{deployment_name}/domain-settings")
+@requires_sso
+async def update_deployment_domain_settings(request: Request, project_name: str, deployment_name: str):
+    """
+    Update domain settings for a deployment.
+
+    This endpoint updates the domain configuration for a specific deployment.
+    It validates subdomain availability (for nice-url mode), updates the project YAML,
+    and re-processes the project to apply changes.
+
+    Security:
+        - Requires SSO authentication
+        - Validates CSRF via Origin/Referer headers
+        - Validates path safety for project filenames
+        - Validates root_component against actual deployment components
+
+    Args:
+        request: The FastAPI request object
+        project_name: Name of the project
+        deployment_name: Name of the deployment
+
+    Returns:
+        JSON response with update status and redirect URL
+    """
+    from fastapi.responses import JSONResponse
+
+    from opi.connectors.git import GitConnector
+    from opi.connectors.subdomain import (
+        create_subdomain_connector,
+        validate_base_domain,
+        validate_subdomain,
+    )
+    from opi.core.config import settings
+    from opi.manager.project_manager import create_project_manager
+    from opi.services.project_service import get_project_service
+
+    # Track state for rollback
+    original_yaml_content: str | None = None
+    git_committed = False
+    subdomain_registered = False
+    old_subdomain_info: dict | None = None
+
+    try:
+        # === CSRF PROTECTION ===
+        _validate_csrf_origin(request)
+
+        user = get_current_user(request)
+        user_email = user.get("email", "").lower()
+
+        # Get project service to validate access
+        project_service = get_project_service()
+
+        # Check if user has access to this project
+        if not project_service.is_user_authorized_for_project(project_name, user_email):
+            logger.warning(f"User {user_email} not authorized to access project: {project_name}")
+            raise HTTPException(status_code=403, detail="You are not authorized to access this project")
+
+        # Check if user has admin or owner role
+        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        if user_role not in ["admin", "owner"]:
+            logger.warning(f"User {user_email} with role '{user_role}' cannot edit domain settings: {project_name}")
+            raise HTTPException(
+                status_code=403, detail=f"Only admin or owner roles can edit domain settings. Your role: {user_role}"
+            )
+
+        # Parse form data
+        form_data = await request.form()
+        domain_mode = str(form_data.get("domain-mode", "")).strip()
+        subdomain = str(form_data.get("subdomain", "")).strip() or None
+        base_domain = str(form_data.get("base-domain", "")).strip() or None
+        root_component = str(form_data.get("root-component", "")).strip() or None
+
+        # Validate domain mode
+        valid_modes = ["component-specific", "deployment-name", "custom", "nice-url"]
+        if domain_mode not in valid_modes:
+            raise HTTPException(status_code=400, detail=f"Invalid domain mode. Valid modes: {', '.join(valid_modes)}")
+
+        # Get project details
+        project = project_service.get_project(project_name)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+        # === PATH TRAVERSAL PROTECTION ===
+        _validate_path_safe(project.filename)
+
+        project_data = project.data or {}
+
+        # Find the deployment
+        deployments = project_data.get("deployments", [])
+        deployment = None
+        for dep in deployments:
+            if dep.get("name") == deployment_name:
+                deployment = dep
+                break
+
+        if not deployment:
+            raise HTTPException(
+                status_code=404, detail=f"Deployment '{deployment_name}' not found in project '{project_name}'"
+            )
+
+        cluster = deployment.get("cluster", "")
+
+        # === VALIDATE ROOT COMPONENT ===
+        # Get list of valid component references for this deployment
+        deployment_components = deployment.get("components", [])
+        valid_component_refs = {comp.get("reference") for comp in deployment_components if comp.get("reference")}
+
+        if root_component and root_component not in valid_component_refs:
+            logger.warning(
+                f"Invalid root_component '{root_component}' for deployment '{deployment_name}'. "
+                f"Valid components: {valid_component_refs}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid root component. Must be one of: {', '.join(sorted(valid_component_refs)) or 'none available'}",
+            )
+
+        # === CAPTURE EXISTING SUBDOMAIN INFO FOR ROLLBACK ===
+        # This must happen BEFORE we check domain_mode, so we can restore if switching away from nice-url
+        subdomain_connector = create_subdomain_connector()
+        existing_subdomain = await subdomain_connector.get_by_deployment(project_name, deployment_name)
+        if existing_subdomain:
+            old_subdomain_info = existing_subdomain  # Store for potential rollback
+
+        # Validate nice-url settings if nice-url mode is selected
+        if domain_mode == "nice-url":
+            if not subdomain:
+                raise HTTPException(status_code=400, detail="Subdomain is required for nice-url mode")
+            if not base_domain:
+                raise HTTPException(status_code=400, detail="Base domain is required for nice-url mode")
+
+            # Validate subdomain format
+            is_valid, error_msg = validate_subdomain(subdomain)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=error_msg)
+
+            # Validate base domain
+            is_valid, error_msg = validate_base_domain(base_domain, cluster)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=error_msg)
+
+            # Check subdomain availability (allow if already registered to this deployment)
+            if existing_subdomain:
+                # Check if subdomain changed
+                if existing_subdomain["subdomain"] != subdomain.lower() or existing_subdomain["base_domain"] != base_domain.lower():
+                    # Check if new subdomain is available
+                    is_available = await subdomain_connector.check_availability(subdomain, base_domain)
+                    if not is_available:
+                        raise HTTPException(
+                            status_code=400, detail=f"Subdomain '{subdomain}.{base_domain}' is not available"
+                        )
+            else:
+                # No existing registration, check availability
+                is_available = await subdomain_connector.check_availability(subdomain, base_domain)
+                if not is_available:
+                    raise HTTPException(
+                        status_code=400, detail=f"Subdomain '{subdomain}.{base_domain}' is not available"
+                    )
+
+        # Create Git connector for projects repository
+        git_connector = GitConnector(
+            repo_url=settings.GIT_PROJECTS_SERVER_URL,
+            username=settings.GIT_PROJECTS_SERVER_USERNAME,
+            password=settings.GIT_PROJECTS_SERVER_PASSWORD,
+            branch=settings.GIT_PROJECTS_SERVER_BRANCH,
+            repo_path=settings.GIT_PROJECTS_SERVER_REPO_PATH,
+        )
+
+        # Load current YAML content (store for potential rollback)
+        project_file_path = f"projects/{project.filename}"
+        original_yaml_content = await git_connector.read_file(project_file_path)
+
+        # Update YAML using ruamel.yaml to preserve structure
+        from io import StringIO
+
+        from ruamel.yaml import YAML
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        project_yaml = yaml.load(StringIO(original_yaml_content))
+
+        # Find and update deployment
+        yaml_deployments = project_yaml.get("deployments", [])
+        for yaml_dep in yaml_deployments:
+            if yaml_dep.get("name") == deployment_name:
+                # Update domain settings
+                yaml_dep["domain-mode"] = domain_mode
+
+                # Handle subdomain and base-domain based on mode
+                if domain_mode == "nice-url":
+                    yaml_dep["subdomain"] = subdomain
+                    yaml_dep["base-domain"] = base_domain
+                elif domain_mode == "custom":
+                    yaml_dep["subdomain"] = subdomain
+                    # Remove base-domain for custom mode
+                    if "base-domain" in yaml_dep:
+                        del yaml_dep["base-domain"]
+                else:
+                    # Remove subdomain and base-domain for other modes
+                    if "subdomain" in yaml_dep:
+                        del yaml_dep["subdomain"]
+                    if "base-domain" in yaml_dep:
+                        del yaml_dep["base-domain"]
+
+                # Handle root component
+                for comp in yaml_dep.get("components", []):
+                    # Clear existing root flags
+                    if "root" in comp:
+                        del comp["root"]
+                    # Set root flag on selected component
+                    if root_component and comp.get("reference") == root_component:
+                        comp["root"] = True
+
+                break
+
+        # Write updated YAML to string
+        stream = StringIO()
+        yaml.dump(project_yaml, stream)
+        updated_yaml = stream.getvalue()
+
+        # === STEP 1: Save to git ===
+        # Sanitize commit message by removing potentially dangerous characters
+        safe_deployment_name = "".join(c for c in deployment_name if c.isalnum() or c in "-_")
+        safe_project_name = "".join(c for c in project_name if c.isalnum() or c in "-_")
+
+        await git_connector.create_or_update_file(
+            project_file_path,
+            updated_yaml,
+            overwrite=True,
+            commit_message=f"Update domain settings for deployment '{safe_deployment_name}' in project '{safe_project_name}'",
+        )
+        git_committed = True
+        logger.info(f"Updated domain settings for {project_name}/{deployment_name} by {user_email}")
+
+        # === STEP 2: Register/update subdomain ===
+        # Track whether we deleted an existing subdomain (for rollback)
+        subdomain_deleted = False
+
+        try:
+            if domain_mode == "nice-url":
+                # Reuse the subdomain_connector created earlier
+                await subdomain_connector.register_or_update_for_deployment(
+                    subdomain=subdomain,
+                    base_domain=base_domain,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    created_by=user_email,
+                )
+                subdomain_registered = True
+                logger.info(f"Registered subdomain '{subdomain}.{base_domain}' for {project_name}/{deployment_name}")
+            else:
+                # If switching away from nice-url, delete any existing subdomain registration
+                # Reuse the subdomain_connector created earlier
+                deleted = await subdomain_connector.delete_by_deployment(project_name, deployment_name)
+                if deleted:
+                    subdomain_deleted = True
+                    logger.info(f"Deleted subdomain registration for {project_name}/{deployment_name}")
+        except Exception as subdomain_error:
+            logger.error(f"Subdomain registration failed: {subdomain_error}")
+
+            # Rollback git commit first
+            if git_committed and original_yaml_content:
+                try:
+                    await git_connector.create_or_update_file(
+                        project_file_path,
+                        original_yaml_content,
+                        overwrite=True,
+                        commit_message=f"Rollback domain settings for '{safe_deployment_name}' (subdomain registration failed)",
+                    )
+                    logger.info(f"Rolled back git commit for {project_name}/{deployment_name}")
+                except Exception as rollback_error:
+                    logger.error(f"Failed to rollback git commit: {rollback_error}")
+
+            # Restore deleted subdomain if we deleted one before the error
+            if subdomain_deleted and old_subdomain_info:
+                try:
+                    await subdomain_connector.register_or_update_for_deployment(
+                        subdomain=old_subdomain_info["subdomain"],
+                        base_domain=old_subdomain_info["base_domain"],
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        cluster=old_subdomain_info["cluster"],
+                        created_by=user_email,
+                    )
+                    logger.info(f"Restored deleted subdomain for {project_name}/{deployment_name}")
+                except Exception as restore_error:
+                    logger.error(f"Failed to restore deleted subdomain: {restore_error}")
+
+            raise HTTPException(
+                status_code=500, detail="Failed to register subdomain. Changes have been rolled back."
+            )
+
+        # === STEP 3: Re-process project to apply changes ===
+        project_manager = create_project_manager()
+        try:
+            processing_result = await project_manager.process_project_from_git(
+                project_file_path, deployment_name=deployment_name
+            )
+            logger.info(f"Re-processed project {project_name} after domain settings update: {processing_result}")
+        except Exception as processing_error:
+            logger.error(f"Project re-processing failed: {processing_error}")
+
+            # Rollback in reverse order of operations:
+            # 1. First rollback git (was step 1)
+            # 2. Then rollback subdomain (was step 2)
+            # This ensures consistent state even if one rollback fails
+
+            # Rollback git commit first
+            if git_committed and original_yaml_content:
+                try:
+                    await git_connector.create_or_update_file(
+                        project_file_path,
+                        original_yaml_content,
+                        overwrite=True,
+                        commit_message=f"Rollback domain settings for '{safe_deployment_name}' (processing failed)",
+                    )
+                    logger.info(f"Rolled back git commit for {project_name}/{deployment_name}")
+                except Exception as git_rollback_error:
+                    logger.error(f"Failed to rollback git commit: {git_rollback_error}")
+
+            # Rollback subdomain changes (reuse existing subdomain_connector)
+            try:
+                if subdomain_registered and domain_mode == "nice-url":
+                    # We registered a new subdomain - need to undo that
+                    if old_subdomain_info:
+                        # Restore old subdomain (was changed)
+                        await subdomain_connector.register_or_update_for_deployment(
+                            subdomain=old_subdomain_info["subdomain"],
+                            base_domain=old_subdomain_info["base_domain"],
+                            project_name=project_name,
+                            deployment_name=deployment_name,
+                            cluster=old_subdomain_info["cluster"],
+                            created_by=user_email,
+                        )
+                        logger.info(f"Restored old subdomain for {project_name}/{deployment_name}")
+                    else:
+                        # Delete newly registered subdomain (there was no old one)
+                        await subdomain_connector.delete_by_deployment(project_name, deployment_name)
+                        logger.info(f"Deleted new subdomain for {project_name}/{deployment_name}")
+
+                elif subdomain_deleted and old_subdomain_info:
+                    # We deleted an existing subdomain when switching away from nice-url
+                    # Need to restore it
+                    await subdomain_connector.register_or_update_for_deployment(
+                        subdomain=old_subdomain_info["subdomain"],
+                        base_domain=old_subdomain_info["base_domain"],
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        cluster=old_subdomain_info["cluster"],
+                        created_by=user_email,
+                    )
+                    logger.info(f"Restored deleted subdomain for {project_name}/{deployment_name}")
+
+            except Exception as subdomain_rollback_error:
+                logger.error(f"Failed to rollback subdomain changes: {subdomain_rollback_error}")
+
+            raise HTTPException(
+                status_code=500, detail="Failed to apply changes. Settings have been rolled back."
+            )
+        finally:
+            await project_manager.close()
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": f"Domain settings updated successfully for deployment '{deployment_name}'",
+                "redirect_url": f"/projects/details/{project_name}",
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating domain settings for {project_name}/{deployment_name}: {e!s}")
+        # Don't expose internal error details to the user
+        raise HTTPException(status_code=500, detail="An error occurred while updating domain settings. Please try again.")
 
 
 @web_router.get("/projects", response_class=HTMLResponse)
