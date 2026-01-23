@@ -889,8 +889,8 @@ Available variables depend on selected services:
             // Copy to the main subdomain field for form submission
             document.getElementById('subdomain').value = subdomain;
           } else {
-            // Already taken by another project - show in red
-            const errorMessage = getErrorMessage(data.error_code, 'Al in gebruik door een ander project');
+            // Not available (taken or reserved) - show in red with generic message
+            const errorMessage = getErrorMessage(data.error_code, 'Subdomein niet beschikbaar');
             availabilityDiv.innerHTML = `<span class="rvo-text--error">&#x2718; ${errorMessage}</span>`;
             document.getElementById('subdomain').value = '';
           }

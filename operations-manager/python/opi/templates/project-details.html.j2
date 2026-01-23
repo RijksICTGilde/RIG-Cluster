@@ -3156,6 +3156,7 @@
     }
 
     // Error code to Dutch message mapping (for robust translation)
+    // NOTE: All "not available" codes use the same generic message to prevent enumeration attacks
     const errorCodeTranslations = {
         'SUBDOMAIN_EMPTY': 'Subdomein mag niet leeg zijn',
         'SUBDOMAIN_TOO_SHORT': 'Subdomein is te kort',
@@ -3163,9 +3164,10 @@
         'SUBDOMAIN_INVALID_START': 'Mag niet beginnen met een streepje',
         'SUBDOMAIN_INVALID_END': 'Mag niet eindigen met een streepje',
         'SUBDOMAIN_INVALID_CHARS': 'Alleen kleine letters, cijfers en streepjes toegestaan',
-        'SUBDOMAIN_RESERVED': 'Dit subdomein is gereserveerd',
+        'SUBDOMAIN_NOT_AVAILABLE': 'Subdomein niet beschikbaar',  // Generic for both reserved and taken
+        'SUBDOMAIN_RESERVED': 'Subdomein niet beschikbaar',  // Legacy - same as NOT_AVAILABLE
         'SUBDOMAIN_INVALID': 'Ongeldig subdomein formaat',
-        'SUBDOMAIN_TAKEN': 'Al in gebruik door een ander project',
+        'SUBDOMAIN_TAKEN': 'Subdomein niet beschikbaar',  // Same as NOT_AVAILABLE
         'INVALID_BASE_DOMAIN': 'Ongeldig base domain',
         'UNKNOWN_ERROR': 'Onbekende fout'
     };
@@ -3259,7 +3261,8 @@
                 if (settingsData.subdomain === subdomain.toLowerCase() && settingsData.base_domain === baseDomain.toLowerCase()) {
                     setAvailabilityMessage(availabilityDiv, 'vinkje', 'groen', 'Beschikbaar (huidige configuratie)', 'available');
                 } else {
-                    setAvailabilityMessage(availabilityDiv, 'kruis', 'rood', 'Niet beschikbaar (al in gebruik)', 'unavailable');
+                    // Generic message - don't reveal whether taken or reserved
+                    setAvailabilityMessage(availabilityDiv, 'kruis', 'rood', 'Niet beschikbaar', 'unavailable');
                 }
             }
         } catch (error) {
