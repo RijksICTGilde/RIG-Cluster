@@ -1529,16 +1529,17 @@
 
     <form id="domain-settings-form" onsubmit="submitDomainSettings(event)">
         <input type="hidden" id="domain-settings-deployment" name="deployment-name" />
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
         <c-layout-flow gap="lg">
             {# Domain Mode Select #}
             <div class="form-field">
                 <label for="edit-domain-mode" class="form-label">URL Modus</label>
                 <select id="edit-domain-mode" name="domain-mode" class="form-select" onchange="handleDomainModeChange()">
-                    <option value="component-specific">Component-specifiek (standaard)</option>
-                    <option value="deployment-name">Deployment naam</option>
-                    <option value="nice-url">Mooi URL (subdomein)</option>
-                    <option value="custom">Aangepast</option>
+                    <option value="component-specific">Component-specifiek (standaard) — bijv. frontend.mijnproject-staging.odcn.nl</option>
+                    <option value="deployment-name">Deployment-naam — bijv. staging.mijnproject.odcn.nl</option>
+                    <option value="nice-url">Eigen subdomein — bijv. frontend.mijnapp.rijks.app (root: mijnapp.rijks.app)</option>
+                    <option value="custom">Aangepast subdomein — bijv. custom-subdomain.odcn.nl</option>
                 </select>
                 <p class="form-help">Bepaalt hoe URLs worden gegenereerd voor deze deployment</p>
             </div>
@@ -3146,6 +3147,25 @@
         }
     }
 
+    // Error code to Dutch message mapping (for robust translation)
+    const errorCodeTranslations = {
+        'SUBDOMAIN_EMPTY': 'Subdomein mag niet leeg zijn',
+        'SUBDOMAIN_TOO_SHORT': 'Subdomein is te kort',
+        'SUBDOMAIN_TOO_LONG': 'Maximaal 63 tekens toegestaan',
+        'SUBDOMAIN_INVALID_START': 'Mag niet beginnen met een streepje',
+        'SUBDOMAIN_INVALID_END': 'Mag niet eindigen met een streepje',
+        'SUBDOMAIN_INVALID_CHARS': 'Alleen kleine letters, cijfers en streepjes toegestaan',
+        'SUBDOMAIN_RESERVED': 'Dit subdomein is gereserveerd',
+        'SUBDOMAIN_INVALID': 'Ongeldig subdomein formaat',
+        'SUBDOMAIN_TAKEN': 'Al in gebruik door een ander project',
+        'INVALID_BASE_DOMAIN': 'Ongeldig base domain',
+        'UNKNOWN_ERROR': 'Onbekende fout'
+    };
+
+    function getErrorMessage(errorCode, fallbackMessage) {
+        return errorCodeTranslations[errorCode] || fallbackMessage || errorCodeTranslations['UNKNOWN_ERROR'];
+    }
+
     /**
      * Check subdomain availability (debounced)
      */
@@ -3166,10 +3186,13 @@
             return;
         }
 
-        availabilityDiv.textContent = 'Controleren...';
-        availabilityDiv.className = 'subdomain-availability checking';
+        // Show typing indicator immediately (U2 fix)
+        availabilityDiv.textContent = 'Wachten op typen...';
+        availabilityDiv.className = 'subdomain-availability typing';
 
         subdomainCheckTimeout = setTimeout(() => {
+            availabilityDiv.textContent = 'Controleren...';
+            availabilityDiv.className = 'subdomain-availability checking';
             checkSubdomainAvailability(subdomain, baseDomain);
         }, 500);
     }
@@ -3201,27 +3224,27 @@
     }
 
     /**
-     * Check subdomain availability via API
+     * Check subdomain availability via SSO-protected endpoint
      */
     async function checkSubdomainAvailability(subdomain, baseDomain) {
         const availabilityDiv = document.getElementById('edit-subdomain-availability');
 
         try {
-            // Use existing API endpoint
-            const response = await fetch(`/api/subdomains/check/${encodeURIComponent(subdomain)}?base_domain=${encodeURIComponent(baseDomain)}`);
+            // Use SSO-protected web endpoint
+            const response = await fetch(`/subdomains/check?subdomain=${encodeURIComponent(subdomain)}&base_domain=${encodeURIComponent(baseDomain)}`);
             const data = await response.json();
 
             if (data.validation_error) {
-                // Sanitize validation_error to prevent XSS
-                setAvailabilityMessage(availabilityDiv, 'kruis', 'rood', sanitizeText(data.validation_error), 'unavailable');
+                // Use error_code for translation, fallback to sanitized validation_error
+                const errorMessage = getErrorMessage(data.error_code, sanitizeText(data.validation_error));
+                setAvailabilityMessage(availabilityDiv, 'kruis', 'rood', errorMessage, 'unavailable');
                 return;
             }
 
             if (data.available) {
                 setAvailabilityMessage(availabilityDiv, 'vinkje', 'groen', 'Beschikbaar', 'available');
             } else {
-                // Check if owned by this deployment (would need additional API call)
-                // For now, check via the domain settings API
+                // Check if owned by this deployment
                 const settingsResponse = await fetch(`/projects/${projectName}/deployments/${currentDeploymentName}/domain-settings`);
                 const settingsData = await settingsResponse.json();
 

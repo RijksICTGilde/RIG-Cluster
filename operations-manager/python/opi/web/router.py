@@ -4,9 +4,13 @@ Web routes for serving HTML pages (non-API endpoints).
 
 import copy
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+
+if TYPE_CHECKING:
+    from opi.manager.project_manager import ProjectManager
 
 from opi.api.router import SelfServiceComponent, SelfServiceProjectRequest
 from opi.core.auth_decorators import get_current_user, requires_sso
@@ -19,7 +23,7 @@ from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
 
 from ..utils.age import decrypt_age_content
-from .router_self_service import self_service_portal
+from .router_self_service import check_subdomain_availability_web, self_service_portal
 from .services_router import services_router
 
 logger = logging.getLogger(__name__)
@@ -76,6 +80,9 @@ async def permission_denied(request: Request) -> HTMLResponse:
 
 # Register the self-service portal route
 web_router.add_api_route("/projects/new", self_service_portal, methods=["GET"], response_class=HTMLResponse)
+
+# SSO-protected subdomain availability check (prevents unauthenticated enumeration)
+web_router.add_api_route("/subdomains/check", check_subdomain_availability_web, methods=["GET"])
 
 
 @web_router.post("/projects/new", response_class=HTMLResponse)
@@ -1582,6 +1589,137 @@ def _validate_path_safe(filename: str) -> None:
             raise HTTPException(status_code=400, detail="Invalid project filename")
 
 
+async def _update_keycloak_redirect_uris_for_deployment(
+    project_manager: "ProjectManager",
+    project_name: str,
+    deployment_name: str,
+    cluster: str,
+    domain_mode: str,
+    subdomain: str | None,
+    base_domain: str | None,
+) -> None:
+    """
+    Update Keycloak client redirect URIs after domain settings change.
+
+    This function checks if the deployment uses Keycloak service and updates
+    the redirect URIs to match the new hostnames based on domain settings.
+
+    Args:
+        project_manager: The ProjectManager instance with project data
+        project_name: Name of the project
+        deployment_name: Name of the deployment
+        cluster: Name of the cluster
+        domain_mode: Domain mode (component-specific, deployment-name, custom, nice-url)
+        subdomain: Subdomain for nice-url or custom mode
+        base_domain: Base domain for nice-url or custom mode
+    """
+    from opi.connectors.keycloak import create_keycloak_connector
+    from opi.core.cluster_config import get_ingress_postfix, get_keycloak_support_http
+    from opi.core.config import settings
+    from opi.services import ServiceAdapter, ServiceType
+    from opi.utils.naming import get_deployment_hostnames
+
+    try:
+        # Get refreshed project data
+        project_data = await project_manager.get_contents()
+
+        # Check if deployment uses Keycloak service
+        deployment = None
+        for dep in project_data.get("deployments", []):
+            if dep.get("name") == deployment_name:
+                deployment = dep
+                break
+
+        if not deployment:
+            logger.warning(f"Deployment {deployment_name} not found in project data, skipping Keycloak update")
+            return
+
+        # Get component references for this deployment that use Keycloak
+        component_refs = [comp.get("reference") for comp in deployment.get("components", []) if comp.get("reference")]
+
+        sso_components = []
+        for component_ref in component_refs:
+            for component in project_data.get("components", []):
+                if component.get("name") == component_ref:
+                    uses_services = component.get("uses-services", [])
+                    component_services = ServiceAdapter.parse_services_from_strings(uses_services)
+                    if ServiceType.KEYCLOAK in component_services:
+                        sso_components.append(component_ref)
+                    break
+
+        if not sso_components:
+            logger.debug(f"No SSO components found in deployment {deployment_name}, skipping Keycloak update")
+            return
+
+        logger.info(f"Updating Keycloak redirect URIs for deployment {deployment_name} with {len(sso_components)} SSO components")
+
+        # Get Keycloak configuration for this cluster
+        kc_config = await project_manager._get_project_keycloak_config_for_cluster(cluster)
+        if not kc_config:
+            logger.warning(f"No Keycloak config found for cluster {cluster}, skipping redirect URI update")
+            return
+
+        realm_name = kc_config["realm"]
+        keycloak_host = kc_config["host"]
+
+        # Calculate new hostnames based on domain settings
+        ingress_postfix = get_ingress_postfix(cluster)
+        all_ingress_hosts = get_deployment_hostnames(
+            component_names=sso_components,
+            deployment_name=deployment_name,
+            project_name=project_name,
+            ingress_postfix=ingress_postfix,
+            subdomain=subdomain,
+            base_domain=base_domain,
+            domain_mode=domain_mode,
+        )
+
+        if not all_ingress_hosts:
+            logger.warning(f"No ingress hosts generated for deployment {deployment_name}, skipping Keycloak update")
+            return
+
+        logger.info(f"New hostnames for Keycloak client: {all_ingress_hosts}")
+
+        # Get HTTP support setting and additional redirect URIs from config
+        support_http = get_keycloak_support_http(cluster)
+
+        # Get additional redirect URIs from project keycloak service config
+        additional_redirect_uris = None
+        project_services = project_data.get("services", [])
+        for service_item in project_services:
+            if isinstance(service_item, dict) and "keycloak" in service_item:
+                service_data = service_item["keycloak"]
+                if isinstance(service_data, dict) and "config" in service_data:
+                    additional_redirect_uris = service_data["config"].get("additional_redirect_uris")
+                    break
+
+        # Create Keycloak connector and update redirect URIs
+        keycloak = await create_keycloak_connector(
+            keycloak_url=keycloak_host,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+
+        result = await keycloak.update_deployment_client_hosts(
+            deployment_name=deployment_name,
+            project_name=project_name,
+            ingress_hosts=all_ingress_hosts,
+            realm_name=realm_name,
+            support_http=support_http,
+            additional_redirect_uris=additional_redirect_uris,
+        )
+
+        if result:
+            logger.info(f"Successfully updated Keycloak redirect URIs for deployment {deployment_name}")
+        else:
+            logger.warning(f"Failed to update Keycloak redirect URIs for deployment {deployment_name} (client not found)")
+
+    except Exception as e:
+        # Log the error but don't fail the entire operation
+        # The ingresses have already been updated, SSO might work with existing URIs
+        logger.error(f"Error updating Keycloak redirect URIs for {deployment_name}: {e}")
+
+
 @web_router.post("/projects/{project_name}/deployments/{deployment_name}/domain-settings")
 @requires_sso
 async def update_deployment_domain_settings(request: Request, project_name: str, deployment_name: str):
@@ -1890,6 +2028,18 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                 project_file_path, deployment_name=deployment_name
             )
             logger.info(f"Re-processed project {project_name} after domain settings update: {processing_result}")
+
+            # === STEP 4: Update Keycloak redirect URIs ===
+            # After domain settings change, update Keycloak client redirect URIs to match new hostnames
+            await _update_keycloak_redirect_uris_for_deployment(
+                project_manager=project_manager,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=cluster,
+                domain_mode=domain_mode,
+                subdomain=subdomain,
+                base_domain=base_domain,
+            )
         except Exception as processing_error:
             logger.error(f"Project re-processing failed: {processing_error}")
 

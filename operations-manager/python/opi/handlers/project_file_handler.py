@@ -401,6 +401,24 @@ class ProjectFileHandler:
 
         return port
 
+    def component_has_ports(self, project_data: dict[str, Any], component_name: str) -> bool:
+        """
+        Check if a component has at least one inbound port configured.
+
+        Args:
+            project_data: The parsed project data
+            component_name: Name of the component to check
+
+        Returns:
+            True if the component has at least one inbound port, False otherwise
+        """
+        path = f"$.components[?(@.name='{component_name}')].ports.inbound[0]"
+        # Use None as default to distinguish "not found" from "found with value"
+        port = self.extract_value_by_path(project_data, path, None)
+        has_ports = port is not None
+        logger.debug(f"Component '{component_name}' has ports configured: {has_ports}")
+        return has_ports
+
     def extract_component_path(self, project_data: dict[str, Any], component_name: str, default_path: str = "/") -> str:
         """
         Extract the publication path from a component definition by name.
