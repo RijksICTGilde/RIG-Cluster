@@ -13,6 +13,7 @@ from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.task_manager import create_task
 from opi.core.templates import get_templates
 from opi.utils.age import decrypt_password_smart, get_global_private_key
+from opi.utils.csrf import ensure_csrf_token
 from opi.utils.project_names import generate_project_name
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
@@ -90,13 +91,16 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
         HTML response with creation results or error page
     """
     try:
+        # Parse form data first (needed for CSRF validation)
+        form_data = await request.form()
+        logger.debug(f"Received form data keys: {list(form_data.keys())}")
+
+        # === CSRF PROTECTION (token + origin/referer validation) ===
+        await _validate_csrf(request, form_data)
+
         # Get current user for logging
         user = get_current_user(request)
         logger.info(f"Processing self-service form submission by user: {user.get('email', 'unknown')}")
-
-        # Parse form data
-        form_data = await request.form()
-        logger.debug(f"Received form data keys: {list(form_data.keys())}")
 
         # Extract project details
         display_name = str(form_data.get("display-name", "")).strip()
@@ -708,6 +712,10 @@ async def project_details(request: Request, project_name: str):
 
         templates = get_templates()
         user = get_current_user(request)
+
+        # Generate CSRF token for form protection (domain settings modal)
+        csrf_token = ensure_csrf_token(request)
+
         # TODO: this logic has to be centralized
         user_email = user.get("email", "").lower()
 
@@ -1305,6 +1313,7 @@ async def project_details(request: Request, project_name: str):
                 "backups_available": backups_available,
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
+                "csrf_token": csrf_token,
             },
         )
 
@@ -1431,10 +1440,39 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
         raise HTTPException(status_code=500, detail="An error occurred while fetching domain settings.")
 
 
+async def _validate_csrf(request: Request, form_data: dict | None = None) -> None:
+    """
+    Validate CSRF protection using both token validation and Origin/Referer headers.
+
+    This implements defense in depth:
+    1. CSRF token validation (primary defense)
+    2. Origin/Referer header validation (secondary defense)
+
+    For SSO-protected endpoints that modify data, we require both checks to pass.
+
+    Args:
+        request: The FastAPI request object
+        form_data: Optional pre-parsed form data (to avoid parsing twice)
+
+    Raises:
+        HTTPException: If CSRF validation fails
+    """
+    from opi.utils.csrf import validate_csrf_token
+
+    # First, validate CSRF token (primary defense)
+    # Convert form_data to dict if needed for csrf validation
+    csrf_form_data = dict(form_data) if form_data else None
+    validate_csrf_token(request, csrf_form_data)
+
+    # Then, validate Origin/Referer headers (secondary defense)
+    _validate_csrf_origin(request)
+
+
 def _validate_csrf_origin(request: Request) -> None:
     """
     Validate Origin/Referer header for CSRF protection.
 
+    This is a secondary defense layer alongside CSRF token validation.
     For SSO-protected endpoints that modify data, we validate that the request
     originates from our own domain to prevent cross-site request forgery.
 
@@ -1464,8 +1502,17 @@ def _validate_csrf_origin(request: Request) -> None:
         logger.warning("CSRF check failed: Request has empty or missing Host header")
         raise HTTPException(status_code=403, detail="Request rejected: invalid request")
 
-    # Only allow localhost bypass in DEBUG mode
-    allow_localhost = settings.DEBUG
+    # Only allow localhost bypass in DEBUG mode AND when the request is actually to localhost
+    # This prevents DEBUG mode from weakening security when running on production hosts
+    is_localhost_request = request_host in ("localhost", "127.0.0.1", "::1")
+    allow_localhost = settings.DEBUG and is_localhost_request
+
+    # Security warning: log if DEBUG mode is enabled on a non-localhost host
+    if settings.DEBUG and not is_localhost_request:
+        logger.warning(
+            f"SECURITY: DEBUG mode is enabled but request is to non-localhost host '{request_host}'. "
+            f"Localhost CSRF bypass is DISABLED for this request. Consider disabling DEBUG in production."
+        )
 
     # Validate Origin header if present
     if origin:
@@ -1478,9 +1525,9 @@ def _validate_csrf_origin(request: Request) -> None:
             logger.warning(f"CSRF check failed: Origin '{origin}' has empty host")
             raise HTTPException(status_code=403, detail="Request rejected: invalid origin")
 
-        # Check if origin matches request host (or localhost in debug mode)
+        # Check if origin matches request host (or localhost in debug mode when request is also localhost)
         origin_matches = origin_host == request_host
-        localhost_allowed = allow_localhost and origin_host == "localhost"
+        localhost_allowed = allow_localhost and origin_host in ("localhost", "127.0.0.1", "::1")
 
         if not origin_matches and not localhost_allowed:
             logger.warning(f"CSRF check failed: Origin '{origin}' does not match host '{host}'")
@@ -1496,9 +1543,9 @@ def _validate_csrf_origin(request: Request) -> None:
             logger.warning(f"CSRF check failed: Referer '{referer}' has empty host")
             raise HTTPException(status_code=403, detail="Request rejected: invalid referer")
 
-        # Check if referer matches request host (or localhost in debug mode)
+        # Check if referer matches request host (or localhost in debug mode when request is also localhost)
         referer_matches = referer_host == request_host
-        localhost_allowed = allow_localhost and referer_host == "localhost"
+        localhost_allowed = allow_localhost and referer_host in ("localhost", "127.0.0.1", "::1")
 
         if not referer_matches and not localhost_allowed:
             logger.warning(f"CSRF check failed: Referer '{referer}' does not match host '{host}'")
@@ -1578,8 +1625,11 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
     old_subdomain_info: dict | None = None
 
     try:
-        # === CSRF PROTECTION ===
-        _validate_csrf_origin(request)
+        # Parse form data first (needed for CSRF validation)
+        form_data = await request.form()
+
+        # === CSRF PROTECTION (token + origin/referer validation) ===
+        await _validate_csrf(request, form_data)
 
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
@@ -1600,8 +1650,7 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                 status_code=403, detail=f"Only admin or owner roles can edit domain settings. Your role: {user_role}"
             )
 
-        # Parse form data
-        form_data = await request.form()
+        # Extract form fields
         domain_mode = str(form_data.get("domain-mode", "")).strip()
         subdomain = str(form_data.get("subdomain", "")).strip() or None
         base_domain = str(form_data.get("base-domain", "")).strip() or None

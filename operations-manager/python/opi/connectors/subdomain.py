@@ -82,7 +82,14 @@ SUBDOMAIN_MIN_LENGTH = 1
 SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$")
 
 # Reserved subdomains that cannot be registered
+# This list includes:
+# - Standard infrastructure subdomains (www, api, mail, etc.)
+# - Security-sensitive subdomains that could be used for phishing/abuse
+# - Email infrastructure subdomains (RFC 2142 compliance)
+# - Auto-discovery endpoints that could leak credentials
+# - Common administrative and system subdomains
 RESERVED_SUBDOMAINS = frozenset([
+    # Standard web/infrastructure
     "www",
     "api",
     "admin",
@@ -91,13 +98,39 @@ RESERVED_SUBDOMAINS = frozenset([
     "ns1",
     "ns2",
     "ns3",
+    "ns4",
     "smtp",
     "pop",
+    "pop3",
     "imap",
     "webmail",
+    "email",
+    # RFC 2142 required mailbox names (security-critical)
+    "postmaster",
+    "hostmaster",
+    "webmaster",
+    "abuse",
+    "security",
+    "noc",
+    "info",
+    "marketing",
+    "sales",
+    "usenet",
+    "news",
+    "uucp",
+    "ftp-admin",
+    # Auto-discovery endpoints (credential exposure risk)
+    "autoconfig",
+    "autodiscover",
+    "wpad",
+    "isatap",
+    # Development/staging
     "test",
+    "testing",
     "dev",
+    "development",
     "staging",
+    "stage",
     "prod",
     "production",
     "localhost",
@@ -105,58 +138,100 @@ RESERVED_SUBDOMAINS = frozenset([
     "beta",
     "alpha",
     "demo",
+    "sandbox",
+    "qa",
+    "uat",
+    # Support and documentation
     "support",
     "help",
     "docs",
+    "documentation",
     "status",
+    "health",
+    "healthcheck",
+    # CDN and static content
     "cdn",
     "static",
     "assets",
     "media",
     "images",
+    "img",
     "files",
     "download",
     "downloads",
     "upload",
     "uploads",
+    "cache",
+    # Version control and CI/CD
     "git",
     "gitlab",
     "github",
+    "bitbucket",
     "jenkins",
     "ci",
     "cd",
     "build",
     "deploy",
+    "releases",
+    # Container/orchestration
     "registry",
     "docker",
     "kubernetes",
     "k8s",
     "argocd",
     "argo",
+    "helm",
+    # Authentication
     "keycloak",
     "auth",
     "oauth",
+    "oauth2",
     "sso",
+    "saml",
     "login",
     "logout",
     "register",
     "signup",
     "signin",
+    "password",
+    "reset",
+    "verify",
+    "confirm",
+    "activate",
+    # User-related
     "account",
+    "accounts",
     "profile",
+    "profiles",
+    "user",
+    "users",
+    "member",
+    "members",
     "settings",
+    "preferences",
+    # Admin interfaces
     "dashboard",
     "portal",
     "panel",
     "console",
     "control",
+    "controlpanel",
+    "cpanel",
+    "plesk",
     "manager",
     "management",
+    "admin1",
+    "admin2",
+    "administrator",
+    # System/infrastructure
     "system",
     "sys",
     "root",
     "master",
     "main",
+    "primary",
+    "secondary",
+    "backup",
     "default",
     "null",
     "undefined",
@@ -167,19 +242,82 @@ RESERVED_SUBDOMAINS = frozenset([
     "private",
     "internal",
     "external",
+    # Network infrastructure
     "vpn",
     "proxy",
     "gateway",
     "lb",
     "loadbalancer",
+    "firewall",
+    "router",
+    "switch",
+    "dns",
+    "ssl",
+    "tls",
+    "cert",
+    "certs",
+    "certificate",
+    "certificates",
+    # Monitoring and logging
     "monitoring",
+    "monitor",
     "metrics",
     "prometheus",
     "grafana",
     "kibana",
     "elasticsearch",
+    "elastic",
     "logs",
     "logging",
+    "syslog",
+    "splunk",
+    "datadog",
+    "newrelic",
+    "sentry",
+    # Database
+    "db",
+    "database",
+    "mysql",
+    "postgres",
+    "postgresql",
+    "redis",
+    "mongo",
+    "mongodb",
+    "minio",
+    "s3",
+    # Cloud/platform
+    "cloud",
+    "aws",
+    "azure",
+    "gcp",
+    "google",
+    "microsoft",
+    "oracle",
+    # API versioning (prevent squatting)
+    "v1",
+    "v2",
+    "v3",
+    "api-v1",
+    "api-v2",
+    # Payment/billing (phishing risk)
+    "pay",
+    "payment",
+    "payments",
+    "billing",
+    "invoice",
+    "invoices",
+    "checkout",
+    "shop",
+    "store",
+    "cart",
+    # Legal/compliance
+    "legal",
+    "privacy",
+    "terms",
+    "tos",
+    "gdpr",
+    "compliance",
+    "audit",
 ])
 
 
@@ -344,7 +482,17 @@ class SubdomainConnector:
         if not is_valid:
             raise BaseDomainValidationError(error_message)
 
-        # Check availability first
+        # TOCTOU Protection Strategy:
+        # We use a two-layer defense against race conditions:
+        #
+        # Layer 1 (UX): check_availability provides early, user-friendly error messages
+        # with context about why registration failed. This catches 99.9% of conflicts.
+        #
+        # Layer 2 (Security): INSERT...ON CONFLICT DO NOTHING provides atomic protection
+        # against the rare case where two requests pass Layer 1 simultaneously.
+        # If ON CONFLICT triggers, we detect it via NULL result and handle accordingly.
+        #
+        # This approach gives us both good UX (informative errors) and security (atomic ops).
         if not await self.check_availability(subdomain_lower, base_domain_lower):
             # Note: Don't expose which project owns the subdomain in error messages
             # to prevent information disclosure to unauthenticated users
@@ -356,8 +504,9 @@ class SubdomainConnector:
         pool = self._get_pool()
         conn = await pool.acquire()
         try:
-            # Use INSERT ... ON CONFLICT to handle race conditions atomically
-            # This prevents the TOCTOU race between check_availability and register
+            # Atomic INSERT with ON CONFLICT - the true protection against TOCTOU races
+            # If a concurrent request registered the same subdomain between our check and
+            # this INSERT, ON CONFLICT DO NOTHING will make result=None, which we handle below
             result = await conn.fetchrow(
                 f"""
                 INSERT INTO {self.TABLE_NAME}
