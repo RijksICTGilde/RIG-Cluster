@@ -2965,6 +2965,8 @@
     let currentDeploymentCluster = null;
     let currentDeploymentComponents = [];
     let subdomainCheckTimeout = null;
+    let originalDomainMode = null;  // Track original mode to detect nice-url -> other transitions
+    let originalSubdomain = null;   // Track original subdomain for confirmation message
 
     /**
      * Open the domain settings modal
@@ -2973,6 +2975,10 @@
         currentDeploymentName = deploymentName;
         currentDeploymentCluster = cluster;
         currentDeploymentComponents = components || [];
+
+        // Store original values to detect destructive changes (switching away from nice-url)
+        originalDomainMode = domainMode || 'component-specific';
+        originalSubdomain = subdomain || null;
 
         // Set deployment name in modal
         document.getElementById('domain-settings-deployment-name').textContent = deploymentName;
@@ -3032,6 +3038,8 @@
         currentDeploymentName = null;
         currentDeploymentCluster = null;
         currentDeploymentComponents = [];
+        originalDomainMode = null;
+        originalSubdomain = null;
     }
 
     /**
@@ -3270,14 +3278,29 @@
         if (isSubmitting) {
             return;
         }
+
+        const formData = new FormData(document.getElementById('domain-settings-form'));
+        const domainMode = formData.get('domain-mode');
+
+        // Check if switching away from nice-url mode (destructive action: subdomain registration will be deleted)
+        if (originalDomainMode === 'nice-url' && domainMode !== 'nice-url') {
+            const subdomainDisplay = originalSubdomain ? `'${originalSubdomain}'` : 'het subdomein';
+            const confirmed = confirm(
+                `Let op: U wisselt van 'Eigen subdomein' naar een andere URL modus.\n\n` +
+                `Dit zal de subdomein-registratie van ${subdomainDisplay} permanent verwijderen.\n` +
+                `Een ander project zou dit subdomein daarna kunnen claimen.\n\n` +
+                `Weet u zeker dat u wilt doorgaan?`
+            );
+            if (!confirmed) {
+                return;
+            }
+        }
+
         isSubmitting = true;
 
         const submitBtn = document.getElementById('domain-settings-submit');
         submitBtn.disabled = true;
         submitBtn.textContent = 'Opslaan...';
-
-        const formData = new FormData(document.getElementById('domain-settings-form'));
-        const domainMode = formData.get('domain-mode');
 
         // For custom mode, use custom-subdomain as subdomain
         if (domainMode === 'custom') {

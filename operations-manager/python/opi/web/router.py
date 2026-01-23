@@ -1881,6 +1881,17 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                         status_code=400, detail=f"Subdomain '{subdomain}.{base_domain}' is not available"
                     )
 
+        # Validate custom subdomain format if custom mode is selected
+        elif domain_mode == "custom":
+            if not subdomain:
+                raise HTTPException(status_code=400, detail="Subdomain is required for custom mode")
+
+            # Validate subdomain format (same rules as nice-url, but without base_domain or availability check)
+            # This ensures the subdomain is DNS-compatible and not a reserved name
+            is_valid, error_msg = validate_subdomain(subdomain)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=error_msg)
+
         # Create Git connector for projects repository
         git_connector = GitConnector(
             repo_url=settings.GIT_PROJECTS_SERVER_URL,
