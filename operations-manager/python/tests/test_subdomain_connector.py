@@ -165,7 +165,7 @@ class TestSubdomainConnectorRegister:
                     cluster="odcn-production",
                 )
 
-        assert "already registered" in str(exc_info.value)
+        assert "al geregistreerd" in str(exc_info.value)  # Dutch: "is al geregistreerd"
 
 
 class TestSubdomainConnectorGetBySubdomain:

@@ -37,6 +37,10 @@ class IPRateLimiter:
         # Add tokens based on time elapsed
         self._tokens[ip] = min(self.burst, self._tokens[ip] + elapsed * self.rate)
 
+        # Periodic cleanup to prevent memory leak (every 1000 IPs)
+        if len(self._tokens) > 1000:
+            self.cleanup_old_entries()
+
         if self._tokens[ip] >= 1:
             self._tokens[ip] -= 1
             return True

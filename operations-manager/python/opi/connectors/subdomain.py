@@ -7,7 +7,6 @@ Subdomains are registered per (subdomain, base_domain) pair and associated with 
 
 import logging
 import re
-from datetime import datetime
 from typing import Any
 
 from opi.core.database_pools import get_database_pool
@@ -347,8 +346,8 @@ class SubdomainConnector:
         if not await self.check_availability(subdomain_lower, base_domain_lower):
             existing = await self.get_by_subdomain(subdomain_lower, base_domain_lower)
             raise SubdomainNotAvailableError(
-                f"Subdomain '{subdomain_lower}.{base_domain_lower}' is already registered "
-                f"to project '{existing.get('project_name') if existing else 'unknown'}'"
+                f"Subdomein '{subdomain_lower}.{base_domain_lower}' is al geregistreerd "
+                f"door project '{existing.get('project_name') if existing else 'onbekend'}'"
             )
 
         pool = self._get_pool()

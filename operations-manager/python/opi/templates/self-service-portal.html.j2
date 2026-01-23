@@ -395,6 +395,18 @@
                                             style="display: none;"/>
 
                                         <div id="nice-url-subdomain-container" style="display: none;">
+                                            <c-select-field
+                                                id="base-domain"
+                                                name="base-domain"
+                                                label="Base Domain"
+                                                helperText="Selecteer het base domain voor uw nice URL"
+                                                :options="[
+                                                    {'value': '', 'label': 'Selecteer een base domain'},
+                                                    {'value': 'rijks.app', 'label': 'rijks.app (productie)'},
+                                                    {'value': 'rijksapps.nl', 'label': 'rijksapps.nl (productie)'},
+                                                    {'value': 'kind', 'label': 'kind (lokaal)'},
+                                                    {'value': 'local', 'label': 'local (lokaal)'}
+                                                ]"/>
                                             <c-text-input-field
                                                 id="nice-url-subdomain"
                                                 name="subdomain"
@@ -692,15 +704,90 @@ Available variables depend on selected services:
           if (niceUrlSubdomain) {
             niceUrlSubdomain.setAttribute('required', 'true');
           }
+          // Also require base-domain for nice-url mode
+          const baseDomainField = document.getElementById('base-domain');
+          if (baseDomainField) {
+            baseDomainField.setAttribute('required', 'true');
+            // Update base domain options based on current cluster
+            updateBaseDomainOptions();
+          }
+        } else {
+          // For other modes, base-domain is not required
+          const baseDomainField = document.getElementById('base-domain');
+          if (baseDomainField) {
+            baseDomainField.removeAttribute('required');
+          }
         }
+      }
+
+      // Base domain options per cluster
+      const clusterBaseDomains = {
+        'local': [
+          {'value': 'kind', 'label': 'kind (lokaal)'},
+          {'value': 'local', 'label': 'local (lokaal)'}
+        ],
+        'odcn-staging': [
+          {'value': 'rijks.app', 'label': 'rijks.app'},
+          {'value': 'rijksapps.nl', 'label': 'rijksapps.nl'}
+        ],
+        'odcn-production': [
+          {'value': 'rijks.app', 'label': 'rijks.app'},
+          {'value': 'rijksapps.nl', 'label': 'rijksapps.nl'}
+        ]
+      };
+
+      // Update base domain options based on selected cluster
+      function updateBaseDomainOptions() {
+        const cluster = document.getElementById('cluster').value;
+        const baseDomainField = document.getElementById('base-domain');
+        const domainMode = document.getElementById('domain-mode').value;
+
+        if (!baseDomainField || domainMode !== 'nice-url') {
+          return;
+        }
+
+        // Get options for this cluster
+        const options = clusterBaseDomains[cluster] || [];
+
+        // Clear current options and add new ones
+        // Note: c-select-field uses Alpine.js :options binding, so we need to update the underlying select
+        const selectElement = baseDomainField.querySelector('select') || baseDomainField;
+
+        if (selectElement.tagName === 'SELECT') {
+          // Clear existing options except the first "select" option
+          selectElement.innerHTML = '<option value="">Selecteer een base domain</option>';
+
+          // Add cluster-specific options
+          options.forEach(opt => {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            selectElement.appendChild(option);
+          });
+
+          // If only one option, auto-select it
+          if (options.length === 1) {
+            selectElement.value = options[0].value;
+          }
+        }
+
+        // Clear availability check when base domain changes
+        document.getElementById('subdomain-availability').innerHTML = '';
       }
 
       // Check subdomain availability for nice-url mode
       let subdomainCheckTimeout = null;
       async function checkSubdomainAvailability() {
         const subdomain = document.getElementById('nice-url-subdomain').value.trim().toLowerCase();
-        const baseDomain = document.getElementById('base-domain')?.value || 'rijks.app';
+        const baseDomainField = document.getElementById('base-domain');
+        const baseDomain = baseDomainField?.value;
         const availabilityDiv = document.getElementById('subdomain-availability');
+
+        // Require base domain to be selected first
+        if (!baseDomain) {
+          availabilityDiv.innerHTML = '<span style="color: orange;">&#x26A0; Selecteer eerst een base domain</span>';
+          return;
+        }
 
         if (!subdomain) {
           availabilityDiv.innerHTML = '';
@@ -771,6 +858,14 @@ Available variables depend on selected services:
           });
         }
 
+        // Add cluster change listener to update base domain options
+        const clusterField = document.getElementById('cluster');
+        if (clusterField) {
+          clusterField.addEventListener('change', function() {
+            updateBaseDomainOptions();
+          });
+        }
+
         // Add form submit validation for nice-url subdomain
         const projectForm = document.getElementById('project-form');
         if (projectForm) {
@@ -781,8 +876,16 @@ Available variables depend on selected services:
             }
 
             const subdomain = document.getElementById('nice-url-subdomain').value.trim().toLowerCase();
-            const baseDomain = document.getElementById('base-domain')?.value || 'rijks.app';
+            const baseDomainField = document.getElementById('base-domain');
+            const baseDomain = baseDomainField?.value;
             const availabilityDiv = document.getElementById('subdomain-availability');
+
+            // Validate base domain is selected
+            if (!baseDomain) {
+              e.preventDefault();
+              availabilityDiv.innerHTML = '<span style="color: red;">&#x2718; Selecteer eerst een base domain</span>';
+              return;
+            }
 
             if (!subdomain) {
               e.preventDefault();
