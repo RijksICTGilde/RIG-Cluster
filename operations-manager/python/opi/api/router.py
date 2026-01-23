@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import GitConnector
-from opi.connectors.subdomain import create_subdomain_connector
+from opi.connectors.subdomain import create_subdomain_connector, validate_subdomain
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
@@ -1414,6 +1414,9 @@ class SubdomainCheckResponse(BaseModel):
     registered_to: str | None = Field(
         None, description="Project name if subdomain is already registered", example="other-project"
     )
+    validation_error: str | None = Field(
+        None, description="Validation error message if subdomain format is invalid", example=None
+    )
 
 
 class SubdomainRegistration(BaseModel):
@@ -1456,6 +1459,17 @@ async def check_subdomain_availability(subdomain: str, base_domain: str) -> Subd
     ```
     """
     try:
+        # Validate subdomain format first
+        is_valid, validation_error = validate_subdomain(subdomain)
+        if not is_valid:
+            return SubdomainCheckResponse(
+                subdomain=subdomain.lower(),
+                base_domain=base_domain.lower(),
+                available=False,
+                registered_to=None,
+                validation_error=validation_error,
+            )
+
         connector = create_subdomain_connector()
         is_available = await connector.check_availability(subdomain, base_domain)
 
@@ -1470,6 +1484,7 @@ async def check_subdomain_availability(subdomain: str, base_domain: str) -> Subd
             base_domain=base_domain.lower(),
             available=is_available,
             registered_to=registered_to,
+            validation_error=None,
         )
     except Exception as e:
         logger.error(f"Error checking subdomain availability: {e}")
@@ -1483,7 +1498,8 @@ async def check_subdomain_availability(subdomain: str, base_domain: str) -> Subd
         200: {"description": "List of subdomain registrations"},
     },
 )
-async def list_subdomains(project_name: str | None = None) -> list[dict]:
+@validate_api_token
+async def list_subdomains(request: Request, project_name: str | None = None) -> list[dict]:
     """
     List subdomain registrations.
 

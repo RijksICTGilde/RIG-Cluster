@@ -6,12 +6,119 @@ Subdomains are registered per (subdomain, base_domain) pair and associated with 
 """
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
 from opi.core.database_pools import get_database_pool
 
 logger = logging.getLogger(__name__)
+
+# DNS subdomain validation constants
+SUBDOMAIN_MAX_LENGTH = 63
+SUBDOMAIN_MIN_LENGTH = 1
+SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$")
+
+# Reserved subdomains that cannot be registered
+RESERVED_SUBDOMAINS = frozenset([
+    "www",
+    "api",
+    "admin",
+    "mail",
+    "ftp",
+    "ns1",
+    "ns2",
+    "ns3",
+    "smtp",
+    "pop",
+    "imap",
+    "webmail",
+    "test",
+    "dev",
+    "staging",
+    "prod",
+    "production",
+    "localhost",
+    "local",
+    "beta",
+    "alpha",
+    "demo",
+    "support",
+    "help",
+    "docs",
+    "status",
+    "cdn",
+    "static",
+    "assets",
+    "media",
+    "images",
+    "files",
+    "download",
+    "downloads",
+    "upload",
+    "uploads",
+    "git",
+    "gitlab",
+    "github",
+    "jenkins",
+    "ci",
+    "cd",
+    "build",
+    "deploy",
+    "registry",
+    "docker",
+    "kubernetes",
+    "k8s",
+    "argocd",
+    "argo",
+    "keycloak",
+    "auth",
+    "oauth",
+    "sso",
+    "login",
+    "logout",
+    "register",
+    "signup",
+    "signin",
+    "account",
+    "profile",
+    "settings",
+    "dashboard",
+    "portal",
+    "panel",
+    "console",
+    "control",
+    "manager",
+    "management",
+    "system",
+    "sys",
+    "root",
+    "master",
+    "main",
+    "default",
+    "null",
+    "undefined",
+    "none",
+    "anonymous",
+    "guest",
+    "public",
+    "private",
+    "internal",
+    "external",
+    "vpn",
+    "proxy",
+    "gateway",
+    "lb",
+    "loadbalancer",
+    "monitoring",
+    "metrics",
+    "prometheus",
+    "grafana",
+    "kibana",
+    "elasticsearch",
+    "logs",
+    "logging",
+])
 
 
 class SubdomainError(Exception):
@@ -20,6 +127,49 @@ class SubdomainError(Exception):
 
 class SubdomainNotAvailableError(SubdomainError):
     """Exception raised when a subdomain is already taken."""
+
+
+class SubdomainValidationError(SubdomainError):
+    """Exception raised when subdomain validation fails."""
+
+
+def validate_subdomain(subdomain: str) -> tuple[bool, str | None]:
+    """Validate a subdomain for DNS compatibility.
+
+    Args:
+        subdomain: The subdomain to validate
+
+    Returns:
+        Tuple of (is_valid, error_message). If valid, error_message is None.
+
+    Rules:
+        - Must be 1-63 characters
+        - Must contain only lowercase letters, numbers, and hyphens
+        - Cannot start or end with a hyphen
+        - Cannot be a reserved subdomain
+    """
+    if not subdomain:
+        return False, "Subdomain cannot be empty"
+
+    subdomain_lower = subdomain.lower()
+
+    if len(subdomain_lower) < SUBDOMAIN_MIN_LENGTH:
+        return False, f"Subdomain must be at least {SUBDOMAIN_MIN_LENGTH} character(s)"
+
+    if len(subdomain_lower) > SUBDOMAIN_MAX_LENGTH:
+        return False, f"Subdomain cannot exceed {SUBDOMAIN_MAX_LENGTH} characters"
+
+    if subdomain_lower in RESERVED_SUBDOMAINS:
+        return False, f"'{subdomain_lower}' is a reserved subdomain and cannot be used"
+
+    if not SUBDOMAIN_PATTERN.match(subdomain_lower):
+        if subdomain_lower.startswith("-"):
+            return False, "Subdomain cannot start with a hyphen"
+        if subdomain_lower.endswith("-"):
+            return False, "Subdomain cannot end with a hyphen"
+        return False, "Subdomain can only contain lowercase letters (a-z), numbers (0-9), and hyphens (-)"
+
+    return True, None
 
 
 class SubdomainConnector:
@@ -85,9 +235,15 @@ class SubdomainConnector:
             Dictionary with the created registration details
 
         Raises:
+            SubdomainValidationError: If the subdomain format is invalid
             SubdomainNotAvailableError: If the subdomain is already taken
             SubdomainError: If registration fails
         """
+        # Validate subdomain format
+        is_valid, error_message = validate_subdomain(subdomain)
+        if not is_valid:
+            raise SubdomainValidationError(error_message)
+
         subdomain_lower = subdomain.lower()
         base_domain_lower = base_domain.lower()
 

@@ -9,11 +9,14 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from opi.connectors.subdomain import (
+    RESERVED_SUBDOMAINS,
+    SUBDOMAIN_REGISTRY_TABLE_SQL,
     SubdomainConnector,
     SubdomainError,
     SubdomainNotAvailableError,
+    SubdomainValidationError,
     create_subdomain_connector,
-    SUBDOMAIN_REGISTRY_TABLE_SQL,
+    validate_subdomain,
 )
 
 
@@ -319,3 +322,104 @@ class TestSubdomainConnectorDeleteByProject:
             result = await connector.delete_by_project("my-project")
 
         assert result == 3
+
+
+class TestValidateSubdomain:
+    """Tests for validate_subdomain function."""
+
+    def test_valid_subdomain(self):
+        """Valid subdomains pass validation."""
+        valid_subdomains = ["myapp", "my-app", "app123", "a", "abc123def"]
+        for subdomain in valid_subdomains:
+            is_valid, error = validate_subdomain(subdomain)
+            assert is_valid is True, f"'{subdomain}' should be valid: {error}"
+            assert error is None
+
+    def test_empty_subdomain(self):
+        """Empty subdomain fails validation."""
+        is_valid, error = validate_subdomain("")
+        assert is_valid is False
+        assert "empty" in error.lower()
+
+    def test_too_long_subdomain(self):
+        """Subdomain exceeding 63 characters fails validation."""
+        long_subdomain = "a" * 64
+        is_valid, error = validate_subdomain(long_subdomain)
+        assert is_valid is False
+        assert "63" in error
+
+    def test_hyphen_at_start(self):
+        """Subdomain starting with hyphen fails validation."""
+        is_valid, error = validate_subdomain("-myapp")
+        assert is_valid is False
+        assert "start" in error.lower()
+
+    def test_hyphen_at_end(self):
+        """Subdomain ending with hyphen fails validation."""
+        is_valid, error = validate_subdomain("myapp-")
+        assert is_valid is False
+        assert "end" in error.lower()
+
+    def test_invalid_characters(self):
+        """Subdomain with invalid characters fails validation."""
+        # Note: uppercase letters are lowercased before validation, so MY-APP becomes my-app which is valid
+        invalid_subdomains = ["my_app", "my.app", "my app"]
+        for subdomain in invalid_subdomains:
+            is_valid, error = validate_subdomain(subdomain)
+            assert is_valid is False, f"'{subdomain}' should be invalid"
+
+    def test_uppercase_is_lowercased(self):
+        """Uppercase letters are lowercased and accepted."""
+        is_valid, error = validate_subdomain("MY-APP")
+        assert is_valid is True  # Gets lowercased to my-app which is valid
+
+    def test_reserved_subdomains(self):
+        """Reserved subdomains fail validation."""
+        reserved_examples = ["www", "api", "admin", "mail"]
+        for subdomain in reserved_examples:
+            is_valid, error = validate_subdomain(subdomain)
+            assert is_valid is False, f"'{subdomain}' is reserved"
+            assert "reserved" in error.lower()
+
+    def test_reserved_subdomains_are_defined(self):
+        """RESERVED_SUBDOMAINS contains expected entries."""
+        assert "www" in RESERVED_SUBDOMAINS
+        assert "api" in RESERVED_SUBDOMAINS
+        assert "admin" in RESERVED_SUBDOMAINS
+        assert len(RESERVED_SUBDOMAINS) > 50  # Reasonable number of reserved names
+
+
+class TestSubdomainValidationInRegister:
+    """Tests for validation integration in SubdomainConnector.register."""
+
+    @pytest.mark.asyncio
+    async def test_register_validates_subdomain_format(self):
+        """register raises SubdomainValidationError for invalid subdomain."""
+        connector = SubdomainConnector()
+
+        with pytest.raises(SubdomainValidationError) as exc_info:
+            await connector.register(
+                subdomain="-invalid",
+                base_domain="rijks.app",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert "start" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_register_rejects_reserved_subdomain(self):
+        """register raises SubdomainValidationError for reserved subdomain."""
+        connector = SubdomainConnector()
+
+        with pytest.raises(SubdomainValidationError) as exc_info:
+            await connector.register(
+                subdomain="www",
+                base_domain="rijks.app",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert "reserved" in str(exc_info.value).lower()

@@ -714,7 +714,11 @@ Available variables depend on selected services:
           const response = await fetch(`/api/subdomains/check/${encodeURIComponent(subdomain)}?base_domain=${encodeURIComponent(baseDomain)}`);
           const data = await response.json();
 
-          if (data.available) {
+          if (data.validation_error) {
+            // Validation error - show the error message
+            availabilityDiv.innerHTML = `<span style="color: red;">&#x2718; ${data.validation_error}</span>`;
+            document.getElementById('subdomain').value = '';
+          } else if (data.available) {
             availabilityDiv.innerHTML = '<span style="color: green;">&#x2714; Beschikbaar</span>';
             // Copy to the main subdomain field for form submission
             document.getElementById('subdomain').value = subdomain;

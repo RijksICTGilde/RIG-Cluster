@@ -27,6 +27,7 @@ from opi.connectors.git import (
     create_git_repository,
 )
 from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_ca_certificate_config,
@@ -60,6 +61,7 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
+    find_root_component,
     generate_argocd_application_name,
     generate_external_hostname,
     generate_helm_values_filename,
@@ -70,6 +72,7 @@ from opi.utils.naming import (
     generate_manifest_name,
     generate_network_policy_manifest_name,
     generate_network_policy_name,
+    generate_nice_url_root_hostname,
     generate_project_realm_name,
     generate_public_url,
     generate_pvc_name,
@@ -3525,6 +3528,42 @@ class ProjectManager:
             logger.warning(f"No components found in deployment {deployment_name}, skipping")
             return []
 
+        # Register subdomain for nice-url mode
+        domain_mode = deployment.get("domain-mode")
+        subdomain = deployment.get("subdomain")
+        base_domain = deployment.get("base-domain")
+
+        if domain_mode == "nice-url" and subdomain and base_domain:
+            try:
+                subdomain_connector = SubdomainConnector()
+                # Check availability first
+                is_available = await subdomain_connector.check_availability(subdomain, base_domain)
+                if is_available:
+                    await subdomain_connector.register(
+                        subdomain=subdomain,
+                        base_domain=base_domain,
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        cluster=cluster,
+                        created_by=None,  # Could be enhanced to track user in future
+                    )
+                    logger.info(f"Registered subdomain '{subdomain}.{base_domain}' for project '{project_name}'")
+                else:
+                    # Check if it's already registered to this project
+                    existing = await subdomain_connector.get_by_subdomain(subdomain, base_domain)
+                    if existing and existing.get("project_name") == project_name:
+                        logger.info(
+                            f"Subdomain '{subdomain}.{base_domain}' already registered to project '{project_name}'"
+                        )
+                    else:
+                        logger.warning(
+                            f"Subdomain '{subdomain}.{base_domain}' is already registered to another project: "
+                            f"{existing.get('project_name') if existing else 'unknown'}"
+                        )
+            except Exception as e:
+                logger.error(f"Failed to register subdomain '{subdomain}.{base_domain}': {e}")
+                # Don't fail the entire deployment for subdomain registration failure
+
         # Collect registry configurations for all components in this deployment
         registry_configs_map: dict[str, dict[str, Any]] = {}  # registry_name -> registry_config
         image_to_registry_map: dict[str, str] = {}  # image_url -> registry_name
@@ -4012,6 +4051,58 @@ class ProjectManager:
                             logger.info(
                                 f"Successfully created {manifest_file} manifest for {ingress_hostname}{path_value}: {manifest_file_path}"
                             )
+
+                    # Create root ingress for nice-url mode if this is the root component
+                    is_root_component = component.get("root") is True
+                    if domain_mode == "nice-url" and subdomain and base_domain and is_root_component:
+                        root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
+                        root_ingress_name = f"{deployment_name}-root"
+                        root_manifest_name = generate_manifest_name(component_name, "ingress-root")
+
+                        # Create root ingress variables
+                        root_ingress_variables = variables.copy()
+
+                        # Determine issuer for root ingress (same logic as component ingress)
+                        root_issuer_name = None
+                        root_cluster_issuer = None
+
+                        if base_domain and issuer_config:
+                            if issuer_config in ("letsencrypt", "letsencrypt-staging"):
+                                root_issuer_name = generate_issuer_name(base_domain, issuer_config)
+                            else:
+                                root_issuer_name = issuer_config
+                        else:
+                            root_cluster_issuer = get_ingress_cluster_issuer(cluster)
+
+                        root_ingress_variables.update(
+                            {
+                                "name": root_ingress_name,
+                                "service_name": unique_name,  # Points to same service as component
+                                "hostname": root_hostname,
+                                "path": "/",  # Root always uses /
+                                "issuer_name": root_issuer_name,
+                                "cluster_issuer": root_cluster_issuer,
+                                "tls_secret_name": generate_tls_secret_name(root_ingress_name),
+                            }
+                        )
+
+                        # Create the root ingress manifest
+                        root_manifest_file_path = self._manifest_generator.create_manifest_file(
+                            template_path=manifest_path,
+                            values=root_ingress_variables,
+                            output_dir=full_output_dir,
+                            output_filename=root_manifest_name,
+                            use_sops=False,
+                        )
+                        created_files.append(f"{root_manifest_name}.yaml")
+                        logger.info(
+                            f"Successfully created root ingress manifest for {root_hostname}: {root_manifest_file_path}"
+                        )
+
+                        # Track root URL in deployment results
+                        root_web_address = generate_public_url(root_hostname, use_https)
+                        self._deployment_results[deployment_name].urls["root"] = root_web_address
+                        logger.info(f"Tracked root URL: {root_web_address}")
                 else:
                     # Standard single manifest creation
                     unique_manifest_name = generate_manifest_name(component_name, manifest_name)

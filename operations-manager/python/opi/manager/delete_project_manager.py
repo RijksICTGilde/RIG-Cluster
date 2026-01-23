@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
+from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services.project_service import get_project_service
@@ -575,6 +576,32 @@ class DeleteProjectManager:
                 deletion_results["errors"].extend(delete_result["errors"])
                 if not delete_result["success"]:
                     deletion_results["success"] = False
+
+            # Clean up subdomain registrations for this project
+            try:
+                subdomain_connector = SubdomainConnector()
+                deleted_subdomains = await subdomain_connector.delete_by_project(project_name)
+                if deleted_subdomains:
+                    deletion_results["operations"].append(
+                        {
+                            "type": "subdomain_cleanup",
+                            "target": f"project '{project_name}'",
+                            "status": "success",
+                            "count": deleted_subdomains,
+                            "message": f"Deleted {deleted_subdomains} subdomain registration(s)",
+                        }
+                    )
+                    logger.info(f"Deleted {deleted_subdomains} subdomain registration(s) for project '{project_name}'")
+                else:
+                    logger.debug(f"No subdomain registrations found for project '{project_name}'")
+            except Exception as e:
+                error_msg = f"Error cleaning up subdomain registrations: {e}"
+                deletion_results["errors"].append(error_msg)
+                deletion_results["operations"].append(
+                    {"type": "subdomain_cleanup", "status": "error", "error": str(e)}
+                )
+                logger.warning(error_msg)
+                # Don't fail the deletion for subdomain cleanup errors
 
             # Final step: Remove project from in-memory database if deletion was successful
             if deletion_results["success"]:
