@@ -1,0 +1,374 @@
+"""
+Subdomain registry connector for managing nice URL subdomains.
+
+This module provides functionality to manage globally unique subdomains for nice URLs.
+Subdomains are registered per (subdomain, base_domain) pair and associated with projects.
+"""
+
+import logging
+from datetime import datetime
+from typing import Any
+
+from opi.core.database_pools import get_database_pool
+
+logger = logging.getLogger(__name__)
+
+
+class SubdomainError(Exception):
+    """Exception raised when subdomain operations fail."""
+
+
+class SubdomainNotAvailableError(SubdomainError):
+    """Exception raised when a subdomain is already taken."""
+
+
+class SubdomainConnector:
+    """Connector for managing subdomain registry using the application database pool.
+
+    This connector manages the subdomain_registry table which tracks globally unique
+    subdomains for the nice URL feature. Each subdomain + base_domain combination
+    must be unique across all projects.
+    """
+
+    TABLE_NAME = "subdomain_registry"
+
+    @staticmethod
+    def _get_pool():
+        """Get the main database pool."""
+        return get_database_pool("main")
+
+    async def check_availability(self, subdomain: str, base_domain: str) -> bool:
+        """Check if a subdomain is available for registration.
+
+        Args:
+            subdomain: The subdomain to check (e.g., "myapp")
+            base_domain: The base domain (e.g., "rijks.app")
+
+        Returns:
+            True if the subdomain is available, False if already taken
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.fetchval(
+                f"""
+                SELECT 1 FROM {self.TABLE_NAME}
+                WHERE subdomain = $1 AND base_domain = $2
+                """,
+                subdomain.lower(),
+                base_domain.lower(),
+            )
+            return result is None
+        finally:
+            await pool.release(conn)
+
+    async def register(
+        self,
+        subdomain: str,
+        base_domain: str,
+        project_name: str,
+        deployment_name: str,
+        cluster: str,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Register a new subdomain.
+
+        Args:
+            subdomain: The subdomain to register (e.g., "myapp")
+            base_domain: The base domain (e.g., "rijks.app")
+            project_name: The project name that owns this subdomain
+            deployment_name: The deployment name using this subdomain
+            cluster: The cluster where this subdomain is deployed
+            created_by: Optional email/identifier of who created the registration
+
+        Returns:
+            Dictionary with the created registration details
+
+        Raises:
+            SubdomainNotAvailableError: If the subdomain is already taken
+            SubdomainError: If registration fails
+        """
+        subdomain_lower = subdomain.lower()
+        base_domain_lower = base_domain.lower()
+
+        # Check availability first
+        if not await self.check_availability(subdomain_lower, base_domain_lower):
+            existing = await self.get_by_subdomain(subdomain_lower, base_domain_lower)
+            raise SubdomainNotAvailableError(
+                f"Subdomain '{subdomain_lower}.{base_domain_lower}' is already registered "
+                f"to project '{existing.get('project_name') if existing else 'unknown'}'"
+            )
+
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.fetchrow(
+                f"""
+                INSERT INTO {self.TABLE_NAME}
+                (subdomain, base_domain, project_name, deployment_name, cluster, created_by)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                """,
+                subdomain_lower,
+                base_domain_lower,
+                project_name,
+                deployment_name,
+                cluster,
+                created_by,
+            )
+
+            logger.info(
+                f"Registered subdomain '{subdomain_lower}.{base_domain_lower}' "
+                f"for project '{project_name}', deployment '{deployment_name}'"
+            )
+
+            return dict(result) if result else {}
+        except Exception as e:
+            # Handle unique constraint violation
+            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                raise SubdomainNotAvailableError(
+                    f"Subdomain '{subdomain_lower}.{base_domain_lower}' is already registered"
+                ) from e
+            logger.exception(f"Failed to register subdomain '{subdomain_lower}.{base_domain_lower}'")
+            raise SubdomainError(f"Subdomain registration failed: {e}") from e
+        finally:
+            await pool.release(conn)
+
+    async def get_by_subdomain(self, subdomain: str, base_domain: str) -> dict[str, Any] | None:
+        """Get a subdomain registration by subdomain and base domain.
+
+        Args:
+            subdomain: The subdomain to look up
+            base_domain: The base domain
+
+        Returns:
+            Dictionary with registration details, or None if not found
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.fetchrow(
+                f"""
+                SELECT id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                FROM {self.TABLE_NAME}
+                WHERE subdomain = $1 AND base_domain = $2
+                """,
+                subdomain.lower(),
+                base_domain.lower(),
+            )
+            return dict(result) if result else None
+        finally:
+            await pool.release(conn)
+
+    async def get_by_project(self, project_name: str) -> list[dict[str, Any]]:
+        """Get all subdomain registrations for a project.
+
+        Args:
+            project_name: The project name to look up
+
+        Returns:
+            List of registration dictionaries
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            results = await conn.fetch(
+                f"""
+                SELECT id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                FROM {self.TABLE_NAME}
+                WHERE project_name = $1
+                ORDER BY subdomain, base_domain
+                """,
+                project_name,
+            )
+            return [dict(row) for row in results]
+        finally:
+            await pool.release(conn)
+
+    async def get_by_deployment(self, project_name: str, deployment_name: str) -> dict[str, Any] | None:
+        """Get subdomain registration for a specific deployment.
+
+        Args:
+            project_name: The project name
+            deployment_name: The deployment name
+
+        Returns:
+            Registration dictionary, or None if not found
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.fetchrow(
+                f"""
+                SELECT id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                FROM {self.TABLE_NAME}
+                WHERE project_name = $1 AND deployment_name = $2
+                """,
+                project_name,
+                deployment_name,
+            )
+            return dict(result) if result else None
+        finally:
+            await pool.release(conn)
+
+    async def delete(self, subdomain: str, base_domain: str) -> bool:
+        """Delete a subdomain registration.
+
+        Args:
+            subdomain: The subdomain to delete
+            base_domain: The base domain
+
+        Returns:
+            True if deleted, False if not found
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.execute(
+                f"""
+                DELETE FROM {self.TABLE_NAME}
+                WHERE subdomain = $1 AND base_domain = $2
+                """,
+                subdomain.lower(),
+                base_domain.lower(),
+            )
+            deleted = result == "DELETE 1"
+            if deleted:
+                logger.info(f"Deleted subdomain registration '{subdomain.lower()}.{base_domain.lower()}'")
+            return deleted
+        finally:
+            await pool.release(conn)
+
+    async def delete_by_project(self, project_name: str) -> int:
+        """Delete all subdomain registrations for a project.
+
+        Args:
+            project_name: The project name
+
+        Returns:
+            Number of registrations deleted
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.execute(
+                f"""
+                DELETE FROM {self.TABLE_NAME}
+                WHERE project_name = $1
+                """,
+                project_name,
+            )
+            # Parse "DELETE N" to get count
+            count = int(result.split()[-1]) if result else 0
+            if count > 0:
+                logger.info(f"Deleted {count} subdomain registration(s) for project '{project_name}'")
+            return count
+        finally:
+            await pool.release(conn)
+
+    async def update(
+        self,
+        subdomain: str,
+        base_domain: str,
+        deployment_name: str | None = None,
+        cluster: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Update a subdomain registration.
+
+        Args:
+            subdomain: The subdomain to update
+            base_domain: The base domain
+            deployment_name: New deployment name (optional)
+            cluster: New cluster (optional)
+
+        Returns:
+            Updated registration dictionary, or None if not found
+        """
+        updates = []
+        params = [subdomain.lower(), base_domain.lower()]
+        param_idx = 3
+
+        if deployment_name is not None:
+            updates.append(f"deployment_name = ${param_idx}")
+            params.append(deployment_name)
+            param_idx += 1
+
+        if cluster is not None:
+            updates.append(f"cluster = ${param_idx}")
+            params.append(cluster)
+            param_idx += 1
+
+        if not updates:
+            return await self.get_by_subdomain(subdomain, base_domain)
+
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.fetchrow(
+                f"""
+                UPDATE {self.TABLE_NAME}
+                SET {", ".join(updates)}
+                WHERE subdomain = $1 AND base_domain = $2
+                RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                """,
+                *params,
+            )
+            return dict(result) if result else None
+        finally:
+            await pool.release(conn)
+
+    async def list_all(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        """List all subdomain registrations.
+
+        Args:
+            limit: Maximum number of results to return
+            offset: Number of results to skip
+
+        Returns:
+            List of registration dictionaries
+        """
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            results = await conn.fetch(
+                f"""
+                SELECT id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                FROM {self.TABLE_NAME}
+                ORDER BY subdomain, base_domain
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
+            return [dict(row) for row in results]
+        finally:
+            await pool.release(conn)
+
+
+# Factory function
+def create_subdomain_connector() -> SubdomainConnector:
+    """Create a SubdomainConnector instance.
+
+    Returns:
+        SubdomainConnector instance
+    """
+    return SubdomainConnector()
+
+
+# SQL for table creation (used by startup)
+SUBDOMAIN_REGISTRY_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS subdomain_registry (
+    id SERIAL PRIMARY KEY,
+    subdomain VARCHAR(63) NOT NULL,
+    base_domain VARCHAR(255) NOT NULL,
+    project_name VARCHAR(63) NOT NULL,
+    deployment_name VARCHAR(63) NOT NULL,
+    cluster VARCHAR(63) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(255),
+    UNIQUE (subdomain, base_domain)
+);
+
+CREATE INDEX IF NOT EXISTS idx_subdomain_project ON subdomain_registry(project_name);
+CREATE INDEX IF NOT EXISTS idx_subdomain_deployment ON subdomain_registry(project_name, deployment_name);
+"""

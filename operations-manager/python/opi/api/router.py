@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import GitConnector
+from opi.connectors.subdomain import create_subdomain_connector
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
@@ -402,8 +403,7 @@ class SelfServiceProjectRequest(BaseModel):
 
     # Web Address Configuration
     domain_mode: str = "component-specific"  # "component-specific", "deployment-name", "custom", or "nice-url"
-    subdomain: str | None = None  # Custom subdomain (required when domain_mode is "custom")
-    include_project_name: bool = False  # For nice-url mode: include project name in hostname
+    subdomain: str | None = None  # For nice-url mode: globally unique subdomain. For custom mode: custom subdomain
 
     # External Domain Configuration (for public domains with Let's Encrypt)
     base_domain: str | None = None  # Apex domain (e.g., "rijks.app")
@@ -1400,3 +1400,125 @@ async def create_self_service_project(
     finally:
         if project_manager:
             await project_manager.close()
+
+
+# Subdomain API endpoints for nice URL feature
+
+
+class SubdomainCheckResponse(BaseModel):
+    """Response for subdomain availability check."""
+
+    subdomain: str = Field(..., description="The subdomain that was checked", example="myapp")
+    base_domain: str = Field(..., description="The base domain", example="rijks.app")
+    available: bool = Field(..., description="Whether the subdomain is available", example=True)
+    registered_to: str | None = Field(
+        None, description="Project name if subdomain is already registered", example="other-project"
+    )
+
+
+class SubdomainRegistration(BaseModel):
+    """Subdomain registration details."""
+
+    id: int = Field(..., description="Registration ID")
+    subdomain: str = Field(..., description="The subdomain", example="myapp")
+    base_domain: str = Field(..., description="The base domain", example="rijks.app")
+    project_name: str = Field(..., description="Project that owns this subdomain", example="my-project")
+    deployment_name: str = Field(..., description="Deployment using this subdomain", example="prod")
+    cluster: str = Field(..., description="Cluster where deployed", example="odcn-production")
+    created_at: str | None = Field(None, description="Registration timestamp")
+    created_by: str | None = Field(None, description="Who created the registration")
+
+
+@api_router.get(
+    "/subdomains/check/{subdomain}",
+    response_model=SubdomainCheckResponse,
+    responses={
+        200: {"description": "Subdomain availability check result"},
+    },
+)
+async def check_subdomain_availability(subdomain: str, base_domain: str) -> SubdomainCheckResponse:
+    """
+    Check if a subdomain is available for registration.
+
+    This endpoint is used by the self-service portal to validate subdomain
+    availability before project creation in nice-url mode.
+
+    Args:
+        subdomain: The subdomain to check (e.g., "myapp")
+        base_domain: The base domain (e.g., "rijks.app")
+
+    Returns:
+        SubdomainCheckResponse with availability status
+
+    Example:
+    ```bash
+    curl "http://localhost:9595/api/subdomains/check/myapp?base_domain=rijks.app"
+    ```
+    """
+    try:
+        connector = create_subdomain_connector()
+        is_available = await connector.check_availability(subdomain, base_domain)
+
+        registered_to = None
+        if not is_available:
+            existing = await connector.get_by_subdomain(subdomain, base_domain)
+            if existing:
+                registered_to = existing.get("project_name")
+
+        return SubdomainCheckResponse(
+            subdomain=subdomain.lower(),
+            base_domain=base_domain.lower(),
+            available=is_available,
+            registered_to=registered_to,
+        )
+    except Exception as e:
+        logger.error(f"Error checking subdomain availability: {e}")
+        raise HTTPException(status_code=500, detail=f"Error checking subdomain availability: {e}")
+
+
+@api_router.get(
+    "/subdomains",
+    response_model=list[SubdomainRegistration],
+    responses={
+        200: {"description": "List of subdomain registrations"},
+    },
+)
+async def list_subdomains(project_name: str | None = None) -> list[dict]:
+    """
+    List subdomain registrations.
+
+    Args:
+        project_name: Optional filter by project name
+
+    Returns:
+        List of subdomain registrations
+
+    Example:
+    ```bash
+    # List all subdomains
+    curl "http://localhost:9595/api/subdomains"
+
+    # List subdomains for a specific project
+    curl "http://localhost:9595/api/subdomains?project_name=my-project"
+    ```
+    """
+    try:
+        connector = create_subdomain_connector()
+
+        if project_name:
+            registrations = await connector.get_by_project(project_name)
+        else:
+            registrations = await connector.list_all()
+
+        # Convert datetime objects to strings for JSON serialization
+        result = []
+        for reg in registrations:
+            reg_dict = dict(reg)
+            if reg_dict.get("created_at"):
+                reg_dict["created_at"] = reg_dict["created_at"].isoformat()
+            result.append(reg_dict)
+
+        return result
+    except Exception as e:
+        logger.error(f"Error listing subdomains: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing subdomains: {e}")
