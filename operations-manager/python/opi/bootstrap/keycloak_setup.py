@@ -96,6 +96,12 @@ class KeycloakSetup:
             expected_client_id = f"{project_name}-{deployment_name}"
             ingress_hosts = [settings.OWN_DOMAIN]
 
+            # Add additional domains if configured
+            if settings.ADDITIONAL_DOMAINS:
+                additional = [d.strip() for d in settings.ADDITIONAL_DOMAINS.split(",") if d.strip()]
+                ingress_hosts.extend(additional)
+                logger.info(f"Added additional domains: {additional}")
+
             logger.info(f"Creating/updating client '{expected_client_id}' with domains: {ingress_hosts}")
 
             # Create or get the client (without realm setup)

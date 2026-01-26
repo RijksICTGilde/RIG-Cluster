@@ -134,6 +134,7 @@ class Settings(BaseSettings):
     model_config = {"env_file": _get_env_files(), "env_file_encoding": "utf-8"}
 
     OWN_DOMAIN: str = "operations-manager.kind"
+    ADDITIONAL_DOMAINS: str = ""  # Comma-separated list of additional domains for redirect URIs
 
     SECRET_KEY: str = "default-secret-key-for-development-change-in-production"
     ENVIRONMENT: str = "local"

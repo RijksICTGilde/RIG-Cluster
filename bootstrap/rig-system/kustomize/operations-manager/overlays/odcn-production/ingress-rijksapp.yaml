@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: operations-manager-rijksapp
+  namespace: rig-prd-operations
+  annotations:
+    cert-manager.io/issuer: letsencrypt-operations-manager
+    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0"
+    haproxy.router.openshift.io/timeout: "300s"
+spec:
+  rules:
+    - host: zad.rijksapp.nl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: operations-manager
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - zad.rijksapp.nl
+      secretName: operations-manager-rijksapp-tls
