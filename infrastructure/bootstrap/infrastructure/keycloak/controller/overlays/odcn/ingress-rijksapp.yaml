@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-rijksapp
+  namespace: rig-system
+  annotations:
+    cert-manager.io/issuer: letsencrypt-keycloak
+    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0"
+spec:
+  rules:
+    - host: keycloak.rijksapp.nl
+      http:
+        paths:
+          - backend:
+              service:
+                name: keycloak
+                port:
+                  number: 8080
+            path: /
+            pathType: Prefix
+  tls:
+    - hosts:
+        - keycloak.rijksapp.nl
+      secretName: keycloak-rijksapp-tls

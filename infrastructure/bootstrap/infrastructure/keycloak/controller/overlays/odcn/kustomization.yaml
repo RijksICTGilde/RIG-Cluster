@@ -3,6 +3,9 @@ kind: Kustomization
 namespace: rig-system
 resources:
 - ../../base
+# Additional hostname keycloak.rijksapp.nl with Let's Encrypt (transition period)
+- issuer-letsencrypt.yaml
+- ingress-rijksapp.yaml
 
 patches:
   - target:
