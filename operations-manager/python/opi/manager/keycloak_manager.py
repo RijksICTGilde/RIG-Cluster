@@ -16,6 +16,7 @@ from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
 from opi.utils.age import encrypt_age_content, get_project_public_key
 from opi.utils.naming import (
+    HostnameFormat,
     extract_domain_from_url,
     generate_external_hostname,
     generate_project_admin_username,
@@ -96,8 +97,11 @@ class KeycloakManager:
             ingress_postfix = get_ingress_postfix(cluster)
             subdomain = deployment.get("subdomain")
             base_domain = deployment.get("base-domain")
+            domain_mode = deployment.get("domain-mode")
 
-            if subdomain:
+            if domain_mode == "nice-url":
+                logger.info(f"Using nice-url mode for deployment {deployment_name}: subdomain={subdomain}, base-domain={base_domain}")
+            elif subdomain:
                 logger.info(f"Using subdomain mode for deployment {deployment_name}: subdomain={subdomain}")
             else:
                 logger.info(f"Using component-specific mode for deployment {deployment_name}")
@@ -119,6 +123,7 @@ class KeycloakManager:
                 ingress_postfix=ingress_postfix,
                 subdomain=subdomain,
                 base_domain=base_domain,
+                hostname_format=HostnameFormat.from_domain_mode(domain_mode),
             )
             if all_ingress_hosts:
                 logger.info(f"Generated hostnames for components: {all_ingress_hosts}")

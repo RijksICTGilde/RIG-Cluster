@@ -57,6 +57,57 @@ async def _initialize_database_pool_with_retry(pool: DatabasePool, name: str) ->
     logger.info(f"Successfully initialized database pool '{name}'")
 
 
+@retry(
+    stop=stop_after_attempt(12),
+    wait=wait_exponential(multiplier=2, min=2, max=60),
+    retry=retry_if_exception_type(
+        (
+            asyncpg.exceptions.PostgresError,
+            asyncpg.exceptions.InterfaceError,
+            asyncpg.exceptions.ConnectionDoesNotExistError,
+            asyncpg.exceptions.ConnectionFailureError,
+            ConnectionError,
+            OSError,
+            asyncio.TimeoutError,
+        )
+    ),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    after=after_log(logger, logging.INFO),
+)
+async def _ensure_database_exists() -> None:
+    """Ensure the operations_manager database exists, creating it if necessary.
+
+    Connects to the default 'postgres' database to check/create our application database.
+    """
+    database_name = settings.DATABASE_NAME
+    logger.info(f"Ensuring database '{database_name}' exists...")
+
+    conn = await asyncpg.connect(
+        host=settings.DATABASE_HOST,
+        user=settings.DATABASE_ADMIN_NAME,
+        password=settings.DATABASE_ADMIN_PASSWORD,
+        database="postgres",
+        port=5432,
+    )
+
+    try:
+        # Check if database exists
+        exists = await conn.fetchval(
+            "SELECT 1 FROM pg_database WHERE datname = $1",
+            database_name,
+        )
+
+        if not exists:
+            logger.info(f"Database '{database_name}' does not exist, creating it...")
+            # Cannot use parameters for CREATE DATABASE, but database_name is from config
+            await conn.execute(f'CREATE DATABASE "{database_name}"')
+            logger.info(f"Database '{database_name}' created successfully")
+        else:
+            logger.info(f"Database '{database_name}' already exists")
+    finally:
+        await conn.close()
+
+
 async def initialize_database_pools() -> None:
     """Initialize all database pools used by the application with robust retry logic.
 
@@ -66,12 +117,19 @@ async def initialize_database_pools() -> None:
     """
     logger.info("Starting database pool initialization with retry logic...")
 
-    # Main PostgreSQL pool for operations
+    # First ensure our application database exists
+    try:
+        await _ensure_database_exists()
+    except Exception as e:
+        logger.error(f"Failed to ensure database exists: {e}")
+        raise DatabasePoolError(f"Failed to create/verify database: {e}") from e
+
+    # Main PostgreSQL pool for operations - now uses our dedicated database
     main_pool = DatabasePool(
         host=settings.DATABASE_HOST,
         user=settings.DATABASE_ADMIN_NAME,
         password=settings.DATABASE_ADMIN_PASSWORD,
-        database="postgres",  # Connect to default postgres database
+        database=settings.DATABASE_NAME,
         port=5432,
         min_size=2,
         max_size=10,

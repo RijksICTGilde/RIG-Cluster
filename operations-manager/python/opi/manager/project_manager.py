@@ -27,6 +27,7 @@ from opi.connectors.git import (
     create_git_repository,
 )
 from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_ca_certificate_config,
@@ -60,6 +61,8 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
+    HostnameFormat,
+    find_root_component,
     generate_argocd_application_name,
     generate_external_hostname,
     generate_helm_values_filename,
@@ -70,6 +73,7 @@ from opi.utils.naming import (
     generate_manifest_name,
     generate_network_policy_manifest_name,
     generate_network_policy_name,
+    generate_nice_url_root_hostname,
     generate_project_realm_name,
     generate_public_url,
     generate_pvc_name,
@@ -636,6 +640,83 @@ class ProjectManager:
 
         logger.debug(f"Alias '{alias_name}' categorized as service='{service_category}', source='{source_type}'")
         return service_category, source_type
+
+    async def _cleanup_deployment_ingresses(self, deployment_name: str, namespace: str) -> int:
+        """
+        Delete existing ingresses for a deployment before regenerating.
+
+        This is used when domain mode changes to ensure orphaned ingresses from the
+        old configuration are cleaned up before creating new ones.
+
+        Args:
+            deployment_name: Name of the deployment
+            namespace: Kubernetes namespace
+
+        Returns:
+            Number of ingresses deleted
+        """
+        logger.info(f"Cleaning up existing ingresses for deployment '{deployment_name}' in namespace '{namespace}'")
+
+        try:
+            # Get all ingresses with the deployment label
+            label_selector = f"app.kubernetes.io/part-of={deployment_name}"
+            ingresses = await self._kubectl_connector.get_resources_by_label(
+                "ingress", namespace=namespace, label_selector=label_selector
+            )
+
+            deleted_count = 0
+            for ingress in ingresses:
+                name = ingress.get("metadata", {}).get("name")
+                if name:
+                    success = await self._kubectl_connector.delete_resource("ingress", name, namespace)
+                    if success:
+                        deleted_count += 1
+                        logger.info(f"Deleted ingress '{name}' from namespace '{namespace}'")
+                    else:
+                        logger.warning(f"Failed to delete ingress '{name}'")
+
+            logger.info(f"Cleaned up {deleted_count} ingress(es) for deployment '{deployment_name}'")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"Error cleaning up ingresses for deployment '{deployment_name}': {e}")
+            return 0
+
+    async def _rollback_subdomain_if_needed(self) -> bool:
+        """
+        Rollback subdomain registration if one is pending.
+
+        This is called when manifest creation fails after subdomain was registered.
+        Uses the rollback info stored in self._pending_subdomain_rollback.
+
+        Returns:
+            True if rollback was performed, False otherwise
+        """
+        rollback_info = getattr(self, "_pending_subdomain_rollback", None)
+        if not rollback_info or not rollback_info.get("should_rollback"):
+            return False
+
+        connector = rollback_info.get("connector")
+        project_name = rollback_info.get("project_name")
+        deployment_name = rollback_info.get("deployment_name")
+        subdomain = rollback_info.get("subdomain")
+        base_domain = rollback_info.get("base_domain")
+
+        if not connector:
+            logger.warning("Cannot rollback subdomain: no connector available")
+            return False
+
+        try:
+            await connector.delete_by_deployment(project_name, deployment_name)
+            logger.info(
+                f"Rolled back subdomain '{subdomain}.{base_domain}' for {project_name}/{deployment_name} "
+                f"due to deployment failure"
+            )
+            self._pending_subdomain_rollback = None
+            return True
+        except Exception as e:
+            logger.error(f"Failed to rollback subdomain '{subdomain}.{base_domain}': {e}")
+            return False
 
     async def _collect_deployment_aliases(self, deployment_name: str) -> dict[str, dict[str, dict[str, str]]]:
         """
@@ -2211,7 +2292,12 @@ class ProjectManager:
         # This allows deployment-level secrets to include aliases from all components
         self._deployment_aliases[deployment_name] = await self._collect_deployment_aliases(deployment_name)
 
-        await self.create_application_manifests(deployment, git_connector, deployment_path)
+        try:
+            await self.create_application_manifests(deployment, git_connector, deployment_path)
+        except Exception as e:
+            # Rollback subdomain registration if manifest creation fails
+            await self._rollback_subdomain_if_needed()
+            raise
 
         # Note: SSO and user secrets are already created in create_application_manifests above
 
@@ -3525,6 +3611,108 @@ class ProjectManager:
             logger.warning(f"No components found in deployment {deployment_name}, skipping")
             return []
 
+        # Clean up existing ingresses before regenerating manifests
+        # This handles domain mode changes where old ingresses would become orphaned
+        deleted_ingress_count = await self._cleanup_deployment_ingresses(deployment_name, namespace)
+        if deleted_ingress_count > 0:
+            logger.info(f"Cleaned up {deleted_ingress_count} existing ingress(es) before regenerating")
+
+        # Register subdomain for nice-url mode (with rollback on failure)
+        domain_mode = deployment.get("domain-mode")
+        subdomain = deployment.get("subdomain")
+        base_domain = deployment.get("base-domain")
+        subdomain_registered = False  # Track if we registered a new subdomain for rollback
+        subdomain_connector = None  # Initialize for use in rollback
+
+        # Validate nice-url mode requirements BEFORE subdomain registration
+        # This prevents orphaned subdomain entries when validation fails
+        if domain_mode == "nice-url" and subdomain and base_domain:
+            # Validate only one component has root: true for nice-url mode
+            root_components = [c.get("reference") or c.get("name") for c in components if c.get("root") is True]
+            if len(root_components) > 1:
+                raise ValueError(
+                    f"Multiple components marked as root in deployment '{deployment_name}': {root_components}. "
+                    f"Only one component can have 'root: true' for nice-url mode."
+                )
+
+            # Validate that all components with publish-on-web have ports configured
+            # In nice-url mode, each component gets its own ingress at component.subdomain.base_domain
+            components_missing_ports = []
+            for component in components:
+                component_name = component.get("reference") or component.get("name")
+                if not component_name:
+                    continue
+
+                # Check if component has publish-on-web enabled
+                has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
+                    project_data, component_name
+                )
+                if has_publish_on_web:
+                    # Component needs a port for its ingress
+                    has_ports = self._project_file_handler.component_has_ports(project_data, component_name)
+                    if not has_ports:
+                        components_missing_ports.append(component_name)
+
+            if components_missing_ports:
+                raise ValueError(
+                    f"Components with 'publish-on-web' in nice-url mode must have at least one port configured. "
+                    f"Missing ports for: {', '.join(components_missing_ports)}. "
+                    f"Add 'ports.inbound' to the component definition."
+                )
+
+            # Validate that root component has publish-on-web (required for root ingress creation)
+            if root_components:
+                root_component_name = root_components[0]
+                root_has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
+                    project_data, root_component_name
+                )
+                if not root_has_publish_on_web:
+                    raise ValueError(
+                        f"Component '{root_component_name}' is marked as root but does not have 'publish-on-web' enabled. "
+                        f"Root components must have a service exposed for the root URL to work."
+                    )
+
+        if domain_mode == "nice-url" and subdomain and base_domain:
+            from opi.connectors.subdomain import (
+                BaseDomainValidationError,
+                SubdomainNotAvailableError,
+                SubdomainValidationError,
+            )
+
+            subdomain_connector = SubdomainConnector()
+
+            # Check if this is a new registration (for rollback purposes)
+            existing_registration = await subdomain_connector.get_by_deployment(project_name, deployment_name)
+            is_new_registration = existing_registration is None
+
+            # Use register_or_update to handle both new registrations and subdomain changes
+            # This method:
+            # 1. Checks if deployment already has a registration
+            # 2. If subdomain unchanged, returns existing
+            # 3. If subdomain changed, deletes old and registers new
+            # 4. Raises appropriate errors on validation/availability issues
+            await subdomain_connector.register_or_update_for_deployment(
+                subdomain=subdomain,
+                base_domain=base_domain,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=cluster,
+                created_by=None,  # Could be enhanced to track user in future
+            )
+            subdomain_registered = is_new_registration  # Mark for rollback only if new
+            logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
+
+        # Store rollback info for use in exception handler
+        # These variables are used by _rollback_subdomain_on_failure if needed
+        self._pending_subdomain_rollback = {
+            "should_rollback": subdomain_registered,
+            "connector": subdomain_connector,
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "subdomain": subdomain,
+            "base_domain": base_domain,
+        } if subdomain_registered else None
+
         # Collect registry configurations for all components in this deployment
         registry_configs_map: dict[str, dict[str, Any]] = {}  # registry_name -> registry_config
         image_to_registry_map: dict[str, str] = {}  # image_url -> registry_name
@@ -3697,11 +3885,14 @@ class ProjectManager:
             subdomain = deployment.get("subdomain")
             base_domain = deployment.get("base-domain")
             issuer_config = deployment.get("issuer")
+            domain_mode = deployment.get("domain-mode")
             logger.info(
-                f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, issuer: {issuer_config}"
+                f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
+                f"issuer: {issuer_config}, domain-mode: {domain_mode}"
             )
 
             # Get ingress map using centralized function
+            hostname_format = HostnameFormat.from_domain_mode(domain_mode)
             ingress_map = get_component_ingress_map(
                 component_name=component_name,
                 deployment_name=deployment_name,
@@ -3709,6 +3900,7 @@ class ProjectManager:
                 ingress_postfix=ingress_postfix,
                 subdomain=subdomain,
                 base_domain=base_domain,
+                hostname_format=hostname_format,
             )
             hostname = next(iter(ingress_map.values()))
 
@@ -4009,6 +4201,58 @@ class ProjectManager:
                             logger.info(
                                 f"Successfully created {manifest_file} manifest for {ingress_hostname}{path_value}: {manifest_file_path}"
                             )
+
+                    # Create root ingress for nice-url mode if this is the root component
+                    is_root_component = component.get("root") is True
+                    if domain_mode == "nice-url" and subdomain and base_domain and is_root_component:
+                        root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
+                        root_ingress_name = f"{deployment_name}-root"
+                        root_manifest_name = generate_manifest_name(component_name, "ingress-root")
+
+                        # Create root ingress variables
+                        root_ingress_variables = variables.copy()
+
+                        # Determine issuer for root ingress (same logic as component ingress)
+                        root_issuer_name = None
+                        root_cluster_issuer = None
+
+                        if base_domain and issuer_config:
+                            if issuer_config in ("letsencrypt", "letsencrypt-staging"):
+                                root_issuer_name = generate_issuer_name(base_domain, issuer_config)
+                            else:
+                                root_issuer_name = issuer_config
+                        else:
+                            root_cluster_issuer = get_ingress_cluster_issuer(cluster)
+
+                        root_ingress_variables.update(
+                            {
+                                "name": root_ingress_name,
+                                "service_name": unique_name,  # Points to same service as component
+                                "hostname": root_hostname,
+                                "path": "/",  # Root always uses /
+                                "issuer_name": root_issuer_name,
+                                "cluster_issuer": root_cluster_issuer,
+                                "tls_secret_name": generate_tls_secret_name(root_ingress_name),
+                            }
+                        )
+
+                        # Create the root ingress manifest
+                        root_manifest_file_path = self._manifest_generator.create_manifest_file(
+                            template_path=manifest_path,
+                            values=root_ingress_variables,
+                            output_dir=full_output_dir,
+                            output_filename=root_manifest_name,
+                            use_sops=False,
+                        )
+                        created_files.append(f"{root_manifest_name}.yaml")
+                        logger.info(
+                            f"Successfully created root ingress manifest for {root_hostname}: {root_manifest_file_path}"
+                        )
+
+                        # Track root URL in deployment results
+                        root_web_address = generate_public_url(root_hostname, use_https)
+                        self._deployment_results[deployment_name].urls["root"] = root_web_address
+                        logger.info(f"Tracked root URL: {root_web_address}")
                 else:
                     # Standard single manifest creation
                     unique_manifest_name = generate_manifest_name(component_name, manifest_name)
@@ -4368,6 +4612,8 @@ class ProjectManager:
                         f"Component {component_name} uses MinIO but no object storage credentials found in deployment {deployment_name}"
                     )
 
+        # Clear rollback info on success
+        self._pending_subdomain_rollback = None
         return created_files
 
     # TODO: this should be moved to manifests.py
