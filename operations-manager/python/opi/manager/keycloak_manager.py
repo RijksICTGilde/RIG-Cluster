@@ -16,6 +16,7 @@ from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
 from opi.utils.age import encrypt_age_content, get_project_public_key
 from opi.utils.naming import (
+    HostnameFormat,
     extract_domain_from_url,
     generate_external_hostname,
     generate_project_admin_username,
@@ -122,7 +123,7 @@ class KeycloakManager:
                 ingress_postfix=ingress_postfix,
                 subdomain=subdomain,
                 base_domain=base_domain,
-                domain_mode=domain_mode,
+                hostname_format=HostnameFormat.from_domain_mode(domain_mode),
             )
             if all_ingress_hosts:
                 logger.info(f"Generated hostnames for components: {all_ingress_hosts}")
