@@ -19,3 +19,4 @@ secrets-overview-*.yaml
 /output.yaml
 /operations-manager/python/.env.my-machine
 /keycloak-migration/custom-mapper/target/
+/security/

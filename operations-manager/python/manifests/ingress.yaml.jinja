@@ -3,15 +3,51 @@ kind: Ingress
 metadata:
   name: {{ name }}
   annotations:
+    # ============================================================
     # OpenShift/HAProxy annotations
+    # ============================================================
     haproxy.router.openshift.io/ip_whitelist: {{ ip_whitelist | default("0.0.0.0") }}
     haproxy.router.openshift.io/timeout: "300s"
+{% if enable_tls %}
+    # HSTS for internet.nl compliance (1 year, includeSubDomains, preload)
+    # See: https://internet.nl/faqs/https/
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000;includeSubDomains;preload"
+{% endif %}
+    # ============================================================
     # NGINX ingress annotations
+    # ============================================================
     nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
     nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+{% if enable_tls %}
+    # HSTS for NGINX (enabled by default, but explicit for clarity)
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+{% endif %}
+    # ============================================================
+    # Security headers for internet.nl compliance
+    # See: https://internet.nl/faqs/appsecpriv/
+    # ============================================================
+    # X-Content-Type-Options: Prevent MIME type sniffing
+    nginx.ingress.kubernetes.io/x-content-type-options: "nosniff"
+    # X-Frame-Options: Prevent clickjacking (DENY or SAMEORIGIN)
+    nginx.ingress.kubernetes.io/x-frame-options: "DENY"
+    # Referrer-Policy: Control referrer information
+    nginx.ingress.kubernetes.io/referrer-policy: "strict-origin-when-cross-origin"
+    # Content-Security-Policy: Baseline CSP (applications should override with stricter policy)
+    # Note: This is a permissive default; applications should set their own CSP header
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Permissions-Policy: geolocation=(), microphone=(), camera=()";
+    # ============================================================
+    # Certificate manager annotations
+    # ============================================================
 {% if issuer_name %}
     cert-manager.io/issuer: {{ issuer_name }}
 {% elif cluster_issuer %}

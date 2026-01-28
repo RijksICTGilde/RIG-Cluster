@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns
+spec:
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: external-dns
+  template:
+    metadata:
+      labels:
+        app: external-dns
+    spec:
+      serviceAccountName: external-dns
+      imagePullSecrets:
+        - name: k8s-rig-robot-pull-secret
+      containers:
+        - resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 256Mi
+          name: external-dns
+          image: rcr.rijksapps.nl/k8s-rig/external-dns/external-dns:v0.15.0
+          args:
+            - --source=ingress
+            - --provider=transip
+            - --transip-account=$(TRANSIP_ACCOUNT_NAME)
+            - --transip-keyfile=/transip/transip-api-key
+            - --log-level=info
+            - --log-format=text
+            - --interval=1m
+            - --policy=upsert-only
+          env:
+            - name: TRANSIP_ACCOUNT_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: transip-credentials
+                  key: TRANSIP_ACCOUNT_NAME
+          volumeMounts:
+            - name: transip-api-key
+              mountPath: /transip
+              readOnly: true
+      volumes:
+        - name: transip-api-key
+          secret:
+            secretName: transip-credentials
+            items:
+              - key: TRANSIP_PRIVATE_KEY
+                path: transip-api-key

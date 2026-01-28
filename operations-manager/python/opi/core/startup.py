@@ -29,6 +29,7 @@ from opi.connectors.git import (
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import PrometheusConnector, create_prometheus_connector
+from opi.connectors.subdomain import SUBDOMAIN_REGISTRY_TABLE_SQL
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
@@ -38,6 +39,22 @@ from opi.services.project_service import get_project_service, initialize_project
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
+
+
+async def create_subdomain_registry_table() -> None:
+    """Create the subdomain_registry table if it doesn't exist.
+
+    This table is used by the nice URL feature to track globally unique subdomains.
+    """
+    from opi.core.database_pools import get_database_pool
+
+    pool = get_database_pool("main")
+    conn = await pool.acquire()
+    try:
+        await conn.execute(SUBDOMAIN_REGISTRY_TABLE_SQL)
+        logger.debug("Subdomain registry table and indexes created/verified")
+    finally:
+        await pool.release(conn)
 
 
 @retry(
@@ -566,6 +583,14 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             f"Application requires database connectivity to function. Error: {e}"
         )
         raise RuntimeError(f"Database pool initialization failed: {e}") from e
+
+    # Create subdomain registry table if it doesn't exist
+    try:
+        await create_subdomain_registry_table()
+        logger.info("Subdomain registry table ensured")
+    except Exception as e:
+        logger.error(f"Failed to create subdomain registry table: {e}")
+        # Non-critical - nice URLs won't work but app can continue
 
     # Initialize Prometheus connector (non-critical - metrics will be unavailable if it fails)
     # If not connected, start a background task to retry

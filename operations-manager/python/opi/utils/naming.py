@@ -7,6 +7,33 @@ including deployments, services, PVCs, and other manifest resources.
 
 import re
 from datetime import UTC
+from enum import Enum
+
+
+class HostnameFormat(Enum):
+    """Format for hostname generation.
+
+    DASHES: Traditional format using dashes (component-deployment-project.domain)
+    DOTS: Nice URL format using dots (component.subdomain.base_domain)
+    """
+
+    DASHES = "dashes"
+    DOTS = "dots"
+
+    @classmethod
+    def from_domain_mode(cls, domain_mode: str | None) -> "HostnameFormat":
+        """Convert a domain_mode string to HostnameFormat enum.
+
+        Args:
+            domain_mode: The domain mode string from deployment config
+                        ("nice-url" -> DOTS, anything else -> DASHES)
+
+        Returns:
+            HostnameFormat enum value
+        """
+        if domain_mode == "nice-url":
+            return cls.DOTS
+        return cls.DASHES
 
 
 def generate_unique_name(deployment_name: str, component_name: str) -> str:
@@ -1353,6 +1380,96 @@ def generate_external_hostname(subdomain: str, base_domain: str) -> str:
     return f"{subdomain}.{base_domain}"
 
 
+def generate_nice_url_hostname(
+    component_name: str,
+    subdomain: str,
+    base_domain: str,
+) -> str:
+    """
+    Generate a hostname using the nice URL dot-separated pattern.
+
+    The nice URL pattern uses dots to separate components:
+    - Pattern: component.subdomain.base_domain
+
+    This provides cleaner, more readable URLs compared to dash-separated patterns.
+    The subdomain is user-configurable and globally unique per base_domain.
+
+    Args:
+        component_name: Name of the component (e.g., "frontend")
+        subdomain: User-configured subdomain (e.g., "myapp") - globally unique
+        base_domain: The base domain (e.g., "rijks.app")
+
+    Returns:
+        Hostname in dot-separated pattern
+
+    Examples:
+        >>> generate_nice_url_hostname("frontend", "myapp", "rijks.app")
+        'frontend.myapp.rijks.app'
+
+        >>> generate_nice_url_hostname("backend", "myapp", "rijksapps.nl")
+        'backend.myapp.rijksapps.nl'
+    """
+    # Sanitize component and subdomain names for URL use
+    component_clean = _sanitize_for_lowercase(component_name)
+    subdomain_clean = _sanitize_for_lowercase(subdomain)
+
+    return f"{component_clean}.{subdomain_clean}.{base_domain}"
+
+
+def generate_nice_url_root_hostname(subdomain: str, base_domain: str) -> str:
+    """
+    Generate the root hostname for nice URL mode.
+
+    The root hostname is just subdomain.base_domain and resolves to the
+    component marked with root: true in the deployment configuration.
+
+    Args:
+        subdomain: User-configured subdomain (e.g., "myapp") - globally unique
+        base_domain: The base domain (e.g., "rijks.app")
+
+    Returns:
+        Root hostname in pattern subdomain.base_domain
+
+    Examples:
+        >>> generate_nice_url_root_hostname("myapp", "rijks.app")
+        'myapp.rijks.app'
+
+        >>> generate_nice_url_root_hostname("mydomain", "rijksapps.nl")
+        'mydomain.rijksapps.nl'
+    """
+    subdomain_clean = _sanitize_for_lowercase(subdomain)
+    return f"{subdomain_clean}.{base_domain}"
+
+
+def find_root_component(components: list[dict]) -> str | None:
+    """
+    Find the component marked as root in a list of component configurations.
+
+    The root component receives traffic for the root hostname (subdomain.base_domain)
+    in nice-url mode. It should be marked with root: true in the component config.
+
+    Args:
+        components: List of component dictionaries with optional 'root' field
+
+    Returns:
+        Component name (from 'reference' or 'name' field), or None if no root found
+
+    Examples:
+        >>> find_root_component([{"reference": "frontend", "root": True}, {"reference": "backend"}])
+        'frontend'
+
+        >>> find_root_component([{"name": "api"}, {"name": "web", "root": True}])
+        'web'
+
+        >>> find_root_component([{"name": "api"}, {"name": "web"}])
+        None
+    """
+    for comp in components:
+        if comp.get("root") is True:
+            return comp.get("reference") or comp.get("name")
+    return None
+
+
 def get_component_ingress_map(
     component_name: str,
     deployment_name: str,
@@ -1360,6 +1477,7 @@ def get_component_ingress_map(
     ingress_postfix: str,
     subdomain: str | None = None,
     base_domain: str | None = None,
+    hostname_format: HostnameFormat = HostnameFormat.DASHES,
 ) -> dict[str, str]:
     """
     Get the ingress map for a single component.
@@ -1367,45 +1485,56 @@ def get_component_ingress_map(
     Centralizes the hostname/ingress generation logic used by both keycloak_manager
     and project_manager to avoid duplication.
 
-    When base_domain and subdomain are set, uses the custom domain.
-    Otherwise, uses the default cluster domain.
-
     Args:
         component_name: Name of the component
         deployment_name: Name of the deployment
         project_name: Name of the project
         ingress_postfix: Cluster ingress postfix
         subdomain: Optional subdomain override
-        base_domain: Optional custom base domain (e.g., "rijksapp.nl")
+        base_domain: Optional custom base domain (e.g., "rijks.app")
+        hostname_format: Format for hostname (DASHES or DOTS)
 
     Returns:
         Dict mapping ingress name to hostname
 
-    Example:
-        # Custom domain mode
+    Examples:
+        # Nice URL (DOTS): component.subdomain.base_domain
         >>> get_component_ingress_map(
-        ...     "frontend", "prod", "myapp",
-        ...     ".cluster.example.com", subdomain="myapp", base_domain="custom.nl"
+        ...     "frontend", "prod", "myapp", ".kind",
+        ...     subdomain="myapp", base_domain="rijks.app",
+        ...     hostname_format=HostnameFormat.DOTS
+        ... )
+        {'prod-frontend': 'frontend.myapp.rijks.app'}
+
+        # Custom domain (DASHES): subdomain.base_domain
+        >>> get_component_ingress_map(
+        ...     "frontend", "prod", "myapp", ".kind",
+        ...     subdomain="myapp", base_domain="custom.nl"
         ... )
         {'prod-frontend': 'myapp.custom.nl'}
 
-        # Default cluster domain
+        # Cluster domain (DASHES): component-deployment-project.cluster
         >>> get_component_ingress_map(
-        ...     "frontend", "prod", "myapp",
-        ...     ".cluster.example.com", subdomain="myapp"
+        ...     "frontend", "prod", "myapp", ".kind"
         ... )
-        {'prod-frontend': 'myapp.cluster.example.com'}
+        {'prod-frontend': 'frontend-prod-myapp.kind'}
     """
-    if base_domain and subdomain:
-        # Custom domain mode
-        hostname = generate_external_hostname(subdomain, base_domain)
-        base_name = generate_unique_name(deployment_name, component_name)
+    base_name = generate_unique_name(deployment_name, component_name)
+
+    # Nice URL format (DOTS): component.subdomain.base_domain
+    if hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
+        hostname = generate_nice_url_hostname(component_name, subdomain, base_domain)
         return {base_name: hostname}
-    else:
-        # Default cluster domain
-        return generate_ingress_map(
-            component_name, deployment_name, project_name, ingress_postfix, subdomain
-        )
+
+    # Custom/external domain mode (base_domain with subdomain)
+    if base_domain and subdomain:
+        hostname = generate_external_hostname(subdomain, base_domain)
+        return {base_name: hostname}
+
+    # Default cluster domain
+    return generate_ingress_map(
+        component_name, deployment_name, project_name, ingress_postfix, subdomain
+    )
 
 
 def get_deployment_hostnames(
@@ -1415,16 +1544,12 @@ def get_deployment_hostnames(
     ingress_postfix: str,
     subdomain: str | None = None,
     base_domain: str | None = None,
+    hostname_format: HostnameFormat = HostnameFormat.DASHES,
 ) -> list[str]:
     """
     Get all hostnames for components in a deployment.
 
     Centralizes the hostname generation logic used by keycloak_manager.
-
-    When base_domain and subdomain are set, returns a single custom domain hostname
-    (all components share the same hostname in custom domain mode).
-
-    Otherwise, returns hostnames for each component using the default cluster domain.
 
     Args:
         component_names: List of component names that need hostnames
@@ -1432,7 +1557,8 @@ def get_deployment_hostnames(
         project_name: Name of the project
         ingress_postfix: Cluster ingress postfix
         subdomain: Optional subdomain override
-        base_domain: Optional custom base domain (e.g., "rijksapp.nl")
+        base_domain: Optional custom base domain (e.g., "rijks.app")
+        hostname_format: Format for hostname (DASHES or DOTS)
 
     Returns:
         List of unique hostnames for the deployment
@@ -1441,11 +1567,18 @@ def get_deployment_hostnames(
 
     for component_name in component_names:
         ingress_map = get_component_ingress_map(
-            component_name, deployment_name, project_name, ingress_postfix, subdomain, base_domain
+            component_name, deployment_name, project_name, ingress_postfix, subdomain, base_domain,
+            hostname_format=hostname_format
         )
         hostname = next(iter(ingress_map.values()))
         if hostname not in hostnames:
             hostnames.append(hostname)
+
+    # For DOTS format (nice URLs), add the root hostname
+    if hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
+        root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
+        if root_hostname not in hostnames:
+            hostnames.append(root_hostname)
 
     return hostnames
 
