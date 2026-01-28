@@ -61,6 +61,7 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
+    HostnameFormat,
     find_root_component,
     generate_argocd_application_name,
     generate_external_hostname,
@@ -3891,6 +3892,7 @@ class ProjectManager:
             )
 
             # Get ingress map using centralized function
+            hostname_format = HostnameFormat.from_domain_mode(domain_mode)
             ingress_map = get_component_ingress_map(
                 component_name=component_name,
                 deployment_name=deployment_name,
@@ -3898,7 +3900,7 @@ class ProjectManager:
                 ingress_postfix=ingress_postfix,
                 subdomain=subdomain,
                 base_domain=base_domain,
-                domain_mode=domain_mode,
+                hostname_format=hostname_format,
             )
             hostname = next(iter(ingress_map.values()))
 
