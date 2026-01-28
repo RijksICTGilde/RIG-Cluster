@@ -108,6 +108,10 @@ dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
                 "uses-components": [],
             }
 
+            # Add root flag for nice-url mode (designates component to receive bare subdomain traffic)
+            if comp.root:
+                component_config["root"] = True
+
             # Add storage configurations from services
             storage_configs = ServiceAdapter.create_storage_configs(component_services)
             if storage_configs:
