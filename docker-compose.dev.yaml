@@ -1,0 +1,82 @@
+---
+# Docker Compose for local development and integration testing
+#
+# This configuration provides:
+# - PostgreSQL database for local development
+# - Operations Manager service with hot-reload
+#
+# Usage:
+#   Start all services:     docker compose -f docker-compose.dev.yaml up -d
+#   Start postgres only:    docker compose -f docker-compose.dev.yaml up -d postgres
+#   View logs:              docker compose -f docker-compose.dev.yaml logs -f
+#   Stop services:          docker compose -f docker-compose.dev.yaml down
+#   Reset (remove data):    docker compose -f docker-compose.dev.yaml down -v
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: opi-postgres-dev
+    environment:
+      POSTGRES_DB: opi
+      POSTGRES_USER: opi
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opi -d opi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - opi-dev
+
+  operations-manager:
+    build:
+      context: .
+      dockerfile: operations-manager/Dockerfile
+      target: application
+    container_name: opi-manager-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Application settings
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DEBUG_MODE=reload
+
+      # Database connection
+      - DATABASE_URL=postgresql://opi:devpassword@postgres:5432/opi
+
+      # Authentication (disabled for local dev)
+      - OIDC_DISABLED=true
+
+      # Git monitoring (disabled for local dev)
+      - ENABLE_GIT_MONITOR=false
+
+      # Cluster settings (for development)
+      - CLUSTER_MANAGER=local
+
+      # Secret key for sessions
+      - SECRET_KEY=dev-secret-key-not-for-production
+    ports:
+      - "8000:8000"
+    volumes:
+      # Hot-reload: mount source code as read-only
+      - ./operations-manager/python/opi:/app/opi:ro
+      - ./manifests:/app/manifests:ro
+    networks:
+      - opi-dev
+    profiles:
+      - full
+
+volumes:
+  postgres_data:
+    name: opi-postgres-dev-data
+
+networks:
+  opi-dev:
+    name: opi-dev-network

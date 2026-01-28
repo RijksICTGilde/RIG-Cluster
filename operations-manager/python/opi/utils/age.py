@@ -246,14 +246,14 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
     if not password:
         return password
 
-    password_type, content = parse_password_with_prefix(password)
+    encoding_type, content = parse_password_with_prefix(password)
 
-    logger.debug(f"Password type detected: {password_type}")
+    logger.debug(f"Encoding type detected: {encoding_type}")
 
-    if password_type == "plain":
+    if encoding_type == "plain":
         return content
 
-    elif password_type == "age":
+    elif encoding_type == "age":
         if not private_key:
             raise ValueError("Age encrypted password found but no private key available")
 
@@ -262,7 +262,7 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
             raise ValueError("Failed to decrypt Age password")
         return decrypted
 
-    elif password_type == "base64+age":
+    elif encoding_type == "base64+age":
         if not private_key:
             raise ValueError("Base64+Age encrypted password found but no private key available")
 
@@ -279,7 +279,7 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
         except Exception as e:
             raise ValueError(f"Failed to decode base64 content: {e}") from e
 
-    raise ValueError(f"Unknown password type: {password_type}")
+    raise ValueError(f"Unknown encoding type: {encoding_type}")
 
 
 def get_project_public_key(project_config: dict) -> str | None:
@@ -355,14 +355,14 @@ def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
     if not password:
         raise ValueError("Missing password")
 
-    password_type, content = parse_password_with_prefix(password)
+    encoding_type, content = parse_password_with_prefix(password)
 
-    logger.debug(f"Password type detected: {password_type}")
+    logger.debug(f"Encoding type detected: {encoding_type}")
 
-    if password_type == "plain":
+    if encoding_type == "plain":
         return content
 
-    elif password_type == "age":
+    elif encoding_type == "age":
         if not private_key:
             raise ValueError("Age encrypted password found but no private key available")
 
@@ -371,7 +371,7 @@ def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
             raise ValueError("Failed to decrypt Age password, returning original")
         return decrypted
 
-    elif password_type == "base64+age":
+    elif encoding_type == "base64+age":
         logger.debug("Processing base64-encoded Age encrypted password")
         if not private_key:
             raise ValueError("Base64+Age encrypted password found but no private key available")
@@ -384,4 +384,4 @@ def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
             raise ValueError("Failed to decrypt base64+Age password")
         return decrypted
 
-    raise ValueError(f"Unknown password type: {password_type}")
+    raise ValueError(f"Unknown encoding type: {encoding_type}")
