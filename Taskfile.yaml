@@ -1542,3 +1542,161 @@ tasks:
         echo "📋 Export complete. Files created:"
         echo "   - $OUTPUT_PATH (users with credentials)"
         echo "   - $OUTPUT_DIR/realm-idps.json (IDP configurations)"
+
+  # ========================================
+  # Development Environment Tasks
+  # ========================================
+
+  dev:
+    desc: "Start local development environment (postgres only)"
+    cmds:
+      - |
+        echo "Starting local development environment..."
+        docker compose -f docker-compose.dev.yaml up -d postgres
+        echo ""
+        echo "Waiting for postgres to be ready..."
+        sleep 5
+        docker compose -f docker-compose.dev.yaml exec postgres pg_isready -U opi -d opi
+        echo ""
+        echo "Development environment started:"
+        echo "  - PostgreSQL: localhost:5432 (opi/devpassword)"
+        echo ""
+        echo "To start the operations manager:"
+        echo "  cd operations-manager/python && uv run python -m opi"
+    silent: false
+
+  dev-full:
+    desc: "Start full local development environment (postgres + operations-manager)"
+    cmds:
+      - |
+        echo "Starting full development environment..."
+        docker compose -f docker-compose.dev.yaml --profile full up -d
+        echo ""
+        echo "Development environment started:"
+        echo "  - PostgreSQL: localhost:5432"
+        echo "  - Operations Manager: http://localhost:8000"
+        echo ""
+        echo "View logs: task dev-logs"
+    silent: false
+
+  dev-down:
+    desc: "Stop local development environment"
+    cmds:
+      - |
+        echo "Stopping development environment..."
+        docker compose -f docker-compose.dev.yaml --profile full down
+        echo "Development environment stopped."
+    silent: false
+
+  dev-logs:
+    desc: "View development environment logs"
+    cmds:
+      - docker compose -f docker-compose.dev.yaml --profile full logs -f
+    silent: false
+
+  dev-reset:
+    desc: "Reset development environment (removes all data)"
+    cmds:
+      - |
+        echo "Resetting development environment..."
+        docker compose -f docker-compose.dev.yaml --profile full down -v
+        echo "All data removed."
+        echo ""
+        echo "To restart: task dev"
+    silent: false
+
+  dev-psql:
+    desc: "Connect to development PostgreSQL database"
+    cmds:
+      - docker compose -f docker-compose.dev.yaml exec postgres psql -U opi -d opi
+    silent: false
+
+  # ========================================
+  # Testing Tasks
+  # ========================================
+
+  test:
+    desc: "Run unit tests (excludes integration tests)"
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest tests/ --ignore=tests/integration/ -v
+    silent: false
+
+  test-integration:
+    desc: "Run integration tests (mock-based, no infrastructure required)"
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest tests/integration/ -v -m "not slow"
+    silent: false
+
+  test-integration-kind:
+    desc: "Run Kind cluster integration tests (requires Kind + Docker)"
+    dir: operations-manager/python
+    cmds:
+      - |
+        echo "Running Kind cluster integration tests..."
+        echo "This will create a temporary Kind cluster for testing."
+        echo ""
+        uv run pytest tests/integration/ -v -m "slow"
+    silent: false
+
+  test-all:
+    desc: "Run all tests (unit + integration)"
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest tests/ -v
+    silent: false
+
+  test-coverage:
+    desc: "Run tests with coverage report"
+    dir: operations-manager/python
+    cmds:
+      - uv run coverage run -m pytest tests/ --ignore=tests/integration/
+      - uv run coverage report
+      - uv run coverage html
+      - |
+        echo ""
+        echo "Coverage report generated: operations-manager/python/htmlcov/index.html"
+    silent: false
+
+  # ========================================
+  # Kind Cluster Management for Testing
+  # ========================================
+
+  test-kind-create:
+    desc: "Create Kind cluster for integration testing"
+    cmds:
+      - |
+        echo "Creating Kind cluster for integration testing..."
+        if kind get clusters | grep -q "^rig-integration-test$"; then
+          echo "Cluster 'rig-integration-test' already exists."
+          echo "To recreate, run: task test-kind-delete && task test-kind-create"
+          exit 0
+        fi
+        kind create cluster --name rig-integration-test \
+          --config operations-manager/python/tests/fixtures/kind-config.yaml \
+          --wait 120s
+        echo ""
+        echo "Deploying test workloads..."
+        kubectl apply -f operations-manager/python/tests/fixtures/test-workloads.yaml
+        echo ""
+        echo "Waiting for deployments to be ready..."
+        kubectl wait --for=condition=available deployment/log-generator -n test-project --timeout=120s
+        echo ""
+        echo "Kind cluster 'rig-integration-test' is ready for testing."
+    silent: false
+
+  test-kind-delete:
+    desc: "Delete Kind cluster used for integration testing"
+    cmds:
+      - |
+        echo "Deleting Kind cluster 'rig-integration-test'..."
+        kind delete cluster --name rig-integration-test
+        echo "Cluster deleted."
+    silent: false
+
+  test-kind-logs:
+    desc: "View logs from test deployment in Kind cluster"
+    cmds:
+      - kubectl logs -n test-project deployment/log-generator -f
+    silent: false

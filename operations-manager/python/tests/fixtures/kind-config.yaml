@@ -1,0 +1,16 @@
+---
+# Kind cluster configuration for integration tests
+#
+# This configuration creates a minimal cluster suitable for testing:
+# - 1 control-plane node
+# - 1 worker node
+#
+# Usage:
+#   kind create cluster --name rig-integration-test --config kind-config.yaml
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: rig-integration-test
+nodes:
+  - role: control-plane
+  - role: worker
