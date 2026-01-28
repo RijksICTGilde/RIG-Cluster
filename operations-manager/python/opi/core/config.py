@@ -233,6 +233,7 @@ class Settings(BaseSettings):
 
     # Database configuration
     DATABASE_HOST: str = "postgresql.kind"
+    DATABASE_NAME: str = "operations_manager"
     DATABASE_ADMIN_NAME: str = "postgres"
     DATABASE_ADMIN_PASSWORD: str = "changeMe123!"
 

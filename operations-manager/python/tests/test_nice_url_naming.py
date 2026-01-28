@@ -8,6 +8,7 @@ Tests the nice URL dot-separated pattern for hostnames:
 
 import pytest
 from opi.utils.naming import (
+    HostnameFormat,
     generate_nice_url_hostname,
     generate_nice_url_root_hostname,
     find_root_component,
@@ -120,7 +121,7 @@ class TestGetComponentIngressMapNiceUrl:
             ingress_postfix=".kind",
             subdomain="mydomain",
             base_domain="rijks.app",
-            domain_mode="nice-url"
+            hostname_format=HostnameFormat.DOTS
         )
         assert "prod-frontend" in result
         assert result["prod-frontend"] == "frontend.mydomain.rijks.app"
@@ -134,7 +135,7 @@ class TestGetComponentIngressMapNiceUrl:
             ingress_postfix=".kind",
             subdomain="testapp",
             base_domain="rijks.app",
-            domain_mode="nice-url"
+            hostname_format=HostnameFormat.DOTS
         )
         assert "staging-backend" in result
         assert result["staging-backend"] == "backend.testapp.rijks.app"
@@ -146,7 +147,7 @@ class TestGetComponentIngressMapNiceUrl:
             deployment_name="prod",
             project_name="myapp",
             ingress_postfix=".cluster.example.com",
-            domain_mode=None  # Default mode
+            hostname_format=HostnameFormat.DASHES  # Default mode
         )
         # Should use the default generate_ingress_map behavior
         assert "prod-frontend" in result
@@ -177,7 +178,7 @@ class TestGetDeploymentHostnamesNiceUrl:
             ingress_postfix=".kind",
             subdomain="mydomain",
             base_domain="rijks.app",
-            domain_mode="nice-url"
+            hostname_format=HostnameFormat.DOTS
         )
         # Should have 4 hostnames: 3 components + 1 root
         assert len(result) == 4
@@ -195,7 +196,7 @@ class TestGetDeploymentHostnamesNiceUrl:
             ingress_postfix=".kind",
             subdomain="testapp",
             base_domain="rijks.app",
-            domain_mode="nice-url"
+            hostname_format=HostnameFormat.DOTS
         )
         assert len(result) == 2
         assert "frontend.testapp.rijks.app" in result
