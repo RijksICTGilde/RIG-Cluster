@@ -54,10 +54,13 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True) -
                     # Keep timezone info if present
                     tz_part = ""
                     decimal_part = parts[1]
-                    if "+" in decimal_part:
-                        idx = decimal_part.index("+")
-                        tz_part = decimal_part[idx:]
-                        decimal_part = decimal_part[:idx]
+                    # Check for timezone offset (+ or -) in the decimal part
+                    for tz_char in ("+", "-"):
+                        if tz_char in decimal_part:
+                            idx = decimal_part.index(tz_char)
+                            tz_part = decimal_part[idx:]
+                            decimal_part = decimal_part[:idx]
+                            break
                     value = parts[0] + "." + decimal_part[:6] + tz_part
             dt = datetime.fromisoformat(value)
         elif isinstance(value, datetime):
