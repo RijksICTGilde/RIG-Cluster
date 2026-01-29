@@ -161,9 +161,7 @@ class TestUpdateUserReenrich:
 
     def test_update_refreshes_role_flags(self, service):
         """After changing org role from admin to dev, is_admin should be False and is_developer True."""
-        service.store_user(
-            {"email": "a@b.com", "organization.name": "Acme", "organization.role": "admin"}
-        )
+        service.store_user({"email": "a@b.com", "organization.name": "Acme", "organization.role": "admin"})
         stored = service.get_user_by_email("a@b.com")
         assert stored["is_admin"] is True
 

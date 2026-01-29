@@ -50,9 +50,7 @@ class TestAgePasswordDecryption:
     def test_parse_password_empty_age_prefix_returns_plain(self):
         """parse_password_with_prefix('age:') with no content should fall back to plain, not return age type."""
         password_type, content = parse_password_with_prefix("age:")
-        assert password_type == "plain", (
-            "age: with no content is not valid encrypted data, should be treated as plain"
-        )
+        assert password_type == "plain", "age: with no content is not valid encrypted data, should be treated as plain"
 
     def test_is_age_encrypted(self):
         """Test Age encryption detection."""

@@ -3076,7 +3076,7 @@ class ProjectManager:
                 for key, value in env_vars.items():
                     # Decrypt if value is AGE-encrypted
                     if isinstance(value, str) and "-----BEGIN AGE ENCRYPTED FILE-----" in value:
-                        decrypted_value = decrypt_age_content(value, private_key)
+                        decrypted_value = await decrypt_age_content(value, private_key)
                         cmp_env_vars.append(f"{key}={decrypted_value}")
                     else:
                         cmp_env_vars.append(f"{key}={value}")

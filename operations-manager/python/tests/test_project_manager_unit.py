@@ -40,9 +40,7 @@ class TestMissingFStrings:
         """ValueError for unknown storage type must include the actual type value, not literal '{storage_type}'."""
         pm = ProjectManager.__new__(ProjectManager)
         with pytest.raises(ValueError, match="bogus_type"):
-            pm._generate_storage_env_vars_from_services(
-                [{"mount-path": "/data", "type": "bogus_type"}]
-            )
+            pm._generate_storage_env_vars_from_services([{"mount-path": "/data", "type": "bogus_type"}])
 
     def test_no_deployments_warning_includes_project_name(self):
         """Log strings with {var} placeholders must use f-string prefix to interpolate variables."""

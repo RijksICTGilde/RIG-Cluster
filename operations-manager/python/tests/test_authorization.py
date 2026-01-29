@@ -225,6 +225,29 @@ class TestRouteRequiresSso:
                         f"Log says 'NOT require SSO' but function returns True (requires SSO): {stripped}"
                     )
 
+    def test_defaults_to_true_for_unannotated_endpoint(self):
+        """An endpoint WITHOUT _requires_sso attribute should default to True (secure by default)."""
+        middleware = AuthorizationMiddleware(MagicMock())
+
+        # Endpoint that does NOT have _requires_sso attribute at all
+        mock_endpoint = lambda: None  # noqa: E731 - plain function, no _requires_sso attr
+
+        mock_route = MagicMock()
+        mock_route.matches.return_value = (Match.FULL, {})
+        mock_route.endpoint = mock_endpoint
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.url = MagicMock()
+        mock_request.url.path = "/some-route"
+        mock_request.method = "GET"
+        mock_request.app = MagicMock()
+        mock_request.app.router.routes = [mock_route]
+
+        result = middleware._route_requires_sso(mock_request)
+        assert result is True, (
+            f"Matched endpoints without _requires_sso should default to True (secure by default), got {result}"
+        )
+
     def test_default_sso_comment_matches_code(self):
         """The comment about default SSO value must match the actual default in getattr()."""
         import inspect

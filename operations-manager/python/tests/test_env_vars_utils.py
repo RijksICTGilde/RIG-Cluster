@@ -49,9 +49,7 @@ class TestDetectEnvVarFormat:
     def test_lowercase_keyvalue_not_misdetected_as_yaml(self):
         """Lowercase key=value lines should count as keyvalue, not fall through to yaml."""
         text = "my_var=hello\nother_key: world"
-        assert _detect_env_var_format(text) == "keyvalue", (
-            "lowercase key=value should count as keyvalue indicator"
-        )
+        assert _detect_env_var_format(text) == "keyvalue", "lowercase key=value should count as keyvalue indicator"
 
     def test_yaml_with_curly_brace_start(self):
         text = "{\nkey: value\n}"
