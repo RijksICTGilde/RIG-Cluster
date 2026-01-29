@@ -306,11 +306,7 @@ class IPRateLimiter:
         min_age = self.EMERGENCY_PURGE_MIN_AGE_SECONDS
 
         # Only remove entries older than minimum age
-        to_remove = [
-            client_id
-            for client_id, last_update in self._last_update.items()
-            if now - last_update > min_age
-        ]
+        to_remove = [client_id for client_id, last_update in self._last_update.items() if now - last_update > min_age]
 
         for client_id in to_remove:
             del self._tokens[client_id]
@@ -778,13 +774,21 @@ class SelfServiceProjectRequest(BaseModel):
     deployment_name: str = Field("main", max_length=63)  # Name for the deployment (defaults to "main")
 
     # Web Address Configuration
-    domain_mode: str = Field("component-specific", max_length=32)  # "component-specific", "deployment-name", "custom", or "nice-url"
-    subdomain: str | None = Field(None, max_length=63)  # For nice-url mode: globally unique subdomain. For custom mode: custom subdomain
+    domain_mode: str = Field(
+        "component-specific", max_length=32
+    )  # "component-specific", "deployment-name", "custom", or "nice-url"
+    subdomain: str | None = Field(
+        None, max_length=63
+    )  # For nice-url mode: globally unique subdomain. For custom mode: custom subdomain
 
     # External Domain Configuration (for public domains with Let's Encrypt)
     base_domain: str | None = Field(None, max_length=255)  # Apex domain (e.g., "rijks.app")
-    issuer: str | None = Field(None, max_length=64)  # Certificate issuer: "letsencrypt", "letsencrypt-staging", or custom issuer name
-    contact_email: str | None = Field(None, max_length=254)  # Contact email for Let's Encrypt (overrides cluster default)
+    issuer: str | None = Field(
+        None, max_length=64
+    )  # Certificate issuer: "letsencrypt", "letsencrypt-staging", or custom issuer name
+    contact_email: str | None = Field(
+        None, max_length=254
+    )  # Contact email for Let's Encrypt (overrides cluster default)
 
     # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
@@ -1766,7 +1770,9 @@ async def create_self_service_project(
             # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
             if not project_data.issuer:
                 project_data.issuer = "letsencrypt"
-                logger.info(f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{project_data.base_domain}'")
+                logger.info(
+                    f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{project_data.base_domain}'"
+                )
 
             # Register subdomain BEFORE project processing to ensure atomic rollback
             # This prevents the TOCTOU issue where subdomain_registered flag doesn't match actual state
@@ -1896,18 +1902,13 @@ async def _rollback_subdomain_registration(
         deleted = await connector.delete_by_deployment(project_name, deployment_name)
         if deleted:
             logger.info(
-                f"Rolled back subdomain registration '{subdomain}.{base_domain}' "
-                f"for failed project '{project_name}'"
+                f"Rolled back subdomain registration '{subdomain}.{base_domain}' for failed project '{project_name}'"
             )
         else:
-            logger.debug(
-                f"No subdomain registration to rollback for '{project_name}/{deployment_name}'"
-            )
+            logger.debug(f"No subdomain registration to rollback for '{project_name}/{deployment_name}'")
     except Exception as rollback_error:
         # Log but don't raise - rollback is best-effort
-        logger.error(
-            f"Failed to rollback subdomain registration for '{project_name}': {rollback_error}"
-        )
+        logger.error(f"Failed to rollback subdomain registration for '{project_name}': {rollback_error}")
 
 
 # Subdomain API endpoints for nice URL feature
@@ -1945,9 +1946,7 @@ class SubdomainRegistration(BaseModel):
     },
 )
 @validate_api_token
-async def check_subdomain_availability(
-    request: Request, subdomain: str, base_domain: str
-) -> SubdomainCheckResponse:
+async def check_subdomain_availability(request: Request, subdomain: str, base_domain: str) -> SubdomainCheckResponse:
     """
     Check if a subdomain is available for registration.
 

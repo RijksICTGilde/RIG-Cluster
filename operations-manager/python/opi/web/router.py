@@ -1647,7 +1647,9 @@ async def _update_keycloak_redirect_uris_for_deployment(
             logger.debug(f"No SSO components found in deployment {deployment_name}, skipping Keycloak update")
             return
 
-        logger.info(f"Updating Keycloak redirect URIs for deployment {deployment_name} with {len(sso_components)} SSO components")
+        logger.info(
+            f"Updating Keycloak redirect URIs for deployment {deployment_name} with {len(sso_components)} SSO components"
+        )
 
         # Get Keycloak configuration for this cluster
         kc_config = await project_manager._get_project_keycloak_config_for_cluster(cluster)
@@ -1708,7 +1710,9 @@ async def _update_keycloak_redirect_uris_for_deployment(
         if result:
             logger.info(f"Successfully updated Keycloak redirect URIs for deployment {deployment_name}")
         else:
-            logger.warning(f"Failed to update Keycloak redirect URIs for deployment {deployment_name} (client not found)")
+            logger.warning(
+                f"Failed to update Keycloak redirect URIs for deployment {deployment_name} (client not found)"
+            )
 
     except Exception as e:
         # Log the error but don't fail the entire operation
@@ -1862,7 +1866,10 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             # Check subdomain availability (allow if already registered to this deployment)
             if existing_subdomain:
                 # Check if subdomain changed
-                if existing_subdomain["subdomain"] != subdomain.lower() or existing_subdomain["base_domain"] != base_domain.lower():
+                if (
+                    existing_subdomain["subdomain"] != subdomain.lower()
+                    or existing_subdomain["base_domain"] != base_domain.lower()
+                ):
                     # Check if new subdomain is available
                     is_available = await subdomain_connector.check_availability(subdomain, base_domain)
                     if not is_available:
@@ -2024,9 +2031,7 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                 except Exception as restore_error:
                     logger.error(f"Failed to restore deleted subdomain: {restore_error}")
 
-            raise HTTPException(
-                status_code=500, detail="Failed to register subdomain. Changes have been rolled back."
-            )
+            raise HTTPException(status_code=500, detail="Failed to register subdomain. Changes have been rolled back.")
 
         # === STEP 3: Re-process project to apply changes ===
         project_manager = create_project_manager()
@@ -2104,9 +2109,7 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             except Exception as subdomain_rollback_error:
                 logger.error(f"Failed to rollback subdomain changes: {subdomain_rollback_error}")
 
-            raise HTTPException(
-                status_code=500, detail="Failed to apply changes. Settings have been rolled back."
-            )
+            raise HTTPException(status_code=500, detail="Failed to apply changes. Settings have been rolled back.")
         finally:
             await project_manager.close()
 
@@ -2123,7 +2126,9 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
     except Exception as e:
         logger.error(f"Error updating domain settings for {project_name}/{deployment_name}: {e!s}")
         # Don't expose internal error details to the user
-        raise HTTPException(status_code=500, detail="An error occurred while updating domain settings. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="An error occurred while updating domain settings. Please try again."
+        )
 
 
 @web_router.get("/projects", response_class=HTMLResponse)

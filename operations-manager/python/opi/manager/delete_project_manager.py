@@ -597,9 +597,7 @@ class DeleteProjectManager:
             except Exception as e:
                 error_msg = f"Error cleaning up subdomain registrations: {e}"
                 deletion_results["errors"].append(error_msg)
-                deletion_results["operations"].append(
-                    {"type": "subdomain_cleanup", "status": "error", "error": str(e)}
-                )
+                deletion_results["operations"].append({"type": "subdomain_cleanup", "status": "error", "error": str(e)})
                 logger.warning(error_msg)
                 # Don't fail the deletion for subdomain cleanup errors
 
@@ -1624,9 +1622,7 @@ class DeleteProjectManager:
             except Exception as e:
                 error_msg = f"Error cleaning up subdomain registrations for deployment: {e}"
                 deletion_results["errors"].append(error_msg)
-                deletion_results["operations"].append(
-                    {"type": "subdomain_cleanup", "status": "error", "error": str(e)}
-                )
+                deletion_results["operations"].append({"type": "subdomain_cleanup", "status": "error", "error": str(e)})
                 logger.warning(error_msg)
                 # Don't fail the deletion for subdomain cleanup errors
 

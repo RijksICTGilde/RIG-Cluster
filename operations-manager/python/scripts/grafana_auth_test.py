@@ -118,12 +118,7 @@ def handle_totp_challenge(session: requests.Session, response: requests.Response
         totp_data = {"otp": totp_code}
 
         print("Submitting TOTP code...")
-        totp_resp = session.post(
-            action_url,
-            data=totp_data,
-            allow_redirects=True,
-            timeout=30
-        )
+        totp_resp = session.post(action_url, data=totp_data, allow_redirects=True, timeout=30)
 
         print(f"TOTP response status: {totp_resp.status_code}")
         print(f"Final URL after TOTP: {totp_resp.url}")
@@ -159,12 +154,7 @@ def authenticate_with_idp(session: requests.Session, idp_url: str, username: str
             }
 
             print("Submitting credentials...")
-            login_resp = session.post(
-                action_url,
-                data=login_data,
-                allow_redirects=True,
-                timeout=30
-            )
+            login_resp = session.post(action_url, data=login_data, allow_redirects=True, timeout=30)
 
             print(f"Login response status: {login_resp.status_code}")
             print(f"URL after credentials: {login_resp.url}")

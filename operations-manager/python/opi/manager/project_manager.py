@@ -3699,14 +3699,18 @@ class ProjectManager:
 
         # Store rollback info for use in exception handler
         # These variables are used by _rollback_subdomain_on_failure if needed
-        self._pending_subdomain_rollback = {
-            "should_rollback": subdomain_registered,
-            "connector": subdomain_connector,
-            "project_name": project_name,
-            "deployment_name": deployment_name,
-            "subdomain": subdomain,
-            "base_domain": base_domain,
-        } if subdomain_registered else None
+        self._pending_subdomain_rollback = (
+            {
+                "should_rollback": subdomain_registered,
+                "connector": subdomain_connector,
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "subdomain": subdomain,
+                "base_domain": base_domain,
+            }
+            if subdomain_registered
+            else None
+        )
 
         # Collect registry configurations for all components in this deployment
         registry_configs_map: dict[str, dict[str, Any]] = {}  # registry_name -> registry_config

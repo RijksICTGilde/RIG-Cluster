@@ -19,10 +19,7 @@ import sys
 import requests
 
 
-GRAFANA_URL = os.environ.get(
-    "GRAFANA_URL",
-    "https://grafana.rig.prd1.gn2.quattro.rijksapps.nl"
-)
+GRAFANA_URL = os.environ.get("GRAFANA_URL", "https://grafana.rig.prd1.gn2.quattro.rijksapps.nl")
 
 
 def get_headers(token: str) -> dict[str, str]:
@@ -222,28 +219,19 @@ def main() -> int:
     test_queries = [
         ("up", "Basic connectivity check"),
         # Resource limits queries (from prometheus.py connector)
-        (
-            'sum(kube_pod_container_resource_limits{resource="cpu"}) by (namespace, pod)',
-            "CPU limits by pod"
-        ),
+        ('sum(kube_pod_container_resource_limits{resource="cpu"}) by (namespace, pod)', "CPU limits by pod"),
         (
             'sum(kube_pod_container_resource_limits{resource="memory"}) by (namespace, pod)',
-            "Memory limits by pod (bytes)"
+            "Memory limits by pod (bytes)",
         ),
         # Resource usage queries
         (
             'sum(rate(container_cpu_usage_seconds_total{container!=""}[5m])) by (namespace, pod)',
-            "CPU usage by pod (cores)"
+            "CPU usage by pod (cores)",
         ),
-        (
-            'sum(container_memory_usage_bytes{container!=""}) by (namespace, pod)',
-            "Memory usage by pod (bytes)"
-        ),
+        ('sum(container_memory_usage_bytes{container!=""}) by (namespace, pod)', "Memory usage by pod (bytes)"),
         # Cluster overview
-        (
-            'count(kube_pod_info)',
-            "Total pod count"
-        ),
+        ("count(kube_pod_info)", "Total pod count"),
     ]
 
     for query, description in test_queries:

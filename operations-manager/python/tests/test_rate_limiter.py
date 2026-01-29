@@ -226,9 +226,7 @@ class TestKubectlConnectorGetResourcesByLabel:
         with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_cmd:
             mock_cmd.return_value = (mock_result, "", 0)
 
-            result = await connector.get_resources_by_label(
-                "ingress", namespace="test-ns", label_selector="app=test"
-            )
+            result = await connector.get_resources_by_label("ingress", namespace="test-ns", label_selector="app=test")
 
             assert len(result) == 1
             assert result[0]["metadata"]["name"] == "test-ingress"
@@ -266,9 +264,7 @@ class TestKubectlConnectorGetResourcesByLabel:
         with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_cmd:
             mock_cmd.return_value = ("", "connection refused", 1)
 
-            result = await connector.get_resources_by_label(
-                "ingress", namespace="test-ns", label_selector="app=test"
-            )
+            result = await connector.get_resources_by_label("ingress", namespace="test-ns", label_selector="app=test")
 
             assert result == []
 

@@ -140,9 +140,10 @@ class ArgoConnector:
 
             connector = aiohttp.TCPConnector(ssl=ssl_context)
 
-            async with aiohttp.ClientSession(connector=connector) as session, session.post(
-                login_url, json=login_data, headers={"Content-Type": "application/json"}
-            ) as response:
+            async with (
+                aiohttp.ClientSession(connector=connector) as session,
+                session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
+            ):
                 # Check if we got redirected to HTTPS
                 if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
                     logger.info(f"Detected redirect to HTTPS: {response.url}")

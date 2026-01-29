@@ -415,9 +415,7 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(schema, 63)  # PostgreSQL schema limit
 
 
-def generate_database_name(
-    project_name: str, deployment_name: str, generation: int | None = None
-) -> str:
+def generate_database_name(project_name: str, deployment_name: str, generation: int | None = None) -> str:
     """
     Generate a consistent database name with optional generation suffix.
 
@@ -467,9 +465,7 @@ def generate_minio_username(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(username, 63)  # MinIO username limit
 
 
-def generate_bucket_name(
-    project_name: str, deployment_name: str, generation: int | None = None
-) -> str:
+def generate_bucket_name(project_name: str, deployment_name: str, generation: int | None = None) -> str:
     """
     Generate a consistent S3/MinIO bucket name with optional generation suffix.
 
@@ -1532,9 +1528,7 @@ def get_component_ingress_map(
         return {base_name: hostname}
 
     # Default cluster domain
-    return generate_ingress_map(
-        component_name, deployment_name, project_name, ingress_postfix, subdomain
-    )
+    return generate_ingress_map(component_name, deployment_name, project_name, ingress_postfix, subdomain)
 
 
 def get_deployment_hostnames(
@@ -1567,8 +1561,13 @@ def get_deployment_hostnames(
 
     for component_name in component_names:
         ingress_map = get_component_ingress_map(
-            component_name, deployment_name, project_name, ingress_postfix, subdomain, base_domain,
-            hostname_format=hostname_format
+            component_name,
+            deployment_name,
+            project_name,
+            ingress_postfix,
+            subdomain,
+            base_domain,
+            hostname_format=hostname_format,
         )
         hostname = next(iter(ingress_map.values()))
         if hostname not in hostnames:

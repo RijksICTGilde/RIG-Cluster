@@ -28,7 +28,7 @@ class TestWebSubdomainCheckRateLimiter:
         # Should allow burst of 10 requests
         for i in range(10):
             result = web_subdomain_check_rate_limiter.is_allowed(client_id)
-            assert result is True, f"Request {i+1} should be allowed within burst"
+            assert result is True, f"Request {i + 1} should be allowed within burst"
 
     def test_rate_limiter_blocks_after_burst(self):
         """Rate limiter blocks requests after burst is exhausted."""

@@ -121,7 +121,7 @@ class TestGetComponentIngressMapNiceUrl:
             ingress_postfix=".kind",
             subdomain="mydomain",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS
+            hostname_format=HostnameFormat.DOTS,
         )
         assert "prod-frontend" in result
         assert result["prod-frontend"] == "frontend.mydomain.rijks.app"
@@ -135,7 +135,7 @@ class TestGetComponentIngressMapNiceUrl:
             ingress_postfix=".kind",
             subdomain="testapp",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS
+            hostname_format=HostnameFormat.DOTS,
         )
         assert "staging-backend" in result
         assert result["staging-backend"] == "backend.testapp.rijks.app"
@@ -147,7 +147,7 @@ class TestGetComponentIngressMapNiceUrl:
             deployment_name="prod",
             project_name="myapp",
             ingress_postfix=".cluster.example.com",
-            hostname_format=HostnameFormat.DASHES  # Default mode
+            hostname_format=HostnameFormat.DASHES,  # Default mode
         )
         # Should use the default generate_ingress_map behavior
         assert "prod-frontend" in result
@@ -160,7 +160,7 @@ class TestGetComponentIngressMapNiceUrl:
             project_name="myapp",
             ingress_postfix=".cluster.example.com",
             subdomain="myapp",
-            base_domain="custom.nl"
+            base_domain="custom.nl",
         )
         assert "prod-frontend" in result
         assert result["prod-frontend"] == "myapp.custom.nl"
@@ -178,7 +178,7 @@ class TestGetDeploymentHostnamesNiceUrl:
             ingress_postfix=".kind",
             subdomain="mydomain",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS
+            hostname_format=HostnameFormat.DOTS,
         )
         # Should have 4 hostnames: 3 components + 1 root
         assert len(result) == 4
@@ -196,7 +196,7 @@ class TestGetDeploymentHostnamesNiceUrl:
             ingress_postfix=".kind",
             subdomain="testapp",
             base_domain="rijks.app",
-            hostname_format=HostnameFormat.DOTS
+            hostname_format=HostnameFormat.DOTS,
         )
         assert len(result) == 2
         assert "frontend.testapp.rijks.app" in result
