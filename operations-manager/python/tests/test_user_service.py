@@ -18,12 +18,14 @@ class TestEnrichUserInfo:
     """_enrich_user_info restructures flat Keycloak claims into nested org data and derives role flags."""
 
     def test_structures_flat_org_claims_into_nested_dict(self, service):
-        result = service._enrich_user_info({
-            "email": "a@b.com",
-            "organization.name": "Acme",
-            "organization.number": "12345",
-            "organization.role": "admin",
-        })
+        result = service._enrich_user_info(
+            {
+                "email": "a@b.com",
+                "organization.name": "Acme",
+                "organization.number": "12345",
+                "organization.role": "admin",
+            }
+        )
         assert result["organization"] == {"name": "Acme", "number": "12345", "role": "admin"}
         assert result["has_organization"] is True
 
@@ -34,55 +36,67 @@ class TestEnrichUserInfo:
 
     def test_partial_org_claims_only_includes_non_empty(self, service):
         """If only organization.name is set but not number/role, only name appears."""
-        result = service._enrich_user_info({
-            "email": "a@b.com",
-            "organization.name": "Acme",
-        })
+        result = service._enrich_user_info(
+            {
+                "email": "a@b.com",
+                "organization.name": "Acme",
+            }
+        )
         assert result["organization"] == {"name": "Acme"}
         assert "number" not in result["organization"]
 
     def test_role_flag_admin(self, service):
-        result = service._enrich_user_info({
-            "email": "a@b.com",
-            "organization.name": "X",
-            "organization.role": "admin",
-        })
+        result = service._enrich_user_info(
+            {
+                "email": "a@b.com",
+                "organization.name": "X",
+                "organization.role": "admin",
+            }
+        )
         assert result["is_admin"] is True
         assert result["is_developer"] is False
         assert result["is_manager"] is False
 
     def test_role_flag_administrator_variant(self, service):
-        result = service._enrich_user_info({
-            "email": "a@b.com",
-            "organization.name": "X",
-            "organization.role": "Administrator",
-        })
+        result = service._enrich_user_info(
+            {
+                "email": "a@b.com",
+                "organization.name": "X",
+                "organization.role": "Administrator",
+            }
+        )
         assert result["is_admin"] is True
 
     def test_role_flag_dev(self, service):
-        result = service._enrich_user_info({
-            "email": "a@b.com",
-            "organization.name": "X",
-            "organization.role": "dev",
-        })
+        result = service._enrich_user_info(
+            {
+                "email": "a@b.com",
+                "organization.name": "X",
+                "organization.role": "dev",
+            }
+        )
         assert result["is_developer"] is True
         assert result["is_admin"] is False
 
     def test_role_flag_manager_variants(self, service):
         for role in ("manager", "lead", "supervisor"):
-            result = service._enrich_user_info({
-                "email": "a@b.com",
-                "organization.name": "X",
-                "organization.role": role,
-            })
+            result = service._enrich_user_info(
+                {
+                    "email": "a@b.com",
+                    "organization.name": "X",
+                    "organization.role": role,
+                }
+            )
             assert result["is_manager"] is True, f"role '{role}' should set is_manager"
 
     def test_no_role_flags_when_no_role(self, service):
         """Org without role should not inject is_admin/is_developer/is_manager at all."""
-        result = service._enrich_user_info({
-            "email": "a@b.com",
-            "organization.name": "X",
-        })
+        result = service._enrich_user_info(
+            {
+                "email": "a@b.com",
+                "organization.name": "X",
+            }
+        )
         assert "is_admin" not in result
         assert "is_developer" not in result
         assert "is_manager" not in result

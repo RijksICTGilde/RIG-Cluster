@@ -37,12 +37,15 @@ class TestRenderRealTemplates:
         assert doc["metadata"]["labels"]["created-by"] == "operations-manager"
 
     def test_service_template(self):
-        result = render_template("service.yaml.jinja", {
-            "name": "web",
-            "namespace": "rig-proj",
-            "project": {"name": "myproj"},
-            "application_port": 8080,
-        })
+        result = render_template(
+            "service.yaml.jinja",
+            {
+                "name": "web",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "application_port": 8080,
+            },
+        )
         yaml = YAML()
         doc = yaml.load(result)
         assert doc["kind"] == "Service"
@@ -53,17 +56,20 @@ class TestRenderRealTemplates:
         assert doc["spec"]["ports"][0]["port"] == 80
 
     def test_deployment_template_local_cluster(self):
-        result = render_template("deployment.yaml.jinja", {
-            "name": "api",
-            "namespace": "rig-proj",
-            "project": {"name": "myproj"},
-            "pod_replacement_mode": "RollingUpdate",
-            "generated_at": "2024-01-01T00:00:00Z",
-            "application_port": 3000,
-            "imageURL": "registry.example.com/app:latest",
-            "imagePullPolicy": "Always",
-            "cluster": "local",
-        })
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+            },
+        )
         yaml = YAML()
         doc = yaml.load(result)
         assert doc["kind"] == "Deployment"
@@ -74,17 +80,20 @@ class TestRenderRealTemplates:
         assert pod_sec["runAsUser"] == 1001
 
     def test_deployment_template_non_local_cluster(self):
-        result = render_template("deployment.yaml.jinja", {
-            "name": "api",
-            "namespace": "rig-proj",
-            "project": {"name": "myproj"},
-            "pod_replacement_mode": "Recreate",
-            "generated_at": "2024-01-01T00:00:00Z",
-            "application_port": 3000,
-            "imageURL": "registry.example.com/app:latest",
-            "imagePullPolicy": "IfNotPresent",
-            "cluster": "production",
-        })
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "Recreate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "IfNotPresent",
+                "cluster": "production",
+            },
+        )
         yaml = YAML()
         doc = yaml.load(result)
         pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
@@ -93,29 +102,35 @@ class TestRenderRealTemplates:
         assert pod_sec["runAsNonRoot"] is True
 
     def test_deployment_template_with_env_vars(self):
-        result = render_template("deployment.yaml.jinja", {
-            "name": "api",
-            "namespace": "ns",
-            "project": {"name": "p"},
-            "pod_replacement_mode": "RollingUpdate",
-            "generated_at": "now",
-            "application_port": 8080,
-            "imageURL": "img:v1",
-            "imagePullPolicy": "Always",
-            "cluster": "local",
-            "env_vars": {"DATABASE_URL": "postgres://localhost/db", "DEBUG": "true"},
-        })
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "ns",
+                "project": {"name": "p"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "now",
+                "application_port": 8080,
+                "imageURL": "img:v1",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "env_vars": {"DATABASE_URL": "postgres://localhost/db", "DEBUG": "true"},
+            },
+        )
         assert "DATABASE_URL" in result
         assert "postgres://localhost/db" in result
 
     def test_ingress_template_with_tls(self):
-        result = render_template("ingress.yaml.jinja", {
-            "name": "web-ingress",
-            "hostname": "app.example.com",
-            "enable_tls": True,
-            "cluster_issuer": "letsencrypt-prod",
-            "tls_secret_name": "app-tls",
-        })
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "enable_tls": True,
+                "cluster_issuer": "letsencrypt-prod",
+                "tls_secret_name": "app-tls",
+            },
+        )
         yaml = YAML()
         doc = yaml.load(result)
         assert doc["spec"]["rules"][0]["host"] == "app.example.com"
@@ -123,21 +138,27 @@ class TestRenderRealTemplates:
         assert "hsts" in result.lower()
 
     def test_ingress_template_without_tls(self):
-        result = render_template("ingress.yaml.jinja", {
-            "name": "web-ingress",
-            "hostname": "app.example.com",
-            "enable_tls": False,
-        })
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "enable_tls": False,
+            },
+        )
         assert "tls:" not in result
         # HSTS annotations should not appear without TLS
         assert "hsts_header" not in result
 
     def test_network_policy_template(self):
-        result = render_template("network-policy.yaml.jinja", {
-            "name": "allow-web",
-            "namespace": "rig-proj",
-            "ports": [8080, 443],
-        })
+        result = render_template(
+            "network-policy.yaml.jinja",
+            {
+                "name": "allow-web",
+                "namespace": "rig-proj",
+                "ports": [8080, 443],
+            },
+        )
         yaml = YAML()
         doc = yaml.load(result)
         assert doc["kind"] == "NetworkPolicy"
@@ -148,11 +169,14 @@ class TestRenderRealTemplates:
         assert ingress_ports[0]["port"] == 8080
 
     def test_generic_secret_template(self):
-        result = render_template("generic-secret.yaml.to-sops.jinja", {
-            "name": "db-credentials",
-            "namespace": "rig-proj",
-            "secret_pairs": {"username": "admin", "password": "s3cret"},
-        })
+        result = render_template(
+            "generic-secret.yaml.to-sops.jinja",
+            {
+                "name": "db-credentials",
+                "namespace": "rig-proj",
+                "secret_pairs": {"username": "admin", "password": "s3cret"},
+            },
+        )
         yaml = YAML()
         doc = yaml.load(result)
         assert doc["kind"] == "Secret"
@@ -161,21 +185,27 @@ class TestRenderRealTemplates:
 
     def test_generic_secret_empty_value(self):
         """Empty string values need special quoting to avoid YAML null."""
-        result = render_template("generic-secret.yaml.to-sops.jinja", {
-            "name": "s",
-            "namespace": "ns",
-            "secret_pairs": {"key": ""},
-        })
+        result = render_template(
+            "generic-secret.yaml.to-sops.jinja",
+            {
+                "name": "s",
+                "namespace": "ns",
+                "secret_pairs": {"key": ""},
+            },
+        )
         assert 'key: ""' in result
 
     def test_generic_secret_multiline_value(self):
         """Multiline values should use YAML literal block scalar."""
         cert = "-----BEGIN CERT-----\nABC123\n-----END CERT-----"
-        result = render_template("generic-secret.yaml.to-sops.jinja", {
-            "name": "s",
-            "namespace": "ns",
-            "secret_pairs": {"cert": cert},
-        })
+        result = render_template(
+            "generic-secret.yaml.to-sops.jinja",
+            {
+                "name": "s",
+                "namespace": "ns",
+                "secret_pairs": {"cert": cert},
+            },
+        )
         assert "cert: |" in result
 
 
@@ -217,9 +247,7 @@ class TestCollectManifestFiles:
         deploy.mkdir(parents=True)
         (deploy / "manifest.yaml").write_text("a: 1")
 
-        _, regular = generator.collect_manifest_files(
-            str(tmp_path), include_subfolders=True, project_name="myproject"
-        )
+        _, regular = generator.collect_manifest_files(str(tmp_path), include_subfolders=True, project_name="myproject")
         # Path should be "deploy-a/manifest.yaml", not "myproject/deploy-a/manifest.yaml"
         assert len(regular) == 1
         assert not regular[0].startswith("myproject")
