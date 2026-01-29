@@ -198,21 +198,21 @@ from opi.utils.sops import encrypt_sops_file, decrypt_sops_file
 ### Development Commands
 ```bash
 # Install dependencies
-poetry install
+uv sync
 
 # Run development server
-poetry run python -m opi
+uv run python -m opi
 
 # Run tests with coverage
-poetry run coverage run -m pytest
-poetry run coverage report
+uv run coverage run -m pytest
+uv run coverage report
 
 # Linting and formatting
-poetry run ruff check .
-poetry run ruff format .
+uv run ruff check .
+uv run ruff format .
 
 # Type checking
-poetry run pyright
+uv run pyright
 ```
 
 ### Operational Commands  
