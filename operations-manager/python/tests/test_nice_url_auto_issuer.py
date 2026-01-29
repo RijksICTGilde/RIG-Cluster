@@ -114,17 +114,12 @@ class TestEditDomainSettingsYamlUpdate:
             yaml_dep["issuer"] = "letsencrypt"
         elif domain_mode == "custom":
             yaml_dep["subdomain"] = "custom-subdomain"
-            if "base-domain" in yaml_dep:
-                del yaml_dep["base-domain"]
-            if "issuer" in yaml_dep:
-                del yaml_dep["issuer"]
+            yaml_dep.pop("base-domain", None)
+            yaml_dep.pop("issuer", None)
         else:
-            if "subdomain" in yaml_dep:
-                del yaml_dep["subdomain"]
-            if "base-domain" in yaml_dep:
-                del yaml_dep["base-domain"]
-            if "issuer" in yaml_dep:
-                del yaml_dep["issuer"]
+            yaml_dep.pop("subdomain", None)
+            yaml_dep.pop("base-domain", None)
+            yaml_dep.pop("issuer", None)
 
         assert yaml_dep["domain-mode"] == "component-specific"
         assert "subdomain" not in yaml_dep
@@ -151,17 +146,12 @@ class TestEditDomainSettingsYamlUpdate:
             yaml_dep["issuer"] = "letsencrypt"
         elif domain_mode == "custom":
             yaml_dep["subdomain"] = subdomain
-            if "base-domain" in yaml_dep:
-                del yaml_dep["base-domain"]
-            if "issuer" in yaml_dep:
-                del yaml_dep["issuer"]
+            yaml_dep.pop("base-domain", None)
+            yaml_dep.pop("issuer", None)
         else:
-            if "subdomain" in yaml_dep:
-                del yaml_dep["subdomain"]
-            if "base-domain" in yaml_dep:
-                del yaml_dep["base-domain"]
-            if "issuer" in yaml_dep:
-                del yaml_dep["issuer"]
+            yaml_dep.pop("subdomain", None)
+            yaml_dep.pop("base-domain", None)
+            yaml_dep.pop("issuer", None)
 
         assert yaml_dep["domain-mode"] == "custom"
         assert yaml_dep["subdomain"] == "custom-subdomain"

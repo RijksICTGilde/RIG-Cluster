@@ -15,73 +15,70 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def mock_prometheus_connected() -> Any:
     """Mock PrometheusConnector as connected."""
-    with patch("opi.api.metrics_router.PrometheusConnector") as mock_class:
-        mock_instance = MagicMock()
-        mock_instance.is_connected = True
-        mock_class.return_value = mock_instance
+    mock_instance = MagicMock()
+    mock_instance.is_connected = True
+    with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
         yield mock_instance
 
 
 @pytest.fixture
 def mock_prometheus_disconnected() -> Any:
     """Mock PrometheusConnector as disconnected."""
-    with patch("opi.api.metrics_router.PrometheusConnector") as mock_class:
-        mock_instance = MagicMock()
-        mock_instance.is_connected = False
-        mock_class.return_value = mock_instance
+    mock_instance = MagicMock()
+    mock_instance.is_connected = False
+    with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
         yield mock_instance
 
 
 @pytest.fixture
 def mock_prometheus_with_data() -> Any:
     """Mock PrometheusConnector with sample data."""
-    with patch("opi.api.metrics_router.PrometheusConnector") as mock_class:
-        mock_instance = MagicMock()
-        mock_instance.is_connected = True
+    mock_instance = MagicMock()
+    mock_instance.is_connected = True
 
-        # Mock cluster overview
-        mock_instance.get_cluster_overview.return_value = {
-            "cpu_usage_percent": 45.2,
-            "memory_usage_percent": 62.8,
-            "pod_count": 25,
-            "node_count": 3,
-        }
+    # Mock cluster overview
+    mock_instance.get_cluster_overview.return_value = {
+        "cpu_usage_percent": 45.2,
+        "memory_usage_percent": 62.8,
+        "pod_count": 25,
+        "node_count": 3,
+    }
 
-        # Mock CPU usage
-        mock_instance.get_cpu_usage_by_namespace.return_value = [
-            {"pod": "web-server-1", "namespace": "test-project", "cpu_usage": 0.15},
-            {"pod": "api-server-1", "namespace": "test-project", "cpu_usage": 0.08},
-        ]
+    # Mock CPU usage
+    mock_instance.get_cpu_usage_by_namespace.return_value = [
+        {"pod": "web-server-1", "namespace": "test-project", "cpu_usage": 0.15},
+        {"pod": "api-server-1", "namespace": "test-project", "cpu_usage": 0.08},
+    ]
 
-        # Mock memory usage
-        mock_instance.get_memory_usage_by_namespace.return_value = [
-            {"pod": "web-server-1", "namespace": "test-project", "memory_bytes": 256000000},
-            {"pod": "api-server-1", "namespace": "test-project", "memory_bytes": 128000000},
-        ]
+    # Mock memory usage
+    mock_instance.get_memory_usage_by_namespace.return_value = [
+        {"pod": "web-server-1", "namespace": "test-project", "memory_bytes": 256000000},
+        {"pod": "api-server-1", "namespace": "test-project", "memory_bytes": 128000000},
+    ]
 
-        # Mock pod count
-        mock_instance.get_pod_count.return_value = 15
+    # Mock pod count
+    mock_instance.get_pod_count.return_value = 15
 
-        # Mock pod restarts
-        mock_instance.get_pod_restarts.return_value = [
-            {"pod": "web-server-1", "namespace": "test-project", "restarts": 0},
-            {"pod": "api-server-1", "namespace": "test-project", "restarts": 2},
-        ]
+    # Mock pod restarts
+    mock_instance.get_pod_restarts.return_value = [
+        {"pod": "web-server-1", "namespace": "test-project", "restarts": 0},
+        {"pod": "api-server-1", "namespace": "test-project", "restarts": 2},
+    ]
 
-        # Mock network metrics
-        mock_instance.get_network_receive_bytes.return_value = [
-            {"pod": "web-server-1", "namespace": "test-project", "bytes_rate": 1024000},
-        ]
-        mock_instance.get_network_transmit_bytes.return_value = [
-            {"pod": "web-server-1", "namespace": "test-project", "bytes_rate": 512000},
-        ]
+    # Mock network metrics
+    mock_instance.get_network_receive_bytes.return_value = [
+        {"pod": "web-server-1", "namespace": "test-project", "bytes_rate": 1024000},
+    ]
+    mock_instance.get_network_transmit_bytes.return_value = [
+        {"pod": "web-server-1", "namespace": "test-project", "bytes_rate": 512000},
+    ]
 
-        # Mock custom query
-        mock_instance.custom_query.return_value = [
-            {"metric": {"__name__": "up"}, "value": [1234567890, "1"]},
-        ]
+    # Mock custom query
+    mock_instance.custom_query.return_value = [
+        {"metric": {"__name__": "up"}, "value": [1234567890, "1"]},
+    ]
 
-        mock_class.return_value = mock_instance
+    with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
         yield mock_instance
 
 
@@ -291,12 +288,11 @@ class TestMetricsErrorHandling:
         """Test handling of Prometheus connection errors."""
         from opi.connectors.prometheus import PrometheusConnectionError
 
-        with patch("opi.api.metrics_router.PrometheusConnector") as mock_class:
-            mock_instance = MagicMock()
-            mock_instance.is_connected = True
-            mock_instance.get_cluster_overview.side_effect = PrometheusConnectionError("Connection refused")
-            mock_class.return_value = mock_instance
+        mock_instance = MagicMock()
+        mock_instance.is_connected = True
+        mock_instance.get_cluster_overview.side_effect = PrometheusConnectionError("Connection refused")
 
+        with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
             response = test_client.get("/api/metrics/overview")
             assert response.status_code == 503
 
@@ -307,11 +303,10 @@ class TestMetricsErrorHandling:
         """Test handling of Prometheus query errors."""
         from opi.connectors.prometheus import PrometheusQueryError
 
-        with patch("opi.api.metrics_router.PrometheusConnector") as mock_class:
-            mock_instance = MagicMock()
-            mock_instance.is_connected = True
-            mock_instance.custom_query.side_effect = PrometheusQueryError("Invalid query")
-            mock_class.return_value = mock_instance
+        mock_instance = MagicMock()
+        mock_instance.is_connected = True
+        mock_instance.custom_query.side_effect = PrometheusQueryError("Invalid query")
 
+        with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
             response = test_client.get("/api/metrics/query?query=invalid{}")
             assert response.status_code == 500

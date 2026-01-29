@@ -216,7 +216,7 @@ class TestKubectlConnectorGetResourcesByLabel:
     @pytest.mark.asyncio
     async def test_get_resources_by_label_returns_items(self):
         """get_resources_by_label returns list of matching resources."""
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock
         from opi.connectors.kubectl import KubectlConnector
 
         connector = KubectlConnector()
@@ -241,7 +241,7 @@ class TestKubectlConnectorGetResourcesByLabel:
     @pytest.mark.asyncio
     async def test_get_resources_by_label_returns_empty_on_no_resources(self):
         """get_resources_by_label returns empty list when no resources found."""
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock
         from opi.connectors.kubectl import KubectlConnector
 
         connector = KubectlConnector()
@@ -258,7 +258,7 @@ class TestKubectlConnectorGetResourcesByLabel:
     @pytest.mark.asyncio
     async def test_get_resources_by_label_handles_errors(self):
         """get_resources_by_label returns empty list on error."""
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock
         from opi.connectors.kubectl import KubectlConnector
 
         connector = KubectlConnector()

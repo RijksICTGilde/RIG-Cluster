@@ -50,12 +50,11 @@ class TestEmptyResults:
         test_client: TestClient,
     ) -> None:
         """Test that empty pod list from Prometheus is handled correctly."""
-        with patch("opi.api.metrics_router.PrometheusConnector") as mock_class:
-            mock_instance = MagicMock()
-            mock_instance.is_connected = True
-            mock_instance.get_cpu_usage_by_namespace.return_value = []
-            mock_class.return_value = mock_instance
+        mock_instance = MagicMock()
+        mock_instance.is_connected = True
+        mock_instance.get_cpu_usage_by_namespace.return_value = []
 
+        with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
             response = test_client.get("/api/metrics/cpu")
             assert response.status_code == 200
             data = response.json()
@@ -109,12 +108,11 @@ class TestInvalidInputs:
         test_client: TestClient,
     ) -> None:
         """Test that invalid namespace characters are passed through."""
-        with patch("opi.api.metrics_router.PrometheusConnector") as mock_class:
-            mock_instance = MagicMock()
-            mock_instance.is_connected = True
-            mock_instance.get_cpu_usage_by_namespace.return_value = []
-            mock_class.return_value = mock_instance
+        mock_instance = MagicMock()
+        mock_instance.is_connected = True
+        mock_instance.get_cpu_usage_by_namespace.return_value = []
 
+        with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
             # Kubernetes namespace rules: lowercase, alphanumeric, hyphens
             response = test_client.get("/api/metrics/cpu?namespace=INVALID_NAMESPACE!")
             assert response.status_code == 200
