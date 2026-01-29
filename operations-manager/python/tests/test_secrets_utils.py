@@ -102,14 +102,16 @@ class TestRegistrySecret:
 
     def test_from_k8s_secret_data_legacy_username_password(self):
         """from_k8s_secret_data supports legacy username/password fields without auth."""
-        config = json.dumps({
-            "auths": {
-                "docker.io": {
-                    "username": "legacyuser",
-                    "password": "legacypass",
+        config = json.dumps(
+            {
+                "auths": {
+                    "docker.io": {
+                        "username": "legacyuser",
+                        "password": "legacypass",
+                    }
                 }
             }
-        })
+        )
         secret = RegistrySecret.from_k8s_secret_data({".dockerconfigjson": config})
 
         assert secret.registry_url == "docker.io"

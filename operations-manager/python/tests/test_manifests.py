@@ -1,0 +1,425 @@
+"""Tests for opi.generation.manifests module.
+
+Focuses on: rendering real project templates, verifying generated file content,
+file categorization logic, namespace prefix resolution, and kustomization
+file assembly with correct resources/generators/namespace.
+"""
+
+import os
+from unittest.mock import patch
+
+import pytest
+from opi.generation.manifests import ManifestGenerator, render_template
+from ruamel.yaml import YAML
+
+MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
+
+
+@pytest.fixture
+def generator():
+    return ManifestGenerator()
+
+
+@pytest.fixture
+def yaml_loader():
+    return YAML()
+
+
+class TestRenderRealTemplates:
+    """Render actual project templates to catch variable name mismatches and Jinja2 syntax errors."""
+
+    def test_namespace_template(self):
+        result = render_template("namespace.yaml.jinja", {"namespace": "rig-myproject"})
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["kind"] == "Namespace"
+        assert doc["metadata"]["name"] == "rig-myproject"
+        assert doc["metadata"]["labels"]["created-by"] == "operations-manager"
+
+    def test_service_template(self):
+        result = render_template("service.yaml.jinja", {
+            "name": "web",
+            "namespace": "rig-proj",
+            "project": {"name": "myproj"},
+            "application_port": 8080,
+        })
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["kind"] == "Service"
+        assert doc["metadata"]["name"] == "web"
+        assert doc["spec"]["selector"]["app"] == "web"
+        assert doc["spec"]["ports"][0]["targetPort"] == 8080
+        # service_port defaults to 80 via Jinja2 default filter
+        assert doc["spec"]["ports"][0]["port"] == 80
+
+    def test_deployment_template_local_cluster(self):
+        result = render_template("deployment.yaml.jinja", {
+            "name": "api",
+            "namespace": "rig-proj",
+            "project": {"name": "myproj"},
+            "pod_replacement_mode": "RollingUpdate",
+            "generated_at": "2024-01-01T00:00:00Z",
+            "application_port": 3000,
+            "imageURL": "registry.example.com/app:latest",
+            "imagePullPolicy": "Always",
+            "cluster": "local",
+        })
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["kind"] == "Deployment"
+        assert doc["metadata"]["name"] == "api"
+        assert doc["spec"]["strategy"]["type"] == "RollingUpdate"
+        # Local cluster should have explicit runAsUser
+        pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
+        assert pod_sec["runAsUser"] == 1001
+
+    def test_deployment_template_non_local_cluster(self):
+        result = render_template("deployment.yaml.jinja", {
+            "name": "api",
+            "namespace": "rig-proj",
+            "project": {"name": "myproj"},
+            "pod_replacement_mode": "Recreate",
+            "generated_at": "2024-01-01T00:00:00Z",
+            "application_port": 3000,
+            "imageURL": "registry.example.com/app:latest",
+            "imagePullPolicy": "IfNotPresent",
+            "cluster": "production",
+        })
+        yaml = YAML()
+        doc = yaml.load(result)
+        pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
+        # Non-local cluster should NOT have explicit runAsUser (OpenShift SCCs assign it)
+        assert "runAsUser" not in pod_sec
+        assert pod_sec["runAsNonRoot"] is True
+
+    def test_deployment_template_with_env_vars(self):
+        result = render_template("deployment.yaml.jinja", {
+            "name": "api",
+            "namespace": "ns",
+            "project": {"name": "p"},
+            "pod_replacement_mode": "RollingUpdate",
+            "generated_at": "now",
+            "application_port": 8080,
+            "imageURL": "img:v1",
+            "imagePullPolicy": "Always",
+            "cluster": "local",
+            "env_vars": {"DATABASE_URL": "postgres://localhost/db", "DEBUG": "true"},
+        })
+        assert "DATABASE_URL" in result
+        assert "postgres://localhost/db" in result
+
+    def test_ingress_template_with_tls(self):
+        result = render_template("ingress.yaml.jinja", {
+            "name": "web-ingress",
+            "hostname": "app.example.com",
+            "enable_tls": True,
+            "cluster_issuer": "letsencrypt-prod",
+            "tls_secret_name": "app-tls",
+        })
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["spec"]["rules"][0]["host"] == "app.example.com"
+        assert doc["spec"]["tls"] is not None
+        assert "hsts" in result.lower()
+
+    def test_ingress_template_without_tls(self):
+        result = render_template("ingress.yaml.jinja", {
+            "name": "web-ingress",
+            "hostname": "app.example.com",
+            "enable_tls": False,
+        })
+        assert "tls:" not in result
+        # HSTS annotations should not appear without TLS
+        assert "hsts_header" not in result
+
+    def test_network_policy_template(self):
+        result = render_template("network-policy.yaml.jinja", {
+            "name": "allow-web",
+            "namespace": "rig-proj",
+            "ports": [8080, 443],
+        })
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["kind"] == "NetworkPolicy"
+        # podSelector should be empty dict when not provided
+        assert doc["spec"]["podSelector"] == {}
+        ingress_ports = doc["spec"]["ingress"][0]["ports"]
+        assert len(ingress_ports) == 2
+        assert ingress_ports[0]["port"] == 8080
+
+    def test_generic_secret_template(self):
+        result = render_template("generic-secret.yaml.to-sops.jinja", {
+            "name": "db-credentials",
+            "namespace": "rig-proj",
+            "secret_pairs": {"username": "admin", "password": "s3cret"},
+        })
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["kind"] == "Secret"
+        assert doc["stringData"]["username"] == "admin"
+        assert doc["stringData"]["password"] == "s3cret"
+
+    def test_generic_secret_empty_value(self):
+        """Empty string values need special quoting to avoid YAML null."""
+        result = render_template("generic-secret.yaml.to-sops.jinja", {
+            "name": "s",
+            "namespace": "ns",
+            "secret_pairs": {"key": ""},
+        })
+        assert 'key: ""' in result
+
+    def test_generic_secret_multiline_value(self):
+        """Multiline values should use YAML literal block scalar."""
+        cert = "-----BEGIN CERT-----\nABC123\n-----END CERT-----"
+        result = render_template("generic-secret.yaml.to-sops.jinja", {
+            "name": "s",
+            "namespace": "ns",
+            "secret_pairs": {"cert": cert},
+        })
+        assert "cert: |" in result
+
+
+class TestCollectManifestFiles:
+    """File categorization: .sops.yaml and .to-sops.yaml go to sops list, rest to regular."""
+
+    def test_categorizes_sops_variants(self, generator, tmp_path):
+        (tmp_path / "deploy.yaml").write_text("kind: Deployment")
+        (tmp_path / "secret.sops.yaml").write_text("kind: Secret")
+        (tmp_path / "config.to-sops.yaml").write_text("kind: Secret")
+        (tmp_path / "notes.yml").write_text("kind: ConfigMap")
+
+        sops, regular = generator.collect_manifest_files(str(tmp_path))
+        sops_names = set(sops)
+        regular_names = set(regular)
+
+        assert "secret.sops.yaml" in sops_names
+        assert "config.to-sops.yaml" in sops_names
+        assert "deploy.yaml" in regular_names
+        assert "notes.yml" in regular_names
+        assert len(sops) == 2
+        assert len(regular) == 2
+
+    def test_subfolder_recursion(self, generator, tmp_path):
+        sub = tmp_path / "subdir"
+        sub.mkdir()
+        (tmp_path / "root.yaml").write_text("a: 1")
+        (sub / "nested.yaml").write_text("b: 2")
+
+        _, shallow = generator.collect_manifest_files(str(tmp_path), include_subfolders=False)
+        assert len(shallow) == 1
+
+        _, deep = generator.collect_manifest_files(str(tmp_path), include_subfolders=True)
+        assert len(deep) == 2
+
+    def test_project_name_stripped_from_paths(self, generator, tmp_path):
+        proj = tmp_path / "myproject"
+        deploy = proj / "deploy-a"
+        deploy.mkdir(parents=True)
+        (deploy / "manifest.yaml").write_text("a: 1")
+
+        _, regular = generator.collect_manifest_files(
+            str(tmp_path), include_subfolders=True, project_name="myproject"
+        )
+        # Path should be "deploy-a/manifest.yaml", not "myproject/deploy-a/manifest.yaml"
+        assert len(regular) == 1
+        assert not regular[0].startswith("myproject")
+        assert regular[0] == "deploy-a/manifest.yaml"
+
+
+class TestDetermineNamespaceWithPrefix:
+    """Namespace prefix logic: add cluster prefix if not already present, handle unknown clusters."""
+
+    def test_none_returns_none(self, generator):
+        assert generator._determine_namespace_with_prefix(None) is None
+
+    def test_no_deployment_returns_namespace_as_is(self, generator):
+        assert generator._determine_namespace_with_prefix("my-ns") == "my-ns"
+
+    @patch("opi.generation.manifests.get_namespace_prefix", return_value="rig-")
+    def test_adds_prefix(self, mock_prefix, generator):
+        result = generator._determine_namespace_with_prefix("proj", deployment={"cluster": "local"})
+        assert result == "rig-proj"
+        mock_prefix.assert_called_once_with("local")
+
+    @patch("opi.generation.manifests.get_namespace_prefix", return_value="rig-")
+    def test_does_not_double_prefix(self, mock_prefix, generator):
+        result = generator._determine_namespace_with_prefix("rig-proj", deployment={"cluster": "local"})
+        assert result == "rig-proj"
+        mock_prefix.assert_called_once_with("local")
+
+    @patch("opi.generation.manifests.get_namespace_prefix", side_effect=ValueError("unknown"))
+    def test_unknown_cluster_falls_back_to_raw_namespace(self, mock_prefix, generator):
+        result = generator._determine_namespace_with_prefix("proj", deployment={"cluster": "unknown"})
+        assert result == "proj"
+        mock_prefix.assert_called_once_with("unknown")
+
+
+class TestCreateKustomizationFiles:
+    """Verify the assembled kustomization.yaml and decrypt-sops.yaml have correct content."""
+
+    def test_kustomization_contains_resources_and_namespace(self, generator, yaml_loader, tmp_path):
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir)
+
+        with patch("opi.generation.manifests.settings") as mock:
+            mock.MANIFESTS_PATH = MANIFESTS_DIR
+            generator.create_kustomization_files(
+                output_dir=output_dir,
+                namespace="my-ns",
+                sops_files=[],
+                regular_files=["deploy.yaml", "service.yaml"],
+            )
+
+        kust_path = os.path.join(output_dir, "kustomization.yaml")
+        with open(kust_path) as f:
+            doc = yaml_loader.load(f)
+
+        assert doc["namespace"] == "my-ns"
+        assert doc["resources"] == ["deploy.yaml", "service.yaml"]
+        # No sops → no generators key
+        assert "generators" not in doc or doc.get("generators") is None
+
+    def test_sops_creates_decrypt_file_with_converted_filenames(self, generator, yaml_loader, tmp_path):
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir)
+
+        with patch("opi.generation.manifests.settings") as mock:
+            mock.MANIFESTS_PATH = MANIFESTS_DIR
+            generator.create_kustomization_files(
+                output_dir=output_dir,
+                sops_files=["secret.to-sops.yaml", "creds.sops.yaml"],
+                regular_files=["deploy.yaml"],
+            )
+
+        # kustomization should reference decrypt-sops.yaml as generator
+        kust_path = os.path.join(output_dir, "kustomization.yaml")
+        with open(kust_path) as f:
+            kust = yaml_loader.load(f)
+        assert kust["generators"] == ["decrypt-sops.yaml"]
+
+        # decrypt-sops.yaml should convert .to-sops.yaml → .sops.yaml
+        decrypt_path = os.path.join(output_dir, "decrypt-sops.yaml")
+        with open(decrypt_path) as f:
+            decrypt = yaml_loader.load(f)
+        files = set(decrypt["files"])
+        assert "secret.sops.yaml" in files  # converted from .to-sops.yaml
+        assert "creds.sops.yaml" in files  # kept as-is
+
+    def test_excludes_meta_files_from_resources(self, generator, yaml_loader, tmp_path):
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir)
+
+        with patch("opi.generation.manifests.settings") as mock:
+            mock.MANIFESTS_PATH = MANIFESTS_DIR
+            generator.create_kustomization_files(
+                output_dir=output_dir,
+                sops_files=[],
+                regular_files=["deploy.yaml", "kustomization.yaml", "decrypt-sops.yaml"],
+            )
+
+        kust_path = os.path.join(output_dir, "kustomization.yaml")
+        with open(kust_path) as f:
+            doc = yaml_loader.load(f)
+        assert doc["resources"] == ["deploy.yaml"]
+
+    def test_helm_charts_added_to_kustomization(self, generator, yaml_loader, tmp_path):
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir)
+
+        charts = [{"name": "nginx", "version": "1.0.0", "repo": "https://charts.example.com"}]
+
+        with patch("opi.generation.manifests.settings") as mock:
+            mock.MANIFESTS_PATH = MANIFESTS_DIR
+            generator.create_kustomization_files(
+                output_dir=output_dir,
+                sops_files=[],
+                regular_files=[],
+                helm_charts=charts,
+            )
+
+        kust_path = os.path.join(output_dir, "kustomization.yaml")
+        with open(kust_path) as f:
+            doc = yaml_loader.load(f)
+        assert doc["helmCharts"] == charts
+
+    @patch("opi.generation.manifests.get_namespace_prefix", return_value="rig-")
+    def test_namespace_gets_cluster_prefix(self, mock_prefix, generator, yaml_loader, tmp_path):
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir)
+
+        with patch("opi.generation.manifests.settings") as mock:
+            mock.MANIFESTS_PATH = MANIFESTS_DIR
+            generator.create_kustomization_files(
+                output_dir=output_dir,
+                namespace="proj",
+                sops_files=[],
+                regular_files=[],
+                deployment={"cluster": "local"},
+            )
+
+        kust_path = os.path.join(output_dir, "kustomization.yaml")
+        with open(kust_path) as f:
+            doc = yaml_loader.load(f)
+        assert doc["namespace"] == "rig-proj"
+
+
+class TestCreateManifestFileEndToEnd:
+    """End-to-end: template → file on disk with correct content."""
+
+    def test_creates_file_with_rendered_content(self, generator, tmp_path):
+        template = tmp_path / "template.yaml.jinja"
+        template.write_text("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ name }}")
+        output_dir = str(tmp_path / "output")
+
+        path = generator.create_manifest_file(
+            template_path=str(template),
+            values={"name": "my-config"},
+            output_dir=output_dir,
+            output_filename="configmap",
+        )
+
+        yaml = YAML()
+        with open(path) as f:
+            doc = yaml.load(f)
+        assert doc["metadata"]["name"] == "my-config"
+        assert path.endswith("configmap.yaml")
+
+    def test_sops_flag_changes_extension(self, generator, tmp_path):
+        template = tmp_path / "t.yaml.jinja"
+        template.write_text("data: x")
+
+        path = generator.create_manifest_file(
+            template_path=str(template),
+            values={},
+            output_dir=str(tmp_path / "out"),
+            output_filename="secret",
+            use_sops=True,
+        )
+        assert path.endswith("secret.to-sops.yaml")
+
+    def test_missing_template_raises(self, generator, tmp_path):
+        with pytest.raises(RuntimeError, match="Failed to create manifest"):
+            generator.create_manifest_file(
+                template_path="/nonexistent",
+                values={},
+                output_dir=str(tmp_path),
+                output_filename="out",
+            )
+
+
+class TestCreateMultipleManifests:
+    """Partial failure handling: one bad config should not block the others."""
+
+    def test_continues_past_failures(self, generator, tmp_path):
+        good = tmp_path / "good.yaml.jinja"
+        good.write_text("ok: true")
+        output_dir = str(tmp_path / "output")
+
+        configs = [
+            {"template_path": "/nonexistent", "values": {}, "output_filename": "bad"},
+            {"template_path": str(good), "values": {}, "output_filename": "good"},
+        ]
+
+        results = generator.create_multiple_manifests(configs, output_dir)
+        assert len(results) == 1
+        assert results[0].endswith("good.yaml")

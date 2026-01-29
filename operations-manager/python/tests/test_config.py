@@ -156,11 +156,7 @@ class TestParseSopsAgeKeyContent:
 
     def test_parses_valid_key_content(self):
         """Should extract public and private keys from valid content."""
-        content = (
-            "# created: 2024-01-01\n"
-            "# public key: age1abc123\n"
-            "AGE-SECRET-KEY-1ABCDEF\n"
-        )
+        content = "# created: 2024-01-01\n# public key: age1abc123\nAGE-SECRET-KEY-1ABCDEF\n"
         public, private = parse_sops_age_key_content(content)
         assert public == "age1abc123"
         assert private == "AGE-SECRET-KEY-1ABCDEF"

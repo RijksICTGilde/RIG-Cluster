@@ -667,8 +667,12 @@ class TestGetComponentIngressMap:
     def test_dots_format(self):
         """DOTS format generates component.subdomain.base_domain."""
         result = get_component_ingress_map(
-            "frontend", "prod", "myapp", ".kind",
-            subdomain="myapp", base_domain="rijks.app",
+            "frontend",
+            "prod",
+            "myapp",
+            ".kind",
+            subdomain="myapp",
+            base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
         )
         assert result == {"prod-frontend": "frontend.myapp.rijks.app"}
@@ -676,15 +680,22 @@ class TestGetComponentIngressMap:
     def test_custom_domain_dashes(self):
         """DASHES with base_domain + subdomain generates subdomain.base_domain."""
         result = get_component_ingress_map(
-            "frontend", "prod", "myapp", ".kind",
-            subdomain="myapp", base_domain="custom.nl",
+            "frontend",
+            "prod",
+            "myapp",
+            ".kind",
+            subdomain="myapp",
+            base_domain="custom.nl",
         )
         assert result == {"prod-frontend": "myapp.custom.nl"}
 
     def test_cluster_domain_default(self):
         """Default cluster domain uses standard hostname generation."""
         result = get_component_ingress_map(
-            "frontend", "prod", "myapp", ".kind",
+            "frontend",
+            "prod",
+            "myapp",
+            ".kind",
         )
         assert result == {"prod-frontend": "frontend-prod-myapp.kind"}
 
@@ -695,8 +706,12 @@ class TestGetDeploymentHostnames:
     def test_dots_format_includes_root(self):
         """DOTS format includes root hostname."""
         result = get_deployment_hostnames(
-            ["frontend", "backend"], "prod", "myapp", ".kind",
-            subdomain="myapp", base_domain="rijks.app",
+            ["frontend", "backend"],
+            "prod",
+            "myapp",
+            ".kind",
+            subdomain="myapp",
+            base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
         )
         assert "frontend.myapp.rijks.app" in result
@@ -707,14 +722,20 @@ class TestGetDeploymentHostnames:
     def test_dashes_format_no_root(self):
         """DASHES format does not add root hostname."""
         result = get_deployment_hostnames(
-            ["frontend", "backend"], "prod", "myapp", ".kind",
+            ["frontend", "backend"],
+            "prod",
+            "myapp",
+            ".kind",
         )
         assert len(result) == 2
 
     def test_deduplicates_hostnames(self):
         """Duplicate hostnames are deduplicated (e.g. shared subdomain mode)."""
         result = get_deployment_hostnames(
-            ["frontend", "backend"], "prod", "myapp", ".dev.example.com",
+            ["frontend", "backend"],
+            "prod",
+            "myapp",
+            ".dev.example.com",
             subdomain="myapp",
         )
         # In subdomain mode with subdomain != deployment_name, both resolve to same hostname

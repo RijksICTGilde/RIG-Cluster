@@ -79,7 +79,7 @@ class TestEncryptWithAgeAndBase64Encode:
 
         assert result.startswith("base64+age:")
         # Decode the base64 part and verify
-        b64_part = result[len("base64+age:"):]
+        b64_part = result[len("base64+age:") :]
         decoded = base64.b64decode(b64_part).decode()
         assert decoded == encrypted
 

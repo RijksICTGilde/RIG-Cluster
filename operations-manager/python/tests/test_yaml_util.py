@@ -1,6 +1,5 @@
 """Tests for opi.utils.yaml_util module."""
 
-
 from opi.utils.yaml_util import (
     dump_yaml_to_string,
     find_value_by_jsonpath,

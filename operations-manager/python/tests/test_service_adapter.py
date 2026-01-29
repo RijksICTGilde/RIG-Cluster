@@ -257,9 +257,7 @@ class TestExtractServiceNamesFromProjectServices:
     """Tests for ServiceAdapter.extract_service_names_from_project_services."""
 
     def test_string_format(self):
-        result = ServiceAdapter.extract_service_names_from_project_services(
-            ["keycloak", "redis"]
-        )
+        result = ServiceAdapter.extract_service_names_from_project_services(["keycloak", "redis"])
         assert result == ["keycloak", "redis"]
 
     def test_dict_format(self):
@@ -283,9 +281,7 @@ class TestExtractServiceNamesFromProjectServices:
 
     def test_multi_key_dict_raises(self):
         with pytest.raises(ValueError, match="exactly one key"):
-            ServiceAdapter.extract_service_names_from_project_services(
-                [{"a": {}, "b": {}}]
-            )
+            ServiceAdapter.extract_service_names_from_project_services([{"a": {}, "b": {}}])
 
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError, match="Invalid service item type"):
