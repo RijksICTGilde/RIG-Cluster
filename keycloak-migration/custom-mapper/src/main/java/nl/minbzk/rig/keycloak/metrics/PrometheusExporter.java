@@ -24,8 +24,10 @@ public final class PrometheusExporter {
     private static final Logger logger = Logger.getLogger(PrometheusExporter.class);
     private static PrometheusExporter INSTANCE;
 
-    // Identity provider constant for users without federated identity
+    // Identity provider type constants
     public static final String IDP_LOCAL = "local";
+    public static final String IDP_SAML = "saml";
+    public static final String IDP_OIDC = "oidc";
 
     // Counters: key = "realm|idp_type|client_id" or similar composite key
     private final Map<String, AtomicLong> loginCounters = new ConcurrentHashMap<>();

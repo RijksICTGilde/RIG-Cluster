@@ -17,10 +17,14 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Authenticator that checks if a user has a required client role.
+ * Authenticator that checks if a user has a required role (client or realm).
  *
  * This authenticator is designed for post-broker login flows where we need to
- * verify that a user has a specific client role before allowing access.
+ * verify that a user has a specific role before allowing access.
+ *
+ * Role type is determined by the clientId configuration:
+ * - If clientId is provided: checks for a client role on that client
+ * - If clientId is empty/null: checks for a realm role
  *
  * Unlike conditional flows which fail when skipped, this authenticator
  * explicitly returns SUCCESS when the role is present, properly completing
@@ -55,14 +59,12 @@ public class RequireClientRoleAuthenticator implements Authenticator {
         String roleName = getConfiguredRoleName(context);
         String errorMessage = getConfiguredErrorMessage(context);
 
-        LOG.debugf("Checking if user '%s' has role '%s' on client '%s' (OAuth client: %s)",
-                   user.getUsername(), roleName, clientId, currentOAuthClientId);
+        // Determine if this is a realm role or client role check
+        boolean isRealmRole = (clientId == null || clientId.isEmpty());
+        String roleDescription = isRealmRole ? roleName : clientId + "." + roleName;
 
-        if (clientId == null || clientId.isEmpty()) {
-            LOG.warn("Client ID not configured for RequireClientRoleAuthenticator");
-            context.failure(AuthenticationFlowError.INTERNAL_ERROR);
-            return;
-        }
+        LOG.debugf("Checking if user '%s' has %s role '%s' (OAuth client: %s)",
+                   user.getUsername(), isRealmRole ? "realm" : "client", roleDescription, currentOAuthClientId);
 
         if (roleName == null || roleName.isEmpty()) {
             LOG.warn("Role name not configured for RequireClientRoleAuthenticator");
@@ -70,13 +72,17 @@ public class RequireClientRoleAuthenticator implements Authenticator {
             return;
         }
 
-        if (userHasClientRole(context, clientId, roleName)) {
-            LOG.debugf("User '%s' has required role '%s.%s' - allowing access",
-                       user.getUsername(), clientId, roleName);
+        boolean hasRole = isRealmRole
+            ? userHasRealmRole(context, roleName)
+            : userHasClientRole(context, clientId, roleName);
+
+        if (hasRole) {
+            LOG.debugf("User '%s' has required %s role '%s' - allowing access",
+                       user.getUsername(), isRealmRole ? "realm" : "client", roleDescription);
             context.success();
         } else {
-            LOG.infof("User '%s' does not have required role '%s.%s' - denying access",
-                      user.getUsername(), clientId, roleName);
+            LOG.infof("User '%s' does not have required %s role '%s' - denying access",
+                      user.getUsername(), isRealmRole ? "realm" : "client", roleDescription);
 
             context.getEvent().error("access_denied_missing_role");
             context.failure(AuthenticationFlowError.ACCESS_DENIED,
@@ -112,20 +118,11 @@ public class RequireClientRoleAuthenticator implements Authenticator {
     }
 
     private String getConfiguredClientId(AuthenticationFlowContext context) {
-        String clientId = context.getAuthenticatorConfig() != null
+        // Return the configured client ID, or null/empty for realm roles
+        // Note: We no longer fall back to current client - empty means realm role
+        return context.getAuthenticatorConfig() != null
             ? context.getAuthenticatorConfig().getConfig().get(RequireClientRoleAuthenticatorFactory.CONFIG_CLIENT_ID)
             : null;
-
-        // If not configured, try to use the current client from the auth session
-        if (clientId == null || clientId.isEmpty()) {
-            AuthenticationSessionModel authSession = context.getAuthenticationSession();
-            if (authSession != null && authSession.getClient() != null) {
-                clientId = authSession.getClient().getClientId();
-                LOG.debugf("Using current auth session client: %s", clientId);
-            }
-        }
-
-        return clientId;
     }
 
     private String getConfiguredRoleName(AuthenticationFlowContext context) {
@@ -159,6 +156,19 @@ public class RequireClientRoleAuthenticator implements Authenticator {
         RoleModel role = client.getRole(roleName);
         if (role == null) {
             LOG.warnf("Role '%s' not found on client '%s'", roleName, clientId);
+            return false;
+        }
+
+        return user.hasRole(role);
+    }
+
+    private boolean userHasRealmRole(AuthenticationFlowContext context, String roleName) {
+        RealmModel realm = context.getRealm();
+        UserModel user = context.getUser();
+
+        RoleModel role = realm.getRole(roleName);
+        if (role == null) {
+            LOG.warnf("Realm role '%s' not found in realm '%s'", roleName, realm.getName());
             return false;
         }
 

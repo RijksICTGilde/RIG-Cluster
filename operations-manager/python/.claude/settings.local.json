@@ -8,7 +8,9 @@
       "Bash(python:*)",
       "Bash(find:*)",
       "Bash(kubectl logs:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

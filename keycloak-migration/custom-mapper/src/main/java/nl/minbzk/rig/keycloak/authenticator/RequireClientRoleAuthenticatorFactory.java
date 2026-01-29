@@ -15,6 +15,10 @@ import java.util.List;
  *
  * This factory registers the authenticator with Keycloak and defines
  * its configuration properties.
+ *
+ * The authenticator supports both client roles and realm roles:
+ * - Client role: provide clientId and roleName
+ * - Realm role: leave clientId empty, provide only roleName
  */
 public class RequireClientRoleAuthenticatorFactory implements AuthenticatorFactory {
 
@@ -32,14 +36,14 @@ public class RequireClientRoleAuthenticatorFactory implements AuthenticatorFacto
     static {
         ProviderConfigProperty clientId = new ProviderConfigProperty();
         clientId.setName(CONFIG_CLIENT_ID);
-        clientId.setLabel("Client ID");
-        clientId.setHelpText("The client ID to check the role against. If empty, uses the current authentication client.");
+        clientId.setLabel("Client ID (optional)");
+        clientId.setHelpText("The client ID for client role checks. Leave empty for realm role checks.");
         clientId.setType(ProviderConfigProperty.STRING_TYPE);
 
         ProviderConfigProperty roleName = new ProviderConfigProperty();
         roleName.setName(CONFIG_ROLE_NAME);
         roleName.setLabel("Role Name");
-        roleName.setHelpText("The client role name that the user must have to be allowed access.");
+        roleName.setHelpText("The role name that the user must have. For client roles, this is the role on the specified client. For realm roles (when Client ID is empty), this is the realm role name.");
         roleName.setType(ProviderConfigProperty.STRING_TYPE);
 
         ProviderConfigProperty errorMessage = new ProviderConfigProperty();
@@ -66,12 +70,13 @@ public class RequireClientRoleAuthenticatorFactory implements AuthenticatorFacto
 
     @Override
     public String getDisplayType() {
-        return "Require Client Role";
+        return "Require Role (Client or Realm)";
     }
 
     @Override
     public String getHelpText() {
-        return "Allows access only if the user has a specific client role. " +
+        return "Allows access only if the user has a specific role. " +
+               "Supports both client roles (provide Client ID) and realm roles (leave Client ID empty). " +
                "Use this in post-broker login flows to restrict access based on roles.";
     }
 

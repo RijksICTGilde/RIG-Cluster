@@ -248,8 +248,12 @@ class InviteManager:
         Assign roles and groups from invite configuration to a user.
 
         Supports both realm roles and client roles:
-        - roles: ["role1", "role2"] - assigns realm-level roles
+        - roles: ["role1", "role2"] - assigns realm-level roles (legacy)
+        - realm_roles: ["role1", "role2"] - assigns realm-level roles (new, preferred)
         - client_roles: {"client-id": ["role1"]} - assigns client-level roles
+
+        Both `roles` and `realm_roles` assign realm-level roles. The `realm_roles`
+        field is preferred for consistency with the keycloak config `realm-roles`.
 
         Args:
             keycloak: KeycloakConnector instance
@@ -263,11 +267,17 @@ class InviteManager:
         assigned: dict[str, Any] = {"roles": [], "client_roles": {}, "groups": []}
         errors: list[str] = []
 
-        # Assign realm roles
+        # Assign realm roles (support both 'roles' and 'realm_roles' fields)
+        # 'realm_roles' is the new preferred field for consistency with config
         roles = invite.get("roles", [])
-        if roles:
+        realm_roles = invite.get("realm_roles", [])
+
+        # Merge both role lists, removing duplicates
+        all_realm_roles = list(set(roles + realm_roles))
+
+        if all_realm_roles:
             try:
-                result = await keycloak.assign_realm_roles_to_user(realm_name, user_id, roles)
+                result = await keycloak.assign_realm_roles_to_user(realm_name, user_id, all_realm_roles)
                 assigned["roles"] = result["assigned"]
                 if result["not_found"]:
                     errors.append(f"Realm roles not found: {result['not_found']}")
@@ -280,9 +290,7 @@ class InviteManager:
         client_roles_raw = invite.get("client_roles", {})
         if client_roles_raw and isinstance(client_roles_raw, dict):
             client_roles = cast(dict[str, Any], client_roles_raw)
-            client_result = await self._assign_client_roles(
-                keycloak, realm_name, user_id, client_roles
-            )
+            client_result = await self._assign_client_roles(keycloak, realm_name, user_id, client_roles)
             assigned["client_roles"] = client_result["assigned"]
             if client_result["errors"]:
                 errors.extend(client_result["errors"])

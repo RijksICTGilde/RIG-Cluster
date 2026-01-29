@@ -13,8 +13,6 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from opi.core.config import settings
-
 
 class ProjectUser(BaseModel):
     """Pydantic model for project user."""
@@ -70,6 +68,9 @@ class ProjectService:
         """
         Register a project with its corresponding data.
 
+        This updates the in-memory project registry. If the project already exists,
+        it will be updated with the new data.
+
         Args:
             project_name: The project identifier
             api_key: The API key for the project
@@ -78,15 +79,13 @@ class ProjectService:
             data: Full project YAML data
 
         Returns:
-            True if registration was successful, False if project already exists and overwrite not allowed
+            True if registration was successful
         """
-        if project_name in self._projects and not settings.ALLOW_PROJECTFILES_OVERWRITE:
-            logger.warning(f"Project already exists: {project_name} (overwrite not allowed)")
-            return False
-
+        is_update = project_name in self._projects
         project = Project(name=project_name, api_key=api_key, filename=filename, users=users, data=data)
         self._projects[project_name] = project
-        logger.debug(f"Registered project: {project_name} (file: {filename}) with {len(users) if users else 0} users")
+        action = "Updated" if is_update else "Registered"
+        logger.debug(f"{action} project: {project_name} (file: {filename}) with {len(users) if users else 0} users")
         return True
 
     def get_project_by_api_key(self, api_key: str) -> Project | None:
@@ -207,12 +206,7 @@ class ProjectService:
                     if isinstance(user_data, dict) and "email" in user_data and "role" in user_data:
                         users.append(ProjectUser(email=user_data["email"], role=user_data["role"]))
 
-            # Note: At startup, we allow overwriting since we're loading from authoritative source
-            # Temporarily allow overwrite for this call
-            original_setting = settings.ALLOW_PROJECTFILES_OVERWRITE
-            settings.ALLOW_PROJECTFILES_OVERWRITE = True
             success = self.register(project_name, str(api_key), filename, users if users else None)
-            settings.ALLOW_PROJECTFILES_OVERWRITE = original_setting
 
             if success:
                 logger.debug(f"Loaded project from project data: {project_name} (file: {filename})")
