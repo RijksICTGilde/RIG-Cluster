@@ -1778,9 +1778,9 @@ class KeycloakConnector:
                 flow_alias=flow_alias,
                 parent_flow_id=forms_flow_id,
                 subflow_alias=conditional_subflow_alias,
-                client_id=client_id,
                 role_name=role_name,
                 error_message=error_message,
+                client_id=client_id,
             )
 
             self.admin.change_current_realm("master")
@@ -1844,22 +1844,27 @@ class KeycloakConnector:
         flow_alias: str,
         parent_flow_id: str,
         subflow_alias: str,
-        client_id: str,
         role_name: str,
         error_message: str,
+        client_id: str | None = None,
     ) -> None:
         """
-        Create a conditional sub-flow that denies access if user lacks a client role.
+        Create a conditional sub-flow that denies access if user lacks a role.
+
+        Supports both client roles and realm roles:
+        - Client role: pass client_id
+        - Realm role: omit client_id (None)
 
         Args:
             flow_alias: Alias of the top-level flow
             parent_flow_id: ID of the parent sub-flow (forms)
             subflow_alias: Alias for the new conditional sub-flow
-            client_id: Client ID for the role check
-            role_name: Client role name that grants access
+            role_name: Role name that grants access
             error_message: Error message key from theme
+            client_id: Client ID for client roles, None for realm roles
         """
-        logger.debug(f"Creating conditional deny sub-flow '{subflow_alias}'")
+        role_desc = f"{client_id}.{role_name}" if client_id else role_name
+        logger.debug(f"Creating conditional deny sub-flow '{subflow_alias}' for role '{role_desc}'")
 
         # Get the forms sub-flow alias from the parent flow
         flows = self.admin.get_authentication_flows()
@@ -1887,7 +1892,7 @@ class KeycloakConnector:
             "alias": subflow_alias,
             "type": "basic-flow",
             "provider": "registration-page-form",
-            "description": f"Deny access if user does not have role {client_id}.{role_name}",
+            "description": f"Deny access if user does not have role {role_desc}",
         }
 
         try:
@@ -1928,25 +1933,30 @@ class KeycloakConnector:
 
         # Step 3: Add "Condition - User Role" execution (negated - check if user does NOT have role)
         await self._add_condition_user_role(
-            subflow_alias=subflow_alias, client_id=client_id, role_name=role_name, negate=True
+            subflow_alias=subflow_alias, role_name=role_name, negate=True, client_id=client_id
         )
 
         # Step 4: Add "Deny Access" execution
         await self._add_deny_access(subflow_alias=subflow_alias, error_message=error_message)
 
     async def _add_condition_user_role(
-        self, subflow_alias: str, client_id: str, role_name: str, negate: bool = True
+        self, subflow_alias: str, role_name: str, negate: bool = True, client_id: str | None = None
     ) -> None:
         """
         Add a "Condition - User Role" execution to a sub-flow.
 
+        Supports both client roles and realm roles:
+        - Client role: pass client_id, uses format "clientId.roleName"
+        - Realm role: omit client_id (None), uses just "roleName"
+
         Args:
             subflow_alias: Alias of the sub-flow
-            client_id: Client ID for the role
             role_name: Role name to check
             negate: If True, condition passes when user does NOT have the role
+            client_id: Client ID for client roles, None for realm roles
         """
-        logger.debug(f"Adding Condition - User Role to sub-flow '{subflow_alias}'")
+        role_type = "client" if client_id else "realm"
+        logger.debug(f"Adding Condition - User Role ({role_type}) to sub-flow '{subflow_alias}'")
 
         # First check if execution already exists (idempotency)
         executions = self.admin.get_authentication_flow_executions(flow_alias=subflow_alias)
@@ -1993,11 +2003,20 @@ class KeycloakConnector:
             }
             self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=subflow_alias)
 
-        # Configure the condition
+        # Configure the condition - format differs for client vs realm roles
+        if client_id:
+            # Client role: "clientId.roleName" format
+            cond_user_role = f"{client_id}.{role_name}"
+            config_alias = f"check-role-{client_id}-{role_name}"
+        else:
+            # Realm role: just "roleName"
+            cond_user_role = role_name
+            config_alias = f"check-realm-role-{role_name}"
+
         config_data = {
-            "alias": f"check-role-{client_id}-{role_name}",
+            "alias": config_alias,
             "config": {
-                "condUserRole": f"{client_id}.{role_name}",
+                "condUserRole": cond_user_role,
                 "negate": str(negate).lower(),
             },
         }
@@ -2013,7 +2032,7 @@ class KeycloakConnector:
             # Create new config
             self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
 
-        logger.debug(f"Configured Condition - User Role: {client_id}.{role_name}, negate={negate}")
+        logger.debug(f"Configured Condition - User Role: {cond_user_role}, negate={negate}")
 
     async def _add_deny_access(self, subflow_alias: str, error_message: str) -> None:
         """
@@ -2090,6 +2109,61 @@ class KeycloakConnector:
             self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
 
         logger.debug(f"Configured Deny Access with error message: {error_message}")
+
+    async def create_restricted_browser_flow_realm_role(
+        self,
+        realm_name: str,
+        flow_alias: str,
+        role_name: str,
+        error_message: str = "${accessDeniedNoPermission}",
+    ) -> None:
+        """
+        Create a browser flow that restricts access to users with a specific realm role.
+
+        This creates a copy of the browser flow with a conditional sub-flow that:
+        1. Checks if the user does NOT have the specified realm role
+        2. If they don't have the role, denies access with a custom error message
+
+        This is similar to create_restricted_browser_flow but uses realm roles
+        instead of client roles, enabling unified access control across multiple apps.
+
+        Args:
+            realm_name: Name of the realm
+            flow_alias: Alias for the new flow (e.g., "browser-restricted-mijnbureau")
+            role_name: Realm role name that grants access
+            error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
+        """
+        logger.info(
+            f"Creating restricted browser flow '{flow_alias}' for realm role '{role_name}' in realm '{realm_name}'"
+        )
+
+        try:
+            self.admin.change_current_realm(realm_name)
+
+            # Step 1: Copy the browser flow
+            await self._copy_browser_flow(flow_alias)
+
+            # Step 2: Find the "forms" sub-flow in our new flow
+            forms_flow_id = await self._find_forms_subflow(flow_alias)
+
+            # Step 3: Create a conditional sub-flow for realm role check
+            conditional_subflow_alias = f"{flow_alias}-deny-no-role"
+            await self._create_conditional_deny_subflow(
+                flow_alias=flow_alias,
+                parent_flow_id=forms_flow_id,
+                subflow_alias=conditional_subflow_alias,
+                role_name=role_name,
+                error_message=error_message,
+                # client_id=None means realm role
+            )
+
+            self.admin.change_current_realm("master")
+            logger.info(f"Successfully created restricted browser flow '{flow_alias}' for realm role")
+
+        except KeycloakError as e:
+            logger.error(f"Failed to create restricted browser flow '{flow_alias}': {e}")
+            self.admin.change_current_realm("master")
+            raise
 
     async def set_client_authentication_flow_override(
         self, realm_name: str, client_id: str, browser_flow_alias: str
@@ -2177,9 +2251,7 @@ class KeycloakConnector:
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
             skip_clients: List of OAuth client IDs that should bypass this role check (e.g., invite client)
         """
-        logger.info(
-            f"Creating post-broker login flow '{flow_alias}' for client '{client_id}' in realm '{realm_name}'"
-        )
+        logger.info(f"Creating post-broker login flow '{flow_alias}' for client '{client_id}' in realm '{realm_name}'")
 
         try:
             self.admin.change_current_realm(realm_name)
@@ -2205,11 +2277,11 @@ class KeycloakConnector:
             # Step 2: Add the custom RequireClientRoleAuthenticator execution
             # This authenticator explicitly handles both success (user has role) and
             # failure (user lacks role) cases, avoiding the conditional sub-flow bug
-            await self._add_require_client_role_authenticator(
+            await self._add_require_role_authenticator(
                 flow_alias=flow_alias,
-                client_id=client_id,
                 role_name=role_name,
                 error_message=error_message,
+                client_id=client_id,
                 skip_clients=skip_clients,
             )
 
@@ -2221,101 +2293,38 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             raise
 
-    async def _create_post_broker_conditional_subflow(
+    async def _add_require_role_authenticator(
         self,
         flow_alias: str,
-        subflow_alias: str,
-        client_id: str,
         role_name: str,
         error_message: str,
-    ) -> None:
-        """
-        Create a conditional sub-flow in a post-broker login flow that denies access if user lacks a role.
-
-        Args:
-            flow_alias: Alias of the parent post-broker login flow
-            subflow_alias: Alias for the conditional sub-flow
-            client_id: Client ID for the role check
-            role_name: Client role name that grants access
-            error_message: Error message key from theme
-        """
-        logger.debug(f"Creating conditional sub-flow '{subflow_alias}' in flow '{flow_alias}'")
-
-        # Step 1: Create the conditional sub-flow
-        subflow_data = {
-            "alias": subflow_alias,
-            "type": "basic-flow",
-            "provider": "registration-page-form",
-            "description": f"Deny access if user does not have role {client_id}.{role_name}",
-        }
-
-        try:
-            self.admin.create_authentication_flow_subflow(
-                payload=subflow_data, flow_alias=flow_alias, skip_exists=True
-            )
-            logger.debug(f"Created conditional sub-flow '{subflow_alias}'")
-        except KeycloakPostError as e:
-            if "409" in str(e) or "Conflict" in str(e):
-                logger.debug(f"Sub-flow '{subflow_alias}' already exists")
-            else:
-                raise
-
-        # Step 2: Set the sub-flow to CONDITIONAL requirement
-        executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
-        subflow_execution = None
-        for execution in executions:
-            if execution.get("displayName") == subflow_alias:
-                subflow_execution = execution
-                break
-
-        if subflow_execution:
-            update_data = {
-                "id": subflow_execution.get("id"),
-                "requirement": "CONDITIONAL",
-                "displayName": subflow_alias,
-                "level": subflow_execution.get("level", 0),
-                "index": subflow_execution.get("index", 0),
-                "configurable": False,
-                "authenticationFlow": True,
-            }
-            self.admin.update_authentication_flow_executions(payload=update_data, flow_alias=flow_alias)
-            logger.debug(f"Set sub-flow '{subflow_alias}' to CONDITIONAL")
-
-        # Step 3: Add "Condition - User Role" execution (negated - check if user does NOT have role)
-        await self._add_condition_user_role(
-            subflow_alias=subflow_alias, client_id=client_id, role_name=role_name, negate=True
-        )
-
-        # Step 4: Add "Deny Access" execution
-        await self._add_deny_access(subflow_alias=subflow_alias, error_message=error_message)
-
-    async def _add_require_client_role_authenticator(
-        self,
-        flow_alias: str,
-        client_id: str,
-        role_name: str,
-        error_message: str,
+        client_id: str | None = None,
         skip_clients: list[str] | None = None,
     ) -> None:
         """
         Add the custom RequireClientRoleAuthenticator to a flow.
 
-        This authenticator checks if the user has a specific client role and:
+        This authenticator checks if the user has a specific role and:
         - Calls success() if the user has the role (allowing the flow to complete)
         - Calls failure() with an error page if the user lacks the role
         - Skips the role check if the OAuth client is in the skip_clients list
+
+        Supports both client roles and realm roles:
+        - Client role: pass client_id
+        - Realm role: omit client_id (None)
 
         This approach works correctly for post-broker login flows, unlike conditional
         sub-flows which fail when skipped.
 
         Args:
             flow_alias: Alias of the parent flow to add the authenticator to
-            client_id: Client ID for the role check
-            role_name: Client role name that grants access
+            role_name: Role name that grants access
             error_message: Error message in ${key} format for theme resolution
+            client_id: Client ID for client roles, None for realm roles
             skip_clients: List of OAuth client IDs that should bypass this role check
         """
-        logger.debug(f"Adding RequireClientRoleAuthenticator to flow '{flow_alias}'")
+        role_desc = f"{client_id}.{role_name}" if client_id else role_name
+        logger.debug(f"Adding RequireClientRoleAuthenticator to flow '{flow_alias}' for role '{role_desc}'")
 
         # Step 1: Check if execution already exists (idempotency)
         executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
@@ -2329,9 +2338,7 @@ class KeycloakConnector:
         # Only create if it doesn't exist
         if not authenticator_execution:
             execution_data = {"provider": "require-client-role-authenticator"}
-            self.admin.create_authentication_flow_execution(
-                payload=execution_data, flow_alias=flow_alias
-            )
+            self.admin.create_authentication_flow_execution(payload=execution_data, flow_alias=flow_alias)
             logger.debug("Added RequireClientRoleAuthenticator execution")
 
             # Re-fetch executions to get the newly created one
@@ -2364,15 +2371,18 @@ class KeycloakConnector:
         # Step 3: Configure the authenticator with client ID, role name, error message, and skip clients
         execution_id = authenticator_execution.get("id")
         existing_config_id = authenticator_execution.get("authenticationConfig")
-        config_alias = f"require-role-{client_id}-{role_name}"
+        config_alias = f"require-role-{client_id or 'realm'}-{role_name}"
         config_data = {
             "alias": config_alias,
             "config": {
-                "clientId": client_id,
                 "roleName": role_name,
                 "errorMessage": error_message,
             },
         }
+
+        # Add clientId only if provided (empty = realm role)
+        if client_id:
+            config_data["config"]["clientId"] = client_id
 
         # Add skipClients if provided
         if skip_clients:
@@ -2383,12 +2393,12 @@ class KeycloakConnector:
             # Update existing config
             config_data["id"] = existing_config_id
             self.admin.update_authenticator_config(payload=config_data, config_id=existing_config_id)
-            logger.debug(f"Updated RequireClientRoleAuthenticator config: client={client_id}, role={role_name}")
+            logger.debug(f"Updated RequireRoleAuthenticator config: role={role_desc}")
         else:
             # Create new config
             url = f"admin/realms/{self.admin.connection.realm_name}/authentication/executions/{execution_id}/config"
             self.admin.connection.raw_post(url, data=json.dumps(config_data))
-            logger.debug(f"Created RequireClientRoleAuthenticator config: client={client_id}, role={role_name}")
+            logger.debug(f"Created RequireRoleAuthenticator config: role={role_desc}")
 
     async def set_identity_provider_post_broker_login_flow(
         self, realm_name: str, provider_alias: str, flow_alias: str
@@ -2403,9 +2413,7 @@ class KeycloakConnector:
             provider_alias: Alias of the identity provider
             flow_alias: Alias of the post-broker login flow to use
         """
-        logger.info(
-            f"Setting post-broker login flow '{flow_alias}' for IdP '{provider_alias}' in realm '{realm_name}'"
-        )
+        logger.info(f"Setting post-broker login flow '{flow_alias}' for IdP '{provider_alias}' in realm '{realm_name}'")
 
         try:
             self.admin.change_current_realm(realm_name)
@@ -2420,14 +2428,80 @@ class KeycloakConnector:
             idp["postBrokerLoginFlowAlias"] = flow_alias
 
             self.admin.update_idp(idp_alias=provider_alias, payload=idp)
-            logger.info(
-                f"Set post-broker login flow to '{flow_alias}' for IdP '{provider_alias}'"
-            )
+            logger.info(f"Set post-broker login flow to '{flow_alias}' for IdP '{provider_alias}'")
 
             self.admin.change_current_realm("master")
 
         except KeycloakError as e:
             logger.error(f"Failed to set post-broker login flow for IdP '{provider_alias}': {e}")
+            self.admin.change_current_realm("master")
+            raise
+
+    async def create_post_broker_login_flow_realm_role(
+        self,
+        realm_name: str,
+        flow_alias: str,
+        role_name: str,
+        error_message: str = "${accessDeniedNoPermission}",
+        skip_clients: list[str] | None = None,
+    ) -> None:
+        """
+        Create a post-broker login flow that restricts access to users with a specific realm role.
+
+        This flow runs after SSO/IdP authentication and checks if the user has the required
+        realm role. If they don't have the role, access is denied with a custom error message.
+
+        Uses the custom RequireClientRoleAuthenticator SPI with empty client ID for realm roles,
+        which allows unified access control across multiple applications.
+
+        Args:
+            realm_name: Name of the realm
+            flow_alias: Alias for the new flow (e.g., "post-broker-restricted-realm")
+            role_name: Realm role name that grants access
+            error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
+            skip_clients: List of OAuth client IDs that should bypass this role check (e.g., invite client)
+        """
+        logger.info(
+            f"Creating post-broker login flow '{flow_alias}' for realm role '{role_name}' in realm '{realm_name}'"
+        )
+
+        try:
+            self.admin.change_current_realm(realm_name)
+
+            # Step 1: Create the post-broker login flow
+            flow_data = {
+                "alias": flow_alias,
+                "description": f"Post-broker login flow restricting access to users with realm role {role_name}",
+                "providerId": "basic-flow",
+                "topLevel": True,
+                "builtIn": False,
+            }
+
+            try:
+                self.admin.create_authentication_flow(payload=flow_data)
+                logger.debug(f"Created post-broker login flow '{flow_alias}'")
+            except KeycloakPostError as e:
+                if "409" in str(e) or "Conflict" in str(e):
+                    logger.debug(f"Flow '{flow_alias}' already exists, will reuse it")
+                else:
+                    raise
+
+            # Step 2: Add the custom RequireClientRoleAuthenticator execution (with empty client_id for realm role)
+            # This authenticator explicitly handles both success (user has role) and
+            # failure (user lacks role) cases, avoiding the conditional sub-flow bug
+            await self._add_require_role_authenticator(
+                flow_alias=flow_alias,
+                role_name=role_name,
+                error_message=error_message,
+                # client_id=None means realm role
+                skip_clients=skip_clients,
+            )
+
+            self.admin.change_current_realm("master")
+            logger.info(f"Successfully created post-broker login flow '{flow_alias}' for realm role")
+
+        except KeycloakError as e:
+            logger.error(f"Failed to create post-broker login flow '{flow_alias}': {e}")
             self.admin.change_current_realm("master")
             raise
 
@@ -2903,10 +2977,7 @@ class KeycloakConnector:
         Returns:
             True if roles were assigned successfully
         """
-        logger.info(
-            f"Assigning realm management permissions for '{target_realm_name}' "
-            f"to master realm user {user_id}"
-        )
+        logger.info(f"Assigning realm management permissions for '{target_realm_name}' to master realm user {user_id}")
 
         try:
             # Ensure we're in master realm
@@ -3012,6 +3083,43 @@ class KeycloakConnector:
         except KeycloakError as e:
             logger.error(f"Failed to assign realm roles: {e}")
             # Switch back to master
+            self.admin.change_current_realm("master")
+            raise
+
+    async def assign_realm_role_to_user(self, realm_name: str, user_id: str, role_name: str) -> bool:
+        """
+        Assign a single realm role to a user.
+
+        Args:
+            realm_name: Name of the realm
+            user_id: ID of the user
+            role_name: Name of the realm role to assign
+
+        Returns:
+            True if role was assigned successfully
+
+        Raises:
+            KeycloakError: If role assignment fails or role not found
+        """
+        logger.info(f"Assigning realm role '{role_name}' to user {user_id} in realm {realm_name}")
+
+        try:
+            self.admin.change_current_realm(realm_name)
+
+            # Get the specific realm role
+            role = self.admin.get_realm_role(role_name=role_name)
+            if not role:
+                raise KeycloakError(f"Realm role '{role_name}' not found in realm '{realm_name}'")
+
+            # Assign the role to the user
+            self.admin.assign_realm_roles(user_id=user_id, roles=[role])
+            logger.info(f"Successfully assigned realm role '{role_name}' to user {user_id}")
+
+            self.admin.change_current_realm("master")
+            return True
+
+        except KeycloakError as e:
+            logger.error(f"Failed to assign realm role '{role_name}': {e}")
             self.admin.change_current_realm("master")
             raise
 

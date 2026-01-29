@@ -2976,7 +2976,10 @@ class ProjectManager:
             os.makedirs(dest_helmfile_path, exist_ok=True)
 
             # Copy all files from source to destination
+            # Skip .git directory to prevent Git from treating the target as a submodule
             for item in os.listdir(full_source_path):
+                if item == ".git":
+                    continue
                 src_item = os.path.join(full_source_path, item)
                 dst_item = os.path.join(dest_helmfile_path, item)
                 if os.path.isdir(src_item):

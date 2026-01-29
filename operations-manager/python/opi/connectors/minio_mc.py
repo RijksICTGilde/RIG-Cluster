@@ -1024,7 +1024,11 @@ class MinioConnector:
                 statements.append(
                     {
                         "Effect": "Allow",
-                        "Action": ["s3:ListBucket"],
+                        "Action": [
+                            "s3:ListBucket",
+                            "s3:GetBucketVersioning",  # Required for apps like Grist that check versioning
+                            "s3:GetBucketLocation",  # Common requirement for S3 clients
+                        ],
                         "Resource": [f"arn:aws:s3:::{validated_bucket_name}"],
                     }
                 )
