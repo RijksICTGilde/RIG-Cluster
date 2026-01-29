@@ -227,7 +227,7 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
                 if root_comp.port is None:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Component marked as root must have a port specified for web publishing.",
+                        detail="Component marked as root must have a port specified for web publishing.",
                     )
 
         # Create the request object
@@ -1011,10 +1011,10 @@ async def project_details(request: Request, project_name: str):
         discovered_workloads: dict[str, list[dict[str, Any]]] = {}
         prometheus_available = False
         try:
-            from opi.connectors.prometheus import PrometheusConnector
+            from opi.connectors.prometheus import get_metrics_connector
             from opi.core.cluster_config import get_prefixed_namespace
 
-            prom = PrometheusConnector()
+            prom = get_metrics_connector()
             prometheus_available = prom.is_connected
 
             if prometheus_available:
@@ -1967,7 +1967,7 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
         await git_connector.create_or_update_file(
             project_file_path,
             updated_yaml,
-            overwrite=True,
+            do_commit_and_push=True,
             commit_message=f"Update domain settings for deployment '{safe_deployment_name}' in project '{safe_project_name}'",
         )
         git_committed = True
@@ -2006,7 +2006,7 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                     await git_connector.create_or_update_file(
                         project_file_path,
                         original_yaml_content,
-                        overwrite=True,
+                        do_commit_and_push=True,
                         commit_message=f"Rollback domain settings for '{safe_deployment_name}' (subdomain registration failed)",
                     )
                     logger.info(f"Rolled back git commit for {project_name}/{deployment_name}")
@@ -2065,7 +2065,7 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                     await git_connector.create_or_update_file(
                         project_file_path,
                         original_yaml_content,
-                        overwrite=True,
+                        do_commit_and_push=True,
                         commit_message=f"Rollback domain settings for '{safe_deployment_name}' (processing failed)",
                     )
                     logger.info(f"Rolled back git commit for {project_name}/{deployment_name}")

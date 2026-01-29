@@ -143,6 +143,9 @@ def create_app() -> FastAPI:
 
     # Add middleware in the correct order (reverse order of execution)
     # ProxyHeadersMiddleware must be last (runs first) to set correct scheme from X-Forwarded-Proto
+    from opi.utils.csrf import CSRFMiddleware
+
+    app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
