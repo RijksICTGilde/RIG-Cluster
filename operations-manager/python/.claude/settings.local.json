@@ -6,7 +6,9 @@
       "Bash(grep:*)",
       "Bash(python functional_tests/test_argocd_application_creation.py)",
       "Bash(python:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": []
   }

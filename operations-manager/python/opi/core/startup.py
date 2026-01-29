@@ -28,7 +28,7 @@ from opi.connectors.git import (
 )
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
-from opi.connectors.prometheus import PrometheusConnector, create_prometheus_connector
+from opi.connectors.prometheus import get_metrics_connector
 from opi.connectors.subdomain import SUBDOMAIN_REGISTRY_TABLE_SQL
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
@@ -173,13 +173,13 @@ async def start_prometheus_reconnection_task() -> None:
     The application continues to function without Prometheus - metrics will
     simply be unavailable until connection is established.
     """
-    prometheus = create_prometheus_connector()
+    metrics_connector = get_metrics_connector()
 
-    if PrometheusConnector.is_connected:
-        logger.info("Prometheus already connected, no background reconnection needed")
+    if metrics_connector.is_connected:
+        logger.info("Metrics connector already connected, no background reconnection needed")
         return
 
-    logger.info("Starting background Prometheus reconnection task")
+    logger.info("Starting background metrics reconnection task")
 
     # Retry parameters: 10 attempts with exponential backoff (4s, 8s, 16s, 32s, 60s max)
     max_attempts = 10
@@ -187,21 +187,21 @@ async def start_prometheus_reconnection_task() -> None:
     max_delay = 60
 
     for attempt in range(1, max_attempts + 1):
-        if PrometheusConnector.is_connected:
-            logger.info("Prometheus connected, stopping reconnection task")
+        if metrics_connector.is_connected:
+            logger.info("Metrics connector connected, stopping reconnection task")
             return
 
         delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
-        logger.info(f"Prometheus reconnection attempt {attempt}/{max_attempts} in {delay}s")
+        logger.info(f"Metrics reconnection attempt {attempt}/{max_attempts} in {delay}s")
 
         await asyncio.sleep(delay)
 
-        if prometheus.reconnect():
-            logger.info("Prometheus reconnection successful")
+        if metrics_connector.reconnect():
+            logger.info("Metrics connector reconnection successful")
             return
 
     logger.warning(
-        f"Prometheus reconnection failed after {max_attempts} attempts. "
+        f"Metrics connector reconnection failed after {max_attempts} attempts. "
         "Metrics will be unavailable. Manual restart may be required."
     )
 
@@ -592,16 +592,16 @@ async def run_startup_tasks(app: FastAPI) -> bool:
         logger.error(f"Failed to create subdomain registry table: {e}")
         # Non-critical - nice URLs won't work but app can continue
 
-    # Initialize Prometheus connector (non-critical - metrics will be unavailable if it fails)
+    # Initialize metrics connector (non-critical - metrics will be unavailable if it fails)
     # If not connected, start a background task to retry
-    logger.info("Initializing Prometheus connector")
-    create_prometheus_connector()
-    if not PrometheusConnector.is_connected:
-        logger.warning("Prometheus not available at startup, starting background reconnection task")
+    logger.info("Initializing metrics connector")
+    metrics_connector = get_metrics_connector()
+    if not metrics_connector.is_connected:
+        logger.warning("Metrics connector not available at startup, starting background reconnection task")
         # Store reference to prevent garbage collection of the background task
-        app.state.prometheus_reconnect_task = asyncio.create_task(start_prometheus_reconnection_task())
+        app.state.metrics_reconnect_task = asyncio.create_task(start_prometheus_reconnection_task())
     else:
-        logger.info("Prometheus connected successfully")
+        logger.info("Metrics connector connected successfully")
 
     # Initialize the API key service for project API key registration
     initialize_project_service()

@@ -252,8 +252,18 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = "changeMe123!"
 
-    # Prometheus configuration
+    # Metrics backend configuration
+    # "prometheus" = direct Prometheus access (local/dev)
+    # "grafana" = query via Grafana API (ODCN production)
+    METRICS_BACKEND: str = "prometheus"
+
+    # Prometheus configuration (used when METRICS_BACKEND="prometheus")
     PROMETHEUS_URL: str = "http://prometheus.rig-system:9090"
+
+    # Grafana configuration (used when METRICS_BACKEND="grafana")
+    GRAFANA_URL: str = "http://grafana-service.rig-system.svc.cluster.local:3000"
+    GRAFANA_TOKEN: str | None = None
+    GRAFANA_DATASOURCE_UID: str | None = None  # Auto-discovered if not set
 
     # Backup configuration
     BACKUP_S3_ENDPOINT: str = "minio.rig-backup-destination.svc:9000"

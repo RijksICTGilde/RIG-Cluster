@@ -9,10 +9,11 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
+from opi.connectors.grafana_prometheus import GrafanaConnectionError, GrafanaQueryError
 from opi.connectors.prometheus import (
     PrometheusConnectionError,
-    PrometheusConnector,
     PrometheusQueryError,
+    get_metrics_connector,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ async def metrics_health() -> JSONResponse:
         JSON response with connection status.
     """
     try:
-        connector = PrometheusConnector()
+        connector = get_metrics_connector()
         return JSONResponse(
             content={
                 "status": "healthy" if connector.is_connected else "unhealthy",
@@ -67,7 +68,7 @@ async def get_cluster_overview() -> JSONResponse:
     ```
     """
     try:
-        connector = PrometheusConnector()
+        connector = get_metrics_connector()
         overview = connector.get_cluster_overview()
 
         return JSONResponse(
@@ -77,10 +78,10 @@ async def get_cluster_overview() -> JSONResponse:
             },
             status_code=200,
         )
-    except PrometheusConnectionError as e:
+    except (PrometheusConnectionError, GrafanaConnectionError) as e:
         logger.warning(f"Prometheus not connected: {e}")
         raise HTTPException(status_code=503, detail="Prometheus is not available")
-    except PrometheusQueryError as e:
+    except (PrometheusQueryError, GrafanaQueryError) as e:
         logger.error(f"Prometheus query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to query metrics: {e}")
     except Exception as e:
@@ -106,7 +107,7 @@ async def get_cpu_usage(namespace: str | None = Query(None, description="Filter 
     ```
     """
     try:
-        connector = PrometheusConnector()
+        connector = get_metrics_connector()
         cpu_data = connector.get_cpu_usage_by_namespace(namespace)
 
         return JSONResponse(
@@ -117,10 +118,10 @@ async def get_cpu_usage(namespace: str | None = Query(None, description="Filter 
             },
             status_code=200,
         )
-    except PrometheusConnectionError as e:
+    except (PrometheusConnectionError, GrafanaConnectionError) as e:
         logger.warning(f"Prometheus not connected: {e}")
         raise HTTPException(status_code=503, detail="Prometheus is not available")
-    except PrometheusQueryError as e:
+    except (PrometheusQueryError, GrafanaQueryError) as e:
         logger.error(f"Prometheus query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to query CPU metrics: {e}")
     except Exception as e:
@@ -146,7 +147,7 @@ async def get_memory_usage(namespace: str | None = Query(None, description="Filt
     ```
     """
     try:
-        connector = PrometheusConnector()
+        connector = get_metrics_connector()
         memory_data = connector.get_memory_usage_by_namespace(namespace)
 
         return JSONResponse(
@@ -157,10 +158,10 @@ async def get_memory_usage(namespace: str | None = Query(None, description="Filt
             },
             status_code=200,
         )
-    except PrometheusConnectionError as e:
+    except (PrometheusConnectionError, GrafanaConnectionError) as e:
         logger.warning(f"Prometheus not connected: {e}")
         raise HTTPException(status_code=503, detail="Prometheus is not available")
-    except PrometheusQueryError as e:
+    except (PrometheusQueryError, GrafanaQueryError) as e:
         logger.error(f"Prometheus query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to query memory metrics: {e}")
     except Exception as e:
@@ -186,7 +187,7 @@ async def get_pod_count(namespace: str | None = Query(None, description="Filter 
     ```
     """
     try:
-        connector = PrometheusConnector()
+        connector = get_metrics_connector()
         pod_count = connector.get_pod_count(namespace)
 
         return JSONResponse(
@@ -197,10 +198,10 @@ async def get_pod_count(namespace: str | None = Query(None, description="Filter 
             },
             status_code=200,
         )
-    except PrometheusConnectionError as e:
+    except (PrometheusConnectionError, GrafanaConnectionError) as e:
         logger.warning(f"Prometheus not connected: {e}")
         raise HTTPException(status_code=503, detail="Prometheus is not available")
-    except PrometheusQueryError as e:
+    except (PrometheusQueryError, GrafanaQueryError) as e:
         logger.error(f"Prometheus query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to query pod count: {e}")
     except Exception as e:
@@ -226,7 +227,7 @@ async def get_pod_restarts(namespace: str | None = Query(None, description="Filt
     ```
     """
     try:
-        connector = PrometheusConnector()
+        connector = get_metrics_connector()
         restart_data = connector.get_pod_restarts(namespace)
 
         return JSONResponse(
@@ -237,10 +238,10 @@ async def get_pod_restarts(namespace: str | None = Query(None, description="Filt
             },
             status_code=200,
         )
-    except PrometheusConnectionError as e:
+    except (PrometheusConnectionError, GrafanaConnectionError) as e:
         logger.warning(f"Prometheus not connected: {e}")
         raise HTTPException(status_code=503, detail="Prometheus is not available")
-    except PrometheusQueryError as e:
+    except (PrometheusQueryError, GrafanaQueryError) as e:
         logger.error(f"Prometheus query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to query pod restarts: {e}")
     except Exception as e:
@@ -266,7 +267,7 @@ async def get_network_metrics(namespace: str | None = Query(None, description="F
     ```
     """
     try:
-        connector = PrometheusConnector()
+        connector = get_metrics_connector()
         receive_data = connector.get_network_receive_bytes(namespace)
         transmit_data = connector.get_network_transmit_bytes(namespace)
 
@@ -281,10 +282,10 @@ async def get_network_metrics(namespace: str | None = Query(None, description="F
             },
             status_code=200,
         )
-    except PrometheusConnectionError as e:
+    except (PrometheusConnectionError, GrafanaConnectionError) as e:
         logger.warning(f"Prometheus not connected: {e}")
         raise HTTPException(status_code=503, detail="Prometheus is not available")
-    except PrometheusQueryError as e:
+    except (PrometheusQueryError, GrafanaQueryError) as e:
         logger.error(f"Prometheus query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to query network metrics: {e}")
     except Exception as e:
@@ -310,7 +311,7 @@ async def custom_query(query: str = Query(..., description="PromQL query to exec
     ```
     """
     try:
-        connector = PrometheusConnector()
+        connector = get_metrics_connector()
         result = connector.custom_query(query)
 
         return JSONResponse(
@@ -321,10 +322,10 @@ async def custom_query(query: str = Query(..., description="PromQL query to exec
             },
             status_code=200,
         )
-    except PrometheusConnectionError as e:
+    except (PrometheusConnectionError, GrafanaConnectionError) as e:
         logger.warning(f"Prometheus not connected: {e}")
         raise HTTPException(status_code=503, detail="Prometheus is not available")
-    except PrometheusQueryError as e:
+    except (PrometheusQueryError, GrafanaQueryError) as e:
         logger.error(f"Prometheus query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to execute query: {e}")
     except Exception as e:

@@ -902,3 +902,33 @@ def create_prometheus_connector() -> PrometheusConnector:
     """
     logger.debug("Creating PrometheusConnector")
     return PrometheusConnector()
+
+
+def get_metrics_connector() -> Any:
+    """
+    Get the appropriate metrics connector based on configuration.
+
+    Returns PrometheusConnector for direct Prometheus access (local/dev)
+    or GrafanaPrometheusConnector for Grafana API access (ODCN production).
+
+    Both connectors implement the same interface with methods like:
+    - custom_query(query) -> list[dict]
+    - get_cpu_usage_by_namespace(namespace) -> list[dict]
+    - get_memory_usage_by_namespace(namespace) -> list[dict]
+    - get_cluster_overview() -> dict
+    - etc.
+
+    Returns:
+        Metrics connector instance (singleton) - either PrometheusConnector
+        or GrafanaPrometheusConnector depending on METRICS_BACKEND setting.
+    """
+    from opi.core.config import settings
+
+    if settings.METRICS_BACKEND == "grafana":
+        from opi.connectors.grafana_prometheus import create_grafana_prometheus_connector
+
+        logger.info("Using Grafana-based metrics connector (METRICS_BACKEND=grafana)")
+        return create_grafana_prometheus_connector()
+    else:
+        logger.info("Using direct Prometheus connector (METRICS_BACKEND=prometheus)")
+        return create_prometheus_connector()

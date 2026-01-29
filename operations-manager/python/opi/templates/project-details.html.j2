@@ -936,13 +936,16 @@
                             </div>
                             <div class="deployment-actions">
                                 {% if user_role in ['admin', 'owner'] %}
-                                <c-button
-                                    label="Domein instellingen"
-                                    kind="tertiary"
-                                    size="sm"
-                                    showIcon="before"
-                                    icon="bewerken"
-                                    onclick="openDomainSettingsModal('{{ deployment.name }}', '{{ deployment.cluster }}', '{{ deployment.get('domain-mode', '') }}', '{{ deployment.get('subdomain', '') }}', '{{ deployment.get('base-domain', '') }}', {{ deployment.get('components', []) | tojson }})" />
+                                <button type="button" class="rvo-button rvo-button--tertiary rvo-button--sm"
+                                    data-deployment="{{ deployment.name }}"
+                                    data-cluster="{{ deployment.cluster }}"
+                                    data-domain-mode="{{ deployment.get('domain-mode', '') }}"
+                                    data-subdomain="{{ deployment.get('subdomain', '') }}"
+                                    data-base-domain="{{ deployment.get('base-domain', '') }}"
+                                    data-components='{{ deployment.get('components', []) | tojson }}'
+                                    onclick="openDomainSettingsFromButton(this)">
+                                    <c-icon icon="bewerken" size="sm" />Domein instellingen
+                                </button>
                                 {% endif %}
                                 <div class="deployment-status">
                                     <div class="status-badge status-running">
@@ -1603,7 +1606,7 @@
 
             {# Form Actions #}
             <div class="form-actions">
-                <c-button type="button" label="Annuleren" kind="tertiary" onclick="closeDomainSettingsModal()" />
+                <c-button type="button" label="Annuleren" kind="tertiary" @click="closeDomainSettingsModal()" />
                 <c-button type="submit" label="Opslaan" kind="primary" id="domain-settings-submit" />
             </div>
         </c-layout-flow>
@@ -2969,6 +2972,19 @@
     let originalSubdomain = null;   // Track original subdomain for confirmation message
 
     /**
+     * Helper to open domain settings from button with data attributes
+     */
+    function openDomainSettingsFromButton(button) {
+        const deployment = button.dataset.deployment;
+        const cluster = button.dataset.cluster;
+        const domainMode = button.dataset.domainMode || '';
+        const subdomain = button.dataset.subdomain || '';
+        const baseDomain = button.dataset.baseDomain || '';
+        const components = JSON.parse(button.dataset.components || '[]');
+        openDomainSettingsModal(deployment, cluster, domainMode, subdomain, baseDomain, components);
+    }
+
+    /**
      * Open the domain settings modal
      */
     function openDomainSettingsModal(deploymentName, cluster, domainMode, subdomain, baseDomain, components) {
@@ -3076,8 +3092,8 @@
         const domains = clusterBaseDomains[cluster] || [];
         domains.forEach(domainInfo => {
             const option = document.createElement('option');
-            option.value = domainInfo.domain;
-            option.textContent = domainInfo.domain;
+            option.value = domainInfo.value;
+            option.textContent = domainInfo.label;
             select.appendChild(option);
         });
     }
