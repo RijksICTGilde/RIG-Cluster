@@ -248,7 +248,7 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
 
     encoding_type, content = parse_password_with_prefix(password)
 
-    logger.debug("Encoding type detected: %s", encoding_type)
+    logger.debug(f"Encoding type detected: {encoding_type}")
 
     if encoding_type == "plain":
         return content
@@ -357,7 +357,7 @@ def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
 
     encoding_type, content = parse_password_with_prefix(password)
 
-    logger.debug("Encoding type detected: %s", encoding_type)
+    logger.debug(f"Encoding type detected: {encoding_type}")
 
     if encoding_type == "plain":
         return content
