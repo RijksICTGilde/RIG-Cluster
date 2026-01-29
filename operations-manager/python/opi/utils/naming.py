@@ -850,9 +850,10 @@ def extract_domain_from_url(url: str) -> str:
         url = url[8:]
     elif url.startswith("http://"):
         url = url[7:]
-    # Remove any path component
-    if "/" in url:
-        url = url.split("/")[0]
+    # Remove any path, query string, or fragment
+    for sep in ("/", "?", "#"):
+        if sep in url:
+            url = url.split(sep)[0]
     return url
 
 
@@ -1223,7 +1224,7 @@ def normalize_base_domain(base_domain: str, max_length: int = 50) -> str:
     if len(normalized) > max_length:
         normalized = normalized[:max_length].rstrip("-")
 
-    return normalized
+    return normalized or "domain"
 
 
 def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:

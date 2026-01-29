@@ -97,7 +97,7 @@ def validate_generated_name(technical_name: str) -> bool:
         return False
     if not technical_name[0].isalpha():
         return False
-    return re.match(r"^[a-z][a-z0-9-]*$", technical_name)
+    return re.match(r"^[a-z][a-z0-9-]*$", technical_name) is not None
 
 
 def ensure_unique_project_name(display_name: str, existing_names: set[str] | None = None) -> tuple[str, str]:

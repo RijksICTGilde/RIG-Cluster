@@ -46,6 +46,13 @@ class TestDetectEnvVarFormat:
         text = "# comment\n\n# another"
         assert _detect_env_var_format(text) == "keyvalue"
 
+    def test_lowercase_keyvalue_not_misdetected_as_yaml(self):
+        """Lowercase key=value lines should count as keyvalue, not fall through to yaml."""
+        text = "my_var=hello\nother_key: world"
+        assert _detect_env_var_format(text) == "keyvalue", (
+            "lowercase key=value should count as keyvalue indicator"
+        )
+
     def test_yaml_with_curly_brace_start(self):
         text = "{\nkey: value\n}"
         assert _detect_env_var_format(text) == "yaml"
@@ -247,6 +254,11 @@ class TestSubstituteVariables:
             {"A": "first", "B": "second"},
         )
         assert result == "first and second"
+
+    def test_value_with_backslash_digit(self):
+        """Values containing backslash-digit (e.g. \\1) must not crash re.sub."""
+        result = substitute_variables("$CONN", {"CONN": r"jdbc:host?opt=\1"})
+        assert result == r"jdbc:host?opt=\1"
 
 
 class TestDetectCircularReferences:

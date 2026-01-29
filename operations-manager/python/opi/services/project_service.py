@@ -208,7 +208,7 @@ class ProjectService:
                     if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
                 )
 
-            success = self.register(project_name, str(api_key), filename, users if users else None)
+            success = self.register(project_name, str(api_key), filename, users if users else None, data=project_data)
 
             if success:
                 logger.debug(f"Loaded project from project data: {project_name} (file: {filename})")

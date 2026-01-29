@@ -203,3 +203,38 @@ class TestRouteRequiresSso:
         mock_request.app.router.routes = []
 
         assert middleware._route_requires_sso(mock_request) is True
+
+    def test_unmatched_route_log_matches_return_value(self):
+        """Log message must agree with actual return value (both should say 'require SSO')."""
+        import inspect
+
+        source = inspect.getsource(AuthorizationMiddleware._route_requires_sso)
+        lines = source.split("\n")
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if "Could not determine SSO requirement" in stripped:
+                # Find the return statement that follows
+                for j in range(i + 1, len(lines)):
+                    next_stripped = lines[j].strip()
+                    if next_stripped.startswith("return"):
+                        returns_true = "True" in next_stripped
+                        break
+                # If the function returns True (requiring SSO), the log should NOT say "NOT require"
+                if returns_true:
+                    assert "NOT require SSO" not in stripped, (
+                        f"Log says 'NOT require SSO' but function returns True (requires SSO): {stripped}"
+                    )
+
+    def test_default_sso_comment_matches_code(self):
+        """The comment about default SSO value must match the actual default in getattr()."""
+        import inspect
+
+        source = inspect.getsource(AuthorizationMiddleware._route_requires_sso)
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if "_requires_sso" in stripped and "getattr" in stripped and "Default to" in stripped:
+                uses_false_default = "False)" in stripped
+                comment_says_true = "Default to True" in stripped
+                assert not (uses_false_default and comment_says_true), (
+                    f"Comment says 'Default to True' but code defaults to False: {stripped}"
+                )

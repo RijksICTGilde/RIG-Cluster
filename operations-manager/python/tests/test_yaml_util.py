@@ -1,9 +1,13 @@
 """Tests for opi.utils.yaml_util module."""
 
+import os
+import tempfile
+
 from opi.utils.yaml_util import (
     dump_yaml_to_string,
     find_value_by_jsonpath,
     load_yaml_from_string,
+    save_yaml_to_path,
     update_value_by_jsonpath,
 )
 
@@ -139,3 +143,27 @@ class TestUpdateValueByJsonpath:
         data = {"name": "old", "keep": "this"}
         update_value_by_jsonpath(data, "$.name", "new")
         assert data["keep"] == "this"
+
+
+class TestSaveYamlToPath:
+    """Tests for save_yaml_to_path."""
+
+    def test_bare_filename_without_directory(self):
+        """save_yaml_to_path should succeed when file_path has no directory component."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "test.yaml")
+            result = save_yaml_to_path(file_path, {"key": "value"})
+            assert result is True
+            assert os.path.exists(file_path)
+
+    def test_bare_filename_in_cwd(self):
+        """save_yaml_to_path with a bare filename (no dir) should not fail due to empty dirname."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                result = save_yaml_to_path("bare_file.yaml", {"key": "value"})
+                assert result is True, "save_yaml_to_path should succeed with bare filename in CWD"
+                assert os.path.exists(os.path.join(tmpdir, "bare_file.yaml"))
+            finally:
+                os.chdir(original_cwd)

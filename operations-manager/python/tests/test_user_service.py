@@ -156,6 +156,55 @@ class TestOrganizationStats:
         assert set(stats["organizations"]["Acme"]["roles"]) == {"admin", "dev"}
 
 
+class TestUpdateUserReenrich:
+    """update_user must re-enrich after merging — raw dict.update() overwrites derived fields."""
+
+    def test_update_refreshes_role_flags(self, service):
+        """After changing org role from admin to dev, is_admin should be False and is_developer True."""
+        service.store_user(
+            {"email": "a@b.com", "organization.name": "Acme", "organization.role": "admin"}
+        )
+        stored = service.get_user_by_email("a@b.com")
+        assert stored["is_admin"] is True
+
+        service.update_user("a@b.com", {"organization.role": "dev", "organization.name": "Acme"})
+        updated = service.get_user_by_email("a@b.com")
+        assert updated["is_admin"] is False, "is_admin should be False after role changed to dev"
+        assert updated["is_developer"] is True, "is_developer should be True after role changed to dev"
+
+
+class TestEmailCaseNormalization:
+    """store_user must normalize email to lowercase so lookup by any casing works."""
+
+    def test_store_mixed_case_lookup_lowercase(self, service):
+        service.store_user({"email": "Alice@Example.COM", "name": "Alice"})
+        result = service.get_user_by_email("alice@example.com")
+        assert result is not None, "Lookup by lowercase should find user stored with mixed-case email"
+        assert result["name"] == "Alice"
+
+
+class TestEmailCaseLookupConsistency:
+    """All user operations (get, update, remove) must be case-insensitive after store normalizes to lowercase."""
+
+    def test_update_user_case_insensitive(self, service):
+        """update_user with mixed-case email should find user stored with lowercase key."""
+        service.store_user({"email": "Alice@Example.COM", "name": "Alice"})
+        result = service.update_user("Alice@Example.COM", {"name": "Alice Updated"})
+        assert result is True, "update_user should find user regardless of email case"
+
+    def test_remove_user_case_insensitive(self, service):
+        """remove_user with mixed-case email should find user stored with lowercase key."""
+        service.store_user({"email": "Alice@Example.COM", "name": "Alice"})
+        result = service.remove_user("Alice@Example.COM")
+        assert result is True, "remove_user should find user regardless of email case"
+
+    def test_get_user_by_email_case_insensitive(self, service):
+        """get_user_by_email with mixed-case email should find user stored with lowercase key."""
+        service.store_user({"email": "Alice@Example.COM", "name": "Alice"})
+        result = service.get_user_by_email("ALICE@EXAMPLE.COM")
+        assert result is not None, "get_user_by_email should find user regardless of case"
+
+
 class TestAccessStats:
     """get_access_stats cross-references the user store and the email allowlist."""
 

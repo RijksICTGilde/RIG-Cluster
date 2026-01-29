@@ -512,6 +512,14 @@ class TestExtractDomainFromUrl:
         """Returns bare domain unchanged."""
         assert extract_domain_from_url("example.com") == "example.com"
 
+    def test_strips_query_string(self):
+        """Query parameters should be stripped, not included in domain."""
+        assert extract_domain_from_url("http://example.com?foo=bar") == "example.com"
+
+    def test_strips_fragment(self):
+        """Fragment identifiers should be stripped from domain."""
+        assert extract_domain_from_url("https://example.com#section") == "example.com"
+
 
 class TestMakeArgocdRepositoryUrlUnique:
     """Tests for make_argocd_repository_url_unique function."""
@@ -869,6 +877,11 @@ class TestNormalizeBaseDomain:
         long_domain = "a" * 60 + ".com"
         result = normalize_base_domain(long_domain, max_length=50)
         assert len(result) <= 50
+
+    def test_all_invalid_chars_returns_empty_not_crash(self):
+        """Domain with only invalid chars (resolved to hyphens then stripped) should not return empty string."""
+        result = normalize_base_domain("...")
+        assert result != "", "normalize_base_domain should not return empty for non-empty input"
 
 
 class TestGenerateIssuerName:

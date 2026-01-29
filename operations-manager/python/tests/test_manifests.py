@@ -281,6 +281,11 @@ class TestDetermineNamespaceWithPrefix:
         assert result == "proj"
         mock_prefix.assert_called_once_with("unknown")
 
+    def test_missing_cluster_key_does_not_crash(self, generator):
+        """deployment dict without 'cluster' key should not raise KeyError."""
+        result = generator._determine_namespace_with_prefix("proj", deployment={"env": "staging"})
+        assert result == "proj"
+
 
 class TestCreateKustomizationFiles:
     """Verify the assembled kustomization.yaml and decrypt-sops.yaml have correct content."""
@@ -306,6 +311,29 @@ class TestCreateKustomizationFiles:
         assert doc["resources"] == ["deploy.yaml", "service.yaml"]
         # No sops → no generators key
         assert "generators" not in doc or doc.get("generators") is None
+
+    def test_sops_decrypt_files_preserve_order(self, generator, yaml_loader, tmp_path):
+        """SOPS decrypt file list must preserve insertion order — nondeterministic order causes ArgoCD churn."""
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir)
+
+        # Use enough files that set() would likely reorder them
+        sops_files = [f"secret-{c}.to-sops.yaml" for c in "zyxwvutsrq"]
+
+        with patch("opi.generation.manifests.settings") as mock:
+            mock.MANIFESTS_PATH = MANIFESTS_DIR
+            generator.create_kustomization_files(
+                output_dir=output_dir,
+                sops_files=sops_files,
+                regular_files=[],
+            )
+
+        decrypt_path = os.path.join(output_dir, "decrypt-sops.yaml")
+        with open(decrypt_path) as f:
+            decrypt = yaml_loader.load(f)
+
+        expected = [f"secret-{c}.sops.yaml" for c in "zyxwvutsrq"]
+        assert decrypt["files"] == expected, "SOPS file order must be preserved (not randomized by set())"
 
     def test_sops_creates_decrypt_file_with_converted_filenames(self, generator, yaml_loader, tmp_path):
         output_dir = str(tmp_path / "output")

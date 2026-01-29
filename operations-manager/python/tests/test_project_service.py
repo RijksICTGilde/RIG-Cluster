@@ -111,6 +111,18 @@ class TestLoadProjectFromData:
         service.load_project_from_data(data, "f.yaml")
         assert service.get_project("proj").users is None
 
+    def test_preserves_full_project_data(self, service):
+        """load_project_from_data must pass the full data dict through to register() so Project.data is set."""
+        data = {
+            "name": "proj",
+            "config": {"api-key": "k", "extra": "value"},
+            "deployments": [{"cluster": "local", "namespace": "ns"}],
+        }
+        service.load_project_from_data(data, "f.yaml")
+        project = service.get_project("proj")
+        assert project.data is not None, "Project.data should contain the original project data"
+        assert project.data["deployments"][0]["cluster"] == "local"
+
 
 class TestCaseInsensitiveEmailMatching:
     """Authorization checks must be case-insensitive — Keycloak emails can differ in casing."""

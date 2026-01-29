@@ -42,7 +42,7 @@ def _detect_env_var_format(text: str) -> str:
             yaml_indicators += 1
 
         # KEY=VALUE indicators
-        if "=" in line and not line.startswith("-") and re.match(r"^[A-Z_][A-Z0-9_]*=.*", line):
+        if "=" in line and not line.startswith("-") and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*", line):
             keyvalue_indicators += 1
 
     # If we have more YAML indicators or the text starts with certain patterns
@@ -282,7 +282,8 @@ def substitute_variables(template: str, context: dict[str, str]) -> str:
     for var_name in referenced_vars:
         var_value = context[var_name]
         # Replace $VAR but not if it's part of ${VAR}
-        result = re.sub(rf"\${var_name}(?=[^A-Za-z0-9_{{]|$)", var_value, result)
+        safe_value = var_value.replace("\\", "\\\\")
+        result = re.sub(rf"\${var_name}(?=[^A-Za-z0-9_{{]|$)", safe_value, result)
 
     # Restore escaped dollars
     result = result.replace(placeholder, "$")

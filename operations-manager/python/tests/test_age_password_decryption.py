@@ -41,6 +41,19 @@ class TestAgePasswordDecryption:
         assert age_type == "age"
         assert extracted_content == age_content
 
+    def test_parse_password_none_returns_string_content(self):
+        """parse_password_with_prefix(None) must return string content, not None."""
+        password_type, content = parse_password_with_prefix(None)
+        assert password_type == "plain"
+        assert isinstance(content, str), "Content must be a string, not None"
+
+    def test_parse_password_empty_age_prefix_returns_plain(self):
+        """parse_password_with_prefix('age:') with no content should fall back to plain, not return age type."""
+        password_type, content = parse_password_with_prefix("age:")
+        assert password_type == "plain", (
+            "age: with no content is not valid encrypted data, should be treated as plain"
+        )
+
     def test_is_age_encrypted(self):
         """Test Age encryption detection."""
         # Decode base64 to get actual Age content

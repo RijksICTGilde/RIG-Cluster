@@ -100,6 +100,16 @@ class TestRegistrySecret:
         with pytest.raises(ValueError, match="No registry found"):
             RegistrySecret.from_k8s_secret_data({".dockerconfigjson": "{}"})
 
+    def test_from_k8s_secret_data_auth_without_colon_raises(self):
+        """Auth token that doesn't contain username:password separator should raise ValueError."""
+        import pytest
+
+        # base64 encode a string without a colon
+        malformed_auth = base64.b64encode(b"no-colon-here").decode()
+        config = json.dumps({"auths": {"registry.io": {"auth": malformed_auth}}})
+        with pytest.raises(ValueError, match=r"[Ii]nvalid auth"):
+            RegistrySecret.from_k8s_secret_data({".dockerconfigjson": config})
+
     def test_from_k8s_secret_data_legacy_username_password(self):
         """from_k8s_secret_data supports legacy username/password fields without auth."""
         config = json.dumps(
@@ -293,6 +303,12 @@ class TestGetSecretName:
         """UserSecret generates {prefix}-user name."""
         assert UserSecret.get_secret_name("myapp") == "myapp-user"
 
+    def test_registry_secret_name(self):
+        """RegistrySecret.get_secret_name must not raise KeyError for {registry} placeholder."""
+        result = RegistrySecret.get_secret_name("myapp")
+        assert "myapp" in result
+        assert "registry" in result
+
     def test_secret_name_with_complex_prefix(self):
         """get_secret_name works with multi-segment prefixes."""
         assert DatabaseSecret.get_secret_name("project-component") == "project-component-database"
@@ -317,3 +333,10 @@ class TestFieldConversion:
     def test_redis_port_conversion(self):
         """RedisSecret converts port string to int."""
         assert RedisSecret._convert_field_value("port", "6379") == 6379
+
+    def test_non_numeric_port_raises_clear_error(self):
+        """Non-numeric port value should raise ValueError with context, not a bare int() error."""
+        import pytest
+
+        with pytest.raises(ValueError, match="port"):
+            DatabaseSecret._convert_field_value("port", "not-a-number")

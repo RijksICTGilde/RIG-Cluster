@@ -310,7 +310,9 @@ class ManifestGenerator:
 
         # If deployment is provided, extract cluster information
         if deployment:
-            cluster_name = deployment["cluster"]
+            cluster_name = deployment.get("cluster")
+            if not cluster_name:
+                return namespace
             try:
                 prefix = get_namespace_prefix(cluster_name)
 
@@ -435,7 +437,7 @@ class ManifestGenerator:
                         decrypt_files.append(f)
 
                 # Remove duplicates that can occur when both .to-sops.yaml and .sops.yaml exist
-                decrypt_files = list(set(decrypt_files))
+                decrypt_files = list(dict.fromkeys(decrypt_files))
 
                 # Update files list
                 decrypt_sops_data["files"] = decrypt_files
