@@ -22,7 +22,7 @@ jobs:
           python-version: "3.13"
       - name: Install dependencies
         working-directory: operations-manager/python
-        run: uv sync --frozen
+        run: uv sync
       - uses: pre-commit/action@v3.0.1
 
   test:
@@ -39,7 +39,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync
       - name: Run tests with coverage
         run: uv run coverage run
       - name: Coverage report
@@ -59,6 +59,8 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
-        run: uv sync --frozen
+        run: |
+          uv sync
+          uv pip install pip
       - name: License check
         run: uv run liccheck
