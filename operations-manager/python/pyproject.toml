@@ -127,6 +127,8 @@ ignore = [
     "RUF012",   # Mutable class attribute
     "RUF013",   # PEP 484 implicit Optional
     "RUF015",   # Prefer next() over [0]
+    "RUF043",   # Regex metacharacters in match=
+    "RUF059",   # Unpacked variable never used
     "RUF100",   # Unused noqa directives
     # F rules - pyflakes
     "F401",     # Imported but unused
@@ -250,18 +252,28 @@ level = "PARANOID"
 dependencies = true
 authorized_licenses = [
     "Apache Software",
+    "Apache-2.0",
+    "Apache-2.0 AND MIT",
+    "Apache-2.0 OR BSD-3-Clause",
+    "Apache-2.0 OR BSD-2-Clause",
+    "Apache-2.0 AND CNRI-Python",
+    "Apache License 2.0",
     "Artistic",
     "BSD",
-    "BSD",
+    "BSD-2-Clause",
     "BSD-3-Clause",
+    "CNRI-Python",
     "GNU General Public License v2 or later (GPLv2+)",
     "GNU General Public License v3 or later (GPLv3+)",
     "GNU General Public License (GPL)",
     "GNU Library or Lesser General Public License (LGPL)",
-    "MIT",
-    "The Unlicense (Unlicense)",
+    "LGPLv3+",
     "ISC License (ISCL)",
+    "MIT",
+    "MIT AND Python-2.0",
     "Mozilla Public License 2.0 (MPL 2.0)",
+    "PSF-2.0",
     "Python Software Foundation",
-    "Public Domain"
+    "Public Domain",
+    "The Unlicense (Unlicense)",
 ]

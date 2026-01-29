@@ -54,7 +54,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: operations-manager/python
-        run: uv sync
+        run: uv sync --all-groups
 
       - name: Run ruff linter
         working-directory: operations-manager/python
@@ -93,7 +93,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: operations-manager/python
-        run: uv sync
+        run: uv sync --all-groups
 
       - name: Start PostgreSQL
         run: |
@@ -137,7 +137,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: operations-manager/python
-        run: uv sync
+        run: uv sync --all-groups
 
       - name: Install Kind
         run: |
