@@ -21,7 +21,7 @@ test_template = """
     Test Button
 </c-button>
 
-<c-text-input-field 
+<c-text-input-field
     id="test-input"
     name="test"
     label="Test Input"
@@ -48,7 +48,7 @@ test_template = """
     @keydown="handleKeyDown(event)">
 </c-textarea-field>
 
-<c-button 
+<c-button
     @click="submitForm()"
     @dblclick="handleDoubleClick()"
     @mouseenter="showTooltip()"

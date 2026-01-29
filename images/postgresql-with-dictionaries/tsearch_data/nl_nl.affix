@@ -304,7 +304,7 @@ REP len llenn
 REP ttel tell
 REP acab abrac
 REP ubi ibu
-REP croc krok 
+REP croc krok
 REP ten than
 REP uuk uc
 REP ings ens
@@ -341,21 +341,21 @@ REP kassiere caissière
 REP britanië Brittannië
 REP britanie Brittannië
 REP capucino cappuccino
-REP celcius Celsius 
+REP celcius Celsius
 REP kado cadeau
 REP kado's cadeaus
 REP kadootje cadeautje
 REP comittee comité
 REP committee comité
-REP komitee comité 
-REP komittee comité 
-REP kommitee comité 
+REP komitee comité
+REP komittee comité
+REP kommitee comité
 REP kommittee comité
-REP kwis quiz 
+REP kwis quiz
 REP kwissen quizzen
 REP loupe loep
 REP copy kopĳ
-REP pitoresque pittoreske 
+REP pitoresque pittoreske
 REP reikweite reikwĳdte
 REP snietsel schnitzel
 REP snitsel schnitzel
@@ -367,10 +367,10 @@ REP uptodate up-to-date
 REP caffeine cafeïne
 REP enigsinds enigszins
 REP klup club
-REP wiskid whizzkid 
-REP kontakt contact 
-REP kontekst context 
-REP korrekt correct 
+REP wiskid whizzkid
+REP kontakt contact
+REP kontekst context
+REP korrekt correct
 REP kritikus criticus
 REP gestressed gestrest
 REP zoëven zo-even
@@ -610,7 +610,7 @@ SFX Nb 0 de
 SFX Nc N 2
 SFX Nc rie erde rie
 SFX Nc n rste n
- 
+
 # don't compound on case-different word borders
 CHECKCOMPOUNDCASE
 
@@ -712,13 +712,13 @@ SFX CB 0 -/CbCp
 # for words that have a plural s and an s when compounding
 # the second one allows for the optional hyphen
 SFX Cd Y 2
-SFX Cd 0 s/CaCbCcCp .  
-SFX Cd 0 s-/CaCbCcCp .  
+SFX Cd 0 s/CaCbCcCp .
+SFX Cd 0 s-/CaCbCcCp .
 
 # for reasons of good results, parts that could have a compounding s
 # but no plural s
 # have to have separate (!) entries in the dictionary
-# using the Ch flag 
+# using the Ch flag
 SFX Ch Y 2
 SFX Ch 0 s/CaCbCxCp .
 SFX Ch 0 s-/CaCbCcCp .
@@ -735,18 +735,18 @@ SFX Cl 0 -/CaCbCp .
 PFX Cw Y 1
 PFX Cw 0 -/CbCcCp .
 
-# FLAGS FOR NOUN DIMINITIVES 
+# FLAGS FOR NOUN DIMINITIVES
 # tuin=>tuintje
 SFX Ya Y 3
 SFX Ya 0 tje .
-SFX Ya 0 tjes/CaCbCp . 
-SFX Ya 0 tjes-/CaCbCp . 
+SFX Ya 0 tjes/CaCbCp .
+SFX Ya 0 tjes-/CaCbCp .
 
 # huis=>huisje
 SFX Yb Y 6
 SFX Yb 0 je [^m]
-SFX Yb 0 jes/CaCbCp [^m] 
-SFX Yb 0 jes-/CaCbCp [^m] 
+SFX Yb 0 jes/CaCbCp [^m]
+SFX Yb 0 jes-/CaCbCp [^m]
 SFX Yb 0 pje [m]
 SFX Yb 0 pjes/CaCbCp [m]
 SFX Yb 0 pjes-/CaCbCp [m]

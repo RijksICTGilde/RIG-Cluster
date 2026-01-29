@@ -97,7 +97,7 @@ async def test_schema_permissions():
         # Use explicit schema notation
         tables = await user_conn.fetch(f"""
             SELECT table_name, table_type
-            FROM information_schema.tables 
+            FROM information_schema.tables
             WHERE table_schema = '{target_schema}'
             ORDER BY table_name
         """)
@@ -137,7 +137,7 @@ async def test_schema_permissions():
         # Try listing tables again
         tables = await user_conn.fetch("""
             SELECT table_name, table_type
-            FROM information_schema.tables 
+            FROM information_schema.tables
             WHERE table_schema = CURRENT_SCHEMA()
             ORDER BY table_name
         """)
@@ -167,8 +167,8 @@ async def test_schema_permissions():
                 # Check table ownership
                 try:
                     table_owner = await user_conn.fetchval("""
-                        SELECT tableowner 
-                        FROM pg_tables 
+                        SELECT tableowner
+                        FROM pg_tables
                         WHERE schemaname = CURRENT_SCHEMA()
                         AND tablename = 'alembic_version'
                     """)

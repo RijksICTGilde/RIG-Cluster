@@ -74,7 +74,7 @@ async def test_table_permissions():
         # List all tables in the schema
         tables = await user_conn.fetch(f"""
             SELECT table_name, table_type
-            FROM information_schema.tables 
+            FROM information_schema.tables
             WHERE table_schema = '{target_schema}'
             ORDER BY table_name
         """)
@@ -118,9 +118,9 @@ async def test_table_permissions():
 
             # Check table owner
             table_owner = await user_conn.fetchval(f"""
-                SELECT tableowner 
-                FROM pg_tables 
-                WHERE schemaname = '{target_schema}' 
+                SELECT tableowner
+                FROM pg_tables
+                WHERE schemaname = '{target_schema}'
                 AND tablename = 'alembic_version'
             """)
 
@@ -180,9 +180,9 @@ async def test_table_permissions():
             # Check this table's owner too
             try:
                 table_owner = await user_conn.fetchval(f"""
-                    SELECT tableowner 
-                    FROM pg_tables 
-                    WHERE schemaname = '{target_schema}' 
+                    SELECT tableowner
+                    FROM pg_tables
+                    WHERE schemaname = '{target_schema}'
                     AND tablename = '{table_name}'
                 """)
                 print(f"  - {table_name} owner: {table_owner}")

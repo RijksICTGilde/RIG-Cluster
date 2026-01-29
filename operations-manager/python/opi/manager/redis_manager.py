@@ -3,8 +3,6 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from jsonpath_ng.ext import parse as jsonpath_parse
-
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
@@ -88,9 +86,7 @@ class RedisManager:
             logger.info(f"Using shared Redis for {project_name}/{deployment_name} (host: {redis_host})")
 
             # Check for existing Redis credentials in Kubernetes
-            existing_redis_secret = await self._get_existing_redis_credentials_from_k8s(
-                deployment_name, deployment
-            )
+            existing_redis_secret = await self._get_existing_redis_credentials_from_k8s(deployment_name, deployment)
 
             if existing_redis_secret:
                 logger.info(f"Found existing Redis secret in Kubernetes for {project_name}/{deployment_name}")

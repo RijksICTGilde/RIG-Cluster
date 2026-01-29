@@ -18,7 +18,7 @@
             <c-layout-flow gap="2xl" size="lg">
                 <main>
                     <c-layout-flow gap="xl">
-                        
+
                         {# Warning Message #}
                         <c-alert
                             kind="warning"
@@ -27,12 +27,12 @@
 
                         <c-content>
                             <c-heading type="h1" textContent="Project {{ project_name }} - Gedeeltelijk voltooid"/>
-                            
+
                             <c-layout-flow gap="md">
                                 <p class="rvo-paragraph rvo-paragraph--lg">
                                     Uw project <strong>{{ project_name }}</strong> is gedeeltelijk verwerkt. Het projectbestand is succesvol aangemaakt, maar er zijn problemen opgetreden tijdens de uitrol.
                                 </p>
-                                
+
                                 <c-layout-flow gap="sm">
                                     <p class="rvo-paragraph">
                                         <strong>Status details:</strong>
@@ -48,7 +48,7 @@
                                     kind="info"
                                     heading="Wat nu?"
                                     messages="Neem contact op met de beheerders of probeer het project opnieuw uit te rollen via de API of dashboard."/>
-                                    
+
                                 <c-layout-flow gap="md">
                                     <c-action-group
                                         :actions="[
@@ -64,7 +64,7 @@
                                             {
                                                 'type': 'link',
                                                 'kind': 'secondary',
-                                                'size': 'md', 
+                                                'size': 'md',
                                                 'label': 'Projectoverzicht',
                                                 'showIcon': 'after',
                                                 'icon': 'pijl-naar-rechts',
@@ -81,7 +81,7 @@
                                 </c-layout-flow>
                             </c-layout-flow>
                         </c-content>
-                        
+
                     </c-layout-flow>
                 </main>
             </c-layout-flow>

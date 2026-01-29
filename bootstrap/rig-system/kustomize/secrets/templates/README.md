@@ -10,7 +10,7 @@ Templates use **@secret-gen annotations** to specify which fields need password 
 # Generate a random 16-character password
 password: "PLACEHOLDER_VALUE" # @secret-gen:random:16
 
-# Generate a bcrypt hash from a 16-character password  
+# Generate a bcrypt hash from a 16-character password
 admin.password: "PLACEHOLDER_BCRYPT_HASH" # @secret-gen:bcrypt:16
 
 # Skip password generation (use existing value)

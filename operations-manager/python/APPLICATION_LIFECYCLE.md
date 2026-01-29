@@ -9,27 +9,27 @@ This document describes the complete lifecycle of database pools in the Operatio
 async def lifespan(app: FastAPI):
     # 1. Print boot banner
     print_boot_banner()
-    
+
     # 2. Initialize database connection pools
     await initialize_database_pools()  # ✅ ADDED
     logger.info("Database pools initialized successfully")
-    
+
     # 3. Run startup tasks (namespace creation, SOPS secrets, etc.)
     await run_startup_tasks()
-    
+
     # 4. Start Git monitoring service
     await start_git_monitoring(app)
-    
+
     # Application runs...
     yield
-    
+
     # 5. Stop Git monitoring service
     await stop_git_monitoring()
-    
+
     # 6. Close database connection pools
     await close_database_pools()  # ✅ ADDED
     logger.info("Database pools closed successfully")
-    
+
     # 7. Shutdown logging
     logging.shutdown()
 ```
@@ -59,11 +59,11 @@ db_manager = DatabaseManager(project_manager, main_pool)
 
 ## Benefits of This Lifecycle
 
-✅ **Connection Management**: Pools are properly initialized and cleaned up  
-✅ **Resource Cleanup**: No connection leaks on application shutdown  
-✅ **Graceful Degradation**: Application can start even if some pools fail  
-✅ **Proper Ordering**: Database pools initialized before they're needed  
-✅ **Error Handling**: Pool failures don't crash the application  
+✅ **Connection Management**: Pools are properly initialized and cleaned up
+✅ **Resource Cleanup**: No connection leaks on application shutdown
+✅ **Graceful Degradation**: Application can start even if some pools fail
+✅ **Proper Ordering**: Database pools initialized before they're needed
+✅ **Error Handling**: Pool failures don't crash the application
 
 ## Race Condition Solution
 

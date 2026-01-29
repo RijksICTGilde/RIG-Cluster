@@ -18,7 +18,7 @@
             <c-layout-flow gap="2xl" size="lg">
                 <main>
                     <c-layout-flow gap="xl">
-                        
+
                         {# Success Message #}
                         <c-alert
                             kind="success"
@@ -27,12 +27,12 @@
 
                         <c-content>
                             <c-heading type="h1" textContent="Project {{ project_name }} is klaar"/>
-                            
+
                             <c-layout-flow gap="md">
                                 <p class="rvo-paragraph rvo-paragraph--lg">
                                     Gefeliciteerd! Uw project <strong>{{ project_name }}</strong> is succesvol aangemaakt en geconfigureerd.
                                 </p>
-                                
+
                                 {% if project_description %}
                                 <p class="rvo-paragraph">
                                     <strong>Beschrijving:</strong> {{ project_description }}
@@ -57,7 +57,7 @@
                                     kind="info"
                                     heading="Volgende stappen"
                                     messages="Uw project wordt nu automatisch uitgerold via ArgoCD. Het kan enkele minuten duren voordat alle resources beschikbaar zijn."/>
-                                    
+
                                 <c-layout-flow gap="md">
                                     <c-action-group
                                         :actions="[
@@ -73,7 +73,7 @@
                                             {
                                                 'type': 'link',
                                                 'kind': 'secondary',
-                                                'size': 'md', 
+                                                'size': 'md',
                                                 'label': 'Projectoverzicht',
                                                 'showIcon': 'after',
                                                 'icon': 'pijl-naar-rechts',
@@ -90,7 +90,7 @@
                                 </c-layout-flow>
                             </c-layout-flow>
                         </c-content>
-                        
+
                     </c-layout-flow>
                 </main>
             </c-layout-flow>

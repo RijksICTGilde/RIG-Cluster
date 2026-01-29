@@ -53,8 +53,8 @@ async def test_clone_setup():
 
         # Count tables in source schema
         table_count_query = """
-            SELECT COUNT(*) as count 
-            FROM information_schema.tables 
+            SELECT COUNT(*) as count
+            FROM information_schema.tables
             WHERE table_schema = %s
         """
 
@@ -69,10 +69,10 @@ async def test_clone_setup():
             if table_count > 0:
                 # List some table names
                 tables_query = """
-                    SELECT table_name 
-                    FROM information_schema.tables 
-                    WHERE table_schema = %s 
-                    ORDER BY table_name 
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = %s
+                    ORDER BY table_name
                     LIMIT 10
                 """
 

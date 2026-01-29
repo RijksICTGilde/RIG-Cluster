@@ -7,7 +7,7 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: vault
-  
+
   ingress:
     # Allow API access from within the rig-system namespace
     - from:
@@ -19,14 +19,14 @@ spec:
           port: 8200  # Vault API port
         - protocol: TCP
           port: 8201  # Vault cluster port
-    
+
     # Allow API access from all other namespaces
     - from:
         - namespaceSelector: {}
       ports:
         - protocol: TCP
           port: 8200  # Vault API port
-          
+
     # Allow ingress controller access
     - from:
         - namespaceSelector:
@@ -35,7 +35,7 @@ spec:
       ports:
         - protocol: TCP
           port: 8200
-  
+
   egress:
     # Allow intra-cluster communication for Vault HA
     - to:
@@ -45,7 +45,7 @@ spec:
       ports:
         - protocol: TCP
           port: 8201
-          
+
     # Allow DNS resolution
     - to:
         - namespaceSelector: {}
@@ -57,7 +57,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-          
+
     # Allow outbound access for auto-unseal, if using cloud KMS
     - to:
         - ipBlock:

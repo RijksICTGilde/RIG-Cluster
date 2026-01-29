@@ -18,7 +18,7 @@
             <c-layout-flow gap="2xl" size="lg">
                 <main>
                     <c-layout-flow gap="xl">
-                        
+
                         {# Error Message #}
                         <c-alert
                             kind="error"
@@ -27,12 +27,12 @@
 
                         <c-content>
                             <c-heading type="h1" textContent="Project aanmaak mislukt"/>
-                            
+
                             <c-layout-flow gap="md">
                                 <p class="rvo-paragraph rvo-paragraph--lg">
                                     Er is een fout opgetreden tijdens het verwerken van uw project aanvraag. Het project kon niet worden aangemaakt.
                                 </p>
-                                
+
                                 <c-layout-flow gap="sm">
                                     <p class="rvo-paragraph">
                                         <strong>Foutdetails:</strong>
@@ -46,7 +46,7 @@
                                     kind="info"
                                     heading="Mogelijke oplossingen"
                                     messages="Controleer uw invoer en probeer het opnieuw, of neem contact op met de systeembeheerder als het probleem aanhoudt."/>
-                                    
+
                                 <c-layout-flow gap="md">
                                     <c-action-group
                                         :actions="[
@@ -62,7 +62,7 @@
                                             {
                                                 'type': 'link',
                                                 'kind': 'secondary',
-                                                'size': 'md', 
+                                                'size': 'md',
                                                 'label': 'Ga naar Dashboard',
                                                 'showIcon': 'after',
                                                 'icon': 'pijl-naar-rechts',
@@ -79,7 +79,7 @@
                                 </c-layout-flow>
                             </c-layout-flow>
                         </c-content>
-                        
+
                     </c-layout-flow>
                 </main>
             </c-layout-flow>

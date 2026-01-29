@@ -6,12 +6,8 @@ on:
   pull_request:
     branches: [main]
 
-defaults:
-  run:
-    working-directory: operations-manager/python
-
 jobs:
-  lint:
+  pre-commit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,16 +18,15 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
+        working-directory: operations-manager/python
         run: uv sync --frozen
-      - name: Ruff check
-        run: uv run ruff check .
-      - name: Ruff format check
-        run: uv run ruff format --check .
-      - name: Pyright
-        run: uv run pyright
+      - uses: pre-commit/action@v3.0.1
 
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -49,6 +44,9 @@ jobs:
 
   license-check:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

@@ -11,7 +11,7 @@
 
 {% block content %}
 <c-layout-flow gap="xl">
-    
+
     {# Page Header #}
     <div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--rvo-space-md);">
@@ -23,7 +23,7 @@
                 </div>
             </div>
             <div style="display: flex; gap: var(--rvo-space-md);">
-                <c-button 
+                <c-button
                     label="Terug naar overzicht"
                     kind="secondary"
                     size="md"
@@ -31,7 +31,7 @@
                     icon="terug"
                     @click="window.location.href='/projects'" />
                 {% if user_role in ["admin", "owner"] %}
-                    <c-button 
+                    <c-button
                         label="Project beheren"
                         kind="primary"
                         size="md"
@@ -669,7 +669,7 @@
         <c-layout-flow gap="lg">
             <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
             <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>
-            
+
             <c-grid columns="three" gap="md">
                 {% for user in project.users %}
                 <c-card padding="md" outline="true" backgroundColor="grijs-050">
@@ -694,7 +694,7 @@
         <c-layout-flow gap="lg">
             <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="instellingen" size="xl" color="donkerblauw" />Configuratie & Secrets</c-heading>
             <p class="rvo-text--subtle">Project configuratie en gevoelige informatie</p>
-            
+
             <div class="config-section">
                 {# Project Name - always show #}
                 <div class="config-item">
@@ -732,7 +732,7 @@
                     </div>
                 </div>
                 {% endif %}
-                
+
                 {# Age Public Key #}
                 {% if project.config.get('age-public-key') %}
                 <div class="config-item">
@@ -756,7 +756,7 @@
                     </div>
                 </div>
                 {% endif %}
-                
+
                 {# Age Private Key #}
                 {% if project.config.get('age-private-key') %}
                 <div class="config-item">
@@ -914,7 +914,7 @@
         <c-layout-flow gap="lg">
             <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="server" size="xl" color="oranje" />Deployments</c-heading>
             <p class="rvo-text--subtle">Applicatie deployments per omgeving</p>
-            
+
             {% if project.deployments %}
             <div class="deployments-section">
                 {% for deployment in project.deployments %}
@@ -955,7 +955,7 @@
                                 </div>
                             </div>
                         </div>
-                        
+
                         {# Components in this deployment #}
                         {% if deployment.components %}
                         <div class="deployment-components">
@@ -1041,7 +1041,7 @@
                             <c-heading type="h4"><c-icon icon="externe-link" size="md" color="hemelblauw" />Publieke links</c-heading>
                             <c-layout-row gap="sm">
                                 {% for link in deployment.ingress_links %}
-                                <c-button 
+                                <c-button
                                     label="{{ link.component_name }}"
                                     kind="secondary"
                                     size="sm"
@@ -1052,7 +1052,7 @@
                             </c-layout-row>
                         </c-layout-flow>
                         {% endif %}
-                        
+
                         {# Deployment Configuration Variables #}
                         {% if deployment.configuration %}
                         <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
@@ -2227,33 +2227,33 @@
         padding: var(--rvo-space-xl);
         color: var(--rvo-color-grijs-600);
     }
-    
+
     /* Responsive Design */
     @media (max-width: 768px) {
         .overview-grid {
             grid-template-columns: repeat(2, 1fr);
         }
-        
+
         /* .team-grid responsive styles handled by c-grid component */
-        
+
         .services-grid {
             grid-template-columns: 1fr;
         }
-        
+
         .components-section {
             grid-template-columns: 1fr;
         }
-        
+
         .deployment-header {
             flex-direction: column;
             gap: var(--rvo-space-md);
         }
-        
+
         .deployment-meta {
             flex-direction: column;
             align-items: flex-start;
         }
-        
+
         .repo-details {
             grid-template-columns: 1fr;
         }

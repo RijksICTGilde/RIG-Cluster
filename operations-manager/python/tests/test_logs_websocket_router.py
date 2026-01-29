@@ -819,10 +819,12 @@ class TestClientMessageSizeLimit(unittest.TestCase):
         from opi.api.logs_websocket_router import MAX_CLIENT_MESSAGE_SIZE
 
         # Typical switch message with component name
-        message = json.dumps({
-            "action": "switch",
-            "component": "my-long-component-name-that-is-reasonable",
-        })
+        message = json.dumps(
+            {
+                "action": "switch",
+                "component": "my-long-component-name-that-is-reasonable",
+            }
+        )
 
         self.assertLess(len(message), MAX_CLIENT_MESSAGE_SIZE)
 
@@ -831,10 +833,12 @@ class TestClientMessageSizeLimit(unittest.TestCase):
         from opi.api.logs_websocket_router import MAX_CLIENT_MESSAGE_SIZE
 
         # Create a message larger than the limit
-        oversized_message = json.dumps({
-            "action": "switch",
-            "component": "x" * (MAX_CLIENT_MESSAGE_SIZE + 100),
-        })
+        oversized_message = json.dumps(
+            {
+                "action": "switch",
+                "component": "x" * (MAX_CLIENT_MESSAGE_SIZE + 100),
+            }
+        )
 
         self.assertGreater(len(oversized_message), MAX_CLIENT_MESSAGE_SIZE)
 

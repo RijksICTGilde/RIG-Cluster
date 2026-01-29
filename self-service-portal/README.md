@@ -15,4 +15,3 @@ resources:
 ````
 
 * bij het verwijderen wordt alles verwijderd
-

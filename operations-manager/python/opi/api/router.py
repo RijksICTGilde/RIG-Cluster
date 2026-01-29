@@ -981,8 +981,7 @@ async def update_deployment_image(
         service_actions = None
         if image_data.services:
             service_actions = {
-                service_type: service_ref.model_dump()
-                for service_type, service_ref in image_data.services.items()
+                service_type: service_ref.model_dump() for service_type, service_ref in image_data.services.items()
             }
             logger.info(f"Service actions requested: {service_actions}")
 
@@ -1234,26 +1233,26 @@ async def delete_project(
 async def delete_project_deployment(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
     """
     Delete a specific deployment within a project.
-    
+
     This endpoint deletes a deployment and its associated resources using project-specific API keys.
     The API key is validated against the in-memory mapping of project IDs to API keys.
-    
+
     Headers:
         X-API-Key: The API key for the project (required)
-        
+
     Example curl command:
     ```
     curl -X DELETE "http://localhost:9595/api/my-project/staging" \
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-project-api-key-here"
     ```
-    
+
     Args:
         request: The FastAPI request object
         project_name: Name of the project (from URL path)
         deployment_name: Name of the deployment to delete (from URL path)
         project_id: Project ID extracted from API key validation (injected by decorator)
-        
+
     Returns:
         JSON response with detailed deletion results
     """

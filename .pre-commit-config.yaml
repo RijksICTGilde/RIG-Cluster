@@ -27,7 +27,7 @@ repos:
 
       - id: djlint
         name: djlint
-        entry: uv run --directory operations-manager/python djlint --lint
+        entry: uv run --directory operations-manager/python djlint --lint opi/templates/
         language: system
-        files: ^operations-manager/python/.*\.html$
-        pass_filenames: true
+        files: ^operations-manager/python/.*\.(html|html\.j2)$
+        pass_filenames: false

@@ -6,16 +6,16 @@ metadata:
 spec:
   instances: 3
   primaryUpdateStrategy: unsupervised
-  
+
   storage:
     size: 10Gi
     storageClass: standard
-  
+
   bootstrap:
     initdb:
       database: postgres
       owner: postgres
-      
+
   backup:
     barmanObjectStore:
       endpointURL: https://minio.example.com

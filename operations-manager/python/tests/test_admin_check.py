@@ -47,7 +47,7 @@ async def test_admin_check():
 
             tables = await admin_conn.fetch(
                 """
-                SELECT table_name, table_type, 
+                SELECT table_name, table_type,
                        (SELECT tableowner FROM pg_tables WHERE schemaname = t.table_schema AND tablename = t.table_name) as table_owner
                 FROM information_schema.tables t
                 WHERE table_schema = $1
@@ -79,9 +79,9 @@ async def test_admin_check():
         try:
             # Check if alembic_version exists and is accessible
             alembic_owner = await admin_conn.fetchval(f"""
-                SELECT tableowner 
-                FROM pg_tables 
-                WHERE schemaname = '{target_schema}' 
+                SELECT tableowner
+                FROM pg_tables
+                WHERE schemaname = '{target_schema}'
                 AND tablename = 'alembic_version'
             """)
 

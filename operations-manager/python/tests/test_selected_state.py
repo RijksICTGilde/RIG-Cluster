@@ -16,7 +16,7 @@ def test_selected_state():
 
     # Write test template
     test_template_content = """
-<c-menubar 
+<c-menubar
     size="md"
     :useIcons="true"
     :items="[

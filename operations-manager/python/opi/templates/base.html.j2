@@ -1,29 +1,29 @@
 {#
   Base Template - Self Service Portal
-  
+
   Gemeenschappelijke layout voor alle pagina's in het Self Service Portal
   inclusief header, navigatie en footer.
 #}
 
 {% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
 <c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive">
-    
+
     <div class="rvo-demo-page">
         {# Header #}
-        <c-header 
+        <c-header
             text="Zelfservice voor Applicatie Deployment"
             subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
             link="/" />
-        
+
         <c-layout-flow gap="xl" size="lg">
             {# MenuBar #}
-            <c-menubar 
+            <c-menubar
                 size="md"
                 :useIcons="true"
                 iconPlacement="before"
                 maxWidth="lg"
                 :items="menu_items" />
-            
+
             {# Main Content Area #}
             <main>
                 {% block content %}
@@ -34,9 +34,9 @@
                 </c-layout-flow>
                 {% endblock %}
             </main>
-            
+
             {# Footer #}
-            <c-footer 
+            <c-footer
                 maxWidth="lg"
                 :primaryMenu="[
                     {
@@ -67,7 +67,7 @@
             .rvo-footer__column-title {
                 color: white !important;
             }
-            
+
             /* Icon alignment for headings */
             h1 .utrecht-icon,
             h2 .utrecht-icon,
@@ -88,7 +88,7 @@
         }
         </style>
         {% endblock %}
-        
+
         {% block additional_scripts %}
         {# Additional JavaScript can be added here by child templates #}
         {% endblock %}

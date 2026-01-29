@@ -10,7 +10,7 @@ I want to build a operations manager application, which should perform certain w
 - create a namespace
 - make API calls to systems like Keycloak, Postgress and f.e. Minio
 
-I am used to writing in Python, but think using Go might be a solution for this as well. How difficult would it be 
+I am used to writing in Python, but think using Go might be a solution for this as well. How difficult would it be
 
 
 

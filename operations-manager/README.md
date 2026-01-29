@@ -7,4 +7,3 @@ De operations manager is de 'spin in het web' RIG applicatie die het mogelijk ma
 3. Het zorgt dat in een cluster alles 'klaargezet' wordt voor een project, zoals het aanmaken van een namespace
 4. Het zorgt dat de Argo bestanden worden aangemaakt
 5. Het zorgt de de applicatie bestanden worden aangemaakt
-

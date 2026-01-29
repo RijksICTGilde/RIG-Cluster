@@ -17,7 +17,7 @@ component_templates = (
 
 # Test button matching your expected format
 test_template = """
-<c-button 
+<c-button
     kind="primary"
     size="md"
     :hover="true"

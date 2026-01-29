@@ -181,7 +181,7 @@ class DeleteProjectManager:
                             logger.info(f"Successfully deleted orphaned AppProject: {appproject_name}")
                         else:
                             logger.error(f"Failed to delete AppProject {appproject_name}: {stderr}")
-                    except Exception as e:
+                    except Exception:
                         logger.exception(f"Error deleting orphaned AppProject {appproject_name}")
 
         except Exception as e:
@@ -1142,8 +1142,8 @@ class DeleteProjectManager:
             # Step 5.5: Delete infrastructure if this was the last deployment using namespace-specific services
             try:
                 from opi.core.cluster_config import get_infrastructure_namespace
-                from opi.utils.naming import generate_infrastructure_manifest_path
                 from opi.services.services import ServiceType
+                from opi.utils.naming import generate_infrastructure_manifest_path
 
                 # Services that require dedicated infrastructure namespace
                 NAMESPACE_SERVICES = {

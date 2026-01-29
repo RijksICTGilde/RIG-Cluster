@@ -139,7 +139,7 @@ stringData:
     name: myapp-frontend-oidc
     key: OIDC_CLIENT_SECRET
   discoveryUrl: {frontend_client["discovery_url"]}
-  
+
 ingress:
   hosts:
     - host: myapp-frontend.apps.digilab.network

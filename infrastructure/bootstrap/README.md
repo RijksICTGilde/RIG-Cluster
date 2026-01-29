@@ -88,10 +88,10 @@ The bootstrap process establishes ArgoCD, which manages all subsequent deploymen
    ```bash
    # Local development with filesystem source
    task bootstrap-minimal SOURCE_TYPE=local-filesystem
-   
+
    # GitHub-based deployment
    task bootstrap-minimal SOURCE_TYPE=github
-   
+
    # ODCN environment with network policies
    task bootstrap-minimal SOURCE_TYPE=odcn
    ```
@@ -208,7 +208,7 @@ To customize the bootstrap process:
 
 ### Common Issues
 
-1. **ArgoCD fails to start**: 
+1. **ArgoCD fails to start**:
    - Check for missing secrets: `kubectl get secret argocd-secret -n rig-system`
    - Verify the ArgoCD operator is deployed: `kubectl get pods -n rig-system | grep argocd-operator`
    - Check operator logs: `kubectl logs deployment/argocd-operator -n rig-system`

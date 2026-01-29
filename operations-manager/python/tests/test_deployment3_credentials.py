@@ -83,8 +83,8 @@ async def test_deployment3_database_access():
             # Get database owner
             db_owner = await admin_conn.fetchval(
                 """
-                SELECT pg_get_userbyid(datdba) as owner 
-                FROM pg_database 
+                SELECT pg_get_userbyid(datdba) as owner
+                FROM pg_database
                 WHERE datname = $1
             """,
                 target_database,
@@ -113,7 +113,7 @@ async def test_deployment3_database_access():
             SELECT s.schema_name, s.schema_owner,
                    n.nspowner::regrole as owner_role
             FROM information_schema.schemata s
-            JOIN pg_namespace n ON n.nspname = s.schema_name  
+            JOIN pg_namespace n ON n.nspname = s.schema_name
             WHERE s.schema_name = $1
         """,
             target_schema,
@@ -184,7 +184,7 @@ async def test_deployment3_database_access():
                     # Test table access
                     tables = await user_conn.fetch(f"""
                         SELECT table_name, table_type
-                        FROM information_schema.tables 
+                        FROM information_schema.tables
                         WHERE table_schema = '{target_schema}'
                         ORDER BY table_name
                         LIMIT 10

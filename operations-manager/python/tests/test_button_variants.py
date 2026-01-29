@@ -31,117 +31,117 @@ test_template = """
 </head>
 <body>
     <h1>RVO Button Component Test</h1>
-    
+
     <div class="section">
         <h2>Button Types (kind)</h2>
-        
+
         <div class="button-row">
             <span class="label">Primary:</span>
             <c-button kind="primary">Primary Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Secondary:</span>
             <c-button kind="secondary">Secondary Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Tertiary:</span>
             <c-button kind="tertiary">Tertiary Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Quaternary:</span>
             <c-button kind="quaternary">Quaternary Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Subtle:</span>
             <c-button kind="subtle">Subtle Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Warning:</span>
             <c-button kind="warning">Warning Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Warning Subtle:</span>
             <c-button kind="warning-subtle">Warning Subtle</c-button>
         </div>
     </div>
-    
+
     <div class="section">
         <h2>Button Sizes</h2>
-        
+
         <div class="button-row">
             <span class="label">Extra Small (xs):</span>
             <c-button kind="primary" size="xs">XS Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Small (sm):</span>
             <c-button kind="primary" size="sm">Small Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Medium (md):</span>
             <c-button kind="primary" size="md">Medium Button</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Default (md):</span>
             <c-button kind="primary">Default Size</c-button>
         </div>
     </div>
-    
+
     <div class="section">
         <h2>Button States</h2>
-        
+
         <div class="button-row">
             <span class="label">Normal:</span>
             <c-button kind="primary">Normal State</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Hover:</span>
             <c-button kind="primary" :hover="true">Hover State</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Focus:</span>
             <c-button kind="primary" :focus="true">Focus State</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Active:</span>
             <c-button kind="primary" :active="true">Active State</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Disabled:</span>
             <c-button kind="primary" :disabled="true">Disabled State</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Busy:</span>
             <c-button kind="primary" :busy="true">Loading...</c-button>
         </div>
     </div>
-    
+
     <div class="section">
         <h2>Button with Icons</h2>
-        
+
         <div class="button-row">
             <span class="label">Icon Before:</span>
             <c-button kind="primary" :showIcon="'before'" :icon="'plus'">Add Item</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Icon After:</span>
             <c-button kind="primary" :showIcon="'after'" :icon="'pijl-naar-rechts'">Next</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Tertiary + Icon:</span>
             <c-button kind="tertiary" size="sm" :showIcon="'before'" :icon="'plus'">
@@ -149,34 +149,34 @@ test_template = """
             </c-button>
         </div>
     </div>
-    
+
     <div class="section">
         <h2>Special Cases</h2>
-        
+
         <div class="button-row">
             <span class="label">Full Width:</span>
             <div style="width: 400px;">
                 <c-button kind="primary" :fullWidth="true">Full Width Button</c-button>
             </div>
         </div>
-        
+
         <div class="button-row">
             <span class="label">Submit Type:</span>
             <c-button kind="primary" type="submit">Submit Form</c-button>
         </div>
-        
+
         <div class="button-row">
             <span class="label">With Event:</span>
             <c-button kind="secondary" @click="alert('Clicked!')">Click Me</c-button>
         </div>
     </div>
-    
+
     <div class="section">
         <h2>Combined Attributes</h2>
-        
+
         <div class="button-row">
             <span class="label">Complex Button:</span>
-            <c-button 
+            <c-button
                 kind="warning"
                 size="sm"
                 :showIcon="'before'"

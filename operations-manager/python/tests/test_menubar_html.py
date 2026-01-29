@@ -17,7 +17,7 @@ def test_menubar_html():
     # Simple template to test menubar
     templates = {
         "test.html": """
-<c-menubar 
+<c-menubar
     size="md"
     :useIcons="true"
     iconPlacement="before"
