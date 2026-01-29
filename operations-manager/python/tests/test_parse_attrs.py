@@ -3,8 +3,8 @@
 Test the _parse_attributes method directly.
 """
 
-from jinja_roos_components.components.registry import ComponentRegistry
 from jinja_roos_components.html_parser import ComponentHTMLParser
+from jinja_roos_components.registry import ComponentRegistry
 
 attrs_str = ''':actions="[
         {

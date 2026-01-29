@@ -5,24 +5,59 @@ Tests that DatabaseManager and MinioManager correctly handle clone-from
 with type: remote-source by calling the appropriate methods with Chisel tunnel support.
 """
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
-# Load the test project file
-TEST_PROJECT_PATH = Path(
-    "/Users/robbertuittenbroek/IdeaProjects/rig-cluster-test-git-repositories/"
-    "rig-cluster-projects-github/projects/amt-136.yaml"
-)
+# Inline test project data (mirrors the amt-136 project structure)
+_TEST_PROJECT_DATA = {
+    "name": "amt-136",
+    "deployments": [
+        {
+            "name": "deployment-1",
+            "cluster": "odcn-production",
+            "clone-from": {
+                "type": "remote-source",
+                "reference": "odcn-production",
+            },
+            "components": [],
+        },
+    ],
+    "remote-sources": [
+        {
+            "name": "odcn-production",
+            "chisel": {
+                "server-url": "https://chisel-server.prd.apps.digilab.network",
+                "username": "admin",
+                "password": "encrypted_chisel_pass",
+            },
+            "services": {
+                "postgresql-database": {
+                    "host": "amt-cluster-db-r",
+                    "port": 5432,
+                    "username": "tad",
+                    "password": "encrypted_db_pass",
+                    "database": "tad",
+                    "schema": "public",
+                },
+                "minio-storage": {
+                    "host": "amt-svc-minio",
+                    "port": 9000,
+                    "access-key": "minio_access",
+                    "secret-key": "minio_secret",
+                    "bucket": "amt",
+                    "secure": False,
+                },
+            },
+        },
+    ],
+}
 
 
 @pytest.fixture
 def project_data() -> dict:
-    """Load the amt-136 project data for testing."""
-    with open(TEST_PROJECT_PATH) as f:
-        return yaml.safe_load(f)
+    """Return the amt-136 project data for testing."""
+    return _TEST_PROJECT_DATA.copy()
 
 
 @pytest.fixture

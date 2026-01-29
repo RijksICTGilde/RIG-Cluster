@@ -571,7 +571,7 @@ async def delete_project_web(request: Request, project_name: str):
             # Project deletion was blocked due to deployments on other clusters
             status_code = 409  # Conflict - cannot complete due to conflicting state
             remaining_deployments = deletion_results["remaining_deployments"]
-            other_clusters = set(dep["cluster"] for dep in remaining_deployments)
+            other_clusters = {dep["cluster"] for dep in remaining_deployments}
             message = f"Project '{project_name}' cannot be deleted because it has deployments on other clusters: {', '.join(other_clusters)}"
             status = "blocked"
             logger.warning(

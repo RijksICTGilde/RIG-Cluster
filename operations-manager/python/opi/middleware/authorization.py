@@ -9,13 +9,15 @@ import logging
 import typing
 from typing import Any
 
-from fastapi import FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Match
 
 from opi.services.user_service import get_user_service
+
+if typing.TYPE_CHECKING:
+    from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 

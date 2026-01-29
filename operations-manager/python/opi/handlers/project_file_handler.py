@@ -166,7 +166,7 @@ class ProjectFileHandler:
         except Exception as e:
             # TODO: do not log and re-raise
             logger.exception(f"Error parsing project file: {e}")
-            raise e
+            raise
 
     # TODO: should this method be here or moved?
     async def get_previous_yaml_content(self, git_connector: GitConnector, file_path: str) -> dict[str, Any] | None:
@@ -444,7 +444,7 @@ class ProjectFileHandler:
         elif isinstance(path_config, list) and path_config:
             # Return first path for backward compatibility
             first_item = path_config[0]
-            if isinstance(first_item, dict):
+            if isinstance(first_item, dict):  # noqa: SIM108
                 # Use 'match' key (new format)
                 component_path = first_item.get("match", default_path)
             else:
@@ -1936,7 +1936,7 @@ class ProjectFileHandler:
                         service_name = (
                             service
                             if isinstance(service, str)
-                            else list(service.keys())[0]
+                            else next(iter(service.keys()))
                             if isinstance(service, dict)
                             else str(service)
                         )
@@ -1953,7 +1953,7 @@ class ProjectFileHandler:
                     service_name = (
                         service
                         if isinstance(service, str)
-                        else list(service.keys())[0]
+                        else next(iter(service.keys()))
                         if isinstance(service, dict)
                         else str(service)
                     )
@@ -1970,7 +1970,7 @@ class ProjectFileHandler:
                     service_name = (
                         service
                         if isinstance(service, str)
-                        else list(service.keys())[0]
+                        else next(iter(service.keys()))
                         if isinstance(service, dict)
                         else str(service)
                     )
@@ -2017,7 +2017,7 @@ class ProjectFileHandler:
                     service_name = service
                     service_ref = f"{deployment_name}-{service_name.split('-')[0]}"
                 elif isinstance(service, dict):
-                    service_name = list(service.keys())[0]
+                    service_name = next(iter(service.keys()))
                     service_config = service[service_name]
                     service_ref = service_config.get("reference", f"{deployment_name}-{service_name.split('-')[0]}")
                 else:

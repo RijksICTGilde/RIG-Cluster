@@ -60,10 +60,7 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
         domain_options = []
         for domain in supported_domains:
             # Add descriptive label
-            if domain in ("kind", "local"):
-                label = f"{domain} (lokaal)"
-            else:
-                label = domain
+            label = f"{domain} (lokaal)" if domain in ("kind", "local") else domain
             domain_options.append({"value": domain, "label": label})
 
         result[cluster_name] = domain_options

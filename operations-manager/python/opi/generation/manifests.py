@@ -48,7 +48,7 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
 
     # Create Jinja2 environment with whitespace control
     # Note: autoescape=False is intentional for YAML template generation
-    env = Environment(loader=BaseLoader(), trim_blocks=True, lstrip_blocks=True, autoescape=False)  # noqa: S701
+    env = Environment(loader=BaseLoader(), trim_blocks=True, lstrip_blocks=True, autoescape=False)
     template = env.from_string(template_content)
 
     # Render the template with variables
@@ -205,7 +205,7 @@ class ManifestGenerator:
         return created_files
 
     def collect_manifest_files(
-        self, directory: str, include_subfolders: bool = False, project_name: str = None
+        self, directory: str, include_subfolders: bool = False, project_name: str | None = None
     ) -> tuple[list[str], list[str]]:
         """
         Collect all YAML manifest files in a directory and categorize them.
@@ -258,13 +258,11 @@ class ManifestGenerator:
 
             # Separate SOPS files from regular files first
             # Include both .sops.yaml and .to-sops.yaml files as SOPS files
-            sops_files = [f for f in relative_files if f.endswith(".sops.yaml") or f.endswith(".to-sops.yaml")]
+            sops_files = [f for f in relative_files if f.endswith((".sops.yaml", ".to-sops.yaml"))]
             regular_files = [
                 f
                 for f in relative_files
-                if (f.endswith(".yaml") or f.endswith(".yml"))
-                and not f.endswith(".sops.yaml")
-                and not f.endswith(".to-sops.yaml")
+                if (f.endswith((".yaml", ".yml"))) and not f.endswith(".sops.yaml") and not f.endswith(".to-sops.yaml")
             ]
 
             # Remove project_name from paths if provided (for structure: given_path/project_name/deployment_name/)

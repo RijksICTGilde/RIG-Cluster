@@ -9,8 +9,8 @@ import logging
 import re
 from typing import Any
 
-from opi.core.database_pools import get_database_pool
 from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.core.database_pools import get_database_pool
 
 logger = logging.getLogger(__name__)
 # Dedicated audit logger for subdomain operations

@@ -42,26 +42,27 @@ templates = {
 """,
 }
 
-# Create environment with our test templates
-env = Environment(loader=DictLoader(templates))
-setup_components(env)
+if __name__ == "__main__":
+    # Create environment with our test templates
+    env = Environment(loader=DictLoader(templates))
+    setup_components(env)
 
-print("Testing direct template (no inheritance):")
-print("=" * 50)
-direct_template = env.get_template("direct.html.j2")
-direct_output = direct_template.render()
-print(direct_output)
-print(
-    "\nDirect template has unprocessed components:",
-    "c-heading" in direct_output or "c-layout-flow" in direct_output or "c-card" in direct_output,
-)
+    print("Testing direct template (no inheritance):")
+    print("=" * 50)
+    direct_template = env.get_template("direct.html.j2")
+    direct_output = direct_template.render()
+    print(direct_output)
+    print(
+        "\nDirect template has unprocessed components:",
+        "c-heading" in direct_output or "c-layout-flow" in direct_output or "c-card" in direct_output,
+    )
 
-print("\n\nTesting child template (with inheritance):")
-print("=" * 50)
-child_template = env.get_template("child.html.j2")
-child_output = child_template.render()
-print(child_output)
-print(
-    "\nChild template has unprocessed components:",
-    "c-heading" in child_output or "c-layout-flow" in child_output or "c-card" in child_output,
-)
+    print("\n\nTesting child template (with inheritance):")
+    print("=" * 50)
+    child_template = env.get_template("child.html.j2")
+    child_output = child_template.render()
+    print(child_output)
+    print(
+        "\nChild template has unprocessed components:",
+        "c-heading" in child_output or "c-layout-flow" in child_output or "c-card" in child_output,
+    )

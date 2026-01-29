@@ -268,7 +268,7 @@ def generate_ingress_map(
         domain = ingress_postfix.lstrip(".")
 
         # If subdomain matches deployment_name, it's deployment-name mode -> include project name
-        if subdomain == deployment_name:
+        if subdomain == deployment_name:  # noqa: SIM108
             hostname = f"{subdomain}-{project_name}.{domain}"
         else:
             # Custom subdomain mode -> use subdomain as-is without project name
@@ -772,7 +772,7 @@ def get_output_filename_from_template(template_filename: str, prefix: str = "") 
         Output filename (e.g., "my-app-argocd-application.yaml")
     """
     # Remove .jinja extension if present
-    base_filename = template_filename[:-6] if template_filename.endswith(".jinja") else template_filename
+    base_filename = template_filename.removesuffix(".jinja")
     # Add prefix if provided
     return f"{prefix}-{base_filename}" if prefix else base_filename
 
@@ -820,7 +820,7 @@ def ensure_url_has_protocol(url: str, use_https: bool = True) -> str:
         ensure_url_has_protocol("http://example.com")
         -> "http://example.com"
     """
-    if url.startswith("http://") or url.startswith("https://"):
+    if url.startswith(("http://", "https://")):
         return url
     protocol = "https" if use_https else "http"
     return f"{protocol}://{url}"

@@ -1158,9 +1158,8 @@ class DeleteProjectManager:
                         if isinstance(service_item, str):
                             if service_item in NAMESPACE_SERVICES:
                                 return True
-                        elif isinstance(service_item, dict):
-                            if any(svc in service_item for svc in NAMESPACE_SERVICES):
-                                return True
+                        elif isinstance(service_item, dict) and any(svc in service_item for svc in NAMESPACE_SERVICES):
+                            return True
                     return False
 
                 uses_namespace_infrastructure = project_uses_namespace_infrastructure(project_data)

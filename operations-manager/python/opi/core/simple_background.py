@@ -15,6 +15,9 @@ from opi.manager.project_manager import ProjectManager
 
 logger = logging.getLogger(__name__)
 
+# Set to hold references to background tasks so they are not garbage collected (RUF006)
+_background_tasks: set[Any] = set()
+
 
 async def _continuous_monitoring(task_id: str, project_name: str) -> None:
     """
@@ -321,7 +324,9 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
                     )
 
                 # Start continuous monitoring in the background
-                asyncio.create_task(_continuous_monitoring(task_id, project_data.project_name))
+                task = asyncio.create_task(_continuous_monitoring(task_id, project_data.project_name))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
 
                 # Calculate final result
                 elapsed_time = time.time() - start_time

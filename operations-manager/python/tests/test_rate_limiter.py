@@ -43,7 +43,7 @@ class TestIPRateLimiterAllowance:
         limiter = IPRateLimiter(requests_per_minute=30, burst=5)
 
         # First 5 requests should be allowed (burst)
-        for i in range(5):
+        for _i in range(5):
             assert limiter.is_allowed("192.168.1.1") is True
 
         # 6th request should be denied (burst exhausted)
@@ -174,23 +174,25 @@ class TestIPRateLimiterMemoryBounds:
         """Memory usage is bounded by cleanup mechanism."""
         limiter = IPRateLimiter(requests_per_minute=30, burst=10, cleanup_interval=0.1)
 
-        # Make many requests from different IPs
-        for i in range(100):
+        # Make requests from different IPs (stay under MAX_NEW_CLIENTS_PER_MINUTE=100)
+        for i in range(80):
             limiter.is_allowed(f"192.168.{i // 256}.{i % 256}")
 
-        # Force old entries
+        # Force half the entries to be old
         old_time = time.monotonic() - 5000
-        for ip in list(limiter._last_update.keys())[:50]:
+        for ip in list(limiter._last_update.keys())[:40]:
             limiter._last_update[ip] = old_time
 
-        # Wait for cleanup interval
+        # Ensure cleanup interval has passed
         limiter._last_cleanup = time.monotonic() - 1.0
+        # Clear new-client timestamps so the next request isn't rate-limited
+        limiter._new_client_timestamps.clear()
 
         # Trigger cleanup via new request
         limiter.is_allowed("10.0.0.1")
 
-        # Should have cleaned up old entries
-        assert len(limiter._tokens) <= 60  # Some should be cleaned
+        # Should have cleaned up ~40 old entries, leaving ~40 recent + 1 new
+        assert len(limiter._tokens) <= 45
 
     def test_tokens_replenish_over_time(self):
         """Tokens are replenished based on elapsed time."""
@@ -217,6 +219,7 @@ class TestKubectlConnectorGetResourcesByLabel:
     async def test_get_resources_by_label_returns_items(self):
         """get_resources_by_label returns list of matching resources."""
         from unittest.mock import AsyncMock
+
         from opi.connectors.kubectl import KubectlConnector
 
         connector = KubectlConnector()
@@ -240,6 +243,7 @@ class TestKubectlConnectorGetResourcesByLabel:
     async def test_get_resources_by_label_returns_empty_on_no_resources(self):
         """get_resources_by_label returns empty list when no resources found."""
         from unittest.mock import AsyncMock
+
         from opi.connectors.kubectl import KubectlConnector
 
         connector = KubectlConnector()
@@ -257,6 +261,7 @@ class TestKubectlConnectorGetResourcesByLabel:
     async def test_get_resources_by_label_handles_errors(self):
         """get_resources_by_label returns empty list on error."""
         from unittest.mock import AsyncMock
+
         from opi.connectors.kubectl import KubectlConnector
 
         connector = KubectlConnector()

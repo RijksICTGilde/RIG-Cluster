@@ -3,7 +3,7 @@
 Test the component validation system.
 """
 
-from jinja_roos_components.components.registry import ComponentRegistry
+from jinja_roos_components.registry import ComponentRegistry
 from jinja_roos_components.validation import ComponentValidationError, validate_template_components
 
 

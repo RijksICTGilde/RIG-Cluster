@@ -6,9 +6,12 @@ Simple test to verify deployment-1 has content and trigger a clone to deployment
 import asyncio
 import logging
 
+import pytest
 from opi.connectors.postgres import create_postgres_connector
 from opi.core.database_pools import close_database_pools, get_database_pool, initialize_database_pools
 from opi.utils.naming import generate_resource_identifier
+
+pytestmark = pytest.mark.slow
 
 logger = logging.getLogger(__name__)
 

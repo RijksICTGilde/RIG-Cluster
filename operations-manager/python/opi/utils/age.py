@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # TODO: replace this method with direct configuration value
 def get_global_private_key() -> str:
-    return cast(str, settings.SOPS_AGE_PRIVATE_KEY)
+    return cast("str", settings.SOPS_AGE_PRIVATE_KEY)
 
 
 async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
@@ -120,7 +120,7 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | 
     logger.debug("Running age decryption command with piped input (sync)")
     logger.debug(f"Command: {' '.join(cmd[:2])} [REDACTED_SECRETS]")
 
-    process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    process = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     if process.returncode != 0:
         error_msg = process.stderr.strip()
@@ -317,7 +317,7 @@ async def get_decoded_project_private_key(project_config: dict) -> str:
     encoded_private_key = config.get("age-private-key")
     if not encoded_private_key:
         raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
-    return await decrypt_age_content(encoded_private_key, cast(str, settings.SOPS_AGE_PRIVATE_KEY))
+    return await decrypt_age_content(encoded_private_key, cast("str", settings.SOPS_AGE_PRIVATE_KEY))
 
 
 def decrypt_password_smart_auto_sync(password: str) -> str:

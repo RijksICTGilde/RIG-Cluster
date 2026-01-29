@@ -36,7 +36,7 @@ class BaseSecret(ABC):
     SECRET_NAME_TEMPLATE: ClassVar[str] = ""
     SERVICE_TYPE: ClassVar[ServiceType]
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> None:  # noqa: B027
         """Default post-initialization hook. Subclasses can override for custom validation."""
 
     @classmethod
@@ -89,7 +89,7 @@ class BaseSecret(ABC):
                     continue
 
                 # Try main key first, then aliases
-                k8s_keys_to_try = [var_def.name] + var_def.aliases
+                k8s_keys_to_try = [var_def.name, *var_def.aliases]
 
                 for k8s_key in k8s_keys_to_try:
                     if k8s_key in secret_data:
@@ -371,7 +371,7 @@ class RegistrySecret(BaseSecret):
             msg = "No registry found in .dockerconfigjson"
             raise ValueError(msg)
 
-        registry_url = list(auths.keys())[0]
+        registry_url = next(iter(auths.keys()))
         auth_data = auths[registry_url]
 
         # Decode auth field if present

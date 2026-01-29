@@ -3,9 +3,7 @@
 Test the new selected attribute in menubar
 """
 
-import sys
-
-sys.path.append("/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/jinja-roos-components")
+from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 from jinja_roos_components.extension import setup_components
@@ -42,12 +40,9 @@ def test_selected_state():
     ]" />
 """
 
-    with open(
-        "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/operations-manager/python/templates/test-selected.html", "w"
-    ) as f:
-        f.write(test_template_content)
-
-    template_dir = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/operations-manager/python/templates"
+    template_dir = str(Path(__file__).parent.parent / "opi" / "templates")
+    test_file = Path(template_dir) / "test-selected.html"
+    test_file.write_text(test_template_content)
     env = Environment(loader=FileSystemLoader(template_dir))
     setup_components(env)
 

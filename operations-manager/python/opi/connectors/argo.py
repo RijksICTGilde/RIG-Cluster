@@ -24,7 +24,7 @@ class ArgoConnector:
         server_host: str = "argocd-server",
         server_port: int = 80,
         username: str = "admin",
-        password: str = "admin",
+        password: str = "admin",  # noqa: S107
         use_tls: bool = False,
         verify_ssl: bool = False,
     ):

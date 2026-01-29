@@ -6,7 +6,10 @@ Test schema access permissions and search path issues
 import asyncio
 
 import asyncpg
+import pytest
 from opi.core.config import settings
+
+pytestmark = pytest.mark.slow
 
 
 async def test_schema_permissions():

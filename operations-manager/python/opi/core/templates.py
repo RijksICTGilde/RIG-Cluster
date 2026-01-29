@@ -59,7 +59,7 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True) -
                         tz_part = decimal_part[idx:]
                         decimal_part = decimal_part[:idx]
                     value = parts[0] + "." + decimal_part[:6] + tz_part
-            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(value)
         elif isinstance(value, datetime):
             dt = value
         else:

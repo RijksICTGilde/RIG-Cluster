@@ -4,8 +4,6 @@ Tests for web subdomain check rate limiting.
 Tests the rate limiting applied to the SSO-protected subdomain check endpoint.
 """
 
-import pytest
-
 from opi.web.router_self_service import web_subdomain_check_rate_limiter
 
 
@@ -36,7 +34,7 @@ class TestWebSubdomainCheckRateLimiter:
         client_id = "test_web_client_block_test"
 
         # Exhaust burst
-        for i in range(10):
+        for _i in range(10):
             web_subdomain_check_rate_limiter.is_allowed(client_id)
 
         # 11th request should be blocked

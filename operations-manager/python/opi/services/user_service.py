@@ -72,9 +72,7 @@ class UserService:
         }
 
         # Only include non-empty organization fields
-        for key, value in org_mappings.items():
-            if value:
-                organization_info[key] = value
+        organization_info = {key: value for key, value in org_mappings.items() if value}
 
         # Add structured organization info if we have any
         if organization_info:
@@ -322,7 +320,7 @@ class UserService:
         Returns:
             List of allowed email addresses
         """
-        return sorted(list(self._allowed_emails))
+        return sorted(self._allowed_emails)
 
     def clear_allowed_emails(self) -> None:
         """Clear all allowed emails (mainly for testing purposes)."""
@@ -340,7 +338,7 @@ class UserService:
         return {
             "total_allowed_emails": len(self._allowed_emails),
             "total_stored_users": len(self._users),
-            "users_with_access": len([email for email in self._users.keys() if self.is_email_allowed(email)]),
+            "users_with_access": len([email for email in self._users if self.is_email_allowed(email)]),
             "allowed_emails": self.get_allowed_emails(),
         }
 

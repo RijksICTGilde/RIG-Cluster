@@ -62,7 +62,7 @@ def generate_project_name(display_name: str) -> tuple[str, str]:
         postfix = settings.FIXED_PROJECT_POSTFIX
     else:
         # Generate 3 random characters (letters and digits)
-        postfix = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(3))
+        postfix = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(3))  # noqa: S311
 
     # Combine: base + dash + postfix
     technical_name = f"{base}-{postfix}"
@@ -70,7 +70,7 @@ def generate_project_name(display_name: str) -> tuple[str, str]:
     # Ensure it starts with a letter (required by validation)
     if not technical_name[0].isalpha():
         # Prepend a random letter if it doesn't start with one
-        technical_name = random.choice(string.ascii_lowercase) + technical_name[1:]
+        technical_name = random.choice(string.ascii_lowercase) + technical_name[1:]  # noqa: S311
 
     # Ensure it's not too long (max 20 characters)
     if len(technical_name) > 20:
@@ -97,9 +97,7 @@ def validate_generated_name(technical_name: str) -> bool:
         return False
     if not technical_name[0].isalpha():
         return False
-    if not re.match(r"^[a-z][a-z0-9-]*$", technical_name):
-        return False
-    return True
+    return re.match(r"^[a-z][a-z0-9-]*$", technical_name)
 
 
 def ensure_unique_project_name(display_name: str, existing_names: set[str] | None = None) -> tuple[str, str]:
@@ -117,7 +115,7 @@ def ensure_unique_project_name(display_name: str, existing_names: set[str] | Non
         existing_names = set()
 
     max_attempts = 10
-    for attempt in range(max_attempts):
+    for _attempt in range(max_attempts):
         technical_name, display = generate_project_name(display_name)
 
         if technical_name not in existing_names and validate_generated_name(technical_name):

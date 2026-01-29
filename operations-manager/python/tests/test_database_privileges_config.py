@@ -120,7 +120,7 @@ def test_get_database_service_config_privileges_not_list(mocker):
     mock_pm = mocker.Mock()
     db_manager = DatabaseManager(mock_pm, db_host="localhost", admin_username="admin", admin_password="password")
 
-    with pytest.raises(ValueError, match="privileges.*must be a list"):
+    with pytest.raises(ValueError, match=r"privileges.*must be a list"):
         db_manager._get_database_service_config(project_data)
 
 
@@ -142,5 +142,5 @@ def test_get_database_service_config_privilege_not_string(mocker):
     mock_pm = mocker.Mock()
     db_manager = DatabaseManager(mock_pm, db_host="localhost", admin_username="admin", admin_password="password")
 
-    with pytest.raises(ValueError, match="Database privilege must be a string"):
+    with pytest.raises(TypeError, match="Database privilege must be a string"):
         db_manager._get_database_service_config(project_data)

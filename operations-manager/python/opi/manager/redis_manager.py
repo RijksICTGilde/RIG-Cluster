@@ -205,10 +205,9 @@ class RedisManager:
             if isinstance(service_item, str):
                 if service_item == ServiceType.NAMESPACE_REDIS.value:
                     return True
-            elif isinstance(service_item, dict):
+            elif isinstance(service_item, dict) and ServiceType.NAMESPACE_REDIS.value in service_item:
                 # Dict format: {"namespace-redis": {"config": {...}}}
-                if ServiceType.NAMESPACE_REDIS.value in service_item:
-                    return True
+                return True
 
         return False
 

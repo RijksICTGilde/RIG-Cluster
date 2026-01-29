@@ -439,7 +439,7 @@ class ServiceAdapter:
                 service_name = next(iter(service_item.keys()))
                 service_names.append(service_name)
             else:
-                raise ValueError(f"Invalid service item type {type(service_item)}, must be str or dict: {service_item}")
+                raise TypeError(f"Invalid service item type {type(service_item)}, must be str or dict: {service_item}")
 
         return service_names
 
@@ -464,7 +464,7 @@ class ServiceAdapter:
 
         for service_name in service_names:
             if not isinstance(service_name, str):
-                raise ValueError(f"Service name must be a string, got {type(service_name)}: {service_name}")
+                raise TypeError(f"Service name must be a string, got {type(service_name)}: {service_name}")
 
             try:
                 service = cls.get_service_by_value(service_name)
@@ -521,9 +521,8 @@ class ServiceAdapter:
             if isinstance(service_item, str):
                 if service_item in namespace_services:
                     return True
-            elif isinstance(service_item, dict):
-                if any(svc in service_item for svc in namespace_services):
-                    return True
+            elif isinstance(service_item, dict) and any(svc in service_item for svc in namespace_services):
+                return True
         return False
 
     @classmethod

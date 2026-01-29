@@ -6,9 +6,12 @@ Test that deployment-1 has content and verify clone will work
 import asyncio
 import logging
 
+import pytest
 from opi.connectors.postgres import create_postgres_connector
-from opi.core.database_pools import get_database_pools
+from opi.core.database_pools import get_database_pool
 from opi.utils.naming import generate_resource_identifier
+
+pytestmark = pytest.mark.slow
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,7 @@ async def test_clone_setup():
     print(f"Target: {target_database}.{target_schema}")
 
     # Get database pools
-    db_pools = await get_database_pools()
+    db_pools = await get_database_pool()
     postgres_connector = await create_postgres_connector(db_pools.postgres)
 
     try:

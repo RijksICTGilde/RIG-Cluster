@@ -6,7 +6,10 @@ Check deployment-3 database as admin to see what schemas and tables actually exi
 import asyncio
 
 import asyncpg
+import pytest
 from opi.core.config import settings
+
+pytestmark = pytest.mark.slow
 
 
 async def test_admin_check():

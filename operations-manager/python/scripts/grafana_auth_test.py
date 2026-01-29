@@ -5,12 +5,11 @@ Grafana OAuth Authentication Test Script
 This script tests authentication to Grafana via SSO/OAuth and performs a simple Prometheus query.
 """
 
-import re
 import getpass
+import re
+from urllib.parse import parse_qs, urlparse
 
 import requests
-from urllib.parse import urlparse, parse_qs
-
 
 GRAFANA_URL = "https://grafana.rig.prd1.gn2.quattro.rijksapps.nl"
 OAUTH_LOGIN_PATH = "/login/generic_oauth"

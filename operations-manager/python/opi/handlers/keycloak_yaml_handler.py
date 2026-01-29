@@ -134,7 +134,7 @@ class KeycloakYamlHandler:
 
         if not isinstance(config, dict):
             msg = f"Invalid YAML configuration: expected dict, got {type(config)}"
-            raise ValueError(msg)
+            raise TypeError(msg)
 
         return config
 
@@ -726,10 +726,7 @@ class KeycloakYamlHandler:
             available_roles = self.keycloak.admin.get_client_roles(client_id=target_client["id"])
 
             # Filter to requested roles
-            roles_to_assign = []
-            for role in available_roles:
-                if role["name"] in role_names:
-                    roles_to_assign.append(role)
+            roles_to_assign = [role for role in available_roles if role["name"] in role_names]
 
             if roles_to_assign:
                 self.keycloak.admin.assign_client_role(

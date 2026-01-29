@@ -51,10 +51,10 @@ def setup_logging(log_to_file: bool = False, log_file_path: str = "log.txt") -> 
             file_handler.setFormatter(logging.Formatter(log_format))
             root_logger.addHandler(file_handler)
 
-            logging.info(f"File logging enabled: {log_file_path}")
+            logging.info(f"File logging enabled: {log_file_path}")  # noqa: LOG015
 
         except Exception as e:
-            logging.exception(f"Failed to setup file logging to {log_file_path}: {e}")
-            logging.info("Continuing with stdout logging only")
+            logging.exception(f"Failed to setup file logging to {log_file_path}: {e}")  # noqa: LOG015
+            logging.info("Continuing with stdout logging only")  # noqa: LOG015
     else:
-        logging.info("File logging disabled - using stdout only")
+        logging.info("File logging disabled - using stdout only")  # noqa: LOG015

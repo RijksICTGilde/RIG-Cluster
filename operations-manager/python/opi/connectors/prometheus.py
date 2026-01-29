@@ -165,10 +165,7 @@ class PrometheusConnector:
         """
         self._ensure_connected()
 
-        if namespace:
-            query = f'count(kube_pod_info{{namespace="{namespace}"}})'
-        else:
-            query = "count(kube_pod_info)"
+        query = f'count(kube_pod_info{{namespace="{namespace}"}})' if namespace else "count(kube_pod_info)"
 
         logger.debug(f"Querying pod count: {query}")
 
@@ -428,6 +425,7 @@ class PrometheusConnector:
                             metrics["requests_per_second"] = value
                             break
                 except Exception:
+                    logger.debug("Metric %s not available for %s/%s, trying next", req_metric, namespace, pod_prefix)
                     continue
 
         except Exception as e:
@@ -805,10 +803,14 @@ class PrometheusConnector:
                     if not created_by_kind:
                         # Skip if it looks like a job pod (single hash suffix)
                         parts = pod_name.split("-")
-                        if len(parts) >= 2 and len(parts[-1]) >= 5 and parts[-1].isalnum():
-                            # Check if second-to-last is NOT a hash (StatefulSet ordinal or Deployment pattern)
-                            if not (parts[-1].isdigit() or (len(parts) >= 3 and len(parts[-2]) >= 5)):
-                                continue
+                        if (
+                            len(parts) >= 2
+                            and len(parts[-1]) >= 5
+                            and parts[-1].isalnum()
+                            and not (parts[-1].isdigit() or (len(parts) >= 3 and len(parts[-2]) >= 5))
+                        ):
+                            # Second-to-last is NOT a hash (StatefulSet ordinal or Deployment pattern)
+                            continue
 
                 # Extract workload name from pod name
                 workload_name = self._extract_workload_name_from_pod(pod_name)

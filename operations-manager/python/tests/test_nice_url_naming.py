@@ -7,18 +7,18 @@ Tests the nice URL dot-separated pattern for hostnames:
 """
 
 import pytest
-from opi.utils.naming import (
-    HostnameFormat,
-    generate_nice_url_hostname,
-    generate_nice_url_root_hostname,
-    find_root_component,
-    get_component_ingress_map,
-    get_deployment_hostnames,
-)
 from opi.core.cluster_config import (
     get_nice_url_config,
     get_nice_url_supported_domains,
     is_nice_url_domain_supported,
+)
+from opi.utils.naming import (
+    HostnameFormat,
+    find_root_component,
+    generate_nice_url_hostname,
+    generate_nice_url_root_hostname,
+    get_component_ingress_map,
+    get_deployment_hostnames,
 )
 
 
@@ -244,5 +244,5 @@ class TestClusterConfigNiceUrl:
 
     def test_unknown_cluster_raises_error(self):
         """Unknown cluster should raise ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="not found in configuration"):
             get_nice_url_supported_domains("nonexistent-cluster")
