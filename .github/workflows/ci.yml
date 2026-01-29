@@ -42,7 +42,7 @@ jobs:
       - name: Run tests with coverage
         run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow" --tb=short
       - name: Coverage report
-        run: uv run coverage report --fail-under=15
+        run: uv run coverage report --fail-under=19
 
   license-check:
     runs-on: ubuntu-latest
