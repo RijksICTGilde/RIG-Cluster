@@ -205,7 +205,7 @@ class TestRouteRequiresSso:
         assert middleware._route_requires_sso(mock_request) is True
 
     def test_unmatched_route_log_matches_return_value(self):
-        """Log message must agree with actual return value (both should say 'require SSO')."""
+        """Log message must agree with actual return value."""
         import inspect
 
         source = inspect.getsource(AuthorizationMiddleware._route_requires_sso)
@@ -225,8 +225,8 @@ class TestRouteRequiresSso:
                         f"Log says 'NOT require SSO' but function returns True (requires SSO): {stripped}"
                     )
 
-    def test_defaults_to_true_for_unannotated_endpoint(self):
-        """An endpoint WITHOUT _requires_sso attribute should default to True (secure by default)."""
+    def test_defaults_to_false_for_unannotated_endpoint(self):
+        """An endpoint WITHOUT _requires_sso attribute should default to False (opt-in SSO)."""
         middleware = AuthorizationMiddleware(MagicMock())
 
         # Endpoint that does NOT have _requires_sso attribute at all
@@ -244,20 +244,18 @@ class TestRouteRequiresSso:
         mock_request.app.router.routes = [mock_route]
 
         result = middleware._route_requires_sso(mock_request)
-        assert result is True, (
-            f"Matched endpoints without _requires_sso should default to True (secure by default), got {result}"
+        assert result is False, (
+            f"Matched endpoints without _requires_sso should default to False (opt-in), got {result}"
         )
 
-    def test_default_sso_comment_matches_code(self):
-        """The comment about default SSO value must match the actual default in getattr()."""
+    def test_default_sso_getattr_uses_false(self):
+        """The getattr default for _requires_sso should be False (opt-in SSO via decorator)."""
         import inspect
 
         source = inspect.getsource(AuthorizationMiddleware._route_requires_sso)
         for line in source.split("\n"):
             stripped = line.strip()
-            if "_requires_sso" in stripped and "getattr" in stripped and "Default to" in stripped:
-                uses_false_default = "False)" in stripped
-                comment_says_true = "Default to True" in stripped
-                assert not (uses_false_default and comment_says_true), (
-                    f"Comment says 'Default to True' but code defaults to False: {stripped}"
+            if "_requires_sso" in stripped and "getattr" in stripped:
+                assert "False)" in stripped, (
+                    f"getattr default for _requires_sso should be False: {stripped}"
                 )
