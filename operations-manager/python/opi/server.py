@@ -7,7 +7,7 @@ from pathlib import Path
 import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -188,6 +188,12 @@ def create_app() -> FastAPI:
     if os.path.exists(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
         logger.info(f"Regular static files mounted at /static from {static_dir}")
+
+    # Health endpoint for Kubernetes probes
+    @app.get("/health", include_in_schema=False, response_class=JSONResponse)
+    async def health_check():
+        """Simple health check endpoint for Kubernetes readiness/liveness probes."""
+        return {"status": "ok"}
 
     return app
 

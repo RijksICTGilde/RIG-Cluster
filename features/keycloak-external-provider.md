@@ -95,7 +95,7 @@ services:
       realm-roles:
         - name: allowed-user
           description: Access to MijnBureau applications
-      restrict_access:
+      restrict-access:
         enabled: true
         realm-role: allowed-user
 ```
