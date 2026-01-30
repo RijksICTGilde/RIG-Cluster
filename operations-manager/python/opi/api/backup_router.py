@@ -1005,10 +1005,10 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
             if run_id not in runs_map:
                 # Parse timestamp from backup_run_id (YYYYMMDDHHmmss)
                 try:
-                    from datetime import datetime
+                    import datetime
 
-                    dt = datetime.strptime(run_id, "%Y%m%d%H%M%S")
-                    formatted_ts = dt.isoformat() + "Z"
+                    dt = datetime.datetime.strptime(run_id, "%Y%m%d%H%M%S").replace(tzinfo=datetime.UTC)
+                    formatted_ts = dt.isoformat()
                 except (ValueError, TypeError):
                     formatted_ts = s.timestamp or "unknown"
 

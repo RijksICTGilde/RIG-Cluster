@@ -6,6 +6,9 @@ Test script to check what's in the SOURCE database (deployment-1) that should be
 import asyncio
 
 import asyncpg
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 async def test_source_database():

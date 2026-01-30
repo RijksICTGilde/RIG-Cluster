@@ -6,6 +6,9 @@ Check what's in the SOURCE database (deployment-2) that was cloned from
 import asyncio
 
 import asyncpg
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 async def test_deployment2_source():

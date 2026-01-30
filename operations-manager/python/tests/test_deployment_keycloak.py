@@ -13,11 +13,15 @@ import logging
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add the project root to the Python path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from opi.connectors.keycloak import create_keycloak_connector
+from opi.connectors.keycloak import create_keycloak_connector  # noqa: E402
+
+pytestmark = pytest.mark.slow
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

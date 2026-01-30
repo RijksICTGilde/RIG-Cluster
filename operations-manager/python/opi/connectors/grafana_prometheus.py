@@ -333,10 +333,7 @@ class GrafanaPrometheusConnector:
         """Get the count of running pods."""
         self._ensure_connected()
 
-        if namespace:
-            query = f'count(kube_pod_info{{namespace="{namespace}"}})'
-        else:
-            query = "count(kube_pod_info)"
+        query = f'count(kube_pod_info{{namespace="{namespace}"}})' if namespace else "count(kube_pod_info)"
 
         logger.debug(f"Querying pod count: {query}")
 
@@ -455,8 +452,8 @@ class GrafanaPrometheusConnector:
 
         try:
             # Parse time strings to datetime
-            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            start_dt = datetime.fromisoformat(start_time)
+            end_dt = datetime.fromisoformat(end_time)
 
             return self._execute_query(
                 query,
@@ -522,6 +519,7 @@ class GrafanaPrometheusConnector:
                             metrics["requests_per_second"] = value
                             break
                 except Exception:
+                    logger.debug("Metric %s not available for %s/%s, trying next", req_metric, namespace, pod_prefix)
                     continue
 
         except Exception as e:
@@ -761,9 +759,13 @@ class GrafanaPrometheusConnector:
                     workload_type = created_by_kind or "Unknown"
                     if not created_by_kind:
                         parts = pod_name.split("-")
-                        if len(parts) >= 2 and len(parts[-1]) >= 5 and parts[-1].isalnum():
-                            if not (parts[-1].isdigit() or (len(parts) >= 3 and len(parts[-2]) >= 5)):
-                                continue
+                        if (
+                            len(parts) >= 2
+                            and len(parts[-1]) >= 5
+                            and parts[-1].isalnum()
+                            and not (parts[-1].isdigit() or (len(parts) >= 3 and len(parts[-2]) >= 5))
+                        ):
+                            continue
 
                 workload_name = self._extract_workload_name_from_pod(pod_name)
 

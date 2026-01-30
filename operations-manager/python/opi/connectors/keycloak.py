@@ -3008,7 +3008,7 @@ class KeycloakConnector:
                 return True
 
             # Filter to requested roles if specified, otherwise assign all
-            if role_names:
+            if role_names:  # noqa: SIM108
                 roles_to_assign = [r for r in available_roles if r["name"] in role_names]
             else:
                 # Assign all management roles for full realm admin access

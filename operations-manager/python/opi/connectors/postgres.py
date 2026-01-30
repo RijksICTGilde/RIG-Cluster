@@ -6,6 +6,7 @@ schema operations, and database cloning operations following the connector patte
 security measures to prevent SQL injection and ensure safe database operations.
 """
 
+import contextlib
 import logging
 import re
 from typing import Any
@@ -72,10 +73,8 @@ class PostgresConnector:
         if self._conn is None or self._current_database != database:
             # Close old connection if exists
             if self._conn:
-                try:
+                with contextlib.suppress(OSError):
                     await self._conn.close()
-                except Exception:
-                    pass  # Ignore errors closing old connection
 
             # Create new connection
             self._conn = await asyncpg.connect(
@@ -93,10 +92,8 @@ class PostgresConnector:
                 await self._conn.fetchval("SELECT 1")
             except Exception:
                 logger.warning(f"Connection to {self._host}/{database} broken, recreating")
-                try:
+                with contextlib.suppress(OSError):
                     await self._conn.close()
-                except Exception:
-                    pass
                 self._conn = await asyncpg.connect(
                     host=self._host,
                     user=self._admin_username,

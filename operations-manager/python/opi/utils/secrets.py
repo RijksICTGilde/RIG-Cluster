@@ -36,7 +36,7 @@ class BaseSecret(ABC):
     SECRET_NAME_TEMPLATE: ClassVar[str] = ""
     SERVICE_TYPE: ClassVar[ServiceType]
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> None:  # noqa: B027
         """Default post-initialization hook. Subclasses can override for custom validation."""
 
     @classmethod
@@ -89,7 +89,7 @@ class BaseSecret(ABC):
                     continue
 
                 # Try main key first, then aliases
-                k8s_keys_to_try = [var_def.name] + var_def.aliases
+                k8s_keys_to_try = [var_def.name, *var_def.aliases]
 
                 for k8s_key in k8s_keys_to_try:
                     if k8s_key in secret_data:
@@ -196,7 +196,10 @@ class DatabaseSecret(BaseSecret):
     def _convert_field_value(cls, field_name: str, value: str) -> str | int:
         """Convert port to integer."""
         if field_name == "port":
-            return int(value)
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
         return value
 
 
@@ -241,7 +244,10 @@ class MinIOSecret(BaseSecret):
     def _convert_field_value(cls, field_name: str, value: str) -> str | int:
         """Convert port to integer."""
         if field_name == "port":
-            return int(value)
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
         return value
 
 
@@ -294,7 +300,10 @@ class RedisSecret(BaseSecret):
     def _convert_field_value(cls, field_name: str, value: str) -> str | int:
         """Convert port to integer."""
         if field_name == "port":
-            return int(value)
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
         return value
 
 
@@ -328,7 +337,7 @@ class RegistrySecret(BaseSecret):
     username: str
     password: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-{registry}-registry"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-registry"
 
     def __post_init__(self) -> None:
         """Validate registry secret data."""
@@ -371,12 +380,14 @@ class RegistrySecret(BaseSecret):
             msg = "No registry found in .dockerconfigjson"
             raise ValueError(msg)
 
-        registry_url = list(auths.keys())[0]
+        registry_url = next(iter(auths.keys()))
         auth_data = auths[registry_url]
 
         # Decode auth field if present
         if "auth" in auth_data:
             auth_decoded = base64.b64decode(auth_data["auth"]).decode()
+            if ":" not in auth_decoded:
+                raise ValueError(f"Invalid auth format for registry '{registry_url}': expected 'username:password'")
             username, password = auth_decoded.split(":", 1)
         else:
             # Fallback to legacy username/password fields

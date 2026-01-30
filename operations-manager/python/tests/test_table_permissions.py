@@ -7,8 +7,11 @@ import asyncio
 import base64
 
 import asyncpg
+import pytest
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart
+
+pytestmark = pytest.mark.slow
 
 
 async def test_table_permissions():
@@ -40,7 +43,7 @@ async def test_table_permissions():
         decoded_password = base64.b64decode(encoded_password).decode("utf-8")
 
         # Decrypt if it's an AGE-encrypted password
-        if decoded_password.startswith("age:") or decoded_password.startswith("base64+age:"):
+        if decoded_password.startswith(("age:", "base64+age:")):
             actual_password = decrypt_password_smart(decoded_password)
             print("✅ Retrieved and decrypted password from Kubernetes secret")
         else:

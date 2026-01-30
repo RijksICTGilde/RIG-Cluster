@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -40,12 +39,10 @@ jobs:
           python-version: "3.13"
       - name: Install dependencies
         run: uv sync --all-groups
-      # NOTE: Root-level tests/test_*.py have broken dependencies on
-      # jinja-roos-components templates. Only run integration tests for now.
       - name: Run tests with coverage
-        run: uv run coverage run --source=opi -m pytest tests/integration/ -v -m "not slow" --tb=short
+        run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow" --tb=short
       - name: Coverage report
-        run: uv run coverage report --fail-under=10
+        run: uv run coverage report --fail-under=21
 
   license-check:
     runs-on: ubuntu-latest

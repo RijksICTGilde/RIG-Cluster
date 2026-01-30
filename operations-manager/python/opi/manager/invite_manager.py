@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any, cast
 
 from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
@@ -104,7 +104,7 @@ class InviteManager:
             # Parse expiration date
             if isinstance(expires_at, str):
                 try:
-                    expiry_date = datetime.strptime(expires_at, "%Y-%m-%d").date()
+                    expiry_date = datetime.strptime(expires_at, "%Y-%m-%d").replace(tzinfo=UTC).date()
                 except ValueError:
                     logger.warning(f"Invalid expires_at format: {expires_at}, treating as not expired")
                     return True
@@ -114,7 +114,7 @@ class InviteManager:
                 logger.warning(f"Unknown expires_at type: {type(expires_at)}, treating as not expired")
                 return True
 
-            today = date.today()
+            today = datetime.now(tz=UTC).date()
             if expiry_date < today:
                 raise InviteExpiredError(invite.get("key", "unknown"), str(expires_at))
 
@@ -221,7 +221,7 @@ class InviteManager:
                 continue
 
             assigned_for_client: list[str] = []
-            role_name_list = cast(list[Any], role_names)
+            role_name_list = cast("list[Any]", role_names)
             for role_name in [str(r) for r in role_name_list]:
                 try:
                     await keycloak.assign_client_role_to_user(realm_name, client_id, user_id, role_name)
@@ -289,7 +289,7 @@ class InviteManager:
         # Assign client roles
         client_roles_raw = invite.get("client_roles", {})
         if client_roles_raw and isinstance(client_roles_raw, dict):
-            client_roles = cast(dict[str, Any], client_roles_raw)
+            client_roles = cast("dict[str, Any]", client_roles_raw)
             client_result = await self._assign_client_roles(keycloak, realm_name, user_id, client_roles)
             assigned["client_roles"] = client_result["assigned"]
             if client_result["errors"]:

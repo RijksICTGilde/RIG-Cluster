@@ -3,8 +3,8 @@
 Test parsing of c-action-group with onclick attribute.
 """
 
-from jinja_roos_components.components.registry import ComponentRegistry
 from jinja_roos_components.html_parser import ComponentHTMLParser
+from jinja_roos_components.registry import ComponentRegistry
 
 # The problematic HTML
 html = """

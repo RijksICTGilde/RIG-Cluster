@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 """Test the layout-grid component."""
 
-import sys
-from pathlib import Path
-
-# Add jinja-roos-components to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "jinja-roos-components"))
-
 from jinja2 import Environment, FileSystemLoader
-from jinja_roos_components.extension import ComponentExtension
+from jinja_roos_components import get_templates_path, setup_components
 
 # Setup paths
-component_templates = (
-    Path(__file__).parent.parent.parent / "jinja-roos-components" / "jinja_roos_components" / "templates"
-)
 
 # Test grid component
 test_template = """
@@ -23,19 +14,21 @@ test_template = """
 </c-layout-grid>
 """
 
-# Create environment
-env = Environment(loader=FileSystemLoader([str(component_templates)]), extensions=[ComponentExtension], autoescape=True)
+if __name__ == "__main__":
+    # Create environment
+    env = Environment(loader=FileSystemLoader(str(get_templates_path())), autoescape=True)
+    setup_components(env)
 
-# Render template
-template = env.from_string(test_template)
-html_output = template.render()
+    # Render template
+    template = env.from_string(test_template)
+    html_output = template.render()
 
-print("Grid component output:")
-print("=" * 40)
-print(html_output)
-print("=" * 40)
+    print("Grid component output:")
+    print("=" * 40)
+    print(html_output)
+    print("=" * 40)
 
-if "rvo-layout-grid--columns-2" in html_output and "rvo-layout-grid--gap-md" in html_output:
-    print("✅ Grid component working correctly")
-else:
-    print("❌ Grid component not working correctly")
+    if "rvo-layout-grid--columns-2" in html_output and "rvo-layout-grid--gap-md" in html_output:
+        print("✅ Grid component working correctly")
+    else:
+        print("❌ Grid component not working correctly")

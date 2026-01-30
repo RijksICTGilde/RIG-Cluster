@@ -61,7 +61,9 @@ def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
         yaml.default_flow_style = False
 
         # Ensure directory exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        dir_name = os.path.dirname(file_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
 
         with open(file_path, "w", encoding="utf-8") as f:
             yaml.dump(data, f)

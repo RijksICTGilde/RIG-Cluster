@@ -8,6 +8,9 @@ import asyncio
 import sys
 
 import asyncpg
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 async def test_database_connection() -> None:

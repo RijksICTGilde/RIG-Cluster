@@ -7,13 +7,14 @@ following the same pattern as kubectl.py.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
 import tempfile
 import threading
-from typing import Any
+from typing import Any, ClassVar
 
 from opi.core.config import settings
 
@@ -38,7 +39,7 @@ class MinioConnector:
     _instance = None
     _lock = threading.Lock()
     is_mc_available = False
-    configured_aliases = set()
+    configured_aliases: ClassVar[set[str]] = set()
     _retry_task = None
 
     def __new__(cls) -> "MinioConnector":
@@ -193,11 +194,8 @@ class MinioConnector:
         if args[0] == "alias" and args[1] == "set":
             # mc alias set <alias> <endpoint> <access-key> <secret-key>
             return True
-        if len(args) >= 3 and args[0] == "admin" and args[1] == "user" and args[2] == "add":
-            # mc admin user add <alias> <username> <secret-key>
-            return True
-
-        return False
+        # mc admin user add <alias> <username> <secret-key>
+        return len(args) >= 3 and args[0] == "admin" and args[1] == "user" and args[2] == "add"
 
     async def _run_mc_command(
         self, args: list[str], env: dict[str, str] | None = None, stdin_input: str | None = None
@@ -536,10 +534,8 @@ class MinioConnector:
                 }
             finally:
                 # Clean up temporary file
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(temp_file)
-                except OSError:
-                    pass
 
         except MinioValidationError:
             logger.exception("Validation failed for policy creation")

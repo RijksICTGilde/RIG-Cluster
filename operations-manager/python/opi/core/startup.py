@@ -123,7 +123,7 @@ def should_retry_keycloak_error(exception):
 
     # Retry network/connection errors
     return isinstance(
-        exception, (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError, ConnectionError)
+        exception, httpx.ConnectError | httpx.TimeoutException | httpx.RemoteProtocolError | ConnectionError
     )
 
 
@@ -210,7 +210,7 @@ def print_boot_banner():
     """Print a distinctive boot banner for easy log identification."""
     import datetime
 
-    boot_time = datetime.datetime.now().isoformat()
+    boot_time = datetime.datetime.now(tz=datetime.UTC).isoformat()
 
     banner = f"""
 {"=" * 80}
@@ -238,9 +238,9 @@ async def get_project_files(repo_root_folder: str) -> list[str]:
         logger.warning(f"Projects directory not found: {repo_root_folder}")
         return project_files
 
-    for file in os.listdir(repo_root_folder):
-        if file.endswith((".yaml", ".yml")):
-            project_files.append(os.path.join("projects", file))
+    project_files.extend(
+        os.path.join("projects", file) for file in os.listdir(repo_root_folder) if file.endswith((".yaml", ".yml"))
+    )
 
     logger.info(f"Found {len(project_files)} project files to process")
     return project_files

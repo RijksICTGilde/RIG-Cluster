@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # TODO: replace this method with direct configuration value
 def get_global_private_key() -> str:
-    return cast(str, settings.SOPS_AGE_PRIVATE_KEY)
+    return cast("str", settings.SOPS_AGE_PRIVATE_KEY)
 
 
 async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
@@ -120,7 +120,7 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | 
     logger.debug("Running age decryption command with piped input (sync)")
     logger.debug(f"Command: {' '.join(cmd[:2])} [REDACTED_SECRETS]")
 
-    process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    process = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     if process.returncode != 0:
         error_msg = process.stderr.strip()
@@ -192,15 +192,17 @@ def parse_password_with_prefix(password: str) -> tuple[str, str]:
         Tuple of (type, content) where type is 'plain', 'age', or 'base64+age'
     """
     if not password:
-        return "plain", password
+        return "plain", password or ""
 
     password = password.strip()
 
     # Check for explicit prefixes
     if password.startswith("age:"):
-        return "age", password[4:]  # Remove 'age:' prefix
+        content = password[4:]
+        return ("age", content) if content else ("plain", password)
     elif password.startswith("base64+age:"):
-        return "base64+age", password[11:]  # Remove 'base64+age:' prefix
+        content = password[11:]
+        return ("base64+age", content) if content else ("plain", password)
     elif password.startswith("plain:"):
         return "plain", password[6:]  # Remove 'plain:' prefix
 
@@ -317,7 +319,7 @@ async def get_decoded_project_private_key(project_config: dict) -> str:
     encoded_private_key = config.get("age-private-key")
     if not encoded_private_key:
         raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
-    return await decrypt_age_content(encoded_private_key, cast(str, settings.SOPS_AGE_PRIVATE_KEY))
+    return await decrypt_age_content(encoded_private_key, cast("str", settings.SOPS_AGE_PRIVATE_KEY))
 
 
 def decrypt_password_smart_auto_sync(password: str) -> str:

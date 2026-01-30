@@ -7,8 +7,8 @@ for bucket operations, user management, and access control.
 
 import logging
 
+import pytest
 from opi.connectors.minio_mc import MinioConnectionError, MinioConnector, MinioExecutionError, MinioValidationError
-from opi.core.config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,19 +29,19 @@ def test_validation():
         # Invalid bucket names should raise exceptions
         try:
             connector._validate_bucket_name("")
-            assert False, "Empty bucket name should fail"
+            raise AssertionError("Empty bucket name should fail")
         except MinioValidationError:
             logger.info("✓ Empty bucket name validation works")
 
         try:
             connector._validate_bucket_name("Test-Bucket")  # Uppercase not allowed
-            assert False, "Uppercase bucket name should fail"
+            raise AssertionError("Uppercase bucket name should fail")
         except MinioValidationError:
             logger.info("✓ Uppercase bucket name validation works")
 
         try:
             connector._validate_bucket_name("test--bucket")  # Consecutive hyphens
-            assert False, "Consecutive hyphens should fail"
+            raise AssertionError("Consecutive hyphens should fail")
         except MinioValidationError:
             logger.info("✓ Consecutive hyphens validation works")
 
@@ -59,7 +59,7 @@ def test_validation():
         # Invalid usernames should raise exceptions
         try:
             connector._validate_username("123user")  # Cannot start with number
-            assert False, "Username starting with number should fail"
+            raise AssertionError("Username starting with number should fail")
         except MinioValidationError:
             logger.info("✓ Username starting with number validation works")
 
@@ -68,6 +68,7 @@ def test_validation():
         raise
 
 
+@pytest.mark.slow
 def test_connection():
     """Test MinIO connection using settings from config."""
     connector = MinioConnector()
@@ -90,6 +91,7 @@ def test_connection():
         logger.warning("This is expected if MinIO server is not available")
 
 
+@pytest.mark.slow
 def test_bucket_operations():
     """Test bucket CRUD operations."""
     connector = MinioConnector()
@@ -148,6 +150,7 @@ def test_bucket_operations():
         raise
 
 
+@pytest.mark.slow
 def test_user_operations():
     """Test user CRUD operations."""
     connector = MinioConnector()
@@ -210,6 +213,7 @@ def test_user_operations():
         raise
 
 
+@pytest.mark.slow
 def test_access_control():
     """Test access control operations."""
     connector = MinioConnector()

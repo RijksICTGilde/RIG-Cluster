@@ -4,16 +4,10 @@
 import sys
 from pathlib import Path
 
-# Add jinja-roos-components to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "jinja-roos-components"))
-
 from jinja2 import Environment, FileSystemLoader
-from jinja_roos_components.extension import ComponentExtension
+from jinja_roos_components import get_templates_path, setup_components
 
 # Setup paths
-component_templates = (
-    Path(__file__).parent.parent.parent / "jinja-roos-components" / "jinja_roos_components" / "templates"
-)
 
 # Create test template with all button variants
 test_template = """
@@ -192,88 +186,91 @@ test_template = """
 </html>
 """
 
-# Create environment
-env = Environment(loader=FileSystemLoader([str(component_templates)]), extensions=[ComponentExtension], autoescape=True)
 
-# Render template
-template = env.from_string(test_template)
-html_output = template.render()
+if __name__ == "__main__":
+    # Create environment
+    env = Environment(loader=FileSystemLoader(str(get_templates_path())), autoescape=True)
+    setup_components(env)
 
-# Save output
-output_file = Path(__file__).parent / "test_button_variants.html"
-output_file.write_text(html_output)
+    # Render template
+    template = env.from_string(test_template)
+    html_output = template.render()
 
-print("✓ Template rendered successfully")
-print(f"✓ Output written to: {output_file}")
+    # Save output
+    output_file = Path(__file__).parent / "test_button_variants.html"
+    output_file.write_text(html_output)
 
-# Verify button types are correctly mapped
-checks = [
-    # Primary and secondary should have appearance attribute
-    ('data-utrecht-button-appearance="primary-action-button"', "Primary button appearance"),
-    ('data-utrecht-button-appearance="secondary-action-button"', "Secondary button appearance"),
-    # Tertiary and quaternary should have specific classes
-    ("utrecht-button--rvo-tertiary-action", "Tertiary button class"),
-    ("utrecht-button--rvo-quaternary-action", "Quaternary button class"),
-    # Warning should have hint attribute
-    ('data-utrecht-button-hint="warning"', "Warning button hint"),
-    # Subtle should have appearance
-    ('data-utrecht-button-appearance="subtle-button"', "Subtle button appearance"),
-    # Size classes
-    ("utrecht-button--rvo-xs", "XS size class"),
-    ("utrecht-button--rvo-sm", "SM size class"),
-    ("utrecht-button--rvo-md", "MD size class"),
-    # State classes
-    ("utrecht-button--hover", "Hover state class"),
-    ("utrecht-button--focus", "Focus state class"),
-    ("utrecht-button--active", "Active state class"),
-    ("utrecht-button--busy", "Busy state class"),
-    # Icon classes
-    ("rvo-icon-plus", "Plus icon"),
-    ("rvo-icon-pijl-naar-rechts", "Arrow icon"),
-    ("rvo-icon-waarschuwing", "Warning icon"),
-    ("rvo-icon-spinner", "Spinner icon for busy state"),
-    # Full width
-    ("utrecht-button--rvo-full-width", "Full width class"),
-    # Icon position classes
-    ("utrecht-button--icon-before", "Icon before class"),
-    ("utrecht-button--icon-after", "Icon after class"),
-    # Event handlers
-    ('onclick="alert(&#39;Clicked!&#39;)"', "Click event handler"),
-    # Data attributes
-    ('data-action="delete"', "Data attribute"),
-    ('aria-label="Delete item"', "ARIA label"),
-]
+    print("✓ Template rendered successfully")
+    print(f"✓ Output written to: {output_file}")
 
-print("\nVerifying button implementations:")
-all_passed = True
-for expected, description in checks:
-    if expected in html_output:
-        print(f"  ✓ {description}")
+    # Verify button types are correctly mapped
+    checks = [
+        # Primary and secondary should have appearance attribute
+        ('data-utrecht-button-appearance="primary-action-button"', "Primary button appearance"),
+        ('data-utrecht-button-appearance="secondary-action-button"', "Secondary button appearance"),
+        # Tertiary and quaternary should have specific classes
+        ("utrecht-button--rvo-tertiary-action", "Tertiary button class"),
+        ("utrecht-button--rvo-quaternary-action", "Quaternary button class"),
+        # Warning should have hint attribute
+        ('data-utrecht-button-hint="warning"', "Warning button hint"),
+        # Subtle should have appearance
+        ('data-utrecht-button-appearance="subtle-button"', "Subtle button appearance"),
+        # Size classes
+        ("utrecht-button--rvo-xs", "XS size class"),
+        ("utrecht-button--rvo-sm", "SM size class"),
+        ("utrecht-button--rvo-md", "MD size class"),
+        # State classes
+        ("utrecht-button--hover", "Hover state class"),
+        ("utrecht-button--focus", "Focus state class"),
+        ("utrecht-button--active", "Active state class"),
+        ("utrecht-button--busy", "Busy state class"),
+        # Icon classes
+        ("rvo-icon-plus", "Plus icon"),
+        ("rvo-icon-pijl-naar-rechts", "Arrow icon"),
+        ("rvo-icon-waarschuwing", "Warning icon"),
+        ("rvo-icon-spinner", "Spinner icon for busy state"),
+        # Full width
+        ("utrecht-button--rvo-full-width", "Full width class"),
+        # Icon position classes
+        ("utrecht-button--icon-before", "Icon before class"),
+        ("utrecht-button--icon-after", "Icon after class"),
+        # Event handlers
+        ('onclick="alert(&#39;Clicked!&#39;)"', "Click event handler"),
+        # Data attributes
+        ('data-action="delete"', "Data attribute"),
+        ('aria-label="Delete item"', "ARIA label"),
+    ]
+
+    print("\nVerifying button implementations:")
+    all_passed = True
+    for expected, description in checks:
+        if expected in html_output:
+            print(f"  ✓ {description}")
+        else:
+            print(f"  ✗ {description} - NOT FOUND")
+            all_passed = False
+
+    # Count button instances
+    button_count = html_output.count("<button")
+    print(f"\n📊 Total buttons rendered: {button_count}")
+
+    # Check for the specific tertiary button with icon
+    if "Gebruiker toevoegen" in html_output:
+        # Find the button context
+        start = html_output.find("Gebruiker toevoegen") - 500
+        end = html_output.find("Gebruiker toevoegen") + 100
+        button_context = html_output[start:end]
+
+        if "utrecht-button--rvo-tertiary-action" in button_context:
+            print("✓ 'Gebruiker toevoegen' correctly uses tertiary style")
+        else:
+            print("✗ 'Gebruiker toevoegen' NOT using tertiary style")
+            all_passed = False
+
+    if all_passed:
+        print("\n✅ All button variant tests passed!")
+        print(f"\n🌐 Open {output_file} in a browser to see the visual result")
+        sys.exit(0)
     else:
-        print(f"  ✗ {description} - NOT FOUND")
-        all_passed = False
-
-# Count button instances
-button_count = html_output.count("<button")
-print(f"\n📊 Total buttons rendered: {button_count}")
-
-# Check for the specific tertiary button with icon
-if "Gebruiker toevoegen" in html_output:
-    # Find the button context
-    start = html_output.find("Gebruiker toevoegen") - 500
-    end = html_output.find("Gebruiker toevoegen") + 100
-    button_context = html_output[start:end]
-
-    if "utrecht-button--rvo-tertiary-action" in button_context:
-        print("✓ 'Gebruiker toevoegen' correctly uses tertiary style")
-    else:
-        print("✗ 'Gebruiker toevoegen' NOT using tertiary style")
-        all_passed = False
-
-if all_passed:
-    print("\n✅ All button variant tests passed!")
-    print(f"\n🌐 Open {output_file} in a browser to see the visual result")
-    sys.exit(0)
-else:
-    print("\n❌ Some tests failed")
-    sys.exit(1)
+        print("\n❌ Some tests failed")
+        sys.exit(1)

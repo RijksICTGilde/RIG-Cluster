@@ -5,6 +5,7 @@ Test Age password decryption using the GIT_PROJECTS_SERVER_PASSWORD from configm
 import base64
 from unittest.mock import patch
 
+import pytest
 from opi.utils.age import decrypt_password_smart_sync, is_age_encrypted, parse_password_with_prefix
 
 
@@ -39,6 +40,17 @@ class TestAgePasswordDecryption:
         age_type, extracted_content = parse_password_with_prefix(f"age:{age_content}")
         assert age_type == "age"
         assert extracted_content == age_content
+
+    def test_parse_password_none_returns_string_content(self):
+        """parse_password_with_prefix(None) must return string content, not None."""
+        password_type, content = parse_password_with_prefix(None)
+        assert password_type == "plain"
+        assert isinstance(content, str), "Content must be a string, not None"
+
+    def test_parse_password_empty_age_prefix_returns_plain(self):
+        """parse_password_with_prefix('age:') with no content should fall back to plain, not return age type."""
+        password_type, content = parse_password_with_prefix("age:")
+        assert password_type == "plain", "age: with no content is not valid encrypted data, should be treated as plain"
 
     def test_is_age_encrypted(self):
         """Test Age encryption detection."""
@@ -78,18 +90,15 @@ class TestAgePasswordDecryption:
         mock_subprocess.return_value.stdout = ""
         mock_subprocess.return_value.stderr = "age: error: decryption failed"
 
-        # Test decryption - should return original password on failure
-        result = decrypt_password_smart_sync(self.encrypted_password, self.private_key)
-
-        # Should return original password when decryption fails
-        assert result == self.encrypted_password
+        # API now raises ValueError on decryption failure
+        with pytest.raises(ValueError, match="Failed to decrypt"):
+            decrypt_password_smart_sync(self.encrypted_password, self.private_key)
 
     def test_decrypt_password_smart_sync_no_key(self):
         """Test behavior when no private key is provided."""
-        result = decrypt_password_smart_sync(self.encrypted_password, None)
-
-        # Should return original password when no key available
-        assert result == self.encrypted_password
+        # API now raises ValueError when no key is available
+        with pytest.raises(ValueError, match="no private key available"):
+            decrypt_password_smart_sync(self.encrypted_password, None)
 
     def test_decrypt_password_smart_sync_plain_text(self):
         """Test handling of plain text passwords."""

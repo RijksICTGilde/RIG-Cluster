@@ -9,7 +9,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 from ruamel.yaml import YAML
@@ -86,9 +86,7 @@ class GitConnector:
             self._decrypted_password = decrypt_password_smart_auto_sync(password)
 
             # Verify password was actually decrypted (not returned as original encrypted value)
-            if self._decrypted_password == password and (
-                password.startswith("base64+age:") or password.startswith("age:")
-            ):
+            if self._decrypted_password == password and (password.startswith(("base64+age:", "age:"))):
                 logger.error("Password decryption failed, still contains encryption prefix")
                 raise ValueError("Failed to decrypt password - Age decryption unsuccessful")
 
@@ -325,7 +323,7 @@ class GitConnector:
         Returns:
             Tuple of (stdout, stderr, return_code)
         """
-        cmd = ["git"] + args
+        cmd = ["git", *args]
         cmd_str = " ".join(cmd)
         working_dir = cwd or self.__working_dir
         logger.debug(f"Running Git command: {_obfuscate_git_command(cmd_str)} in {working_dir}")
@@ -336,20 +334,24 @@ class GitConnector:
             cmd_env.update(env)
 
         # Configure SSH if using SSH URL and credentials are provided
-        if self.url_config and self.url_config.get("needs_auth") and self.url_config.get("scheme") in ["ssh"]:
-            if self.ssh_key_path:
-                ssh_cmd = f"ssh -i {self.ssh_key_path}"
+        if (
+            self.url_config
+            and self.url_config.get("needs_auth")
+            and self.url_config.get("scheme") in ["ssh"]
+            and self.ssh_key_path
+        ):
+            ssh_cmd = f"ssh -i {self.ssh_key_path}"
 
-                # Add port if not default
-                port = self.url_config.get("port", 22)
-                if port != 22:
-                    ssh_cmd += f" -p {port}"
+            # Add port if not default
+            port = self.url_config.get("port", 22)
+            if port != 22:
+                ssh_cmd += f" -p {port}"
 
-                # Add options for StrictHostKeyChecking
-                ssh_cmd += " -o StrictHostKeyChecking=no"
+            # Add options for StrictHostKeyChecking
+            ssh_cmd += " -o StrictHostKeyChecking=no"
 
-                logger.debug(f"Using SSH command: {ssh_cmd}")
-                cmd_env["GIT_SSH_COMMAND"] = ssh_cmd
+            logger.debug(f"Using SSH command: {ssh_cmd}")
+            cmd_env["GIT_SSH_COMMAND"] = ssh_cmd
 
         # Create process
         process = await asyncio.create_subprocess_exec(
@@ -433,7 +435,7 @@ class GitConnector:
             return f"git server [URL: {_obfuscate_git_command(self.repo_url)}]{project_part}"
 
     # Dictionary to cache Git references for each repository URL
-    _ref_cache: dict[str, dict[str, str]] = {}
+    _ref_cache: ClassVar[dict[str, dict[str, str]]] = {}
 
     async def get_remote_refs(self) -> dict[str, str]:
         """
@@ -861,8 +863,7 @@ class GitConnector:
         if not self.repo_path or self.repo_path == "/":
             return file_path.lstrip("/")
 
-        if file_path.startswith("/"):
-            file_path = file_path[1:]
+        file_path = file_path.removeprefix("/")
 
         if self.repo_path.endswith("/"):
             return f"{self.repo_path}{file_path}"
@@ -1458,8 +1459,7 @@ class GitConnector:
         logger.info(f"Creating new Git repository '{repo_name}' on server {server_host}")
 
         # Ensure repo_name doesn't have .git extension already
-        if repo_name.endswith(".git"):
-            repo_name = repo_name[:-4]
+        repo_name = repo_name.removesuffix(".git")
 
         repo_path = f"/srv/git/{repo_name}.git"
         logger.debug(f"Repository path on server: {repo_path}")
@@ -1482,7 +1482,7 @@ class GitConnector:
         ssh_target = f"{ssh_user}@{server_host}"
 
         # First check if repository already exists
-        check_cmd = ssh_cmd_base + [ssh_target, f"test -d {repo_path}"]
+        check_cmd = [*ssh_cmd_base, ssh_target, f"test -d {repo_path}"]
         logger.debug(f"Checking if repository exists: {' '.join(check_cmd)}")
 
         try:
@@ -1502,11 +1502,11 @@ class GitConnector:
             logger.warning(f"Error checking repository existence: {e}, proceeding with creation")
 
         # Commands to execute on the remote server (only if repo doesn't exist)
-        commands = [f"mkdir -p {repo_path}", f"git-init -b main --bare {repo_path}"]
+        commands = [f"mkdir -p {repo_path}", f"git init -b main --bare {repo_path}"]
 
         # Execute each command
         for cmd in commands:
-            ssh_cmd = ssh_cmd_base + [ssh_target, cmd]
+            ssh_cmd = [*ssh_cmd_base, ssh_target, cmd]
             logger.debug(f"Executing SSH command: {' '.join(ssh_cmd)}")
 
             try:

@@ -420,20 +420,18 @@ class KeycloakManager:
         user_config = None
         keycloak_type = None
         for service_item in project_services:
-            if isinstance(service_item, dict):
-                # Dict format: {"keycloak": {"type": "external", "config": {...}}}
-                if "keycloak" in service_item:
-                    service_data = service_item["keycloak"]
-                    if not isinstance(service_data, dict):
-                        raise ValueError(
-                            f"Invalid keycloak service format. Expected dict with 'config' key, "
-                            f"got {type(service_data).__name__}"
-                        )
-                    # Extract type from service_data (not config)
-                    keycloak_type = service_data.get("type")
-                    if "config" in service_data:
-                        user_config = service_data["config"]
-                    break
+            if isinstance(service_item, dict) and "keycloak" in service_item:
+                service_data = service_item["keycloak"]
+                if not isinstance(service_data, dict):
+                    raise ValueError(
+                        f"Invalid keycloak service format. Expected dict with 'config' key, "
+                        f"got {type(service_data).__name__}"
+                    )
+                # Extract type from service_data (not config)
+                keycloak_type = service_data.get("type")
+                if "config" in service_data:
+                    user_config = service_data["config"]
+                break
 
         # If no config specified, use defaults
         if user_config is None:
@@ -444,7 +442,7 @@ class KeycloakManager:
 
         # Validate config is a dict
         if not isinstance(user_config, dict):
-            raise ValueError(f"Keycloak config must be a dict, got {type(user_config).__name__}")
+            raise TypeError(f"Keycloak config must be a dict, got {type(user_config).__name__}")
 
         # Merge with defaults
         merged_config = DEFAULT_CONFIG.copy()
@@ -484,7 +482,7 @@ class KeycloakManager:
             # Validate all entries are strings
             for uri in additional_uris:
                 if not isinstance(uri, str):
-                    raise ValueError(f"All additional_redirect_uris must be strings, got {type(uri).__name__}: {uri}")
+                    raise TypeError(f"All additional_redirect_uris must be strings, got {type(uri).__name__}: {uri}")
             merged_config["additional_redirect_uris"] = additional_uris
             logger.info(f"Found {len(additional_uris)} additional redirect URIs in config")
 
@@ -538,7 +536,7 @@ class KeycloakManager:
                 raise ValueError(f"additional-clients must be a list, got {type(additional_clients).__name__}")
             for i, client_config in enumerate(additional_clients):
                 if not isinstance(client_config, dict):
-                    raise ValueError(f"additional-clients[{i}] must be a dict, got {type(client_config).__name__}")
+                    raise TypeError(f"additional-clients[{i}] must be a dict, got {type(client_config).__name__}")
                 if "name" not in client_config:
                     raise ValueError(f"additional-clients[{i}].name is required")
             merged_config["additional_clients"] = additional_clients
@@ -551,7 +549,7 @@ class KeycloakManager:
                 raise ValueError(f"realm-roles must be a list, got {type(realm_roles).__name__}")
             for i, role_config in enumerate(realm_roles):
                 if not isinstance(role_config, dict):
-                    raise ValueError(f"realm-roles[{i}] must be a dict, got {type(role_config).__name__}")
+                    raise TypeError(f"realm-roles[{i}] must be a dict, got {type(role_config).__name__}")
                 if "name" not in role_config:
                     raise ValueError(f"realm-roles[{i}].name is required")
             merged_config["realm_roles"] = realm_roles
@@ -1404,7 +1402,8 @@ class KeycloakManager:
 
         except Exception as e:
             logger.warning(f"Failed to check/update platform client configuration: {e}")
-            # Ensure we're back in master realm (ignore errors during cleanup)
+            # Ensure we're back in master realm (ignore errors during cleanup — broad
+            # suppress is intentional since the keycloak client can raise any exception)
             with contextlib.suppress(Exception):
                 keycloak.admin.change_current_realm("master")
 
@@ -1529,7 +1528,7 @@ class KeycloakManager:
         # Merge user-provided variables (overrides defaults)
         user_variables = config.get("variables", {})
         if not isinstance(user_variables, dict):
-            raise ValueError(f"Template variables must be a dict, got {type(user_variables).__name__}")
+            raise TypeError(f"Template variables must be a dict, got {type(user_variables).__name__}")
 
         context.update(user_variables)
 

@@ -268,7 +268,7 @@ def generate_ingress_map(
         domain = ingress_postfix.lstrip(".")
 
         # If subdomain matches deployment_name, it's deployment-name mode -> include project name
-        if subdomain == deployment_name:
+        if subdomain == deployment_name:  # noqa: SIM108
             hostname = f"{subdomain}-{project_name}.{domain}"
         else:
             # Custom subdomain mode -> use subdomain as-is without project name
@@ -772,7 +772,7 @@ def get_output_filename_from_template(template_filename: str, prefix: str = "") 
         Output filename (e.g., "my-app-argocd-application.yaml")
     """
     # Remove .jinja extension if present
-    base_filename = template_filename[:-6] if template_filename.endswith(".jinja") else template_filename
+    base_filename = template_filename.removesuffix(".jinja")
     # Add prefix if provided
     return f"{prefix}-{base_filename}" if prefix else base_filename
 
@@ -820,7 +820,7 @@ def ensure_url_has_protocol(url: str, use_https: bool = True) -> str:
         ensure_url_has_protocol("http://example.com")
         -> "http://example.com"
     """
-    if url.startswith("http://") or url.startswith("https://"):
+    if url.startswith(("http://", "https://")):
         return url
     protocol = "https" if use_https else "http"
     return f"{protocol}://{url}"
@@ -850,9 +850,10 @@ def extract_domain_from_url(url: str) -> str:
         url = url[8:]
     elif url.startswith("http://"):
         url = url[7:]
-    # Remove any path component
-    if "/" in url:
-        url = url.split("/")[0]
+    # Remove any path, query string, or fragment
+    for sep in ("/", "?", "#"):
+        if sep in url:
+            url = url.split(sep)[0]
     return url
 
 
@@ -1223,7 +1224,7 @@ def normalize_base_domain(base_domain: str, max_length: int = 50) -> str:
     if len(normalized) > max_length:
         normalized = normalized[:max_length].rstrip("-")
 
-    return normalized
+    return normalized or "domain"
 
 
 def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:

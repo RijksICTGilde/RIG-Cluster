@@ -3,9 +3,7 @@
 Test the menubar HTML output to verify correct class structure
 """
 
-import sys
-
-sys.path.append("/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/jinja-roos-components")
+from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 from jinja_roos_components.extension import setup_components
@@ -42,13 +40,9 @@ def test_menubar_html():
     }
 
     # Write test template to file
-    with open(
-        "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/operations-manager/python/templates/test-menubar-styles.html",
-        "w",
-    ) as f:
-        f.write(templates["test.html"])
-
-    template_dir = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/operations-manager/python/templates"
+    template_dir = str(Path(__file__).parent.parent / "opi" / "templates")
+    test_file = Path(template_dir) / "test-menubar-styles.html"
+    test_file.write_text(templates["test.html"])
     env = Environment(loader=FileSystemLoader(template_dir))
     setup_components(env)
 

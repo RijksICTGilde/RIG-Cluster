@@ -18,7 +18,6 @@ import sys
 
 import requests
 
-
 GRAFANA_URL = os.environ.get("GRAFANA_URL", "https://grafana.rig.prd1.gn2.quattro.rijksapps.nl")
 
 
