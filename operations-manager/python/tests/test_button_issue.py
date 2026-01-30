@@ -4,10 +4,7 @@ Simple test case to isolate the button parsing issue.
 """
 
 import os
-import sys
 import tempfile
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../jinja-roos-components"))
 
 from jinja2 import DictLoader, Environment
 
@@ -47,7 +44,8 @@ def test_button_parsing_directly():
             temp_path = f.name
 
         # Try to render it
-        template = templates.env.from_string(open(temp_path).read())
+        with open(temp_path) as tf:
+            template = templates.env.from_string(tf.read())
         result = template.render()
         print("✅ Operations Manager setup: SUCCESS")
         print("Rendered length:", len(result))

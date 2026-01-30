@@ -45,7 +45,7 @@ python functional_tests/setup_test_infrastructure.py
 
 This script will:
 - ✅ Check if Git server is running on localhost:2222
-- ✅ Validate SSH connectivity and credentials  
+- ✅ Validate SSH connectivity and credentials
 - ✅ Create the ArgoCD applications repository
 - ✅ Create the project repository from simple-example.yaml
 - ✅ Provide detailed feedback on any issues

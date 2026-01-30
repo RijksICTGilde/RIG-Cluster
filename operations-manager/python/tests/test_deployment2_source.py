@@ -6,6 +6,9 @@ Check what's in the SOURCE database (deployment-2) that was cloned from
 import asyncio
 
 import asyncpg
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 async def test_deployment2_source():
@@ -26,8 +29,8 @@ async def test_deployment2_source():
 
         # List all schemas
         schemas = await conn.fetch("""
-            SELECT schema_name, schema_owner 
-            FROM information_schema.schemata 
+            SELECT schema_name, schema_owner
+            FROM information_schema.schemata
             WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
             ORDER BY schema_name
         """)
@@ -45,8 +48,8 @@ async def test_deployment2_source():
             # List tables in the expected schema
             tables = await conn.fetch(
                 """
-                SELECT table_name, table_type 
-                FROM information_schema.tables 
+                SELECT table_name, table_type
+                FROM information_schema.tables
                 WHERE table_schema = $1
                 ORDER BY table_name
             """,

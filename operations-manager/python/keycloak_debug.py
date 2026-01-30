@@ -53,7 +53,7 @@ def list_realms(admin: KeycloakAdmin) -> None:
     print(f"Found {len(realms)} realms:\n")
     for realm in realms:
         print(f"  - {realm['realm']}")
-        if realm.get('displayName'):
+        if realm.get("displayName"):
             print(f"    Display: {realm['displayName']}")
         print(f"    Login Theme: {realm.get('loginTheme', 'default')}")
         print()
@@ -101,24 +101,21 @@ def get_themes(admin: KeycloakAdmin, realm_name: str) -> None:
 
     # Get client-specific themes
     clients = admin.get_clients()
-    print(f"\nClient Theme Overrides:")
+    print("\nClient Theme Overrides:")
     print("-" * 50)
 
     clients_with_themes = []
     for client in clients:
         # Check for theme-related attributes
-        attributes = client.get('attributes', {})
-        login_theme = attributes.get('login_theme')
+        attributes = client.get("attributes", {})
+        login_theme = attributes.get("login_theme")
 
         # Also check direct property (some Keycloak versions)
         if not login_theme:
-            login_theme = client.get('loginTheme')
+            login_theme = client.get("loginTheme")
 
         if login_theme:
-            clients_with_themes.append({
-                'clientId': client['clientId'],
-                'loginTheme': login_theme
-            })
+            clients_with_themes.append({"clientId": client["clientId"], "loginTheme": login_theme})
 
     if clients_with_themes:
         for c in clients_with_themes:
@@ -134,16 +131,16 @@ def list_clients(admin: KeycloakAdmin, realm_name: str) -> None:
 
     print(f"Found {len(clients)} clients in realm '{realm_name}':\n")
     for client in clients:
-        client_id = client.get('clientId', 'unknown')
-        enabled = client.get('enabled', False)
-        public = client.get('publicClient', False)
+        client_id = client.get("clientId", "unknown")
+        enabled = client.get("enabled", False)
+        public = client.get("publicClient", False)
 
         print(f"  - {client_id}")
         print(f"    Enabled: {enabled}, Public: {public}")
 
         # Check for theme override
-        attributes = client.get('attributes', {})
-        if 'login_theme' in attributes:
+        attributes = client.get("attributes", {})
+        if "login_theme" in attributes:
             print(f"    Login Theme Override: {attributes['login_theme']}")
         print()
 
@@ -156,7 +153,7 @@ def get_client(admin: KeycloakAdmin, realm_name: str, client_id: str) -> None:
     clients = admin.get_clients()
     client = None
     for c in clients:
-        if c.get('clientId') == client_id:
+        if c.get("clientId") == client_id:
             client = c
             break
 
@@ -168,33 +165,33 @@ def get_client(admin: KeycloakAdmin, realm_name: str, client_id: str) -> None:
     print("-" * 50)
 
     # Basic info
-    print(f"\nBasic Settings:")
+    print("\nBasic Settings:")
     print(f"  ID:            {client.get('id')}")
     print(f"  Enabled:       {client.get('enabled', False)}")
     print(f"  Public Client: {client.get('publicClient', False)}")
     print(f"  Protocol:      {client.get('protocol', 'openid-connect')}")
 
     # URLs
-    print(f"\nURLs:")
+    print("\nURLs:")
     print(f"  Root URL:      {client.get('rootUrl', '(not set)')}")
     print(f"  Base URL:      {client.get('baseUrl', '(not set)')}")
-    redirect_uris = client.get('redirectUris', [])
+    redirect_uris = client.get("redirectUris", [])
     print(f"  Redirect URIs: {redirect_uris}")
 
     # Theme settings
-    print(f"\nTheme Settings:")
-    attributes = client.get('attributes', {})
-    login_theme = attributes.get('login_theme') or client.get('loginTheme')
+    print("\nTheme Settings:")
+    attributes = client.get("attributes", {})
+    login_theme = attributes.get("login_theme") or client.get("loginTheme")
     print(f"  Login Theme:   {login_theme or '(inherits from realm)'}")
 
     # All attributes
     if attributes:
-        print(f"\nAll Attributes:")
+        print("\nAll Attributes:")
         for key, value in attributes.items():
             print(f"  {key}: {value}")
 
     # Full dump option
-    print(f"\nFull Client Config:")
+    print("\nFull Client Config:")
     print_json(client)
 
 
@@ -206,7 +203,7 @@ def set_client_theme(admin: KeycloakAdmin, realm_name: str, client_id: str, them
     clients = admin.get_clients()
     client = None
     for c in clients:
-        if c.get('clientId') == client_id:
+        if c.get("clientId") == client_id:
             client = c
             break
 
@@ -214,58 +211,58 @@ def set_client_theme(admin: KeycloakAdmin, realm_name: str, client_id: str, them
         print(f"Client '{client_id}' not found in realm '{realm_name}'")
         return
 
-    client_uuid = client['id']
-    attributes = client.get('attributes', {})
+    client_uuid = client["id"]
+    attributes = client.get("attributes", {})
 
     if theme:
         # Set theme
-        attributes['login_theme'] = theme
+        attributes["login_theme"] = theme
         print(f"Setting login theme for '{client_id}' to '{theme}'")
     else:
         # Clear theme (inherit from realm)
-        if 'login_theme' in attributes:
-            del attributes['login_theme']
+        if "login_theme" in attributes:
+            del attributes["login_theme"]
         print(f"Clearing login theme override for '{client_id}' (will inherit from realm)")
 
     # Update client
-    admin.update_client(client_uuid, {'attributes': attributes})
+    admin.update_client(client_uuid, {"attributes": attributes})
     print("Done!")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Keycloak debugging tool')
-    parser.add_argument('--url', default='https://keycloak.kind', help='Keycloak URL')
-    parser.add_argument('--user', '-u', default='admin', help='Admin username')
-    parser.add_argument('--password', '-p', required=True, help='Admin password')
-    parser.add_argument('--verify-ssl', action='store_true', help='Verify SSL certificates')
+    parser = argparse.ArgumentParser(description="Keycloak debugging tool")
+    parser.add_argument("--url", default="https://keycloak.kind", help="Keycloak URL")
+    parser.add_argument("--user", "-u", default="admin", help="Admin username")
+    parser.add_argument("--password", "-p", required=True, help="Admin password")
+    parser.add_argument("--verify-ssl", action="store_true", help="Verify SSL certificates")
 
-    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # list-realms
-    subparsers.add_parser('list-realms', help='List all realms')
+    subparsers.add_parser("list-realms", help="List all realms")
 
     # get-realm
-    p = subparsers.add_parser('get-realm', help='Get realm details')
-    p.add_argument('realm', help='Realm name')
+    p = subparsers.add_parser("get-realm", help="Get realm details")
+    p.add_argument("realm", help="Realm name")
 
     # get-themes
-    p = subparsers.add_parser('get-themes', help='Get theme settings for realm and clients')
-    p.add_argument('realm', help='Realm name')
+    p = subparsers.add_parser("get-themes", help="Get theme settings for realm and clients")
+    p.add_argument("realm", help="Realm name")
 
     # list-clients
-    p = subparsers.add_parser('list-clients', help='List clients in a realm')
-    p.add_argument('realm', help='Realm name')
+    p = subparsers.add_parser("list-clients", help="List clients in a realm")
+    p.add_argument("realm", help="Realm name")
 
     # get-client
-    p = subparsers.add_parser('get-client', help='Get client details')
-    p.add_argument('realm', help='Realm name')
-    p.add_argument('client_id', help='Client ID')
+    p = subparsers.add_parser("get-client", help="Get client details")
+    p.add_argument("realm", help="Realm name")
+    p.add_argument("client_id", help="Client ID")
 
     # set-client-theme
-    p = subparsers.add_parser('set-client-theme', help='Set login theme for a client')
-    p.add_argument('realm', help='Realm name')
-    p.add_argument('client_id', help='Client ID')
-    p.add_argument('--theme', help='Theme name (omit to clear and inherit from realm)')
+    p = subparsers.add_parser("set-client-theme", help="Set login theme for a client")
+    p.add_argument("realm", help="Realm name")
+    p.add_argument("client_id", help="Client ID")
+    p.add_argument("--theme", help="Theme name (omit to clear and inherit from realm)")
 
     args = parser.parse_args()
 
@@ -276,17 +273,17 @@ def main():
     try:
         admin = create_admin(args.url, args.user, args.password, args.verify_ssl)
 
-        if args.command == 'list-realms':
+        if args.command == "list-realms":
             list_realms(admin)
-        elif args.command == 'get-realm':
+        elif args.command == "get-realm":
             get_realm(admin, args.realm)
-        elif args.command == 'get-themes':
+        elif args.command == "get-themes":
             get_themes(admin, args.realm)
-        elif args.command == 'list-clients':
+        elif args.command == "list-clients":
             list_clients(admin, args.realm)
-        elif args.command == 'get-client':
+        elif args.command == "get-client":
             get_client(admin, args.realm, args.client_id)
-        elif args.command == 'set-client-theme':
+        elif args.command == "set-client-theme":
             set_client_theme(admin, args.realm, args.client_id, args.theme)
 
     except KeycloakError as e:
@@ -297,5 +294,5 @@ def main():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

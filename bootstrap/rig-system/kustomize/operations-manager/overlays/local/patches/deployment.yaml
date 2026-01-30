@@ -71,7 +71,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
       - name: tmp
-        emptyDir: 
+        emptyDir:
           sizeLimit: 2Gi
       - name: config-volume
         configMap:

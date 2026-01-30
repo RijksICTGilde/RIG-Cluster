@@ -10,11 +10,11 @@
         <c-card outline="true" padding="lg">
             <form method="POST" action="/api/projects/create-basic">
                 <c-layout-flow gap="lg">
-                    
+
                     <!-- Project Name -->
                     <div>
                         <label for="project-name" class="utrecht-form-label">Projectnaam</label>
-                        <c-input id="project-name" 
+                        <c-input id="project-name"
                                name="project-name"
                                type="text"
                                placeholder="mijn-project"
@@ -35,15 +35,15 @@
                         <label for="image-url" class="utrecht-form-label">Container Image</label>
                         <c-input id="image-url"
                                name="image-url"
-                               type="text" 
+                               type="text"
                                placeholder="nginxdemos/hello"
                                required="true" />
                     </div>
 
                     <!-- Some checkboxes -->
                     <c-layout-flow gap="md">
-                        <c-checkbox id="expose-web" 
-                                  name="expose-web" 
+                        <c-checkbox id="expose-web"
+                                  name="expose-web"
                                   label="Publiceren op web" />
 
                         <c-checkbox id="sso-rijk"

@@ -40,7 +40,7 @@ All kustomize-related tasks point directly to the directory containing a standar
    ```bash
    # Apply to the local kind cluster (default)
    task apply-local-bootstrap
-   
+
    # Apply to a different cluster configuration
    task apply-local-bootstrap -- KUSTOMIZATION_DIR=cluster-specific-repo/clusters/odcn
    ```
@@ -49,7 +49,7 @@ All kustomize-related tasks point directly to the directory containing a standar
    ```bash
    # Test the build output without applying
    task test-kustomize-build
-   
+
    # Review the output in test-output.yaml
    # Then apply when ready
    task apply-local-bootstrap
@@ -71,7 +71,7 @@ resources:
   # Local overrides in resources directory
   - resources/postgres-override.yaml
   - resources/vault-override.yaml
-  
+
   # Local development secrets directly from templates
   - ../../../implementation/bootstrap/infrastructure/secrets/templates
 ```

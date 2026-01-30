@@ -109,7 +109,7 @@ class TestKeycloakConfigValidation:
             "services": [{"keycloak": {"config": {"template": "../secrets/password"}}}],
         }
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="Invalid template name") as exc_info:
             self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert "Invalid template name" in str(exc_info.value)
@@ -122,7 +122,7 @@ class TestKeycloakConfigValidation:
             "services": [{"keycloak": {"config": {"template": "configs/secret"}}}],
         }
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="Invalid template name") as exc_info:
             self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert "Invalid template name" in str(exc_info.value)
@@ -134,19 +134,19 @@ class TestKeycloakConfigValidation:
             "services": [{"keycloak": {"config": {"template": "configs\\secret"}}}],
         }
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="Invalid template name") as exc_info:
             self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert "Invalid template name" in str(exc_info.value)
 
     def test_invalid_config_format_raises_error(self):
-        """Test that non-dict config raises ValueError."""
+        """Test that non-dict config raises TypeError."""
         project_data = {
             "name": "test-project",
             "services": [{"keycloak": {"config": "invalid-string-config"}}],
         }
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(TypeError, match="Keycloak config must be a dict") as exc_info:
             self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert "Keycloak config must be a dict" in str(exc_info.value)
@@ -158,7 +158,7 @@ class TestKeycloakConfigValidation:
             "services": [{"keycloak": {"config": {"template": 123}}}],  # Number instead of string
         }
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="Template must be a string") as exc_info:
             self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert "Template must be a string" in str(exc_info.value)
@@ -179,7 +179,7 @@ class TestKeycloakConfigValidation:
             ],
         }
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="Template variables must be a dict") as exc_info:
             self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert "Template variables must be a dict" in str(exc_info.value)
@@ -191,7 +191,7 @@ class TestKeycloakConfigValidation:
             "services": [{"keycloak": "invalid-not-dict"}],  # Should be dict with 'config' key
         }
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="Invalid keycloak service format") as exc_info:
             self.keycloak_manager._get_keycloak_service_config(project_data)
 
         assert "Invalid keycloak service format" in str(exc_info.value)
@@ -338,7 +338,7 @@ class TestOldServiceNameHandling:
         """Test that 'sso-rijk' in services list raises helpful error."""
         from opi.services import ServiceAdapter
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="sso-rijk") as exc_info:
             ServiceAdapter.parse_services_from_strings(["sso-rijk"])
 
         assert "sso-rijk" in str(exc_info.value)

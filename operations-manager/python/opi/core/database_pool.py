@@ -166,7 +166,7 @@ class DatabasePool:
             try:
                 current_task = asyncio.current_task()
                 task_name = current_task.get_name() if current_task else None
-            except:
+            except Exception:
                 task_name = None
 
             # Find the first meaningful caller (skip internal pool/connector methods)

@@ -7,6 +7,10 @@ import asyncio
 import logging
 import sys
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 sys.path.insert(0, ".")
 
 # Set up logging

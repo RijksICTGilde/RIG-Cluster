@@ -13,34 +13,32 @@ preprocessed = """
 """
 
 # Create environment with component templates
-import sys
+from jinja_roos_components import get_templates_path  # noqa: E402
 
-sys.path.insert(0, "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster")
-from jinja_roos_components import get_templates_path
+if __name__ == "__main__":
+    template_paths = [
+        get_templates_path(),  # Component templates
+    ]
 
-template_paths = [
-    get_templates_path(),  # Component templates
-]
+    env = Environment(loader=FileSystemLoader(template_paths))
 
-env = Environment(loader=FileSystemLoader(template_paths))
+    print("Testing preprocessed template rendering...")
+    print("=" * 60)
 
-print("Testing preprocessed template rendering...")
-print("=" * 60)
+    try:
+        # Create template from string
+        template = env.from_string(preprocessed)
 
-try:
-    # Create template from string
-    template = env.from_string(preprocessed)
+        # Render
+        output = template.render()
 
-    # Render
-    output = template.render()
+        print("✓ Rendered successfully")
+        print(f"  Length: {len(output)} characters")
+        print("\nFirst 200 chars of output:")
+        print(output[:200])
 
-    print("✓ Rendered successfully")
-    print(f"  Length: {len(output)} characters")
-    print("\nFirst 200 chars of output:")
-    print(output[:200])
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        import traceback
 
-except Exception as e:
-    print(f"✗ Error: {e}")
-    import traceback
-
-    traceback.print_exc()
+        traceback.print_exc()

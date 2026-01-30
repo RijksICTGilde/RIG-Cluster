@@ -36,7 +36,7 @@ class UserService:
             logger.error("Cannot store user without email address")
             return
 
-        email = user_info["email"]
+        email = user_info["email"].lower()
 
         # Process and enrich user information
         enriched_user_info = self._enrich_user_info(user_info.copy())
@@ -72,9 +72,7 @@ class UserService:
         }
 
         # Only include non-empty organization fields
-        for key, value in org_mappings.items():
-            if value:
-                organization_info[key] = value
+        organization_info = {key: value for key, value in org_mappings.items() if value}
 
         # Add structured organization info if we have any
         if organization_info:
@@ -186,7 +184,7 @@ class UserService:
         Returns:
             User information dictionary if found, None otherwise
         """
-        user_info = self._users.get(email)
+        user_info = self._users.get(email.lower())
         if user_info:
             logger.debug(f"Retrieved user information for: {email}")
         else:
@@ -204,11 +202,13 @@ class UserService:
         Returns:
             True if user was updated, False if user not found
         """
-        if email not in self._users:
+        email_key = email.lower()
+        if email_key not in self._users:
             logger.warning(f"Cannot update user - not found: {email}")
             return False
 
-        self._users[email].update(user_info)
+        merged = {**self._users[email_key], **user_info}
+        self._users[email_key] = self._enrich_user_info(merged)
         logger.info(f"Updated user information for: {email}")
         return True
 
@@ -222,11 +222,12 @@ class UserService:
         Returns:
             True if user was removed, False if user not found
         """
-        if email not in self._users:
+        email_key = email.lower()
+        if email_key not in self._users:
             logger.warning(f"Cannot remove user - not found: {email}")
             return False
 
-        del self._users[email]
+        del self._users[email_key]
         logger.info(f"Removed user: {email}")
         return True
 
@@ -322,7 +323,7 @@ class UserService:
         Returns:
             List of allowed email addresses
         """
-        return sorted(list(self._allowed_emails))
+        return sorted(self._allowed_emails)
 
     def clear_allowed_emails(self) -> None:
         """Clear all allowed emails (mainly for testing purposes)."""
@@ -340,7 +341,7 @@ class UserService:
         return {
             "total_allowed_emails": len(self._allowed_emails),
             "total_stored_users": len(self._users),
-            "users_with_access": len([email for email in self._users.keys() if self.is_email_allowed(email)]),
+            "users_with_access": len([email for email in self._users if self.is_email_allowed(email)]),
             "allowed_emails": self.get_allowed_emails(),
         }
 

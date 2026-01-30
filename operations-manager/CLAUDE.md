@@ -30,7 +30,7 @@ The Operations Manager (OPI) is a FastAPI-based system that provides self-servic
 opi/
 ├── api/              # FastAPI REST API endpoints
 ├── connectors/       # External system integrations
-├── core/            # Configuration and startup logic  
+├── core/            # Configuration and startup logic
 ├── generation/      # Manifest generation from templates
 ├── handlers/        # Request processing and business logic
 ├── manager/         # Project lifecycle management (the "worker")
@@ -42,7 +42,7 @@ opi/
 
 1. **Connector Pattern**: All operations outside the project scope (git, keycloak, database, kubectl, ArgoCD) use dedicated connector classes
 2. **Project Manager as Worker**: The `project_manager.py` serves as the primary worker that orchestrates deployment steps
-3. **Cryptographic Security**: Uses `age.py` for AGE encryption operations and `sops.py` for SOPS operations  
+3. **Cryptographic Security**: Uses `age.py` for AGE encryption operations and `sops.py` for SOPS operations
 4. **Template-Driven Generation**: Kubernetes manifests generated from Jinja2 templates in `manifests/` directory
 5. **GitOps Workflow**: Supports both ArgoCD deployment and direct kubectl application
 
@@ -77,7 +77,7 @@ opi/
 **Purpose**: Handle AGE encryption/decryption for secrets and sensitive data
 
 **Key Functions**:
-- `encrypt_age_content()` - Encrypt content with AGE public key  
+- `encrypt_age_content()` - Encrypt content with AGE public key
 - `decrypt_age_content()` - Decrypt AGE-encrypted content
 - `decrypt_password_smart()` - Smart password decryption with prefix support
 - `parse_password_with_prefix()` - Parse passwords with prefixes (age:, base64+age:, plain:)
@@ -112,7 +112,7 @@ opi/
 ### Code Style Requirements
 - **Modern Type Hints**: Use lowercase types (`dict`, `list`, `tuple`) instead of uppercase
 - **Union Types**: Use `|` symbol for union types instead of `Optional` or `Union`
-  - `name: str | None` instead of `Optional[str]`  
+  - `name: str | None` instead of `Optional[str]`
   - `data: dict[str, any]` instead of `Dict[str, Any]`
 - **Type Annotations**: Always include proper type annotations for function parameters and return types
 - **Explicit Error Handling**: Use specific exception types, avoid generic `except Exception`
@@ -141,7 +141,7 @@ python functional_tests/run_all.py
 ruff check .
 ruff format .
 
-# Type checking  
+# Type checking
 pyright
 ```
 
@@ -171,12 +171,12 @@ kubectl_connector = KubectlConnector()
 result = await kubectl_connector.apply_manifest(manifest_path)
 ```
 
-#### Secret Management Patterns  
+#### Secret Management Patterns
 ```python
 # For AGE operations
 from opi.utils.age import decrypt_password_smart, encrypt_age_content
 
-# For SOPS operations  
+# For SOPS operations
 from opi.utils.sops import encrypt_sops_file, decrypt_sops_file
 ```
 
@@ -198,24 +198,24 @@ from opi.utils.sops import encrypt_sops_file, decrypt_sops_file
 ### Development Commands
 ```bash
 # Install dependencies
-poetry install
+uv sync
 
 # Run development server
-poetry run python -m opi
+uv run python -m opi
 
 # Run tests with coverage
-poetry run coverage run -m pytest
-poetry run coverage report
+uv run coverage run -m pytest
+uv run coverage report
 
 # Linting and formatting
-poetry run ruff check .
-poetry run ruff format .
+uv run ruff check .
+uv run ruff format .
 
 # Type checking
-poetry run pyright
+uv run pyright
 ```
 
-### Operational Commands  
+### Operational Commands
 ```bash
 # SOPS operations
 sops --encrypt --in-place secret.yaml
@@ -241,7 +241,7 @@ sops --decrypt secret.yaml
 
 ### Encryption/Decryption Issues
 - Check AGE key configuration in settings
-- Verify SOPS key availability for file operations  
+- Verify SOPS key availability for file operations
 - Use debug logging in age.py and sops.py utilities
 
 ### Connector Failures
@@ -259,7 +259,7 @@ sops --decrypt secret.yaml
 ## Important Reminders
 
 - **Always use connectors for external operations** - never bypass the connector pattern
-- **Use age.py for AGE operations and sops.py for SOPS operations** - maintain separation of cryptographic concerns  
+- **Use age.py for AGE operations and sops.py for SOPS operations** - maintain separation of cryptographic concerns
 - **Project manager is the worker** - orchestrate complex operations through the project manager
 - **Follow GitOps principles** - prefer declarative configurations and ArgoCD deployments
 - **Security first** - encrypt all secrets, validate inputs, use type hints for safety

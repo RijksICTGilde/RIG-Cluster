@@ -6,6 +6,7 @@ import asyncio
 import base64
 import logging
 import subprocess
+import tempfile
 from typing import cast
 
 from opi.core.config import settings
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # TODO: replace this method with direct configuration value
 def get_global_private_key() -> str:
-    return cast(str, settings.SOPS_AGE_PRIVATE_KEY)
+    return cast("str", settings.SOPS_AGE_PRIVATE_KEY)
 
 
 async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
@@ -32,11 +33,21 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
     if not encrypted_content or not private_key:
         raise ValueError("Missing encrypted content or private key for decryption")
 
-    cmd = ["bash", "-c", f'echo "{encrypted_content}" | age -d -i <(echo "{private_key}")']
+    # Write private key to a temporary file to avoid shell injection
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".key", delete=True) as key_file:
+        key_file.write(private_key)
+        key_file.flush()
 
-    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-
-    stdout, stderr = await process.communicate()
+        process = await asyncio.create_subprocess_exec(
+            "age",
+            "-d",
+            "-i",
+            key_file.name,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate(input=encrypted_content.encode())
 
     if process.returncode != 0:
         error_msg = stderr.decode("utf-8").strip()
@@ -114,13 +125,20 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | 
         logger.error(f"Private key provided: {bool(private_key)}")
         return None
 
-    # Use echo to pipe encrypted content to age for decryption
-    # echo "encrypted_content" | age -d -i <(echo "private_key")
-    cmd = ["bash", "-c", f'echo "{encrypted_content}" | age -d -i <(echo "{private_key}")']
-    logger.debug("Running age decryption command with piped input (sync)")
-    logger.debug(f"Command: {' '.join(cmd[:2])} [REDACTED_SECRETS]")
+    # Write private key to a temporary file to avoid shell injection
+    logger.debug("Running age decryption command (sync)")
 
-    process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".key", delete=True) as key_file:
+        key_file.write(private_key)
+        key_file.flush()
+
+        process = subprocess.run(
+            ["age", "-d", "-i", key_file.name],
+            input=encrypted_content,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     if process.returncode != 0:
         error_msg = process.stderr.strip()
@@ -192,15 +210,17 @@ def parse_password_with_prefix(password: str) -> tuple[str, str]:
         Tuple of (type, content) where type is 'plain', 'age', or 'base64+age'
     """
     if not password:
-        return "plain", password
+        return "plain", password or ""
 
     password = password.strip()
 
     # Check for explicit prefixes
     if password.startswith("age:"):
-        return "age", password[4:]  # Remove 'age:' prefix
+        content = password[4:]
+        return ("age", content) if content else ("plain", password)
     elif password.startswith("base64+age:"):
-        return "base64+age", password[11:]  # Remove 'base64+age:' prefix
+        content = password[11:]
+        return ("base64+age", content) if content else ("plain", password)
     elif password.startswith("plain:"):
         return "plain", password[6:]  # Remove 'plain:' prefix
 
@@ -317,7 +337,7 @@ async def get_decoded_project_private_key(project_config: dict) -> str:
     encoded_private_key = config.get("age-private-key")
     if not encoded_private_key:
         raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
-    return await decrypt_age_content(encoded_private_key, cast(str, settings.SOPS_AGE_PRIVATE_KEY))
+    return await decrypt_age_content(encoded_private_key, cast("str", settings.SOPS_AGE_PRIVATE_KEY))
 
 
 def decrypt_password_smart_auto_sync(password: str) -> str:

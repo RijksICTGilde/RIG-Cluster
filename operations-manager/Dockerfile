@@ -5,9 +5,9 @@ FROM python:3.13-slim AS base-system
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_VERSION=2.1.3 \
-    POETRY_HOME="/opt/poetry" \
-    POETRY_VIRTUALENVS_CREATE=false \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/usr/local \
     TZ=Europe/Amsterdam \
     DEBIAN_FRONTEND=noninteractive
 
@@ -55,22 +55,22 @@ RUN CHISEL_VERSION=$(curl -s https://api.github.com/repos/jpillora/chisel/releas
     && chmod +x "chisel_${CHISEL_VERSION}_linux_amd64" \
     && mv "chisel_${CHISEL_VERSION}_linux_amd64" /usr/local/bin/chisel
 
-# Install poetry - cached unless poetry version changes
-RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION python3 -
-ENV PATH="$POETRY_HOME/bin:$PATH"
+# Install uv - cached unless uv version changes
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Stage 2: Dependencies (changes when poetry files change)
+# Stage 2: Dependencies (changes when lock file changes)
 FROM base-system AS dependencies
 
 WORKDIR /app
 
-# Copy poetry configuration files - this triggers dependency installation only when these change
-COPY operations-manager/python/pyproject.toml operations-manager/python/poetry.lock ./
+# Copy uv configuration files - this triggers dependency installation only when these change
+COPY operations-manager/python/pyproject.toml operations-manager/python/uv.lock ./
 
 # Install only production dependencies (exclude dev and test groups)
-# Then clean up pip cache and unnecessary files to reduce image size
-RUN poetry install --no-interaction --no-ansi --no-root --without dev,test && \
-    rm -rf /root/.cache/pip /root/.cache/pypoetry && \
+# UV_PROJECT_ENVIRONMENT=/usr/local installs into system Python directly
+# Then clean up cache and unnecessary files to reduce image size
+RUN uv sync --frozen --no-install-project --no-dev --no-group test && \
+    rm -rf /root/.cache/uv && \
     find /usr/local/lib/python3.13/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python3.13/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python3.13/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true

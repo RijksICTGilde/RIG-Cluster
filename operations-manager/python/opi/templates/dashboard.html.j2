@@ -2,7 +2,7 @@
 
 {#
   Dashboard - Self Service Portal
-  
+
   Overzicht van alle projecten, deployments en resource metrics
   met real-time monitoring en status updates.
 #}
@@ -12,7 +12,7 @@
 
 {% block content %}
 <c-layout-flow gap="xl">
-    
+
     {# Page Header #}
     <div>
         <c-heading type="h1" textContent="Dashboard (dit is dummy / fake!)" />
@@ -33,7 +33,7 @@
                 <p class="rvo-text--sm rvo-text--subtle">3 nieuwe deze maand</p>
             </c-layout-flow>
         </c-card>
-        
+
         <c-card class="stat-card" outline="true" padding="lg" backgroundColor="wit">
             <c-layout-flow gap="sm">
                 <div class="stat-header">
@@ -44,7 +44,7 @@
                 <p class="rvo-text--sm rvo-text--subtle">5 updates vandaag</p>
             </c-layout-flow>
         </c-card>
-        
+
         <c-card class="stat-card" outline="true" padding="lg" backgroundColor="wit">
             <c-layout-flow gap="sm">
                 <div class="stat-header">
@@ -55,7 +55,7 @@
                 <p class="rvo-text--sm rvo-text--subtle">12 online nu</p>
             </c-layout-flow>
         </c-card>
-        
+
         <c-card class="stat-card" outline="true" padding="lg" backgroundColor="wit">
             <c-layout-flow gap="sm">
                 <div class="stat-header">
@@ -71,7 +71,7 @@
     {# Resource Usage Section #}
     <c-layout-flow gap="lg">
         <c-heading type="h2" textContent="Resource Usage" />
-        
+
         <div class="metrics-grid">
             {# CPU Usage Gauge #}
             <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
@@ -87,7 +87,7 @@
                     <p class="rvo-text--sm rvo-text--subtle">Gemiddeld over alle nodes</p>
                 </c-layout-flow>
             </c-card>
-            
+
             {# Memory Usage Gauge #}
             <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
                 <c-layout-flow gap="md">
@@ -102,7 +102,7 @@
                     <p class="rvo-text--sm rvo-text--subtle">Totaal cluster geheugen</p>
                 </c-layout-flow>
             </c-card>
-            
+
             {# Storage Usage Gauge #}
             <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
                 <c-layout-flow gap="md">
@@ -117,7 +117,7 @@
                     <p class="rvo-text--sm rvo-text--subtle">Persistent volumes</p>
                 </c-layout-flow>
             </c-card>
-            
+
             {# Network Traffic #}
             <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
                 <c-layout-flow gap="md">
@@ -135,7 +135,7 @@
     <c-layout-flow gap="lg">
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <c-heading type="h2" textContent="Mijn Projecten" />
-            <c-button 
+            <c-button
                 label="Nieuw Project"
                 kind="primary"
                 size="md"
@@ -143,7 +143,7 @@
                 icon="plus"
                 @click="window.location.href='/projects/new'" />
         </div>
-        
+
         <div class="projects-grid">
             {# Project 1 #}
             <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
@@ -174,7 +174,7 @@
                     </div>
                 </c-layout-flow>
             </c-card>
-            
+
             {# Project 2 #}
             <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
                 <c-layout-flow gap="md">
@@ -204,7 +204,7 @@
                     </div>
                 </c-layout-flow>
             </c-card>
-            
+
             {# Project 3 #}
             <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
                 <c-layout-flow gap="md">
@@ -240,7 +240,7 @@
     {# Recent Activity #}
     <c-layout-flow gap="lg">
         <c-heading type="h2" textContent="Recente Activiteit" />
-        
+
         <c-card outline="true" padding="lg" backgroundColor="wit">
             <c-layout-flow gap="md">
                 {# Activity Item 1 #}
@@ -253,7 +253,7 @@
                         <p class="rvo-text--sm rvo-text--subtle">2 minuten geleden</p>
                     </div>
                 </div>
-                
+
                 {# Activity Item 2 #}
                 <div class="activity-item">
                     <div class="activity-icon activity-warning">
@@ -264,7 +264,7 @@
                         <p class="rvo-text--sm rvo-text--subtle">8 minuten geleden</p>
                     </div>
                 </div>
-                
+
                 {# Activity Item 3 #}
                 <div class="activity-item">
                     <div class="activity-icon activity-info">
@@ -275,7 +275,7 @@
                         <p class="rvo-text--sm rvo-text--subtle">15 minuten geleden</p>
                     </div>
                 </div>
-                
+
                 {# Activity Item 4 #}
                 <div class="activity-item">
                     <div class="activity-icon activity-success">
@@ -286,7 +286,7 @@
                         <p class="rvo-text--sm rvo-text--subtle">1 uur geleden</p>
                     </div>
                 </div>
-                
+
                 <div style="text-align: center; margin-top: var(--rvo-space-md);">
                     <c-button label="Alle activiteit bekijken" kind="tertiary" size="sm" />
                 </div>
@@ -305,28 +305,28 @@
         gap: var(--rvo-space-lg);
         margin-bottom: var(--rvo-space-xl);
     }
-    
+
     .stat-card {
         transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-    
+
     .stat-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
-    
+
     .stat-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
-    
+
     .stat-number {
         font-size: 2rem;
         font-weight: 700;
         color: var(--rvo-color-hemelblauw);
     }
-    
+
     .status-healthy {
         color: var(--rvo-color-groen);
     }
@@ -337,11 +337,11 @@
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         gap: var(--rvo-space-lg);
     }
-    
+
     .metric-card {
         transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-    
+
     .metric-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
@@ -355,12 +355,12 @@
         align-items: center;
         height: 150px;
     }
-    
+
     .gauge {
         max-width: 150px;
         max-height: 150px;
     }
-    
+
     .gauge-value {
         position: absolute;
         text-align: center;
@@ -368,14 +368,14 @@
         left: 50%;
         transform: translateX(-50%);
     }
-    
+
     .gauge-percentage {
         display: block;
         font-size: 1.5rem;
         font-weight: 700;
         color: var(--rvo-color-hemelblauw);
     }
-    
+
     .gauge-label {
         font-size: 0.875rem;
         color: var(--rvo-color-grijs-700);
@@ -388,7 +388,7 @@
         justify-content: center;
         align-items: center;
     }
-    
+
     .chart {
         max-width: 100%;
         max-height: 120px;
@@ -400,22 +400,22 @@
         grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
         gap: var(--rvo-space-lg);
     }
-    
+
     .project-card {
         transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-    
+
     .project-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
-    
+
     .project-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
-    
+
     .project-status {
         padding: var(--rvo-space-xs) var(--rvo-space-sm);
         border-radius: 4px;
@@ -423,28 +423,28 @@
         font-weight: 600;
         text-transform: uppercase;
     }
-    
+
     .status-running {
         background: var(--rvo-color-groen-50);
         color: var(--rvo-color-groen);
     }
-    
+
     .status-deploying {
         background: var(--rvo-color-oranje-50);
         color: var(--rvo-color-oranje);
     }
-    
+
     .status-error {
         background: var(--rvo-color-rood-50);
         color: var(--rvo-color-rood);
     }
-    
+
     .project-metrics {
         display: flex;
         gap: var(--rvo-space-md);
         flex-wrap: wrap;
     }
-    
+
     .metric {
         display: flex;
         align-items: center;
@@ -452,7 +452,7 @@
         font-size: 0.875rem;
         color: var(--rvo-color-grijs-700);
     }
-    
+
     .project-actions {
         display: flex;
         gap: var(--rvo-space-sm);
@@ -467,12 +467,12 @@
         padding-bottom: var(--rvo-space-md);
         border-bottom: 1px solid var(--rvo-color-grijs-200);
     }
-    
+
     .activity-item:last-of-type {
         border-bottom: none;
         padding-bottom: 0;
     }
-    
+
     .activity-icon {
         flex-shrink: 0;
         width: 32px;
@@ -482,22 +482,22 @@
         align-items: center;
         justify-content: center;
     }
-    
+
     .activity-success {
         background: var(--rvo-color-groen-50);
         color: var(--rvo-color-groen);
     }
-    
+
     .activity-warning {
         background: var(--rvo-color-oranje-50);
         color: var(--rvo-color-oranje);
     }
-    
+
     .activity-info {
         background: var(--rvo-color-hemelblauw-50);
         color: var(--rvo-color-hemelblauw);
     }
-    
+
     .activity-content {
         flex: 1;
     }
@@ -525,36 +525,36 @@
     function initializeGauges() {
         // CPU Gauge
         createGauge('cpu-gauge', 67, 'CPU Usage', '#1f5e99');
-        
+
         // Memory Gauge
         createGauge('memory-gauge', 84, 'Memory Usage', '#e17000');
-        
+
         // Storage Gauge
         createGauge('storage-gauge', 45, 'Storage Usage', '#007bc7');
     }
-    
+
     function createGauge(canvasId, percentage, label, color) {
         const canvas = document.getElementById(canvasId);
         const ctx = canvas.getContext('2d');
-        
+
         // Set canvas size
         canvas.width = 150;
         canvas.height = 150;
-        
+
         const centerX = canvas.width / 2;
         const centerY = canvas.height / 2;
         const radius = 60;
-        
+
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
+
         // Draw background arc
         ctx.beginPath();
         ctx.arc(centerX, centerY, radius, Math.PI, 2 * Math.PI);
         ctx.strokeStyle = '#f0f0f0';
         ctx.lineWidth = 12;
         ctx.stroke();
-        
+
         // Draw progress arc
         const angle = Math.PI + (Math.PI * percentage / 100);
         ctx.beginPath();
@@ -563,14 +563,14 @@
         ctx.lineWidth = 12;
         ctx.lineCap = 'round';
         ctx.stroke();
-        
+
         // Draw center circle
         ctx.beginPath();
         ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
         ctx.fillStyle = color;
         ctx.fill();
     }
-    
+
     function initializeCharts() {
         // Network Traffic Chart
         const networkCtx = document.getElementById('network-chart').getContext('2d');
@@ -611,19 +611,19 @@
             }
         });
     }
-    
+
     // Auto-refresh data every 30 seconds
     setInterval(function() {
         // In a real application, this would fetch fresh data from the API
         updateGauges();
     }, 30000);
-    
+
     function updateGauges() {
         // Generate some random variations for demo purposes
         const cpuVariation = Math.floor(Math.random() * 10) - 5;
         const memoryVariation = Math.floor(Math.random() * 10) - 5;
         const storageVariation = Math.floor(Math.random() * 5) - 2;
-        
+
         createGauge('cpu-gauge', Math.max(0, Math.min(100, 67 + cpuVariation)), 'CPU Usage', '#1f5e99');
         createGauge('memory-gauge', Math.max(0, Math.min(100, 84 + memoryVariation)), 'Memory Usage', '#e17000');
         createGauge('storage-gauge', Math.max(0, Math.min(100, 45 + storageVariation)), 'Storage Usage', '#007bc7');

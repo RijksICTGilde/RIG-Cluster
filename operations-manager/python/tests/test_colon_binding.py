@@ -3,22 +3,14 @@
 Test colon binding with content in c-button.
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../jinja-roos-components"))
-
 from jinja2 import Environment, FileSystemLoader
-from jinja_roos_components.extension_dom import ComponentExtensionDOM
+from jinja_roos_components import get_templates_path, setup_components
 
 
 def test_colon_binding_with_content():
     """Test that colon binding with content works correctly."""
-    # Set up Jinja2 environment with component extension
-    template_dir = (
-        "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/jinja-roos-components/jinja_roos_components/templates"
-    )
-    env = Environment(loader=FileSystemLoader(template_dir), extensions=[ComponentExtensionDOM])
+    env = Environment(loader=FileSystemLoader(str(get_templates_path())), autoescape=True)
+    setup_components(env)
 
     # Test template with colon binding and content
     test_template = """
@@ -41,10 +33,8 @@ def test_colon_binding_with_content():
 
 def test_problematic_template():
     """Test the specific problematic template from line 356."""
-    template_dir = (
-        "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/jinja-roos-components/jinja_roos_components/templates"
-    )
-    env = Environment(loader=FileSystemLoader(template_dir), extensions=[ComponentExtensionDOM])
+    env = Environment(loader=FileSystemLoader(str(get_templates_path())), autoescape=True)
+    setup_components(env)
 
     # The exact problematic template
     test_template = """<c-button

@@ -18,16 +18,16 @@ metadata:
   namespace: argocd
 spec:
   description: "Example project with RBAC"
-  
+
   # Define allowed destinations
   destinations:
   - namespace: my-app-namespace
     server: https://kubernetes.default.svc
-  
+
   # Define allowed source repositories
   sourceRepos:
   - https://github.com/myorg/my-app-repo.git
-  
+
   # Project-specific roles and policies
   roles:
   - name: developer
@@ -39,7 +39,7 @@ spec:
     - p, proj:my-project:developer, applications, update, my-project/*, allow
     groups:
     - my-oidc-developer-group
-    
+
   - name: viewer
     description: "Read-only access to project applications"
     policies:

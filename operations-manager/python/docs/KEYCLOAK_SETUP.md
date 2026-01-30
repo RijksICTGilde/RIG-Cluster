@@ -100,15 +100,15 @@ General Settings:
 
 Access settings:
 - Root URL: http://127.0.0.1:9595
-- Valid redirect URIs: 
+- Valid redirect URIs:
   * http://127.0.0.1:9595/*
   * http://localhost:9595/*
   * http://operations-manager.kind/*
-- Valid post logout redirect URIs: 
+- Valid post logout redirect URIs:
   * http://127.0.0.1:9595/
   * http://localhost:9595/
   * http://operations-manager.kind/
-- Web origins: 
+- Web origins:
   * http://127.0.0.1:9595
   * http://localhost:9595
   * http://operations-manager.kind

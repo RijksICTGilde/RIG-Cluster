@@ -101,8 +101,7 @@ class GrafanaPrometheusConnector:
                     self._datasource_uid = ds.get("uid")
                     self._datasource_type = ds_type
                     logger.info(
-                        f"Auto-discovered datasource: {ds.get('name')} "
-                        f"(type: {ds_type}, uid: {self._datasource_uid})"
+                        f"Auto-discovered datasource: {ds.get('name')} (type: {ds_type}, uid: {self._datasource_uid})"
                     )
                     return
 
@@ -215,9 +214,7 @@ class GrafanaPrometheusConnector:
             logger.error(f"Grafana request error: {e}")
             raise GrafanaQueryError(f"Request failed: {e}") from e
 
-    def _convert_grafana_response(
-        self, grafana_result: dict[str, Any], instant: bool = True
-    ) -> list[dict[str, Any]]:
+    def _convert_grafana_response(self, grafana_result: dict[str, Any], instant: bool = True) -> list[dict[str, Any]]:
         """
         Convert Grafana API response to Prometheus API format.
 
@@ -250,10 +247,12 @@ class GrafanaPrometheusConnector:
                     if values and len(values) > 1 and values[1]:
                         timestamp = values[0][0] if values[0] else 0
                         value = values[1][0] if values[1] else 0
-                        results.append({
-                            "metric": labels,
-                            "value": [timestamp / 1000, str(value)],  # Convert ms to seconds
-                        })
+                        results.append(
+                            {
+                                "metric": labels,
+                                "value": [timestamp / 1000, str(value)],  # Convert ms to seconds
+                            }
+                        )
                 else:
                     # Range query: multiple values over time
                     if values and len(values) > 1:
@@ -266,10 +265,12 @@ class GrafanaPrometheusConnector:
                                 range_values.append([ts / 1000, str(metric_values[i])])
 
                         if range_values:
-                            results.append({
-                                "metric": labels,
-                                "values": range_values,
-                            })
+                            results.append(
+                                {
+                                    "metric": labels,
+                                    "values": range_values,
+                                }
+                            )
 
         return results
 
@@ -332,10 +333,7 @@ class GrafanaPrometheusConnector:
         """Get the count of running pods."""
         self._ensure_connected()
 
-        if namespace:
-            query = f'count(kube_pod_info{{namespace="{namespace}"}})'
-        else:
-            query = "count(kube_pod_info)"
+        query = f'count(kube_pod_info{{namespace="{namespace}"}})' if namespace else "count(kube_pod_info)"
 
         logger.debug(f"Querying pod count: {query}")
 
@@ -446,9 +444,7 @@ class GrafanaPrometheusConnector:
 
         return overview
 
-    def query_range(
-        self, query: str, start_time: str, end_time: str, step: str
-    ) -> list[dict[str, Any]]:
+    def query_range(self, query: str, start_time: str, end_time: str, step: str) -> list[dict[str, Any]]:
         """Execute a range query to get time-series data."""
         self._ensure_connected()
 
@@ -456,8 +452,8 @@ class GrafanaPrometheusConnector:
 
         try:
             # Parse time strings to datetime
-            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            start_dt = datetime.fromisoformat(start_time)
+            end_dt = datetime.fromisoformat(end_time)
 
             return self._execute_query(
                 query,
@@ -470,9 +466,7 @@ class GrafanaPrometheusConnector:
             logger.error(f"Failed to execute range query: {e}")
             raise GrafanaQueryError(f"Failed to execute range query: {e}") from e
 
-    def get_component_metrics(
-        self, namespace: str, pod_prefix: str, time_range: str = "6h"
-    ) -> dict[str, float | None]:
+    def get_component_metrics(self, namespace: str, pod_prefix: str, time_range: str = "6h") -> dict[str, float | None]:
         """Get aggregated metrics for a specific component."""
         if not GrafanaPrometheusConnector.is_connected:
             return {
@@ -492,9 +486,9 @@ class GrafanaPrometheusConnector:
         try:
             # CPU usage
             cpu_query = (
-                f'avg(rate(container_cpu_usage_seconds_total{{'
+                f"avg(rate(container_cpu_usage_seconds_total{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
-                f'}}[{time_range}]))'
+                f"}}[{time_range}]))"
             )
             cpu_result = self._execute_query(cpu_query, instant=True)
             if cpu_result and len(cpu_result) > 0:
@@ -502,9 +496,7 @@ class GrafanaPrometheusConnector:
 
             # Memory usage
             memory_query = (
-                f'sum(container_memory_usage_bytes{{'
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
-                f'}})'
+                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
             )
             memory_result = self._execute_query(memory_query, instant=True)
             if memory_result and len(memory_result) > 0:
@@ -518,11 +510,7 @@ class GrafanaPrometheusConnector:
                 "http_server_requests_seconds_count",
                 "promhttp_metric_handler_requests_total",
             ]:
-                req_query = (
-                    f'sum(rate({req_metric}{{'
-                    f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                    f'}}[{time_range}]))'
-                )
+                req_query = f'sum(rate({req_metric}{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{time_range}]))'
                 try:
                     req_result = self._execute_query(req_query, instant=True)
                     if req_result and len(req_result) > 0:
@@ -531,6 +519,7 @@ class GrafanaPrometheusConnector:
                             metrics["requests_per_second"] = value
                             break
                 except Exception:
+                    logger.debug("Metric %s not available for %s/%s, trying next", req_metric, namespace, pod_prefix)
                     continue
 
         except Exception as e:
@@ -556,11 +545,20 @@ class GrafanaPrometheusConnector:
         """Get time-series metrics for a component over a duration."""
         if not GrafanaPrometheusConnector.is_connected:
             return {
-                "cpu": [], "memory": [], "requests": [],
-                "network_in": [], "network_out": [], "disk_read": [], "disk_write": [],
-                "cpu_limit": None, "memory_limit": None,
-                "cpu_timestamps": [], "memory_timestamps": [], "requests_timestamps": [],
-                "network_timestamps": [], "disk_timestamps": [],
+                "cpu": [],
+                "memory": [],
+                "requests": [],
+                "network_in": [],
+                "network_out": [],
+                "disk_read": [],
+                "disk_write": [],
+                "cpu_limit": None,
+                "memory_limit": None,
+                "cpu_timestamps": [],
+                "memory_timestamps": [],
+                "requests_timestamps": [],
+                "network_timestamps": [],
+                "disk_timestamps": [],
             }
 
         end_time = datetime.now(UTC)
@@ -568,21 +566,32 @@ class GrafanaPrometheusConnector:
         step = f"{step_minutes}m"
 
         result: dict[str, Any] = {
-            "cpu": [], "memory": [], "requests": [],
-            "network_in": [], "network_out": [], "disk_read": [], "disk_write": [],
-            "cpu_limit": None, "memory_limit": None,
-            "cpu_timestamps": [], "memory_timestamps": [], "requests_timestamps": [],
-            "network_timestamps": [], "disk_timestamps": [],
+            "cpu": [],
+            "memory": [],
+            "requests": [],
+            "network_in": [],
+            "network_out": [],
+            "disk_read": [],
+            "disk_write": [],
+            "cpu_limit": None,
+            "memory_limit": None,
+            "cpu_timestamps": [],
+            "memory_timestamps": [],
+            "requests_timestamps": [],
+            "network_timestamps": [],
+            "disk_timestamps": [],
         }
 
         try:
             # CPU usage time-series
             cpu_query = (
-                f'sum(rate(container_cpu_usage_seconds_total{{'
+                f"sum(rate(container_cpu_usage_seconds_total{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
-                f'}}[{step}]))'
+                f"}}[{step}]))"
             )
-            cpu_result = self._execute_query(cpu_query, instant=False, start_time=start_time, end_time=end_time, step=step)
+            cpu_result = self._execute_query(
+                cpu_query, instant=False, start_time=start_time, end_time=end_time, step=step
+            )
             if cpu_result and len(cpu_result) > 0 and "values" in cpu_result[0]:
                 for ts, value in cpu_result[0]["values"]:
                     cpu_millicores = float(value) * 1000
@@ -590,11 +599,11 @@ class GrafanaPrometheusConnector:
 
             # Memory usage time-series
             memory_query = (
-                f'sum(container_memory_usage_bytes{{'
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
-                f'}})'
+                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
             )
-            memory_result = self._execute_query(memory_query, instant=False, start_time=start_time, end_time=end_time, step=step)
+            memory_result = self._execute_query(
+                memory_query, instant=False, start_time=start_time, end_time=end_time, step=step
+            )
             if memory_result and len(memory_result) > 0 and "values" in memory_result[0]:
                 for ts, value in memory_result[0]["values"]:
                     memory_mb = float(value) / (1024 * 1024)
@@ -602,55 +611,63 @@ class GrafanaPrometheusConnector:
 
             # HTTP requests time-series
             requests_query = (
-                f'sum(rate(http_requests_total{{'
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f'}}[{step}])) * 60'
+                f'sum(rate(http_requests_total{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{step}])) * 60'
             )
-            requests_result = self._execute_query(requests_query, instant=False, start_time=start_time, end_time=end_time, step=step)
+            requests_result = self._execute_query(
+                requests_query, instant=False, start_time=start_time, end_time=end_time, step=step
+            )
             if requests_result and len(requests_result) > 0 and "values" in requests_result[0]:
                 for ts, value in requests_result[0]["values"]:
                     result["requests"].append({"timestamp": ts, "value": round(float(value), 1)})
 
             # Network receive
             network_in_query = (
-                f'sum(rate(container_network_receive_bytes_total{{'
+                f"sum(rate(container_network_receive_bytes_total{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f'}}[{step}])) / 1024'
+                f"}}[{step}])) / 1024"
             )
-            network_in_result = self._execute_query(network_in_query, instant=False, start_time=start_time, end_time=end_time, step=step)
+            network_in_result = self._execute_query(
+                network_in_query, instant=False, start_time=start_time, end_time=end_time, step=step
+            )
             if network_in_result and len(network_in_result) > 0 and "values" in network_in_result[0]:
                 for ts, value in network_in_result[0]["values"]:
                     result["network_in"].append({"timestamp": ts, "value": round(float(value), 2)})
 
             # Network transmit
             network_out_query = (
-                f'sum(rate(container_network_transmit_bytes_total{{'
+                f"sum(rate(container_network_transmit_bytes_total{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f'}}[{step}])) / 1024'
+                f"}}[{step}])) / 1024"
             )
-            network_out_result = self._execute_query(network_out_query, instant=False, start_time=start_time, end_time=end_time, step=step)
+            network_out_result = self._execute_query(
+                network_out_query, instant=False, start_time=start_time, end_time=end_time, step=step
+            )
             if network_out_result and len(network_out_result) > 0 and "values" in network_out_result[0]:
                 for ts, value in network_out_result[0]["values"]:
                     result["network_out"].append({"timestamp": ts, "value": round(float(value), 2)})
 
             # Disk read
             disk_read_query = (
-                f'sum(rate(container_fs_reads_bytes_total{{'
+                f"sum(rate(container_fs_reads_bytes_total{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f'}}[{step}])) / 1024'
+                f"}}[{step}])) / 1024"
             )
-            disk_read_result = self._execute_query(disk_read_query, instant=False, start_time=start_time, end_time=end_time, step=step)
+            disk_read_result = self._execute_query(
+                disk_read_query, instant=False, start_time=start_time, end_time=end_time, step=step
+            )
             if disk_read_result and len(disk_read_result) > 0 and "values" in disk_read_result[0]:
                 for ts, value in disk_read_result[0]["values"]:
                     result["disk_read"].append({"timestamp": ts, "value": round(float(value), 2)})
 
             # Disk write
             disk_write_query = (
-                f'sum(rate(container_fs_writes_bytes_total{{'
+                f"sum(rate(container_fs_writes_bytes_total{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f'}}[{step}])) / 1024'
+                f"}}[{step}])) / 1024"
             )
-            disk_write_result = self._execute_query(disk_write_query, instant=False, start_time=start_time, end_time=end_time, step=step)
+            disk_write_result = self._execute_query(
+                disk_write_query, instant=False, start_time=start_time, end_time=end_time, step=step
+            )
             if disk_write_result and len(disk_write_result) > 0 and "values" in disk_write_result[0]:
                 for ts, value in disk_write_result[0]["values"]:
                     result["disk_write"].append({"timestamp": ts, "value": round(float(value), 2)})
@@ -664,9 +681,9 @@ class GrafanaPrometheusConnector:
 
             # Fetch resource limits
             cpu_limit_query = (
-                f'sum(kube_pod_container_resource_limits{{'
+                f"sum(kube_pod_container_resource_limits{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu"'
-                f'}})'
+                f"}})"
             )
             cpu_limit_result = self._execute_query(cpu_limit_query, instant=True)
             if cpu_limit_result and len(cpu_limit_result) > 0:
@@ -674,9 +691,9 @@ class GrafanaPrometheusConnector:
                 result["cpu_limit"] = round(cpu_limit_cores * 1000, 0)
 
             memory_limit_query = (
-                f'sum(kube_pod_container_resource_limits{{'
+                f"sum(kube_pod_container_resource_limits{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory"'
-                f'}})'
+                f"}})"
             )
             memory_limit_result = self._execute_query(memory_limit_query, instant=True)
             if memory_limit_result and len(memory_limit_result) > 0:
@@ -742,9 +759,13 @@ class GrafanaPrometheusConnector:
                     workload_type = created_by_kind or "Unknown"
                     if not created_by_kind:
                         parts = pod_name.split("-")
-                        if len(parts) >= 2 and len(parts[-1]) >= 5 and parts[-1].isalnum():
-                            if not (parts[-1].isdigit() or (len(parts) >= 3 and len(parts[-2]) >= 5)):
-                                continue
+                        if (
+                            len(parts) >= 2
+                            and len(parts[-1]) >= 5
+                            and parts[-1].isalnum()
+                            and not (parts[-1].isdigit() or (len(parts) >= 3 and len(parts[-2]) >= 5))
+                        ):
+                            continue
 
                 workload_name = self._extract_workload_name_from_pod(pod_name)
 
@@ -779,8 +800,7 @@ class GrafanaPrometheusConnector:
             last_part = parts[-1]
             second_last = parts[-2]
 
-            if (len(last_part) == 5 and last_part.isalnum() and
-                len(second_last) >= 5 and second_last.isalnum()):
+            if len(last_part) == 5 and last_part.isalnum() and len(second_last) >= 5 and second_last.isalnum():
                 return "-".join(parts[:-2])
 
         if len(parts[-1]) >= 5 and parts[-1].isalnum():

@@ -81,7 +81,7 @@ class BootstrapApiHandler:
 
         if not isinstance(config, dict):
             msg = f"Invalid YAML configuration: expected dict, got {type(config)}"
-            raise ValueError(msg)
+            raise TypeError(msg)
 
         return config
 

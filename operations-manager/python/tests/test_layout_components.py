@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 """Test layout components rendering."""
 
-import sys
-from pathlib import Path
-
-# Add jinja-roos-components to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "jinja-roos-components"))
-
 from jinja2 import Environment, FileSystemLoader
-from jinja_roos_components.extension import ComponentExtension
+from jinja_roos_components import get_templates_path, setup_components
 
 # Setup paths
-component_templates = (
-    Path(__file__).parent.parent.parent / "jinja-roos-components" / "jinja_roos_components" / "templates"
-)
 
 # Test layout components
 test_template = """
@@ -28,7 +19,8 @@ test_template = """
 """
 
 # Create environment
-env = Environment(loader=FileSystemLoader([str(component_templates)]), extensions=[ComponentExtension], autoescape=True)
+env = Environment(loader=FileSystemLoader(str(get_templates_path())), autoescape=True)
+setup_components(env)
 
 # Render template
 template = env.from_string(test_template)

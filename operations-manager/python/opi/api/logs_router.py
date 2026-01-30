@@ -29,7 +29,7 @@ logs_router: APIRouter = APIRouter(
 
 
 @logs_router.get("/{project_name}")
-async def get_deployment_logs(  # noqa: C901
+async def get_deployment_logs(
     project_name: str,
     deployment: str | None = Query(None, description="Filter by deployment name"),
     component: str | None = Query(None, description="Filter by component name"),
@@ -65,7 +65,7 @@ async def get_deployment_logs(  # noqa: C901
 
         # Check if project exists
         if project_name not in all_projects:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")  # noqa: TRY301
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
         project_info = all_projects[project_name]
         project_data = project_info.data or {}

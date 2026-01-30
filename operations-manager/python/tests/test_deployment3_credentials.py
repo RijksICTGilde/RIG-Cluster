@@ -6,11 +6,14 @@ Test deployment3 database access using the actual credentials that should have b
 import asyncio
 import logging
 
+import pytest
 from opi.connectors.postgres import create_postgres_connector
 from opi.core.config import settings
 from opi.core.database_pools import close_database_pools, get_database_pool, initialize_database_pools
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.project_manager import ProjectManager
+
+pytestmark = pytest.mark.slow
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +86,8 @@ async def test_deployment3_database_access():
             # Get database owner
             db_owner = await admin_conn.fetchval(
                 """
-                SELECT pg_get_userbyid(datdba) as owner 
-                FROM pg_database 
+                SELECT pg_get_userbyid(datdba) as owner
+                FROM pg_database
                 WHERE datname = $1
             """,
                 target_database,
@@ -113,7 +116,7 @@ async def test_deployment3_database_access():
             SELECT s.schema_name, s.schema_owner,
                    n.nspowner::regrole as owner_role
             FROM information_schema.schemata s
-            JOIN pg_namespace n ON n.nspname = s.schema_name  
+            JOIN pg_namespace n ON n.nspname = s.schema_name
             WHERE s.schema_name = $1
         """,
             target_schema,
@@ -184,7 +187,7 @@ async def test_deployment3_database_access():
                     # Test table access
                     tables = await user_conn.fetch(f"""
                         SELECT table_name, table_type
-                        FROM information_schema.tables 
+                        FROM information_schema.tables
                         WHERE table_schema = '{target_schema}'
                         ORDER BY table_name
                         LIMIT 10

@@ -9,13 +9,15 @@ import logging
 import typing
 from typing import Any
 
-from fastapi import FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Match
 
 from opi.services.user_service import get_user_service
+
+if typing.TYPE_CHECKING:
+    from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
@@ -129,10 +131,10 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                 endpoint = getattr(route, "endpoint", None)
                 if endpoint:
                     # Check for our custom SSO requirement attribute
-                    requires_sso = getattr(endpoint, "_requires_sso", False)  # Default to True
+                    requires_sso = getattr(endpoint, "_requires_sso", False)
                     logger.debug(f"Route {request.url.path} SSO requirement: {requires_sso}")
                     return requires_sso
 
         # Default behavior for unmatched routes or routes without annotations
-        logger.debug(f"Could not determine SSO requirement for {request.url.path}, defaulting to NOT require SSO")
+        logger.debug(f"Could not determine SSO requirement for {request.url.path}, defaulting to require SSO")
         return True

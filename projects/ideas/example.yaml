@@ -22,7 +22,3 @@ projects:
       tag: v1
       ports: 8080
       base-ingress: www.myapp.example.com/api
-
-
-
-

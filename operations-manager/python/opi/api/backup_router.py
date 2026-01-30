@@ -302,15 +302,11 @@ class DeploymentBackupResponse(BaseModel):
 
     status: str = Field(..., description="Operation status: success, partial, or failed")
     message: str = Field(..., description="Human-readable message")
-    pvc_results: list[BackupResultModel] = Field(
-        default_factory=list, description="PVC backup results"
-    )
+    pvc_results: list[BackupResultModel] = Field(default_factory=list, description="PVC backup results")
     database_results: list[DatabaseBackupResultModel] = Field(
         default_factory=list, description="Database backup results"
     )
-    bucket_results: list[BucketBackupResultModel] = Field(
-        default_factory=list, description="Bucket backup results"
-    )
+    bucket_results: list[BucketBackupResultModel] = Field(default_factory=list, description="Bucket backup results")
 
 
 # Router
@@ -994,9 +990,7 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
 
         # Get all snapshots for the namespace
         backup_manager = create_backup_manager()
-        snapshots = await backup_manager.list_snapshots(
-            current_cluster, k8s_namespace, project_name=project_name
-        )
+        snapshots = await backup_manager.list_snapshots(current_cluster, k8s_namespace, project_name=project_name)
 
         # Group snapshots by backup_run_id
         runs_map: dict[str, BackupRun] = {}
@@ -1011,10 +1005,10 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
             if run_id not in runs_map:
                 # Parse timestamp from backup_run_id (YYYYMMDDHHmmss)
                 try:
-                    from datetime import datetime
+                    import datetime
 
-                    dt = datetime.strptime(run_id, "%Y%m%d%H%M%S")
-                    formatted_ts = dt.isoformat() + "Z"
+                    dt = datetime.datetime.strptime(run_id, "%Y%m%d%H%M%S").replace(tzinfo=datetime.UTC)
+                    formatted_ts = dt.isoformat()
                 except (ValueError, TypeError):
                     formatted_ts = s.timestamp or "unknown"
 

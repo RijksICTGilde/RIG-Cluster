@@ -3,11 +3,6 @@
 Test the c-select-field that might be causing the real issue.
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../jinja-roos-components"))
-
 
 def test_select_field():
     """Test the c-select-field with complex :options attribute."""

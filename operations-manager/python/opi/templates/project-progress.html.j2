@@ -66,13 +66,13 @@
 
                 {# Success Message #}
                 <div id="success-message" style="display: none;">
-                    <c-alert kind="success" heading="Project Succesvol Aangemaakt!" 
+                    <c-alert kind="success" heading="Project Succesvol Aangemaakt!"
                              content="Uw project is klaar voor gebruik."/>
                 </div>
 
                 {# Error Message #}
                 <div id="error-message" style="display: none;">
-                    <c-alert kind="error" heading="Er is een fout opgetreden" 
+                    <c-alert kind="error" heading="Er is een fout opgetreden"
                              content="Er ging iets mis tijdens het aanmaken van uw project.">
                         <div id="error-details"></div>
                     </c-alert>
@@ -97,7 +97,7 @@
     .progress-wrapper {
         margin: 1rem 0;
     }
-    
+
     .progress-container {
         width: 100%;
         height: 30px;
@@ -106,7 +106,7 @@
         overflow: hidden;
         position: relative;
     }
-    
+
     .progress-bar {
         height: 100%;
         background: linear-gradient(90deg, #007bc7 0%, #0099ff 100%);
@@ -119,65 +119,65 @@
         font-weight: bold;
         min-width: 40px;
     }
-    
+
     .tasks-list {
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
     }
-    
+
     .task-item {
         padding: 0.75rem;
         background: #f8f9fa;
         border-radius: 4px;
         border-left: 4px solid #007bc7;
     }
-    
+
     .task-item.completed {
         border-left-color: #28a745;
         background: #f1f8f4;
     }
-    
+
     .task-item.failed {
         border-left-color: #dc3545;
         background: #fdf3f4;
     }
-    
+
     .task-item.running {
         border-left-color: #ffc107;
         background: #fff9e6;
         animation: pulse 2s infinite;
     }
-    
+
     @keyframes pulse {
         0% { opacity: 1; }
         50% { opacity: 0.7; }
         100% { opacity: 1; }
     }
-    
+
     .task-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
         margin-bottom: 0.25rem;
     }
-    
+
     .task-name {
         font-weight: 500;
     }
-    
+
     .task-status {
         font-size: 0.9rem;
         padding: 0.125rem 0.5rem;
         border-radius: 12px;
         background: white;
     }
-    
+
     .task-time {
         font-size: 0.85rem;
         color: #666;
     }
-    
+
     .subtask-item {
         margin-left: 2rem;
         margin-top: 0.5rem;
@@ -186,15 +186,15 @@
         border-left: 2px solid #ddd;
         border-radius: 4px;
     }
-    
+
     .subtask-item.completed {
         border-left-color: #28a745;
     }
-    
+
     .subtask-item.running {
         border-left-color: #ffc107;
     }
-    
+
     .logs-output {
         background: #1e1e1e;
         color: #00ff00;
@@ -206,58 +206,58 @@
         overflow-y: auto;
         white-space: pre-wrap;
     }
-    
+
     .events-list {
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
     }
-    
+
     .event-item {
         padding: 0.75rem;
         background: white;
         border-radius: 4px;
         border: 1px solid #e0e0e0;
     }
-    
+
     .event-header {
         display: flex;
         justify-content: space-between;
         margin-bottom: 0.25rem;
     }
-    
+
     .event-type {
         font-weight: 500;
         padding: 0.125rem 0.5rem;
         border-radius: 4px;
         font-size: 0.85rem;
     }
-    
+
     .event-type.Normal {
         background: #d4edda;
         color: #155724;
     }
-    
+
     .event-type.Warning {
         background: #fff3cd;
         color: #856404;
     }
-    
+
     .event-time {
         font-size: 0.85rem;
         color: #666;
     }
-    
+
     .event-message {
         color: #333;
     }
-    
+
     .web-addresses-list {
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
     }
-    
+
     .web-address-item {
         padding: 1rem;
         background: white;
@@ -266,25 +266,25 @@
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         transition: all 0.2s ease;
     }
-    
+
     .web-address-item:hover {
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         transform: translateY(-1px);
     }
-    
+
     .web-address-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
         margin-bottom: 0.5rem;
     }
-    
+
     .web-address-component {
         font-weight: 600;
         color: #007bc7;
         font-size: 1.1rem;
     }
-    
+
     .web-address-status {
         padding: 0.25rem 0.75rem;
         border-radius: 12px;
@@ -293,7 +293,7 @@
         background: #d4edda;
         color: #155724;
     }
-    
+
     .web-address-link {
         display: inline-flex;
         align-items: center;
@@ -306,7 +306,7 @@
         font-weight: 500;
         transition: all 0.2s ease;
     }
-    
+
     .web-address-link:hover {
         background: linear-gradient(90deg, #005a9e 0%, #0077cc 100%);
         text-decoration: none;
@@ -314,11 +314,11 @@
         transform: translateY(-1px);
         box-shadow: 0 4px 8px rgba(0,123,199,0.3);
     }
-    
+
     .web-address-link:visited {
         color: white;
     }
-    
+
     .web-address-link::after {
         content: ' →';
         font-size: 0.9rem;
@@ -350,7 +350,7 @@
         const validProgress = (progress !== undefined && progress !== null && !isNaN(progress)) ? progress : 0;
         const progressBar = document.getElementById('progress-bar');
         const progressText = document.getElementById('progress-text');
-        
+
         if (progressBar) {
             progressBar.style.width = validProgress + '%';
         }
@@ -369,17 +369,17 @@
     function renderTasks(tasks) {
         const tasksList = document.getElementById('tasks-list');
         if (!tasksList) return;
-        
+
         if (!tasks || tasks.length === 0) {
             tasksList.innerHTML = '<span>Geen taken beschikbaar.</span>';
             return;
         }
-        
+
         let html = '';
         tasks.forEach(task => {
             const statusClass = task.status.toLowerCase();
             const statusText = STATUS_TEXT[task.status] || task.status;
-            
+
             html += `
                 <div class="task-item ${statusClass}">
                     <div class="task-header">
@@ -390,13 +390,13 @@
                     ${task.completed_at ? `<div class="task-time">Voltooid: ${new Date(task.completed_at).toLocaleTimeString('nl-NL')}</div>` : ''}
                     ${task.error ? `<div style="color: red; margin-top: 0.5rem;">${task.error}</div>` : ''}
             `;
-            
+
             // Render subtasks
             if (task.subtasks && task.subtasks.length > 0) {
                 task.subtasks.forEach(subtask => {
                     const subtaskClass = subtask.status.toLowerCase();
                     const subtaskText = STATUS_TEXT[subtask.status] || subtask.status;
-                    
+
                     html += `
                         <div class="subtask-item ${subtaskClass}">
                             <div class="task-header">
@@ -408,19 +408,19 @@
                     `;
                 });
             }
-            
+
             html += '</div>';
         });
-        
+
         tasksList.innerHTML = html;
     }
 
     function renderLogs(logs) {
         if (!logs || logs.length === 0) return;
-        
+
         const logsSection = document.getElementById('logs-section');
         const logsContent = document.getElementById('logs-content');
-        
+
         if (logsSection && logsContent) {
             logsContent.textContent = logs.join('\n');
             logsSection.style.display = 'block';
@@ -431,10 +431,10 @@
 
     function renderEvents(events) {
         if (!events || events.length === 0) return;
-        
+
         const eventsSection = document.getElementById('events-section');
         const eventsList = document.getElementById('events-list');
-        
+
         if (eventsSection && eventsList) {
             let html = '';
             events.forEach(event => {
@@ -457,10 +457,10 @@
 
     function renderWebAddresses(webAddresses) {
         if (!webAddresses || Object.keys(webAddresses).length === 0) return;
-        
+
         const webAddressesSection = document.getElementById('web-addresses-section');
         const webAddressesList = document.getElementById('web-addresses-list');
-        
+
         if (webAddressesSection && webAddressesList) {
             let html = '';
             Object.entries(webAddresses).forEach(([componentName, webAddress]) => {
@@ -472,7 +472,7 @@
                 } catch (e) {
                     // Keep original if URL parsing fails
                 }
-                
+
                 html += `
                     <div class="web-address-item">
                         <div class="web-address-header">
@@ -502,7 +502,7 @@
     function showError(error) {
         const errorMessage = document.getElementById('error-message');
         const errorDetails = document.getElementById('error-details');
-        
+
         if (errorMessage) {
             errorMessage.style.display = 'block';
         }
@@ -514,14 +514,14 @@
     async function pollTaskStatus() {
         try {
             const response = await fetch(`/api/tasks/${TASK_ID}/status`);
-            
+
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-            
+
             const data = await response.json();
             console.log('Received data:', data);
-            
+
             // Update all UI elements
             updateProgressBar(data.progress);
             updateCurrentStep(data.current_step);
@@ -529,12 +529,12 @@
             renderLogs(data.logs);
             renderEvents(data.events);
             renderWebAddresses(data.web_addresses);
-            
+
             // Show namespace monitoring if available
             if (data.namespace && (data.logs || data.events)) {
                 updateCurrentStep(`Live monitoring actief voor namespace: ${data.namespace}`);
             }
-            
+
             // Handle completion
             if (data.status === 'completed') {
                 clearInterval(pollTimer);
@@ -543,7 +543,7 @@
                 clearInterval(pollTimer);
                 showError(data.error || 'Project aanmaak mislukt');
             }
-            
+
         } catch (error) {
             console.error('Error polling task status:', error);
             if (error.message.includes('404')) {
@@ -558,7 +558,7 @@
 
     // Start polling
     pollTimer = setInterval(pollTaskStatus, POLL_INTERVAL);
-    
+
     // Initial poll
     setTimeout(pollTaskStatus, 100);
 </script>

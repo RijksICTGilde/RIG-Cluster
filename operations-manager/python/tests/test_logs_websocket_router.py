@@ -17,6 +17,7 @@ import unittest
 from collections import defaultdict
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from itsdangerous import BadSignature, SignatureExpired
 
 
@@ -101,15 +102,23 @@ class TestSessionExtraction(unittest.TestCase):
         self.assertIsNone(result)
 
     @patch("opi.api.logs_websocket_router.settings")
-    @patch("opi.api.logs_websocket_router.URLSafeTimedSerializer")
-    def test_get_session_valid_cookie(self, mock_serializer_class, mock_settings):
+    @patch("opi.api.logs_websocket_router.TimestampSigner")
+    def test_get_session_valid_cookie(self, mock_signer_class, mock_settings):
         """Test extraction of valid session cookie."""
+        import base64
+        import json as json_mod
+
         from opi.api.logs_websocket_router import _get_session_from_cookie
 
         mock_settings.SECRET_KEY = "test_secret"
-        mock_serializer = MagicMock()
-        mock_serializer.loads.return_value = {"user": {"email": "test@example.com"}}
-        mock_serializer_class.return_value = mock_serializer
+
+        # TimestampSigner.unsign returns base64-encoded JSON bytes
+        session_data = {"user": {"email": "test@example.com"}}
+        encoded = base64.b64encode(json_mod.dumps(session_data).encode())
+
+        mock_signer = MagicMock()
+        mock_signer.unsign.return_value = encoded
+        mock_signer_class.return_value = mock_signer
 
         mock_websocket = MagicMock()
         mock_websocket.cookies = {"session": "valid_cookie"}
@@ -119,22 +128,21 @@ class TestSessionExtraction(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["user"]["email"], "test@example.com")
 
-        # Verify max_age and salt are passed
-        mock_serializer.loads.assert_called_once()
-        call_kwargs = mock_serializer.loads.call_args[1]
+        # Verify unsign was called with max_age
+        mock_signer.unsign.assert_called_once()
+        call_kwargs = mock_signer.unsign.call_args[1]
         self.assertIn("max_age", call_kwargs)
-        self.assertEqual(call_kwargs["salt"], "cookie-session")
 
     @patch("opi.api.logs_websocket_router.settings")
-    @patch("opi.api.logs_websocket_router.URLSafeTimedSerializer")
-    def test_get_session_invalid_cookie(self, mock_serializer_class, mock_settings):
+    @patch("opi.api.logs_websocket_router.TimestampSigner")
+    def test_get_session_invalid_cookie(self, mock_signer_class, mock_settings):
         """Test handling of invalid/tampered session cookie (BadSignature)."""
         from opi.api.logs_websocket_router import _get_session_from_cookie
 
         mock_settings.SECRET_KEY = "test_secret"
-        mock_serializer = MagicMock()
-        mock_serializer.loads.side_effect = BadSignature("Invalid signature")
-        mock_serializer_class.return_value = mock_serializer
+        mock_signer = MagicMock()
+        mock_signer.unsign.side_effect = BadSignature("Invalid signature")
+        mock_signer_class.return_value = mock_signer
 
         mock_websocket = MagicMock()
         mock_websocket.cookies = {"session": "tampered_cookie"}
@@ -144,15 +152,15 @@ class TestSessionExtraction(unittest.TestCase):
         self.assertIsNone(result)
 
     @patch("opi.api.logs_websocket_router.settings")
-    @patch("opi.api.logs_websocket_router.URLSafeTimedSerializer")
-    def test_get_session_expired_cookie(self, mock_serializer_class, mock_settings):
+    @patch("opi.api.logs_websocket_router.TimestampSigner")
+    def test_get_session_expired_cookie(self, mock_signer_class, mock_settings):
         """Test handling of expired session cookie (SignatureExpired)."""
         from opi.api.logs_websocket_router import _get_session_from_cookie
 
         mock_settings.SECRET_KEY = "test_secret"
-        mock_serializer = MagicMock()
-        mock_serializer.loads.side_effect = SignatureExpired("Signature has expired")
-        mock_serializer_class.return_value = mock_serializer
+        mock_signer = MagicMock()
+        mock_signer.unsign.side_effect = SignatureExpired("Signature has expired")
+        mock_signer_class.return_value = mock_signer
 
         mock_websocket = MagicMock()
         mock_websocket.cookies = {"session": "expired_cookie"}
@@ -555,7 +563,7 @@ class TestWebSocketMessageParsing(unittest.TestCase):
         """Test handling of invalid JSON."""
         message = "not valid json"
 
-        with self.assertRaises(json.JSONDecodeError):
+        with pytest.raises(json.JSONDecodeError):
             json.loads(message)
 
 
@@ -819,10 +827,12 @@ class TestClientMessageSizeLimit(unittest.TestCase):
         from opi.api.logs_websocket_router import MAX_CLIENT_MESSAGE_SIZE
 
         # Typical switch message with component name
-        message = json.dumps({
-            "action": "switch",
-            "component": "my-long-component-name-that-is-reasonable",
-        })
+        message = json.dumps(
+            {
+                "action": "switch",
+                "component": "my-long-component-name-that-is-reasonable",
+            }
+        )
 
         self.assertLess(len(message), MAX_CLIENT_MESSAGE_SIZE)
 
@@ -831,10 +841,12 @@ class TestClientMessageSizeLimit(unittest.TestCase):
         from opi.api.logs_websocket_router import MAX_CLIENT_MESSAGE_SIZE
 
         # Create a message larger than the limit
-        oversized_message = json.dumps({
-            "action": "switch",
-            "component": "x" * (MAX_CLIENT_MESSAGE_SIZE + 100),
-        })
+        oversized_message = json.dumps(
+            {
+                "action": "switch",
+                "component": "x" * (MAX_CLIENT_MESSAGE_SIZE + 100),
+            }
+        )
 
         self.assertGreater(len(oversized_message), MAX_CLIENT_MESSAGE_SIZE)
 
