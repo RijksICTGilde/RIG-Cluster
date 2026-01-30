@@ -281,7 +281,7 @@ class ProjectFileHandler:
             Cleaned path like "deployments.web-app"
         """
         # Remove 'root' and convert ['key'] to .key
-        clean_path = path.replace("root", "")
+        clean_path = path.removeprefix("root")
         # Convert ['key'] to .key, handling nested brackets
         clean_path = re.sub(r"\['([^']+)']", r".\1", clean_path)
         # Remove leading dot
@@ -1204,7 +1204,13 @@ class ProjectFileHandler:
 
                 # Convert dict to list if needed (migration from old format)
                 if isinstance(services, dict):
-                    deployment["services"] = []
+                    new_list = []
+                    for ref_name, ref_config in services.items():
+                        if isinstance(ref_config, dict) and "generation" in ref_config:
+                            new_list.append({"reference": ref_name, "config": {"generation": ref_config["generation"]}})
+                        else:
+                            new_list.append({"reference": ref_name})
+                    deployment["services"] = new_list
                     services = deployment["services"]
 
                 # Find existing service entry or create new one
