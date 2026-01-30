@@ -221,8 +221,7 @@ class MinioConnector:
             cmd = ["mc"]
             cmd.extend(args)
 
-            # Log command subcommand only — args may contain secrets
-            logger.debug(f"Running mc command: mc {' '.join(args[:2])}")
+            logger.debug("Running mc command")
 
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env
