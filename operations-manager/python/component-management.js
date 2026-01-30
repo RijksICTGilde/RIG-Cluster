@@ -5,17 +5,17 @@ let componentCounter = 1;
 function addComponentRow() {
     componentCounter++;
     const componentsList = document.getElementById('components-list');
-    
+
     const newComponent = document.createElement('div');
     newComponent.className = 'component-item rvo-card rvo-card--outline rvo-card--padding-lg';
     newComponent.innerHTML = `
         <c-layout-flow gap="md">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <c-heading type="h3" textContent="Component ${componentCounter}" />
-                <c-button 
+                <c-button
                     kind="quaternary"
-                    size="sm" 
-                    :showIcon="'before'" 
+                    size="sm"
+                    :showIcon="'before'"
                     :icon="'verwijderen'"
                     @click="removeComponentRow(this)">
                     Verwijderen
@@ -94,7 +94,7 @@ function addComponentRow() {
             <div class="service-binding">
                 <c-heading type="h4" textContent="Gekoppelde Services" />
                 <p class="rvo-text--sm">Selecteer welke services dit component mag gebruiken:</p>
-                
+
                 <c-layout-row gap="md">
                     <c-layout-column>
                         <c-card variant="outline" padding="sm">
@@ -104,7 +104,7 @@ function addComponentRow() {
                                     <div style="font-weight: 600;">Keycloak</div>
                                     <div class="rvo-text--xs" style="color: var(--rvo-color-grijs-700);">Identity Management</div>
                                 </c-layout-column>
-                                <c-checkbox 
+                                <c-checkbox
                                     id="component-${componentCounter}-service-keycloak"
                                     name="components[${componentCounter - 1}][services][]"
                                     value="keycloak" />
@@ -120,7 +120,7 @@ function addComponentRow() {
                                     <div style="font-weight: 600;">PostgreSQL</div>
                                     <div class="rvo-text--xs" style="color: var(--rvo-color-grijs-700);">Database</div>
                                 </c-layout-column>
-                                <c-checkbox 
+                                <c-checkbox
                                     id="component-${componentCounter}-service-postgres"
                                     name="components[${componentCounter - 1}][services][]"
                                     value="postgresql" />
@@ -136,7 +136,7 @@ function addComponentRow() {
                                     <div style="font-weight: 600;">MinIO</div>
                                     <div class="rvo-text--xs" style="color: var(--rvo-color-grijs-700);">Object Storage</div>
                                 </c-layout-column>
-                                <c-checkbox 
+                                <c-checkbox
                                     id="component-${componentCounter}-service-minio"
                                     name="components[${componentCounter - 1}][services][]"
                                     value="minio" />
@@ -147,7 +147,7 @@ function addComponentRow() {
             </div>
         </c-layout-flow>
     `;
-    
+
     componentsList.appendChild(newComponent);
 }
 
@@ -157,7 +157,7 @@ function removeComponentRow(button) {
         // Only remove if there's more than one component
         const componentsList = document.getElementById('components-list');
         const componentItems = componentsList.querySelectorAll('.component-item');
-        
+
         if (componentItems.length > 1) {
             componentItem.remove();
             // Renumber remaining components
@@ -171,14 +171,14 @@ function removeComponentRow(button) {
 function updateComponentNumbers() {
     const componentsList = document.getElementById('components-list');
     const componentItems = componentsList.querySelectorAll('.component-item');
-    
+
     componentItems.forEach((item, index) => {
         // Update heading
         const heading = item.querySelector('c-heading');
         if (heading) {
             heading.setAttribute('textContent', `Component ${index + 1}`);
         }
-        
+
         // Update form field names and IDs
         const fields = item.querySelectorAll('[name], [id]');
         fields.forEach(field => {
@@ -207,7 +207,7 @@ function removeUserRow(button) {
     if (userRow) {
         const usersList = document.getElementById('users-list');
         const userRows = usersList ? usersList.querySelectorAll('.user-row') : [];
-        
+
         if (userRows.length > 1) {
             userRow.remove();
         } else {

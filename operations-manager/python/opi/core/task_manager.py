@@ -6,8 +6,8 @@ Simple task tracking for FastAPI BackgroundTasks.
 import logging
 import time
 import uuid
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -18,6 +18,9 @@ from opi.core.config import settings
 # ProjectManager imported locally to avoid circular import
 
 logger = logging.getLogger(__name__)
+
+# Set to hold references to background tasks so they are not garbage collected (RUF006)
+_background_tasks: set[Any] = set()
 
 
 class TaskStatus(str, Enum):
@@ -37,7 +40,7 @@ class Task:
     name: str
     status: TaskStatus = TaskStatus.RUNNING
     parent_id: str | None = None  # If this is a subtask
-    created_at: datetime = datetime.now()
+    created_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     completed_at: datetime | None = None
     error: str | None = None
 
@@ -73,7 +76,10 @@ class TaskProgressManager:
 
         # Create project info
         _projects[project_id] = ProjectInfo(
-            id=project_id, project_name=project_name, status=TaskStatus.RUNNING, created_at=datetime.now()
+            id=project_id,
+            project_name=project_name,
+            status=TaskStatus.RUNNING,
+            created_at=datetime.now(tz=UTC),
         )
 
         # Store this manager instance
@@ -102,7 +108,7 @@ class TaskProgressManager:
         """Mark a task as completed."""
         if task_id in self.tasks:
             self.tasks[task_id].status = TaskStatus.COMPLETED
-            self.tasks[task_id].completed_at = datetime.now()
+            self.tasks[task_id].completed_at = datetime.now(tz=UTC)
             logger.info(f"Project {self.project_id}: Completed task: {self.tasks[task_id].name} ({task_id})")
 
     def fail_task(self, task_id: str, error: str) -> None:
@@ -110,7 +116,7 @@ class TaskProgressManager:
         if task_id in self.tasks:
             self.tasks[task_id].status = TaskStatus.FAILED
             self.tasks[task_id].error = error
-            self.tasks[task_id].completed_at = datetime.now()
+            self.tasks[task_id].completed_at = datetime.now(tz=UTC)
             logger.error(f"Project {self.project_id}: Failed task: {self.tasks[task_id].name} ({task_id}): {error}")
 
     def update_current_step(self, step: str) -> None:
@@ -152,7 +158,9 @@ class TaskProgressManager:
             # Start the monitoring task
             import asyncio
 
-            asyncio.create_task(_monitor_project_progress(self.project_id))
+            task = asyncio.create_task(_monitor_project_progress(self.project_id))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
             logger.info(
                 f"Started monitoring for project {self.project_id} in namespace {_projects[self.project_id].namespace}"
             )
@@ -195,7 +203,7 @@ def create_task(project_name: str) -> str:
     project_id = str(uuid.uuid4())
     # Create project info in the new system
     _projects[project_id] = ProjectInfo(
-        id=project_id, project_name=project_name, status=TaskStatus.RUNNING, created_at=datetime.now()
+        id=project_id, project_name=project_name, status=TaskStatus.RUNNING, created_at=datetime.now(tz=UTC)
     )
     logger.info(f"Created project {project_id} for project {project_name}")
     return project_id
@@ -304,7 +312,9 @@ async def start_task_monitoring(task_id: str) -> None:
     logger.info(f"Starting monitoring for task {task_id} in namespace {project.namespace}")
 
     # Start monitoring in the background using new system
-    asyncio.create_task(_monitor_project_progress(task_id))
+    task = asyncio.create_task(_monitor_project_progress(task_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 async def _monitor_task_progress(task_id: str) -> None:
@@ -353,17 +363,16 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
     while elapsed_time < max_wait_time:
         try:
             # First ensure user-applications is synced
-            if not user_apps_synced:
-                if await argo_connector.application_exists("user-applications"):
-                    app_info = await argo_connector.get_application_status("user-applications")
-                    if app_info and app_info.get("status", {}).get("sync", {}).get("status") == "Synced":
-                        user_apps_synced = True
-                        logger.info("User applications synced, checking for project applications")
-                        update_progress(
-                            task_id,
-                            78,
-                            f"User applications gesynchroniseerd, zoeken naar {project_name} applicaties...",
-                        )
+            if not user_apps_synced and await argo_connector.application_exists("user-applications"):
+                app_info = await argo_connector.get_application_status("user-applications")
+                if app_info and app_info.get("status", {}).get("sync", {}).get("status") == "Synced":
+                    user_apps_synced = True
+                    logger.info("User applications synced, checking for project applications")
+                    update_progress(
+                        task_id,
+                        78,
+                        f"User applications gesynchroniseerd, zoeken naar {project_name} applicaties...",
+                    )
 
             # If user-applications is synced, look for project applications
             if user_apps_synced:
@@ -371,22 +380,23 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
                 all_apps = await argo_connector.list_applications()
                 for app in all_apps:
                     app_name = app.get("metadata", {}).get("name", "")
-                    if app_name.startswith(f"{project_name}-"):
-                        if app_name not in project_apps_found:
-                            project_apps_found.append(app_name)
-                            logger.info(f"Found ArgoCD application: {app_name}")
-                            update_progress(task_id, 80, f"ArgoCD applicatie gevonden: {app_name}")
+                    if app_name.startswith(f"{project_name}-") and app_name not in project_apps_found:
+                        project_apps_found.append(app_name)
+                        logger.info(f"Found ArgoCD application: {app_name}")
+                        update_progress(task_id, 80, f"ArgoCD applicatie gevonden: {app_name}")
 
-                            # Extract namespace from the application
-                            namespace = app.get("spec", {}).get("destination", {}).get("namespace")
-                            if namespace and task_id in _projects:
-                                # Set the correct namespace for monitoring
-                                _projects[task_id].namespace = namespace
-                                logger.info(f"Set monitoring namespace to: {namespace}")
-                                # Start background monitoring
-                                import asyncio
+                        # Extract namespace from the application
+                        namespace = app.get("spec", {}).get("destination", {}).get("namespace")
+                        if namespace and task_id in _projects:
+                            # Set the correct namespace for monitoring
+                            _projects[task_id].namespace = namespace
+                            logger.info(f"Set monitoring namespace to: {namespace}")
+                            # Start background monitoring
+                            import asyncio
 
-                                asyncio.create_task(_monitor_project_progress(task_id))
+                            task = asyncio.create_task(_monitor_project_progress(task_id))
+                            _background_tasks.add(task)
+                            task.add_done_callback(_background_tasks.discard)
 
                 # Check if all found applications are synced and healthy
                 if project_apps_found:
@@ -447,9 +457,11 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
                         update_progress(task_id, 82, f"Alle {len(project_apps_found)} ArgoCD applicaties zijn gezond")
 
                         # Start continuous monitoring for the newly created project applications
-                        asyncio.create_task(
+                        task = asyncio.create_task(
                             _monitor_project_applications_continuously(task_id, project_name, project_apps_found)
                         )
+                        _background_tasks.add(task)
+                        task.add_done_callback(_background_tasks.discard)
                         break
 
         except Exception as e:

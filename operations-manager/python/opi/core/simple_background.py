@@ -15,6 +15,9 @@ from opi.manager.project_manager import ProjectManager
 
 logger = logging.getLogger(__name__)
 
+# Set to hold references to background tasks so they are not garbage collected (RUF006)
+_background_tasks: set[Any] = set()
+
 
 async def _continuous_monitoring(task_id: str, project_name: str) -> None:
     """
@@ -61,10 +64,6 @@ async def _continuous_monitoring(task_id: str, project_name: str) -> None:
                                 )
                                 if deployment_logs:
                                     logs.extend([f"[{deployment_name}] {log}" for log in deployment_logs[-20:]])
-                else:
-                    # If no namespace is set yet, skip monitoring this cycle
-                    continue
-
                     # Update project with latest monitoring data
                     if events and len(events) > 0:
                         _projects[task_id].events = events[-20:]  # Keep last 20 events
@@ -78,7 +77,10 @@ async def _continuous_monitoring(task_id: str, project_name: str) -> None:
                     current_time = time.strftime("%H:%M:%S")
                     _projects[
                         task_id
-                    ].current_step = f"📡 Live monitoring actief voor {project_name} (laatste update: {current_time})"
+                    ].current_step = f"Live monitoring actief voor {project_name} (laatste update: {current_time})"
+                else:
+                    # If no namespace is set yet, skip monitoring this cycle
+                    continue
 
             except Exception as e:
                 logger.warning(f"Error in continuous monitoring cycle {cycle + 1}: {e}")
@@ -321,7 +323,9 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
                     )
 
                 # Start continuous monitoring in the background
-                asyncio.create_task(_continuous_monitoring(task_id, project_data.project_name))
+                task = asyncio.create_task(_continuous_monitoring(task_id, project_data.project_name))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
 
                 # Calculate final result
                 elapsed_time = time.time() - start_time

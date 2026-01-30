@@ -5,7 +5,9 @@ Test the GitConnector with SSH authentication.
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.git import GitConnector, create_git_connector, create_git_repository
+from opi.connectors.git import GitConnector, create_git_repository
+
+pytestmark = pytest.mark.slow
 
 
 @pytest.mark.asyncio

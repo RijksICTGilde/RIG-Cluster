@@ -3,11 +3,6 @@
 Test the actual self-service-portal.html.j2 template to reproduce the real error.
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../jinja-roos-components"))
-
 
 def test_actual_template():
     """Test the actual template that's failing."""

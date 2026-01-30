@@ -5,7 +5,7 @@ import pathlib
 from pydantic_settings import BaseSettings
 
 # Initialize logging early to ensure it's available during config loading
-from opi.core.early_logging import initialize_logging  # noqa: F401
+from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
 from opi.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ def _check_env_file_for_environment_var(file_path: str) -> None:
                     continue
 
                 # Check if line defines ENVIRONMENT variable
-                if line.startswith("ENVIRONMENT=") or line.startswith("ENVIRONMENT "):
+                if line.startswith(("ENVIRONMENT=", "ENVIRONMENT ")):
                     environment_value = line.split("=", 1)[1] if "=" in line else ""
                     logger.warning(f"ENVIRONMENT variable found in {file_path}:{line_num}")
                     logger.warning(f"Value '{environment_value}' in {file_path} is IGNORED")

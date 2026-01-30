@@ -13,7 +13,7 @@ from typing import Any
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
-from jinja2 import Template
+from jinja2 import Template  # noqa: E402
 
 
 class KubectlConnectionError(Exception):
@@ -74,7 +74,7 @@ class KubectlConnector:
 
         # Start async retry task if connection failed
         if not KubectlConnector.isConnected:
-            asyncio.create_task(self._connection_retry())
+            self._retry_task = asyncio.create_task(self._connection_retry())
 
         self._initialized = True
         logger.debug("KubectlConnector initialized successfully")
@@ -796,19 +796,16 @@ class KubectlConnector:
             import json
 
             events_data = json.loads(stdout)
-            events = []
-
-            # Process events (newest first, limited by limit parameter)
-            for event in list(reversed(events_data.get("items", [])))[:limit]:
-                events.append(
-                    {
-                        "type": event.get("type", ""),
-                        "reason": event.get("reason", ""),
-                        "object": event.get("involvedObject", {}).get("name", ""),
-                        "message": event.get("message", ""),
-                        "time": event.get("metadata", {}).get("creationTimestamp", ""),
-                    }
-                )
+            events = [
+                {
+                    "type": event.get("type", ""),
+                    "reason": event.get("reason", ""),
+                    "object": event.get("involvedObject", {}).get("name", ""),
+                    "message": event.get("message", ""),
+                    "time": event.get("metadata", {}).get("creationTimestamp", ""),
+                }
+                for event in list(reversed(events_data.get("items", [])))[:limit]
+            ]
 
             return events
 

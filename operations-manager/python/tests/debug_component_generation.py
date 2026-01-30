@@ -3,11 +3,6 @@
 Debug what the component extension generates for the failing button.
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../jinja-roos-components"))
-
 
 def debug_component_preprocessing():
     """Debug the preprocessing step to see what Jinja2 code is generated."""

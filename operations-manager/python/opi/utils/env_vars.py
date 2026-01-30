@@ -37,15 +37,13 @@ def _detect_env_var_format(text: str) -> str:
             continue
 
         # YAML indicators: indentation with colon, no equals sign
-        if ":" in line and "=" not in line:
-            # Check for YAML-style key: value
-            if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*:\s*.+", line):
-                yaml_indicators += 1
+        if ":" in line and "=" not in line and re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*:\s*.+", line):
+            # YAML-style key: value
+            yaml_indicators += 1
 
         # KEY=VALUE indicators
-        if "=" in line and not line.startswith("-"):
-            if re.match(r"^[A-Z_][A-Z0-9_]*=.*", line):
-                keyvalue_indicators += 1
+        if "=" in line and not line.startswith("-") and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*", line):
+            keyvalue_indicators += 1
 
     # If we have more YAML indicators or the text starts with certain patterns
     if yaml_indicators > keyvalue_indicators or text.strip().startswith(("---", "{\n", "[\n")):
@@ -81,7 +79,7 @@ def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
         if isinstance(data, dict):
             for key, value in data.items():
                 if not isinstance(key, str):
-                    raise ValueError(f"Environment variable key must be a string, got {type(key).__name__}: {key}")
+                    raise TypeError(f"Environment variable key must be a string, got {type(key).__name__}: {key}")
 
                 # Validate key format
                 if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
@@ -94,7 +92,7 @@ def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
                     env_vars[key] = ""
                 elif isinstance(value, bool):
                     env_vars[key] = "true" if value else "false"
-                elif isinstance(value, (int, float)):
+                elif isinstance(value, int | float):
                     env_vars[key] = str(value)
                 elif isinstance(value, str):
                     env_vars[key] = value
@@ -104,7 +102,7 @@ def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
                         "Only strings, numbers, and booleans are supported."
                     )
         else:
-            raise ValueError("YAML must be a dictionary/mapping of key-value pairs")
+            raise TypeError("YAML must be a dictionary/mapping of key-value pairs")
 
         return env_vars
 
@@ -174,12 +172,12 @@ def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
         if value == '""' or value == "''":
             # Convert quoted empty strings to actual empty strings
             value = ""
-        elif len(value) >= 2:
+        elif len(value) >= 2 and (
+            (value.startswith('"') and value.endswith('"') and value.count('"') == 2)
+            or (value.startswith("'") and value.endswith("'") and value.count("'") == 2)
+        ):
             # Remove surrounding quotes if present (but preserve internal quotes)
-            if (value.startswith('"') and value.endswith('"') and value.count('"') == 2) or (
-                value.startswith("'") and value.endswith("'") and value.count("'") == 2
-            ):
-                value = value[1:-1]
+            value = value[1:-1]
 
         if not key:
             raise ValueError(f"Line {line_num}: Environment variable key cannot be empty")
@@ -228,7 +226,7 @@ def extract_variable_references(template: str) -> list[str]:
     simple_pattern = r"\$([A-Za-z_][A-Za-z0-9_]*)(?=[^A-Za-z0-9_]|$)"
     var_names.update(re.findall(simple_pattern, template))
 
-    return sorted(list(var_names))
+    return sorted(var_names)
 
 
 def substitute_variables(template: str, context: dict[str, str]) -> str:
@@ -284,7 +282,8 @@ def substitute_variables(template: str, context: dict[str, str]) -> str:
     for var_name in referenced_vars:
         var_value = context[var_name]
         # Replace $VAR but not if it's part of ${VAR}
-        result = re.sub(rf"\${var_name}(?=[^A-Za-z0-9_{{]|$)", var_value, result)
+        safe_value = var_value.replace("\\", "\\\\")
+        result = re.sub(rf"\${var_name}(?=[^A-Za-z0-9_{{]|$)", safe_value, result)
 
     # Restore escaped dollars
     result = result.replace(placeholder, "$")
@@ -322,7 +321,7 @@ def detect_circular_references(aliases: dict[str, str]) -> None:
             # Found a cycle
             if node in path:
                 cycle_start = path.index(node)
-                return path[cycle_start:] + [node]
+                return [*path[cycle_start:], node]
             return None
 
         visited.add(node)

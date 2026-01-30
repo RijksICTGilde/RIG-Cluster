@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync
+      - uses: pre-commit/action@v3.0.1
+
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: uv sync --all-groups
+      - name: Run tests with coverage
+        run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow" --tb=short
+      - name: Coverage report
+        run: uv run coverage report --fail-under=21
+
+  license-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          uv sync --all-groups
+          uv pip install pip
+      - name: License check
+        run: uv run liccheck

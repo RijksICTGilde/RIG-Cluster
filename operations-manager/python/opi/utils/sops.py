@@ -7,6 +7,7 @@ This module handles SOPS-specific operations including key generation and encryp
 For pure Age encryption, use the age.py module.
 """
 
+import contextlib
 import glob
 import logging
 import os
@@ -51,7 +52,7 @@ def decrypt_sops_file(file_path: str) -> str | None:
     cmd = ["sops", "--decrypt", file_path]
     logger.debug(f"Running SOPS decryption command: {' '.join(cmd)}")
 
-    process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    process = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     if process.returncode != 0:
         error_msg = process.stderr.strip()
@@ -76,7 +77,7 @@ def encrypt_sops_file(file_path: str) -> bool:
     cmd = ["sops", "--encrypt", "--in-place", file_path]
     logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
 
-    process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    process = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     if process.returncode != 0:
         error_msg = process.stderr.strip()
@@ -121,7 +122,7 @@ def encrypt_to_sops_files(directory: str, public_key: str) -> bool:
                 cmd = ["sops", "--encrypt", "--age", public_key, file_path]
                 logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
 
-                process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                process = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
                 if process.returncode != 0:
                     error_msg = process.stderr.strip()
@@ -194,10 +195,8 @@ def generate_sops_key_pair() -> tuple[str, str]:
 
         finally:
             # Clean up temp file
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(temp_file_path)
-            except OSError:
-                pass
 
     except subprocess.CalledProcessError as e:
         raise SOPSKeyEncryptionError(f"age-keygen command failed: {e.stderr}") from e

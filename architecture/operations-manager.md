@@ -12,24 +12,24 @@ graph TB
         UIServer[User Interface / API Server<br/>Manages Project Files]
         ProjectFiles[Project Files<br/>YAML Configurations]
     end
-    
+
     subgraph "Cluster A"
         BackendA[Backend<br/>Reads project files]
         ManifestsA[Generated Manifests<br/>& Services]
     end
-    
+
     subgraph "Cluster B"
         BackendB[Backend<br/>Reads project files]
         ManifestsB[Generated Manifests<br/>& Services]
     end
-    
+
     UIServer --> ProjectFiles
     UIServer <--> BackendA
     UIServer <--> BackendB
-    
+
     BackendA --> ProjectFiles
     BackendB --> ProjectFiles
-    
+
     BackendA --> ManifestsA
     BackendB --> ManifestsB
 ```
@@ -41,28 +41,28 @@ graph TB
     subgraph Input ["Input"]
         ProjectFile[Project File<br/>YAML Configuration]
     end
-    
+
     subgraph BackendProc ["Backend Processing"]
         Backend[Backend Processor<br/>Reads & Processes]
     end
-    
+
     subgraph ServiceProv ["Service Provisioning"]
         DB[Database<br/>Schema & Connections]
         Auth[Keycloak<br/>Realm & Client Setup]
         Storage[MinIO<br/>Bucket & Access Setup]
         More[...]
     end
-    
+
     subgraph ServiceInfo ["Service Information"]
         Credentials[Connection Info<br/>URLs, Credentials, Configs]
     end
-    
+
     subgraph GeneratedMan ["Generated Manifests"]
         Deployment[Deployment<br/>+ Service Connection Info]
         Service[Service<br/>Network Configuration]
         Ingress[Ingress<br/>External Access]
     end
-    
+
     ProjectFile --> Backend
     Backend -->|"Configure services"| ServiceProv
     Backend -->|"Generate manifests"| GeneratedMan
@@ -83,8 +83,8 @@ graph TB
 - Required services (PostgreSQL database, MinIO storage, Keycloak authentication)
 - Networking and security policies
 
-**Processing Flow**: 
-1. Project File → Backend Processing 
+**Processing Flow**:
+1. Project File → Backend Processing
 2. Backend sets up required services (DB, Auth, Storage)
 3. Service connection information is automatically injected into Kubernetes manifests
 4. Generated manifests deployed to cluster with all necessary service connectivity

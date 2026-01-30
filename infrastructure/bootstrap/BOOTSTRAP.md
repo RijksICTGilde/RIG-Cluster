@@ -72,7 +72,7 @@ Vault requires special handling for initialization:
    ```bash
    # Port-forward to Vault service
    kubectl port-forward svc/vault -n rig-system 8200:8200
-   
+
    # Initialize Vault
    export VAULT_ADDR=http://localhost:8200
    vault operator init -key-shares=3 -key-threshold=2
@@ -88,7 +88,7 @@ Vault requires special handling for initialization:
      --from-literal=unseal-key-2=<key-2> \
      --from-literal=unseal-key-3=<key-3> \
      --dry-run=client -o yaml | kubeseal > vault-init-sealed.yaml
-   
+
    kubectl apply -f vault-init-sealed.yaml
    ```
 

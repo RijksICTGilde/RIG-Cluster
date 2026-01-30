@@ -78,8 +78,8 @@ task --list-all
    This will generate human-readable passwords using `pwgen` (14 characters in length) for all service accounts.
    The passwords are saved in a `.credentials-[cluster-name].txt` file in the encrypted secrets directory.
 
-   > **Note:** Before using this task, you may want to configure SOPS by creating a `.sops.yaml` file in your project 
-   > root with your encryption settings (AGE, PGP, etc.). See the [SOPS documentation](https://github.com/mozilla/sops) 
+   > **Note:** Before using this task, you may want to configure SOPS by creating a `.sops.yaml` file in your project
+   > root with your encryption settings (AGE, PGP, etc.). See the [SOPS documentation](https://github.com/mozilla/sops)
    > for details.
 
 2. Apply generated secrets to the cluster:
@@ -95,7 +95,7 @@ task --list-all
    ```bash
    # Generate in current directory
    task generate-age-key
-   
+
    # Generate in a specific directory
    task generate-age-key -- OUTPUT_DIR=/path/to/dir
    ```
@@ -104,17 +104,17 @@ task --list-all
    ```bash
    # Create a new cluster repo with default name
    task bootstrap-new-cluster
-   
+
    # Create a repo for a specific cluster
    task bootstrap-new-cluster -- my-production-cluster
-   
+
    # Create without generating an age key
    task bootstrap-new-cluster -- GENERATE_AGE_KEY=false my-production-cluster
-   
+
    # Specify output directory
    task bootstrap-new-cluster -- OUTPUT_DIR=/path/to/repos my-production-cluster
    ```
-   
+
    This task:
    - Creates a new Git repository from the example template
    - Generates an age key for SOPS encryption
@@ -157,19 +157,19 @@ If you prefer to set things up step by step:
    ```bash
    # Apply minimal bootstrap (ArgoCD)
    task bootstrap-minimal SOURCE_TYPE=local-filesystem
-   
+
    # Mount your local repository to ArgoCD
    task mount-repo-to-argocd
    ```
    This creates the rig-system namespace and deploys ArgoCD configured to use local filesystem paths.
-   
+
    **Direct Approach** (bypassing GitOps):
    ```bash
    # Apply full infrastructure directly
    task apply-full-infrastructure
    ```
    This applies all infrastructure components directly, bypassing ArgoCD.
-   
+
 3. For the GitOps approach, you can mount a specific repository directory:
    ```bash
    task mount-repo-to-argocd -- PROJECT_DIR=/path/to/your/repo

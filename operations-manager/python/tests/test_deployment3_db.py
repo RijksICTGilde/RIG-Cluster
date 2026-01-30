@@ -8,6 +8,9 @@ import asyncio
 import sys
 
 import asyncpg
+import pytest
+
+pytestmark = pytest.mark.slow
 
 
 async def test_database_connection() -> None:
@@ -61,8 +64,8 @@ async def test_database_connection() -> None:
 
         print("\n5. Listing ALL schemas in database...")
         schemas = await conn.fetch("""
-            SELECT schema_name, schema_owner 
-            FROM information_schema.schemata 
+            SELECT schema_name, schema_owner
+            FROM information_schema.schemata
             WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
             ORDER BY schema_name
         """)
@@ -83,8 +86,8 @@ async def test_database_connection() -> None:
             # Try to list tables in the schema
             tables = await conn.fetch(
                 """
-                SELECT table_name, table_type 
-                FROM information_schema.tables 
+                SELECT table_name, table_type
+                FROM information_schema.tables
                 WHERE table_schema = $1
                 ORDER BY table_name
             """,
@@ -107,8 +110,8 @@ async def test_database_connection() -> None:
                 # Check table ownership
                 table_owner = await conn.fetchval(
                     """
-                    SELECT tableowner 
-                    FROM pg_tables 
+                    SELECT tableowner
+                    FROM pg_tables
                     WHERE schemaname = $1 AND tablename = 'alembic_version'
                 """,
                     SCHEMA,
@@ -129,7 +132,7 @@ async def test_database_connection() -> None:
             # Check what permissions the user has
             permissions = await conn.fetch(
                 """
-                SELECT 
+                SELECT
                     schemaname,
                     tablename,
                     tableowner,
@@ -137,7 +140,7 @@ async def test_database_connection() -> None:
                     hasselects,
                     hasupdates,
                     hasdeletes
-                FROM pg_tables 
+                FROM pg_tables
                 WHERE schemaname = $1
                 ORDER BY tablename
             """,

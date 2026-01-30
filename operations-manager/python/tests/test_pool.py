@@ -4,11 +4,15 @@ import asyncio
 import logging
 import sys
 
+import pytest
+
 # Add the current directory to path
 sys.path.insert(0, ".")
 
 # Import directly to avoid other dependencies
 from opi.connectors.postgres import PostgresConnector
+
+pytestmark = pytest.mark.slow
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)

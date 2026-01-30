@@ -202,11 +202,13 @@ class ProjectService:
             users_data = project_data.get("users", [])
             users = []
             if users_data and isinstance(users_data, list):
-                for user_data in users_data:
-                    if isinstance(user_data, dict) and "email" in user_data and "role" in user_data:
-                        users.append(ProjectUser(email=user_data["email"], role=user_data["role"]))
+                users.extend(
+                    ProjectUser(email=user_data["email"], role=user_data["role"])
+                    for user_data in users_data
+                    if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
+                )
 
-            success = self.register(project_name, str(api_key), filename, users if users else None)
+            success = self.register(project_name, str(api_key), filename, users if users else None, data=project_data)
 
             if success:
                 logger.debug(f"Loaded project from project data: {project_name} (file: {filename})")

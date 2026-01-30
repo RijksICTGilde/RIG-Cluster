@@ -5,6 +5,7 @@ Tests the SubdomainConnector class that manages globally unique subdomains
 for the nice URL feature.
 """
 
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -155,17 +156,19 @@ class TestSubdomainConnectorRegister:
         mock_pool.acquire = AsyncMock(return_value=mock_conn)
         mock_pool.release = AsyncMock()
 
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            with pytest.raises(SubdomainNotAvailableError) as exc_info:
-                await connector.register(
-                    subdomain="myapp",
-                    base_domain="rijks.app",
-                    project_name="my-project",
-                    deployment_name="prod",
-                    cluster="odcn-production",
-                )
+        with (
+            patch.object(connector, "_get_pool", return_value=mock_pool),
+            pytest.raises(SubdomainNotAvailableError) as exc_info,
+        ):
+            await connector.register(
+                subdomain="myapp",
+                base_domain="rijks.app",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="odcn-production",
+            )
 
-        assert "al geregistreerd" in str(exc_info.value)  # Dutch: "is al geregistreerd"
+        assert "niet beschikbaar" in str(exc_info.value).lower()  # Dutch: "is niet beschikbaar"
 
 
 class TestSubdomainConnectorGetBySubdomain:
@@ -700,7 +703,7 @@ class TestRegisterRaceCondition:
                 cluster="local",
             )
 
-        assert "zojuist geregistreerd" in str(exc_info.value).lower()  # Dutch: "was just registered"
+        assert "niet beschikbaar" in str(exc_info.value).lower()  # Dutch: "is niet beschikbaar"
 
 
 class TestSubdomainAuditLogging:
@@ -861,7 +864,7 @@ class TestSubdomainRollbackHelper:
     @pytest.mark.asyncio
     async def test_rollback_helper_clears_pending_rollback(self):
         """_rollback_subdomain_if_needed clears pending rollback after success."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock
 
         # Create a mock ProjectManager-like object
         class MockProjectManager:
@@ -913,9 +916,7 @@ class TestSubdomainRollbackHelper:
 
             async def _rollback_subdomain_if_needed(self) -> bool:
                 rollback_info = getattr(self, "_pending_subdomain_rollback", None)
-                if not rollback_info or not rollback_info.get("should_rollback"):
-                    return False
-                return True
+                return not (not rollback_info or not rollback_info.get("should_rollback"))
 
         manager = MockProjectManager()
         result = await manager._rollback_subdomain_if_needed()
@@ -927,13 +928,11 @@ class TestSubdomainRollbackHelper:
         """_rollback_subdomain_if_needed respects should_rollback flag."""
 
         class MockProjectManager:
-            _pending_subdomain_rollback = {"should_rollback": False}
+            _pending_subdomain_rollback: ClassVar[dict[str, bool]] = {"should_rollback": False}
 
             async def _rollback_subdomain_if_needed(self) -> bool:
                 rollback_info = getattr(self, "_pending_subdomain_rollback", None)
-                if not rollback_info or not rollback_info.get("should_rollback"):
-                    return False
-                return True
+                return not (not rollback_info or not rollback_info.get("should_rollback"))
 
         manager = MockProjectManager()
         result = await manager._rollback_subdomain_if_needed()

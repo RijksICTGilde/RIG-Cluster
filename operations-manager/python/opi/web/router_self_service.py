@@ -60,10 +60,7 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
         domain_options = []
         for domain in supported_domains:
             # Add descriptive label
-            if domain in ("kind", "local"):
-                label = f"{domain} (lokaal)"
-            else:
-                label = domain
+            label = f"{domain} (lokaal)" if domain in ("kind", "local") else domain
             domain_options.append({"value": domain, "label": label})
 
         result[cluster_name] = domain_options
@@ -167,8 +164,7 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
     safe_subdomain = subdomain[:64].replace("\n", "").replace("\r", "") if subdomain else ""
     safe_base_domain = base_domain[:64].replace("\n", "").replace("\r", "") if base_domain else ""
     logger.info(
-        f"AUDIT: SSO subdomain check - subdomain={safe_subdomain}, "
-        f"base_domain={safe_base_domain}, user={user_email}"
+        f"AUDIT: SSO subdomain check - subdomain={safe_subdomain}, base_domain={safe_base_domain}, user={user_email}"
     )
 
     try:
@@ -177,35 +173,41 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
         if not is_valid:
             # Map validation error to error code for frontend translation
             error_code = _get_validation_error_code(validation_error)
-            return JSONResponse({
-                "subdomain": subdomain.lower() if subdomain else "",
-                "base_domain": base_domain.lower() if base_domain else "",
-                "available": False,
-                "validation_error": validation_error,
-                "error_code": error_code,
-            })
+            return JSONResponse(
+                {
+                    "subdomain": subdomain.lower() if subdomain else "",
+                    "base_domain": base_domain.lower() if base_domain else "",
+                    "available": False,
+                    "validation_error": validation_error,
+                    "error_code": error_code,
+                }
+            )
 
         # Validate base_domain is supported
         is_valid_domain, domain_error = validate_base_domain(base_domain)
         if not is_valid_domain:
-            return JSONResponse({
-                "subdomain": subdomain.lower() if subdomain else "",
-                "base_domain": base_domain.lower() if base_domain else "",
-                "available": False,
-                "validation_error": domain_error,
-                "error_code": "INVALID_BASE_DOMAIN",
-            })
+            return JSONResponse(
+                {
+                    "subdomain": subdomain.lower() if subdomain else "",
+                    "base_domain": base_domain.lower() if base_domain else "",
+                    "available": False,
+                    "validation_error": domain_error,
+                    "error_code": "INVALID_BASE_DOMAIN",
+                }
+            )
 
         connector = create_subdomain_connector()
         is_available = await connector.check_availability(subdomain, base_domain)
 
-        return JSONResponse({
-            "subdomain": subdomain.lower(),
-            "base_domain": base_domain.lower(),
-            "available": is_available,
-            "validation_error": None,
-            "error_code": None if is_available else "SUBDOMAIN_TAKEN",
-        })
+        return JSONResponse(
+            {
+                "subdomain": subdomain.lower(),
+                "base_domain": base_domain.lower(),
+                "available": is_available,
+                "validation_error": None,
+                "error_code": None if is_available else "SUBDOMAIN_TAKEN",
+            }
+        )
     except Exception as e:
         logger.error(f"Error checking subdomain availability: {e}")
         raise HTTPException(status_code=500, detail=f"Error checking subdomain availability: {e}")

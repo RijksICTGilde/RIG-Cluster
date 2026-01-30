@@ -30,7 +30,7 @@ stringData:
 
 2. **Use annotations for fields that need generated passwords**:
    - `# @secret-gen:random:16` - Random password (16 characters)
-   - `# @secret-gen:random:20` - Random password (20 characters) 
+   - `# @secret-gen:random:20` - Random password (20 characters)
    - `# @secret-gen:bcrypt:16` - BCrypt hash of random password (16 chars)
 
 3. **Run the generator**:
@@ -59,7 +59,7 @@ After running `task generate-secrets-for-cluster local`:
 ```
 ../config/overlays/local/
 ├── kustomization.yaml          # References decrypt-sops.yaml
-├── decrypt-sops.yaml          # Lists all encrypted files  
+├── decrypt-sops.yaml          # Lists all encrypted files
 ├── my-service-secret.yaml.sops # Your encrypted secret
 └── ...other-secrets.yaml.sops
 ```

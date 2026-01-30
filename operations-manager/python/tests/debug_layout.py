@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 """Debug layout component processing."""
 
-import sys
-from pathlib import Path
-
-# Add jinja-roos-components to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "jinja-roos-components"))
-
 from jinja2 import Environment, FileSystemLoader
-from jinja_roos_components.extension import ComponentExtension
+from jinja_roos_components import get_templates_path, setup_components
 
 # Setup paths
-component_templates = (
-    Path(__file__).parent.parent.parent / "jinja-roos-components" / "jinja_roos_components" / "templates"
-)
 
 # Simple test - just layout components
 test_template = """
@@ -22,28 +13,31 @@ test_template = """
 </c-layout-row>
 """
 
-# Create environment with debug mode
-env = Environment(loader=FileSystemLoader([str(component_templates)]), extensions=[ComponentExtension], autoescape=True)
 
-print("Testing simple layout-row component...")
-print("Input template:")
-print(test_template)
-print("\n" + "=" * 50)
+if __name__ == "__main__":
+    # Create environment with debug mode
+    env = Environment(loader=FileSystemLoader(str(get_templates_path())), autoescape=True)
+    setup_components(env)
 
-try:
-    template = env.from_string(test_template)
-    html_output = template.render()
-    print("Rendered output:")
-    print(html_output)
+    print("Testing simple layout-row component...")
+    print("Input template:")
+    print(test_template)
+    print("\n" + "=" * 50)
 
-    if "rvo-layout-row" in html_output:
-        print("\n✅ SUCCESS: Layout component was processed!")
-    else:
-        print("\n❌ FAILED: Layout component was NOT processed")
-        print("Raw component tag is still present in output")
+    try:
+        template = env.from_string(test_template)
+        html_output = template.render()
+        print("Rendered output:")
+        print(html_output)
 
-except Exception as e:
-    print(f"\n❌ ERROR: {e}")
-    import traceback
+        if "rvo-layout-row" in html_output:
+            print("\n✅ SUCCESS: Layout component was processed!")
+        else:
+            print("\n❌ FAILED: Layout component was NOT processed")
+            print("Raw component tag is still present in output")
 
-    traceback.print_exc()
+    except Exception as e:
+        print(f"\n❌ ERROR: {e}")
+        import traceback
+
+        traceback.print_exc()

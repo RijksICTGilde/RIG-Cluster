@@ -31,7 +31,7 @@ tasks:
         echo ""
         printf "Select cluster [1-2]: "
         read -r CLUSTER_CHOICE
-        
+
         case $CLUSTER_CHOICE in
           1)
             ENV_FILE=".env-taskfile-local"
@@ -47,15 +47,15 @@ tasks:
             CLUSTER_NAME="local"
             ;;
         esac
-        
+
         if [ ! -f "$ENV_FILE" ]; then
           echo "❌ Environment file not found: $ENV_FILE"
           exit 1
         fi
-        
+
         # Copy the selected env file to .env-taskfile-current
         cp "$ENV_FILE" .env-taskfile-current
-        
+
         echo "✅ Selected: $CLUSTER_NAME cluster"
         echo "📁 Loaded configuration from: $ENV_FILE"
         echo ""
@@ -99,69 +99,69 @@ tasks:
     cmds:
       - |
         echo "Preparing ArgoCD Operator version {{.VERSION}}..."
-        
+
         # Print current directory for debugging
         echo "Current working directory: $(pwd)"
         echo "Target output directory: {{.OUTPUT_DIR}}"
-        
+
         # Create temp directory
         TEMP_DIR="/tmp/argocd-operator-prep"
         mkdir -p $TEMP_DIR
-        
+
         # Check if Prometheus CRD exists
         if ! kubectl get crd prometheuses.monitoring.coreos.com &>/dev/null; then
           echo "⚠️  WARNING: Prometheus CRD not found in the cluster."
           echo "⚠️  This is required by the ArgoCD operator. Applying fake Prometheus CRD as a workaround."
           echo "⚠️  Note: This is only a temporary solution. For production, install Prometheus Operator properly."
-          
+
           # Apply the fake Prometheus CRD
           kubectl apply -f bootstrap/crd/prometheus/fake-prometheus.yaml
-          
+
           echo "✅ Fake Prometheus CRD applied successfully."
         else
           echo "✅ Prometheus CRD already exists in the cluster."
         fi
-        
+
         # Download the operator source
         echo "Downloading ArgoCD Operator source code..."
         curl -sL "https://github.com/argoproj-labs/argocd-operator/archive/refs/tags/{{.VERSION}}.tar.gz" -o $TEMP_DIR/argocd-operator.tar.gz
-        
+
         # Extract the source
         echo "Extracting source code..."
         tar -xzf $TEMP_DIR/argocd-operator.tar.gz -C $TEMP_DIR
-        
+
         # Save the original directory path before changing
         ORIGINAL_DIR="$(pwd)"
-        
+
         # Navigate to extracted directory
         OPERATOR_DIR="$TEMP_DIR/argocd-operator-$(echo {{.VERSION}} | tr -d 'v')"
         echo "Changing to directory: $OPERATOR_DIR"
         cd $OPERATOR_DIR
-        
+
         # Apply the customizations
         echo "Applying customizations..."
-        
+
         # 1. Disable webhooks in kustomization.yaml
         sed -i.bak 's/- path: manager_webhook_patch.yaml/#- path: manager_webhook_patch.yaml/' config/default/kustomization.yaml
         sed -i.bak 's/- ..\/webhook/#- ..\/webhook/' config/default/kustomization.yaml
-        
+
         # TODO: delete step 2, it seems image 0.14 exists and we need to use that instead of latest
         # 2. Use latest image tag in manager kustomization.yaml
         # sed -i.bak 's/newTag: {{.VERSION}}/newTag: latest/' config/manager/kustomization.yaml
-        
+
         # Create output directory with absolute path
         mkdir -p "$ORIGINAL_DIR/{{.OUTPUT_DIR}}"
         OUTPUT_FILE="$ORIGINAL_DIR/{{.OUTPUT_DIR}}/argocd-operator-install.yaml"
-        
+
         # Build the customized installation yaml
         echo "Building customized installation YAML..."
         kustomize build config/default > "$OUTPUT_FILE"
-        
+
         echo "Output written to: $OUTPUT_FILE"
-        
+
         # Return to original directory
         cd "$ORIGINAL_DIR"
-        
+
         # Apply to cluster if requested
         if [[ "{{.APPLY}}" == "true" ]]; then
           echo "Applying ArgoCD operator to cluster..."
@@ -171,10 +171,10 @@ tasks:
           echo "To apply this to your cluster, run:"
           echo "kubectl replace --force -f {{.OUTPUT_DIR}}/argocd-operator-install.yaml"
         fi
-        
+
         # Clean up
         rm -rf $TEMP_DIR
-        
+
         echo "✅ ArgoCD operator preparation complete"
     silent: false
 
@@ -558,19 +558,19 @@ tasks:
       DRY_RUN: '{{default "false" .DRY_RUN}}'
     cmds:
       - |
-        
+
         echo "🚀 Bootstrapping minimal RIG Cluster with source type: {{.CLUSTER}}"
-        
+
         # Set flags for kubectl apply
         KUBECTL_FLAGS=""
         if [[ "{{.DRY_RUN}}" == "true" ]]; then
           KUBECTL_FLAGS="--dry-run=client"
           echo "🔍 Dry run mode enabled"
         fi
-        
+
         # Build and apply
         SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        
+
         # Restart ArgoCD deployments to ensure they pick up any configuration changes
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
           echo "Restarting ArgoCD deployments to apply configuration changes..."
@@ -590,7 +590,7 @@ tasks:
         echo "If ingress is set up, use: http://argo.kind/"
         echo "Default credentials: admin / admin"
     silent: false
-    
+
   uninstall-local-kind-cluster:
     desc: "Uninstall local set-up by deleting the Kind cluster."
     cmds:
@@ -755,12 +755,12 @@ tasks:
       - |
         echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
         echo "Using cluster-specific secrets file: {{.ENV_FILE}}"
-        
+
         # Check if cluster-specific env file exists
         if [ ! -f "{{.ENV_FILE}}" ]; then
           echo "⚠️  Cluster-specific secrets file not found: {{.ENV_FILE}}"
           echo "⚠️  Creating empty secrets file for cluster {{.CLUSTER}}"
-          
+
           # Create the file with a comment
           echo "# Environment secrets for cluster: {{.CLUSTER}}" > "{{.ENV_FILE}}"
           echo "# Add your cluster-specific secret environment variables here" >> "{{.ENV_FILE}}"
@@ -770,19 +770,19 @@ tasks:
           echo "✅ Created empty secrets file: {{.ENV_FILE}}"
           echo "📝 Please edit this file and add the required secrets for your cluster"
         fi
-        
+
         # Check if SOPS key file exists
         if [ ! -f "security/key.txt" ]; then
           echo "❌ SOPS key file not found: security/key.txt"
           exit 1
         fi
-        
+
         # Create output directory
         mkdir -p "{{.OUTPUT_DIR}}"
-        
+
         # Start creating the secret YAML
         SECRET_FILE="{{.OUTPUT_DIR}}/{{.SECRET_NAME}}.yaml"
-        
+
         cat > "$SECRET_FILE" << 'EOF'
         apiVersion: v1
         kind: Secret
@@ -792,32 +792,32 @@ tasks:
         type: Opaque
         data:
         EOF
-        
+
         # Process env file and add base64 encoded values
         echo "Processing environment variables from {{.ENV_FILE}}..."
-        
+
         # Use grep to filter and process the file instead of while loop
         grep -v '^[[:space:]]*#' "{{.ENV_FILE}}" | grep -v '^[[:space:]]*$' | while IFS='=' read -r key value; do
           # Remove any surrounding quotes from value
           value=$(echo "$value" | sed 's/^["'\'']//' | sed 's/["'\'']$//')
-          
+
           # Base64 encode the value
           encoded_value=$(echo -n "$value" | base64)
-          
+
           # Add to secret file
           echo "  $key: $encoded_value" >> "$SECRET_FILE"
           echo "  Added: $key"
         done
-        
+
         echo "Finished processing environment variables."
         echo "Generated secret file content:"
         cat "$SECRET_FILE"
-        
+
         # Encrypt with SOPS using the AGE key
         echo "Encrypting secret with SOPS..."
         AGE_PUBLIC_KEY="$(sed -n '2p' security/key.txt | sed 's/# public key: //')"
         sops --encrypt --output-type yaml --age "$AGE_PUBLIC_KEY" --in-place "$SECRET_FILE"
-        
+
         echo "✅ SOPS-encrypted secret generated: $SECRET_FILE"
         echo "Secret name: {{.SECRET_NAME}}"
         echo "Namespace: {{.NAMESPACE}}"
@@ -1179,10 +1179,10 @@ tasks:
         echo "📁 Templates directory: {{.TEMPLATES_DIR}}"
         echo "📁 Output directory: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
         echo ""
-        
+
         # Create output directory
         mkdir -p "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
-        
+
         # Initialize overview file
         OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
         if [ -f "$OVERVIEW_FILE" ]; then
@@ -1191,70 +1191,70 @@ tasks:
           echo "   Please copy any needed passwords and delete this file before running again."
           exit 1
         fi
-        
+
         echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}" > "$OVERVIEW_FILE"
         echo "# Generated on $(date)" >> "$OVERVIEW_FILE"
         echo "# WARNING: This file contains plaintext passwords - handle with care!" >> "$OVERVIEW_FILE"
         echo "# This file is added to .gitignore - copy passwords and delete this file manually" >> "$OVERVIEW_FILE"
         echo "" >> "$OVERVIEW_FILE"
-        
+
         # Process each template
         for template in {{.TEMPLATES_DIR}}/*.yaml; do
           if [ ! -f "$template" ]; then
             echo "No template files found in {{.TEMPLATES_DIR}}"
             continue
           fi
-          
+
           filename=$(basename "$template")
-          
+
           # Only process files that are clearly secrets (contain '-secret' or '.secret' in filename)
           if [[ "$filename" != *"-secret.yaml" ]] && [[ "$filename" != *".secret.yaml" ]]; then
             echo "Skipping non-secret file: $filename"
             continue
           fi
-          
+
           echo "Processing: $filename"
-          
+
           # Copy template to temp file
           temp_file=$(mktemp)
           cp "$template" "$temp_file"
-          
+
           # Add filename to overview
           echo "# === $filename ===" >> "$OVERVIEW_FILE"
-          
+
           # Find all @secret-gen annotations and process them
           grep -n "# @secret-gen:" "$template" | while IFS=':' read -r line_num rest; do
             # Get the full line
             full_line=$(sed -n "${line_num}p" "$template")
-            
+
             # Extract field name (everything before first colon)
             field_name=$(echo "$full_line" | cut -d':' -f1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-            
+
             # Extract annotation details (everything after # @secret-gen:)
             annotation=$(echo "$full_line" | sed 's/.*# @secret-gen://')
-            
+
             # Parse annotation: type:length[,path=...] or skip
             if echo "$annotation" | grep -q "skip"; then
               echo "  Skipping line $line_num (marked with @secret-gen:skip)"
               continue
             fi
-            
+
             # Parse type and length
             type_length=$(echo "$annotation" | cut -d',' -f1)
             password_type=$(echo "$type_length" | cut -d':' -f1)
             password_length=$(echo "$type_length" | cut -d':' -f2)
-            
+
             # Parse path if present
             path_annotation=""
             if echo "$annotation" | grep -q "path="; then
               path_annotation=$(echo "$annotation" | sed 's/.*path=//')
             fi
-            
+
             if [ -z "$field_name" ]; then
               echo "  ❌ Could not find field name on line $line_num"
               continue
             fi
-            
+
             # Generate password based on type
             case "$password_type" in
               "random")
@@ -1269,12 +1269,12 @@ tasks:
                 continue
                 ;;
             esac
-            
+
             echo "  Generated $password_type password for field: $field_name"
-            
+
             # Use yq to replace the field value (more reliable than sed)
             yq eval ".stringData.\"$field_name\" = \"$password\"" -i "$temp_file"
-            
+
             # Add to overview file
             if [ "$password_type" = "bcrypt" ]; then
               echo "$field_name: \"$plain_password\"  # Original password (bcrypt hash in secret)" >> "$OVERVIEW_FILE"
@@ -1282,7 +1282,7 @@ tasks:
               echo "$field_name: \"$password\"" >> "$OVERVIEW_FILE"
             fi
           done
-          
+
           echo "" >> "$OVERVIEW_FILE"
 
           # Path substitution not needed - path annotation is only for informational purposes
@@ -1294,11 +1294,11 @@ tasks:
           # Copy to final location and encrypt with SOPS using AGE key
           output_file="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/${filename}.sops.yaml"
           cp "$temp_file" "$output_file"
-          
+
           AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
           echo "  Encrypting: $output_file"
           sops --encrypt --output-type yaml --age "$AGE_PUBLIC_KEY" --in-place "$output_file"
-          
+
           # Clean up temp file
           rm "$temp_file"
         done
@@ -1349,7 +1349,7 @@ tasks:
         KUSTOMIZATION_EOF
           echo "  ✅ Created kustomization.yaml"
         fi
-        
+
         echo ""
         echo "✅ {{.MODE | title}} secrets generated successfully!"
         echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore)"

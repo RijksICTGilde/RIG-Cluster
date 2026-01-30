@@ -4,8 +4,13 @@ Test the new dependency injection architecture with DatabasePool.
 """
 
 import asyncio
+import contextlib
 import logging
 import sys
+
+import pytest
+
+pytestmark = pytest.mark.slow
 
 sys.path.insert(0, ".")
 
@@ -89,10 +94,8 @@ async def test_dependency_injection_architecture():
     except Exception as e:
         logger.error(f"❌ Test failed: {e}")
         # Try to clean up on error
-        try:
+        with contextlib.suppress(Exception):
             await close_database_pools()
-        except:
-            pass
         raise
 
 

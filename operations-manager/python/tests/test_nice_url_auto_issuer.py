@@ -5,8 +5,6 @@ When domain-mode is 'nice-url' with a base-domain, the system should
 automatically enable Let's Encrypt (issuer: letsencrypt) for HTTPS.
 """
 
-import pytest
-
 
 class TestAutoIssuerLogic:
     """Tests for the auto-issuer logic used in nice-url mode."""

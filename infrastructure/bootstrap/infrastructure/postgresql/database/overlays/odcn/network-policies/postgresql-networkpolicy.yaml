@@ -8,7 +8,7 @@ spec:
     matchLabels:
       # Match PostgreSQL cluster pods
       cnpg.io/cluster: rig-db
-  
+
   ingress:
     # Allow PostgreSQL access from within the rig-system namespace
     - from:
@@ -18,14 +18,14 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    
+
     # Allow PostgreSQL access from all other namespaces
     - from:
         - namespaceSelector: {}
       ports:
         - protocol: TCP
           port: 5432
-  
+
   egress:
     # Allow all outbound traffic (needed for backups, WAL shipping, etc.)
     - {}
@@ -40,7 +40,7 @@ spec:
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db
-  
+
   ingress:
     # Allow metrics scraping from monitoring namespace
     - from:

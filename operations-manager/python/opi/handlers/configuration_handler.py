@@ -466,10 +466,10 @@ class ConfigurationHandler:
         Returns:
             YAML string representation of the configuration
         """
-        from datetime import datetime
+        import datetime
 
         config = self.to_dict()
-        config["generation_timestamp"] = datetime.now().isoformat()
+        config["generation_timestamp"] = datetime.datetime.now(tz=datetime.UTC).isoformat()
 
         yaml = YAML()
         yaml.default_flow_style = False

@@ -7,13 +7,14 @@ following the same pattern as kubectl.py.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
 import tempfile
 import threading
-from typing import Any
+from typing import Any, ClassVar
 
 from opi.core.config import settings
 
@@ -38,7 +39,7 @@ class MinioConnector:
     _instance = None
     _lock = threading.Lock()
     is_mc_available = False
-    configured_aliases = set()
+    configured_aliases: ClassVar[set[str]] = set()
     _retry_task = None
 
     def __new__(cls) -> "MinioConnector":
@@ -175,30 +176,6 @@ class MinioConnector:
             MinioConnector.is_mc_available = False
             return False
 
-    @staticmethod
-    def _is_sensitive_command(args: list[str]) -> bool:
-        """
-        Check if a command contains sensitive data that should not be logged.
-
-        Args:
-            args: List of command arguments
-
-        Returns:
-            True if command contains sensitive data, False otherwise
-        """
-        if len(args) < 2:
-            return False
-
-        # Commands that contain passwords/secrets
-        if args[0] == "alias" and args[1] == "set":
-            # mc alias set <alias> <endpoint> <access-key> <secret-key>
-            return True
-        if len(args) >= 3 and args[0] == "admin" and args[1] == "user" and args[2] == "add":
-            # mc admin user add <alias> <username> <secret-key>
-            return True
-
-        return False
-
     async def _run_mc_command(
         self, args: list[str], env: dict[str, str] | None = None, stdin_input: str | None = None
     ) -> tuple[str, str, int]:
@@ -244,12 +221,7 @@ class MinioConnector:
             cmd = ["mc"]
             cmd.extend(args)
 
-            # Only log non-sensitive commands
-            if not self._is_sensitive_command(args):
-                cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
-                logger.debug(f"Running mc command: mc {cmd_args_str}")
-            else:
-                logger.debug("Running mc command (sensitive data hidden)")
+            logger.debug("Running mc command")
 
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env
@@ -536,10 +508,8 @@ class MinioConnector:
                 }
             finally:
                 # Clean up temporary file
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(temp_file)
-                except OSError:
-                    pass
 
         except MinioValidationError:
             logger.exception("Validation failed for policy creation")

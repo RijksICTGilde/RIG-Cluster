@@ -7,7 +7,7 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: keycloak
-  
+
   ingress:
     # Allow HTTP/HTTPS access from within the rig-system namespace
     - from:
@@ -19,7 +19,7 @@ spec:
           port: 8080  # HTTP port
         - protocol: TCP
           port: 8443  # HTTPS port
-    
+
     # Allow HTTP/HTTPS access from all other namespaces
     - from:
         - namespaceSelector: {}
@@ -28,7 +28,7 @@ spec:
           port: 8080
         - protocol: TCP
           port: 8443
-          
+
     # Allow ingress controller access
     - from:
         - namespaceSelector:
@@ -39,7 +39,7 @@ spec:
           port: 8080
         - protocol: TCP
           port: 8443
-  
+
   egress:
     # Allow outbound traffic to PostgreSQL
     - to:
@@ -49,7 +49,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-          
+
     # Allow DNS resolution
     - to:
         - namespaceSelector: {}
@@ -61,7 +61,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-          
+
     # Allow outbound HTTPS for external connections (OIDC providers, etc.)
     - to:
         - ipBlock:

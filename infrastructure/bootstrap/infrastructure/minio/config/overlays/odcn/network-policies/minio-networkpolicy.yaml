@@ -7,7 +7,7 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: minio
-  
+
   ingress:
     # Allow S3 API access from within the rig-system namespace
     - from:
@@ -19,14 +19,14 @@ spec:
           port: 9000  # MinIO S3 API
         - protocol: TCP
           port: 9001  # MinIO Console
-    
+
     # Allow S3 API access from all other namespaces
     - from:
         - namespaceSelector: {}
       ports:
         - protocol: TCP
           port: 9000  # MinIO S3 API
-          
+
     # Allow ingress controller access
     - from:
         - namespaceSelector:
@@ -37,7 +37,7 @@ spec:
           port: 9000
         - protocol: TCP
           port: 9001
-  
+
   egress:
     # Allow DNS resolution
     - to:
@@ -50,7 +50,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-          
+
     # Allow metrics export
     - to:
         - namespaceSelector:

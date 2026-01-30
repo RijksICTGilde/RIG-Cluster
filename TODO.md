@@ -5,9 +5,9 @@
 ### Multi-Cluster Keycloak Credential Management
 **Issue**: Both local and production operations managers update the same `projects/wies.yaml` file to store Keycloak credentials, which can cause Git conflicts and credential overwrites.
 
-**Context**: 
+**Context**:
 - Local ops manager processes deployments with `cluster: local`
-- Production ops manager processes deployments with `cluster: odcn-production` 
+- Production ops manager processes deployments with `cluster: odcn-production`
 - Both try to write to `config.keycloak.{deployment-name}` in the same project file
 
 **Potential Solutions**:

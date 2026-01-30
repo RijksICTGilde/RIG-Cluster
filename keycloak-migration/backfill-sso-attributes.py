@@ -38,7 +38,6 @@ Examples:
 import getpass
 import json
 import sys
-from copy import deepcopy
 
 import requests
 
@@ -110,7 +109,13 @@ def get_federated_identities(
 
 
 def update_user_attributes(
-    keycloak_url: str, realm: str, token: str, user_id: str, user: dict, attributes: dict, debug: bool = False
+    keycloak_url: str,
+    realm: str,
+    token: str,
+    user_id: str,
+    user: dict,
+    attributes: dict,
+    debug: bool = False,
 ) -> None:
     """Update user attributes.
 
@@ -148,12 +153,12 @@ def update_user_attributes(
         print("DEBUG: Request Details")
         print("=" * 80)
         print(f"URL: {url}")
-        print(f"Method: PUT")
-        print(f"\nOriginal user attributes:")
+        print("Method: PUT")
+        print("\nOriginal user attributes:")
         print(json.dumps(user.get("attributes", {}), indent=2))
-        print(f"\nNew attributes being set:")
+        print("\nNew attributes being set:")
         print(json.dumps(attributes, indent=2))
-        print(f"\nMinimal user data being sent (to preserve firstName/lastName/email):")
+        print("\nMinimal user data being sent (to preserve firstName/lastName/email):")
         print(json.dumps(user_data, indent=2))
         print("=" * 80 + "\n")
 
@@ -182,7 +187,12 @@ def get_user_by_id(keycloak_url: str, realm: str, token: str, user_id: str) -> d
 
 
 def backfill_user(
-    keycloak_url: str, realm: str, token: str, user: dict, dry_run: bool = False, debug: bool = False
+    keycloak_url: str,
+    realm: str,
+    token: str,
+    user: dict,
+    dry_run: bool = False,
+    debug: bool = False,
 ) -> tuple[bool, str, dict | None]:
     """
     Backfill SSO-Rijk attributes for a single user.
@@ -200,7 +210,9 @@ def backfill_user(
         full_user = get_user_by_id(keycloak_url, realm, token, user_id)
         if debug:
             print(f"\n[DEBUG] Fetched full user object for {username}")
-            print(f"[DEBUG] Current attributes: {json.dumps(full_user.get('attributes', {}), indent=2)}")
+            print(
+                f"[DEBUG] Current attributes: {json.dumps(full_user.get('attributes', {}), indent=2)}"
+            )
     except Exception as e:
         return False, f"Failed to get full user object: {e}", None
 
@@ -272,12 +284,18 @@ def backfill_user(
     # Update user (unless dry-run)
     if not dry_run:
         try:
-            update_user_attributes(keycloak_url, realm, token, user_id, full_user, current_attrs, debug)
+            update_user_attributes(
+                keycloak_url, realm, token, user_id, full_user, current_attrs, debug
+            )
         except Exception as e:
             return False, f"Failed to update attributes: {e}", details
 
     action = "Would set" if dry_run else "Set"
-    return True, f"{action} sso-rijk-userid = {sso_userid}, sso-rijk-userid-lowercase = {sso_userid.lower()}", details
+    return (
+        True,
+        f"{action} sso-rijk-userid = {sso_userid}, sso-rijk-userid-lowercase = {sso_userid.lower()}",
+        details,
+    )
 
 
 def main():
@@ -291,7 +309,9 @@ def main():
         print("\nOptions:")
         print("  --dry-run                    Only show what would be changed")
         print("  --test-user <username>       Only process specific user")
-        print("  --debug                      Show detailed request/response information")
+        print(
+            "  --debug                      Show detailed request/response information"
+        )
         print("\nExamples:")
         print(
             "  python backfill-sso-attributes.py https://keycloak.apps.digilab.network algoritmes admin --dry-run"
@@ -430,12 +450,16 @@ def main():
             print(f"SSO-Rijk userName: {detail['sso_username']}")
             if "existing_original" in detail:
                 print(f"Existing sso-rijk-userid: {detail['existing_original']}")
-                print(f"Existing sso-rijk-userid-lowercase: {detail['existing_lowercase']}")
+                print(
+                    f"Existing sso-rijk-userid-lowercase: {detail['existing_lowercase']}"
+                )
             if detail["would_set"]:
                 action = "Would be set" if dry_run else "Was set"
                 print(f"Action: {action}")
                 print(f"  - sso-rijk-userid = {detail['sso_userid']}")
-                print(f"  - sso-rijk-userid-lowercase = {detail['sso_userid_lowercase']}")
+                print(
+                    f"  - sso-rijk-userid-lowercase = {detail['sso_userid_lowercase']}"
+                )
             print("=" * 60)
 
     if dry_run:

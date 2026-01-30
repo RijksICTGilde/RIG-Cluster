@@ -12,32 +12,34 @@ template_str = """
 </c-layout-flow>
 """
 
-templates = {"test.html.j2": template_str}
-env = Environment(loader=DictLoader(templates))
-setup_components_dom(env)
 
-# Get the extension
-from jinja_roos_components.extension_dom import ComponentExtensionDOM
+if __name__ == "__main__":
+    templates = {"test.html.j2": template_str}
+    env = Environment(loader=DictLoader(templates))
+    setup_components_dom(env)
 
-ext = None
-for ext_class, ext_instance in env.extensions.items():
-    if isinstance(ext_instance, ComponentExtensionDOM):
-        ext = ext_instance
-        break
+    # Get the extension
+    from jinja_roos_components.extension_dom import ComponentExtensionDOM
 
-if not ext:
-    print("Extension not found!")
-    import sys
+    ext = None
+    for ext_instance in env.extensions.values():
+        if isinstance(ext_instance, ComponentExtensionDOM):
+            ext = ext_instance
+            break
 
-    sys.exit(1)
+    if not ext:
+        print("Extension not found!")
+        import sys
 
-# Process
-result = ext.preprocess(template_str, "test.html.j2")
+        sys.exit(1)
 
-print("Placeholders stored:", len(ext._jinja_placeholders))
-for key, value in ext._jinja_placeholders.items():
-    print(f"  {key}: {value[:50]}...")
+    # Process
+    result = ext.preprocess(template_str, "test.html.j2")
 
-print("\nResult contains placeholders:", "JINJA2_PLACEHOLDER" in result)
-print("\nFirst 500 chars of result:")
-print(result[:500])
+    print("Placeholders stored:", len(ext._jinja_placeholders))
+    for key, value in ext._jinja_placeholders.items():
+        print(f"  {key}: {value[:50]}...")
+
+    print("\nResult contains placeholders:", "JINJA2_PLACEHOLDER" in result)
+    print("\nFirst 500 chars of result:")
+    print(result[:500])

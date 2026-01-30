@@ -17,4 +17,3 @@
 #Remove a role → CloudNativePG can delete it (with ensure: absent)
 #  Modify role attributes → CloudNativePG updates the existing role
 #  Change passwords → CloudNativePG updates the password
-

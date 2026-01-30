@@ -4,16 +4,10 @@
 import sys
 from pathlib import Path
 
-# Add jinja-roos-components to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "jinja-roos-components"))
-
 from jinja2 import Environment, FileSystemLoader
-from jinja_roos_components.extension import ComponentExtension
+from jinja_roos_components import get_templates_path, setup_components
 
 # Setup paths
-component_templates = (
-    Path(__file__).parent.parent.parent / "jinja-roos-components" / "jinja_roos_components" / "templates"
-)
 
 # Create a simple test template
 test_template = """
@@ -21,7 +15,7 @@ test_template = """
     Test Button
 </c-button>
 
-<c-text-input-field 
+<c-text-input-field
     id="test-input"
     name="test"
     label="Test Input"
@@ -48,7 +42,7 @@ test_template = """
     @keydown="handleKeyDown(event)">
 </c-textarea-field>
 
-<c-button 
+<c-button
     @click="submitForm()"
     @dblclick="handleDoubleClick()"
     @mouseenter="showTooltip()"
@@ -59,68 +53,71 @@ test_template = """
 </c-button>
 """
 
-# Create environment
-env = Environment(loader=FileSystemLoader([str(component_templates)]), extensions=[ComponentExtension], autoescape=True)
 
-# Render template
-template = env.from_string(test_template)
-html_output = template.render()
+if __name__ == "__main__":
+    # Create environment
+    env = Environment(loader=FileSystemLoader(str(get_templates_path())), autoescape=True)
+    setup_components(env)
 
-# Save output
-output_file = Path(__file__).parent / "test_event_output.html"
-output_file.write_text(html_output)
+    # Render template
+    template = env.from_string(test_template)
+    html_output = template.render()
 
-print("✓ Template rendered successfully")
-print(f"✓ Output written to: {output_file}")
+    # Save output
+    output_file = Path(__file__).parent / "test_event_output.html"
+    output_file.write_text(html_output)
 
-# Test cases for event handlers
-# Note: Jinja2 autoescape will convert single quotes to &#39;
-test_cases = [
-    ('onclick="alert(&#39;Button clicked!&#39;)"', "Button click event"),
-    ('onmouseover="console.log(&#39;Hover&#39;)"', "Mouse over event"),
-    ('onchange="handleChange(event)"', "Input change event"),
-    ('onfocus="handleFocus()"', "Input focus event"),
-    ('onblur="handleBlur()"', "Input blur event"),
-    ('onchange="handleSelectChange(event)"', "Select change event"),
-    ('oninput="handleTextareaInput(event)"', "Textarea input event"),
-    ('onkeydown="handleKeyDown(event)"', "Textarea keydown event"),
-    ('onclick="submitForm()"', "Submit button click"),
-    ('ondblclick="handleDoubleClick()"', "Double click event"),
-    ('onmouseenter="showTooltip()"', "Mouse enter event"),
-    ('onmouseleave="hideTooltip()"', "Mouse leave event"),
-    ('data-test="123"', "Data attribute"),
-    ('aria-label="Custom label"', "ARIA attribute"),
-    ('data-form-id="main-form"', "Custom data attribute"),
-    ('aria-describedby="submit-help"', "ARIA describedby attribute"),
-]
+    print("✓ Template rendered successfully")
+    print(f"✓ Output written to: {output_file}")
 
-# Verify all event handlers are present
-print("\nChecking event handlers:")
-all_passed = True
-for expected, description in test_cases:
-    if expected in html_output:
-        print(f"  ✓ {description}: Found")
-    else:
-        print(f"  ✗ {description}: NOT FOUND")
+    # Test cases for event handlers
+    # Note: Jinja2 autoescape will convert single quotes to &#39;
+    test_cases = [
+        ('onclick="alert(&#39;Button clicked!&#39;)"', "Button click event"),
+        ('onmouseover="console.log(&#39;Hover&#39;)"', "Mouse over event"),
+        ('onchange="handleChange(event)"', "Input change event"),
+        ('onfocus="handleFocus()"', "Input focus event"),
+        ('onblur="handleBlur()"', "Input blur event"),
+        ('onchange="handleSelectChange(event)"', "Select change event"),
+        ('oninput="handleTextareaInput(event)"', "Textarea input event"),
+        ('onkeydown="handleKeyDown(event)"', "Textarea keydown event"),
+        ('onclick="submitForm()"', "Submit button click"),
+        ('ondblclick="handleDoubleClick()"', "Double click event"),
+        ('onmouseenter="showTooltip()"', "Mouse enter event"),
+        ('onmouseleave="hideTooltip()"', "Mouse leave event"),
+        ('data-test="123"', "Data attribute"),
+        ('aria-label="Custom label"', "ARIA attribute"),
+        ('data-form-id="main-form"', "Custom data attribute"),
+        ('aria-describedby="submit-help"', "ARIA describedby attribute"),
+    ]
+
+    # Verify all event handlers are present
+    print("\nChecking event handlers:")
+    all_passed = True
+    for expected, description in test_cases:
+        if expected in html_output:
+            print(f"  ✓ {description}: Found")
+        else:
+            print(f"  ✗ {description}: NOT FOUND")
+            all_passed = False
+
+    # Check that no @click remains
+    if "@click" in html_output:
+        print("\n✗ ERROR: Found unprocessed @click attributes")
         all_passed = False
+    else:
+        print("\n✓ No unprocessed @click attributes found")
 
-# Check that no @click remains
-if "@click" in html_output:
-    print("\n✗ ERROR: Found unprocessed @click attributes")
-    all_passed = False
-else:
-    print("\n✓ No unprocessed @click attributes found")
+    # Check icon classes
+    if "rvo-icon--" in html_output and "rvo-icon--sm" not in html_output and "rvo-icon--md" not in html_output:
+        print("✗ ERROR: Found double-dash icon class")
+        all_passed = False
+    else:
+        print("✓ Icon classes correctly formatted")
 
-# Check icon classes
-if "rvo-icon--" in html_output and "rvo-icon--sm" not in html_output and "rvo-icon--md" not in html_output:
-    print("✗ ERROR: Found double-dash icon class")
-    all_passed = False
-else:
-    print("✓ Icon classes correctly formatted")
-
-if all_passed:
-    print("\n✅ All event handling tests passed!")
-    sys.exit(0)
-else:
-    print("\n❌ Some tests failed")
-    sys.exit(1)
+    if all_passed:
+        print("\n✅ All event handling tests passed!")
+        sys.exit(0)
+    else:
+        print("\n❌ Some tests failed")
+        sys.exit(1)

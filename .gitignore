@@ -1,4 +1,7 @@
 /.idea/
+__pycache__/
+*.pyc
+.venv/
 /CLAUDE.md
 /.claude/settings.local.json
 /security/key.txt

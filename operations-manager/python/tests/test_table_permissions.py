@@ -7,8 +7,11 @@ import asyncio
 import base64
 
 import asyncpg
+import pytest
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart
+
+pytestmark = pytest.mark.slow
 
 
 async def test_table_permissions():
@@ -40,7 +43,7 @@ async def test_table_permissions():
         decoded_password = base64.b64decode(encoded_password).decode("utf-8")
 
         # Decrypt if it's an AGE-encrypted password
-        if decoded_password.startswith("age:") or decoded_password.startswith("base64+age:"):
+        if decoded_password.startswith(("age:", "base64+age:")):
             actual_password = decrypt_password_smart(decoded_password)
             print("✅ Retrieved and decrypted password from Kubernetes secret")
         else:
@@ -74,7 +77,7 @@ async def test_table_permissions():
         # List all tables in the schema
         tables = await user_conn.fetch(f"""
             SELECT table_name, table_type
-            FROM information_schema.tables 
+            FROM information_schema.tables
             WHERE table_schema = '{target_schema}'
             ORDER BY table_name
         """)
@@ -118,9 +121,9 @@ async def test_table_permissions():
 
             # Check table owner
             table_owner = await user_conn.fetchval(f"""
-                SELECT tableowner 
-                FROM pg_tables 
-                WHERE schemaname = '{target_schema}' 
+                SELECT tableowner
+                FROM pg_tables
+                WHERE schemaname = '{target_schema}'
                 AND tablename = 'alembic_version'
             """)
 
@@ -180,9 +183,9 @@ async def test_table_permissions():
             # Check this table's owner too
             try:
                 table_owner = await user_conn.fetchval(f"""
-                    SELECT tableowner 
-                    FROM pg_tables 
-                    WHERE schemaname = '{target_schema}' 
+                    SELECT tableowner
+                    FROM pg_tables
+                    WHERE schemaname = '{target_schema}'
                     AND tablename = '{table_name}'
                 """)
                 print(f"  - {table_name} owner: {table_owner}")

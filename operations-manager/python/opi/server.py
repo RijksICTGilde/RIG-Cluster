@@ -24,7 +24,7 @@ from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
 # Initialize logging first, before any other imports that might log
-from opi.core.early_logging import initialize_logging  # noqa: F401
+from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks
 from opi.middleware.authorization import AuthorizationMiddleware

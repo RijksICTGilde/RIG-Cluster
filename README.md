@@ -30,7 +30,7 @@ To bootstrap a new cluster:
    ```bash
    # Create a Kind cluster
    task create-k8s-cluster
-   
+
    # Apply bootstrap
    task bootstrap-minimal SOURCE_TYPE=local-filesystem
    ```

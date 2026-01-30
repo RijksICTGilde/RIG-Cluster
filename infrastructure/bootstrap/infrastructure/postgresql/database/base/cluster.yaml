@@ -23,7 +23,7 @@ spec:
   storage:
     size: 1Gi
     storageClass: standard
-  
+
   # Resource limits
   resources:
     requests:
@@ -32,7 +32,7 @@ spec:
     limits:
       memory: "512Mi"
       cpu: "500m"
-  
+
   # Bootstrap initial database
   bootstrap:
     initdb:
@@ -74,7 +74,7 @@ spec:
   #     wal:
   #       compression: gzip
   #       maxParallel: 2
-      
+
   # Enable monitoring
   monitoring:
     enablePodMonitor: true

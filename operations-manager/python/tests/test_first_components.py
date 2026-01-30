@@ -12,7 +12,7 @@ test_template = """
 
 {% block content %}
 <div class="rvo-layout-column rvo-layout-gap--3xl">
-    
+
     {# Hero Section #}
     <section class="rvo-hero">
         <p>Hero content here</p>

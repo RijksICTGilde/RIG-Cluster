@@ -3,9 +3,7 @@
 Test the fixed formulier template
 """
 
-import sys
-
-sys.path.append("/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/jinja-roos-components")
+from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 from jinja_roos_components.extension import setup_components
@@ -15,7 +13,7 @@ def test_formulier_template():
     """Test the formulier template with fixed menubar"""
 
     # Setup Jinja2 environment
-    template_dir = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/operations-manager/python/templates"
+    template_dir = str(Path(__file__).parent.parent / "opi" / "templates")
     env = Environment(loader=FileSystemLoader(template_dir))
 
     # Setup components

@@ -3,21 +3,14 @@
 Test the layout-row center verticalSpacing processing.
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../jinja-roos-components"))
-
 from jinja2 import Environment, FileSystemLoader
+from jinja_roos_components import get_templates_path, setup_components
 
 
 def test_layout_center():
     """Test that verticalSpacing='center' produces correct CSS class."""
-    # Set up Jinja2 environment
-    template_dir = (
-        "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/jinja-roos-components/jinja_roos_components/templates"
-    )
-    env = Environment(loader=FileSystemLoader(template_dir))
+    env = Environment(loader=FileSystemLoader(str(get_templates_path())), autoescape=True)
+    setup_components(env)
 
     # Load layout-row template
     template = env.get_template("components/layout-row.html.j2")

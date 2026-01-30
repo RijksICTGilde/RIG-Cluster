@@ -18,7 +18,7 @@ data:
     GIT_PROJECTS_SERVER_FILE_PATH=projects/simple-example.yaml
     GIT_PROJECTS_SERVER_BRANCH=main
     GIT_PROJECTS_SERVER_POLL_INTERVAL=120
-    
+
     GIT_ARGO_APPLICATIONS_URL=https://github.com/RijksICTGilde/argo-applications.git
     GIT_ARGO_APPLICATIONS_KEY=""
     GIT_ARGO_APPLICATIONS_USERNAME=git

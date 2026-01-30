@@ -96,7 +96,7 @@ PART2:
 Configmap option idea:
 - create configmap (or env file) in branch and sops encrypt it to GIT
 - when calling API to deploy, parse the configmap file / content / path
-- the API will combine the deployment with the right configmap... 
+- the API will combine the deployment with the right configmap...
 
 
 Wanting local DNS for nicer ingress:
@@ -277,5 +277,3 @@ task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/
 task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=frontend REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.11.21 DOCKERFILE_PATH=frontend/Dockerfile
 
 task docker-build-and-push BUILD_CONTEXT=/Users/robbertuittenbroek/IdeaProjects/Algoritmeregister/ IMAGE_NAME=frontend-beheer REGISTRY_IMAGE=ghcr.io/rijksictgilde/algoritmeregister/ IMAGE_TAG=2024.12.08 DOCKERFILE_PATH=frontend-beheer/Dockerfile
-
-

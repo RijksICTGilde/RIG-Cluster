@@ -4,8 +4,11 @@ Test the enhanced database pool retry and recovery functionality.
 """
 
 import asyncio
+import contextlib
 import logging
 import sys
+
+import pytest
 
 # Add the current directory to Python path for imports
 sys.path.insert(0, ".")
@@ -19,6 +22,8 @@ from opi.core.database_pools import (
     is_database_available,
     recover_database_pool,
 )
+
+pytestmark = pytest.mark.slow
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -176,10 +181,8 @@ async def run_all_tests():
         await asyncio.sleep(1)
 
     # Final cleanup
-    try:
+    with contextlib.suppress(Exception):
         await close_database_pools()
-    except:
-        pass
 
     # Summary
     logger.info(f"\n{'=' * 50}")

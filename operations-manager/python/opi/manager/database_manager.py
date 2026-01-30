@@ -55,7 +55,8 @@ class DatabaseManager:
         """Get the PostgreSQL connector. Ensures connection is initialized."""
         if self._postgres_connector is None:
             self._ensure_connection()
-        assert self._postgres_connector is not None
+        if self._postgres_connector is None:
+            raise RuntimeError("PostgreSQL connector failed to initialize")
         return self._postgres_connector
 
     async def close(self) -> None:
@@ -449,68 +450,66 @@ class DatabaseManager:
                 clone_from = None  # Set to None to skip clone logic but continue to normal flow
 
         # Handle clone-from configuration - can be dict (new format) or string (legacy)
-        if clone_from:
-            # New format: clone-from is a dict with type, reference, mode
-            if isinstance(clone_from, dict):
-                clone_type = clone_from.get("type")
-                if clone_type == "remote-source":
-                    # Handle remote source cloning directly
-                    remote_source_name = clone_from.get("reference")
-                    if project_data is None:
-                        raise ValueError(f"project_data is required for remote-source clone: {deployment.get('name')}")
+        if clone_from and isinstance(clone_from, dict):
+            clone_type = clone_from.get("type")
+            if clone_type == "remote-source":
+                # Handle remote source cloning directly
+                remote_source_name = clone_from.get("reference")
+                if project_data is None:
+                    raise ValueError(f"project_data is required for remote-source clone: {deployment.get('name')}")
 
-                    remote_source = self._get_remote_source_config(project_data, remote_source_name)
-                    if not remote_source:
-                        raise ValueError(f"Remote source '{remote_source_name}' not found in project configuration")
+                remote_source = self._get_remote_source_config(project_data, remote_source_name)
+                if not remote_source:
+                    raise ValueError(f"Remote source '{remote_source_name}' not found in project configuration")
 
-                    db_config = remote_source.get("services", {}).get("postgresql-database", {})
-                    if not db_config:
-                        logger.debug(
-                            f"No postgresql-database service in remote source '{remote_source_name}', "
-                            "skipping database clone"
-                        )
-                        return
-
-                    chisel_config = remote_source.get("chisel")
-
-                    # Decrypt source password using project's AGE key
-                    from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
-
-                    project_private_key = await get_decoded_project_private_key(project_data)
-                    source_password = await decrypt_password_smart(db_config.get("password", ""), project_private_key)
-
-                    logger.info(
-                        f"Cloning database from remote source '{remote_source_name}' for deployment {deployment_name}"
+                db_config = remote_source.get("services", {}).get("postgresql-database", {})
+                if not db_config:
+                    logger.debug(
+                        f"No postgresql-database service in remote source '{remote_source_name}', "
+                        "skipping database clone"
                     )
+                    return
 
-                    result = await self.clone_database_from_external_source(
-                        project_name=project_name,
-                        deployment_name=deployment_name,
-                        source_host=db_config["host"],
-                        source_port=db_config.get("port", 5432),
-                        source_username=db_config["username"],
-                        source_password=source_password,
-                        source_database=db_config["database"],
-                        source_schema=db_config["schema"],
-                        force_clone=force_clone,
-                        chisel_config=chisel_config,
-                        project_data=project_data,
-                    )
+                chisel_config = remote_source.get("chisel")
 
-                    if not result.get("success"):
-                        raise RuntimeError(f"Remote source clone failed: {result.get('errors', ['Unknown error'])}")
+                # Decrypt source password using project's AGE key
+                from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
 
-                    # Update clone status after successful clone
-                    await self._update_clone_status(project_data, deployment_name)
+                project_private_key = await get_decoded_project_private_key(project_data)
+                source_password = await decrypt_password_smart(db_config.get("password", ""), project_private_key)
 
-                    return  # Skip normal create flow
-                elif clone_type == "deployment":
-                    # Local deployment clone - extract reference
-                    clone_from = clone_from.get("reference")
-                else:
-                    logger.warning(f"Unknown clone-from type: {clone_type}, skipping clone")
-                    clone_from = None
-            # else: clone_from is a string (legacy format), use as-is
+                logger.info(
+                    f"Cloning database from remote source '{remote_source_name}' for deployment {deployment_name}"
+                )
+
+                result = await self.clone_database_from_external_source(
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    source_host=db_config["host"],
+                    source_port=db_config.get("port", 5432),
+                    source_username=db_config["username"],
+                    source_password=source_password,
+                    source_database=db_config["database"],
+                    source_schema=db_config["schema"],
+                    force_clone=force_clone,
+                    chisel_config=chisel_config,
+                    project_data=project_data,
+                )
+
+                if not result.get("success"):
+                    raise RuntimeError(f"Remote source clone failed: {result.get('errors', ['Unknown error'])}")
+
+                # Update clone status after successful clone
+                await self._update_clone_status(project_data, deployment_name)
+
+                return  # Skip normal create flow
+            elif clone_type == "deployment":
+                # Local deployment clone - extract reference
+                clone_from = clone_from.get("reference")
+            else:
+                logger.warning(f"Unknown clone-from type: {clone_type}, skipping clone")
+                clone_from = None
+        # else: clone_from is a string (legacy format), use as-is
 
         if clone_from:
             # Handle local database cloning (type: deployment)
@@ -955,10 +954,9 @@ class DatabaseManager:
             if isinstance(service_item, str):
                 if service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value:
                     return True
-            elif isinstance(service_item, dict):
+            elif isinstance(service_item, dict) and ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item:
                 # Dict format: {"namespace-postgresql-database": {"config": {...}}}
-                if ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item:
-                    return True
+                return True
 
         return False
 
@@ -1048,11 +1046,10 @@ class DatabaseManager:
                     # Service defined but no config - use defaults
                     user_config = {}
                     break
-            elif isinstance(service_item, str):
+            elif isinstance(service_item, str) and service_item == service_name:
                 # String format: just the service name, no config - use defaults
-                if service_item == service_name:
-                    user_config = {}
-                    break
+                user_config = {}
+                break
 
         if user_config is None:
             # Service not found in project services
@@ -1124,7 +1121,7 @@ class DatabaseManager:
             }
             for priv in privileges:
                 if not isinstance(priv, str):
-                    raise ValueError(f"Database privilege must be a string, got {type(priv)}: {priv}")
+                    raise TypeError(f"Database privilege must be a string, got {type(priv)}: {priv}")
                 if priv.upper() not in valid_privileges:
                     raise ValueError(
                         f"Invalid database privilege '{priv}'. Valid privileges: {', '.join(sorted(valid_privileges))}"
@@ -1137,7 +1134,7 @@ class DatabaseManager:
                 raise ValueError(f"Service config 'postInitSQL' must be a list, got {type(post_init_sql)}")
             for idx, sql in enumerate(post_init_sql):
                 if not isinstance(sql, str):
-                    raise ValueError(f"postInitSQL[{idx}] must be a string, got {type(sql)}: {sql}")
+                    raise TypeError(f"postInitSQL[{idx}] must be a string, got {type(sql)}: {sql}")
 
         logger.debug(f"Database config (merged with defaults): {merged_config}")
         return merged_config
@@ -1331,7 +1328,7 @@ class DatabaseManager:
             return None
         except Exception as e:
             logger.debug(f"Could not retrieve database secret for {deployment_name}: {e}")
-            raise e
+            raise
             # return None
 
     @staticmethod

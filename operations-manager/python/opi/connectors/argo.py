@@ -24,7 +24,7 @@ class ArgoConnector:
         server_host: str = "argocd-server",
         server_port: int = 80,
         username: str = "admin",
-        password: str = "admin",
+        password: str = "admin",  # noqa: S107
         use_tls: bool = False,
         verify_ssl: bool = False,
     ):
@@ -140,33 +140,33 @@ class ArgoConnector:
 
             connector = aiohttp.TCPConnector(ssl=ssl_context)
 
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    login_url, json=login_data, headers={"Content-Type": "application/json"}
-                ) as response:
-                    # Check if we got redirected to HTTPS
-                    if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
-                        logger.info(f"Detected redirect to HTTPS: {response.url}")
-                        # Update base URL to use HTTPS
-                        old_base = self.base_url
-                        self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
-                        self._actual_base_url = self.base_url
-                        logger.info(f"Updated base URL from {old_base} to {self.base_url}")
+            async with (
+                aiohttp.ClientSession(connector=connector) as session,
+                session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
+            ):
+                # Check if we got redirected to HTTPS
+                if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
+                    logger.info(f"Detected redirect to HTTPS: {response.url}")
+                    # Update base URL to use HTTPS
+                    old_base = self.base_url
+                    self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
+                    self._actual_base_url = self.base_url
+                    logger.info(f"Updated base URL from {old_base} to {self.base_url}")
 
-                    if response.status == 200:
-                        response_data = await response.json()
-                        logger.debug(f"Login response data: {response_data}")
-                        self.auth_token = response_data.get("token")
-                        if self.auth_token:
-                            logger.info("Successfully logged in to ArgoCD - token received")
-                            return True
-                        else:
-                            logger.error("Login response missing token")
-                            return False
+                if response.status == 200:
+                    response_data = await response.json()
+                    logger.debug(f"Login response data: {response_data}")
+                    self.auth_token = response_data.get("token")
+                    if self.auth_token:
+                        logger.info("Successfully logged in to ArgoCD - token received")
+                        return True
                     else:
-                        error_text = await response.text()
-                        logger.error(f"Login failed with status {response.status}: {error_text}")
+                        logger.error("Login response missing token")
                         return False
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Login failed with status {response.status}: {error_text}")
+                    return False
 
         except Exception as e:
             logger.error(f"Error during ArgoCD login: {e}")

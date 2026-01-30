@@ -9,7 +9,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from warnings import deprecated
 
 from fastapi import HTTPException
@@ -43,7 +43,6 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
-from opi.core.task_manager import TaskProgressManager
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.handlers.sops import SopsHandler
@@ -62,7 +61,6 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     HostnameFormat,
-    find_root_component,
     generate_argocd_application_name,
     generate_external_hostname,
     generate_helm_values_filename,
@@ -98,6 +96,10 @@ from opi.utils.yaml_util import (
     find_value_by_jsonpath,
     load_yaml_from_string,
 )
+
+if TYPE_CHECKING:
+    from opi.core.task_manager import TaskProgressManager
+    from opi.manager.database_manager import DatabaseManager
 
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
@@ -166,7 +168,6 @@ class ProjectManager:
         # TODO: fix me, we don't want this
         from opi.manager.argo_manager import ArgoManager
         from opi.manager.bootstrap_manager import BootstrapManager
-        from opi.manager.database_manager import DatabaseManager
         from opi.manager.delete_project_manager import DeleteProjectManager
         from opi.manager.keycloak_manager import KeycloakManager
         from opi.manager.minio_manager import MinioManager
@@ -408,7 +409,7 @@ class ProjectManager:
                 f"expected {secret_class.__name__}, got {type(secret).__name__}"
             )
 
-        return cast(T, secret)
+        return cast("T", secret)
 
     def _get_expected_secrets(
         self, deployment_name: str, deployment: dict[str, Any], project_data: dict[str, Any]
@@ -590,7 +591,7 @@ class ProjectManager:
         var_to_service: dict[str, tuple[ServiceType, VariableDefinition]] = {}
         all_known_vars = set()
 
-        for service_type in ServiceAdapter.SERVICE_DEFINITIONS.keys():
+        for service_type in ServiceAdapter.SERVICE_DEFINITIONS:
             service_def = ServiceAdapter.get_service_definition(service_type)
             for var_def in service_def.variables:
                 # Add primary variable name
@@ -941,7 +942,7 @@ class ProjectManager:
             elif storage_type == "ephemeral":
                 service_type = ServiceType.TEMP_STORAGE
             else:
-                raise ValueError("Unkown storage type: {storage_type}")
+                raise ValueError(f"Unknown storage type: {storage_type}")
 
             # Generate env vars using service variable definitions
             for var_def in ServiceAdapter.get_service_definition(service_type).variables:
@@ -1028,7 +1029,7 @@ class ProjectManager:
 
                 # Include secrets from _secrets_to_create if available
                 if deployment_name in self._secrets_to_create:
-                    for secret_type, secret_data in self._secrets_to_create[deployment_name].items():
+                    for secret_data in self._secrets_to_create[deployment_name].values():
                         if hasattr(secret_data, "to_config_data"):
                             # Handle typed secret objects using config method (main keys only, no aliases)
                             config_vars = secret_data.to_config_data()
@@ -1190,8 +1191,7 @@ class ProjectManager:
             if repo_url:
                 # Extract repo name from URL (e.g., "/srv/git/example-project-infra.git" -> "example-project-infra")
                 repo_name = os.path.basename(repo_url)
-                if repo_name.endswith(".git"):
-                    repo_name = repo_name[:-4]  # Remove .git extension
+                repo_name = repo_name.removesuffix(".git")  # Remove .git extension
             else:
                 logger.error(f"No URL defined for repository: {main_repo.get('name', 'unknown')}")
                 return False
@@ -1267,7 +1267,7 @@ class ProjectManager:
         all_successful = True
 
         for deployment in deployments:
-            namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, cast(str, deployment["namespace"]))
+            namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, cast("str", deployment["namespace"]))
 
             logger.info(
                 f"Checking namespace '{namespace}' for deployment '{deployment['name']}' for project '{project_data['name']}':"
@@ -1933,7 +1933,7 @@ class ProjectManager:
             logger.info(f"Creating SOPS secrets only for deployment: {deployment_name}")
 
         if not deployments:
-            logger.warning("No deployments found in project: {project_name}")
+            logger.warning(f"No deployments found in project: {project_name}")
             return
 
         for deployment in deployments:
@@ -2778,9 +2778,7 @@ class ProjectManager:
                 )
 
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
-                logger.info(
-                    f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
-                )
+                logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
                 # Create network policy for ACME HTTP-01 challenge
                 # This allows ingress on port 80 to all pods, required for the ACME solver
@@ -3078,7 +3076,7 @@ class ProjectManager:
                 for key, value in env_vars.items():
                     # Decrypt if value is AGE-encrypted
                     if isinstance(value, str) and "-----BEGIN AGE ENCRYPTED FILE-----" in value:
-                        decrypted_value = decrypt_age_content(value, private_key)
+                        decrypted_value = await decrypt_age_content(value, private_key)
                         cmp_env_vars.append(f"{key}={decrypted_value}")
                     else:
                         cmp_env_vars.append(f"{key}={value}")
@@ -3089,9 +3087,7 @@ class ProjectManager:
                 logger.info(f"Created CMP environment file: {cmp_env_path}")
 
             # Extract base helm-values from helmfile definition
-            base_values = await self._project_file_handler.extract_helmfile_values(
-                project_data, helmfile_reference
-            )
+            base_values = await self._project_file_handler.extract_helmfile_values(project_data, helmfile_reference)
 
             # Extract deployment-level helm-values
             deployment_values = await self._project_file_handler.extract_deployment_helmfile_values(
@@ -3169,9 +3165,7 @@ class ProjectManager:
                 )
 
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
-                logger.info(
-                    f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
-                )
+                logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
                 # Create network policy for ACME HTTP-01 challenge
                 network_policy_template_path = os.path.join(
@@ -3194,9 +3188,7 @@ class ProjectManager:
                 regular_files.append(f"{network_policy_filename}.yaml")
                 logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
             else:
-                logger.warning(
-                    f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured"
-                )
+                logger.warning(f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured")
 
         # Create kustomization.yaml for additional resources (Issuer, NetworkPolicy, Secrets)
         # The CMP plugin will run BOTH kustomize build AND helmfile template
@@ -3544,9 +3536,11 @@ class ProjectManager:
             users_data = project_data_with_configs.get("users", [])
             users = []
             if users_data and isinstance(users_data, list):
-                for user_data in users_data:
-                    if isinstance(user_data, dict) and "email" in user_data and "role" in user_data:
-                        users.append(ProjectUser(email=user_data["email"], role=user_data["role"]))
+                users.extend(
+                    ProjectUser(email=user_data["email"], role=user_data["role"])
+                    for user_data in users_data
+                    if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
+                )
 
             project_service.register(
                 project_name,
@@ -3676,12 +3670,6 @@ class ProjectManager:
                     )
 
         if domain_mode == "nice-url" and subdomain and base_domain:
-            from opi.connectors.subdomain import (
-                BaseDomainValidationError,
-                SubdomainNotAvailableError,
-                SubdomainValidationError,
-            )
-
             subdomain_connector = SubdomainConnector()
 
             # Check if this is a new registration (for rollback purposes)
@@ -3707,14 +3695,18 @@ class ProjectManager:
 
         # Store rollback info for use in exception handler
         # These variables are used by _rollback_subdomain_on_failure if needed
-        self._pending_subdomain_rollback = {
-            "should_rollback": subdomain_registered,
-            "connector": subdomain_connector,
-            "project_name": project_name,
-            "deployment_name": deployment_name,
-            "subdomain": subdomain,
-            "base_domain": base_domain,
-        } if subdomain_registered else None
+        self._pending_subdomain_rollback = (
+            {
+                "should_rollback": subdomain_registered,
+                "connector": subdomain_connector,
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "subdomain": subdomain,
+                "base_domain": base_domain,
+            }
+            if subdomain_registered
+            else None
+        )
 
         # Collect registry configurations for all components in this deployment
         registry_configs_map: dict[str, dict[str, Any]] = {}  # registry_name -> registry_config
@@ -4693,7 +4685,7 @@ class ProjectManager:
             matches = jsonpath_expr.find(project_data)
             return matches[0].value if matches else None
         except Exception as e:
-            raise Exception(f"Error querying JSONPath '{json_path}") from e
+            raise Exception(f"Error querying JSONPath '{json_path}'") from e
 
     async def get_api_key(self) -> str:
         """
@@ -4826,9 +4818,13 @@ class ProjectManager:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
                         # Clone all properties except name and components
-                        for key, value in source_deployment.items():
-                            if key not in ["name", "components"]:
-                                new_deployment[key] = value
+                        new_deployment.update(
+                            {
+                                key: value
+                                for key, value in source_deployment.items()
+                                if key not in ["name", "components"]
+                            }
+                        )
 
                         # If clone-from is specified, add clone-from flag
                         new_deployment["clone-from"] = clone_from

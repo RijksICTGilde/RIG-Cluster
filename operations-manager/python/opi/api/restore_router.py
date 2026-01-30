@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token, validate_master_api_key  # noqa: F401
+from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import create_git_connector_for_project_files
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings

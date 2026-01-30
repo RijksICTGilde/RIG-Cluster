@@ -75,4 +75,3 @@ SOPS_AGE_KEY_FILE=sops-key.txt sops --decrypt secret.sops.yaml
 When using plugin in kustomize, testing with:
 
 SOPS_AGE_KEY="AGE-SECRET-KEY-here" kustomize build --enable-alpha-plugins --enable-exec apps/amt/overlays/local
-

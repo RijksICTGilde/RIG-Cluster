@@ -270,12 +270,12 @@ def display_user_data(tokens: dict[str, Any], user_info: dict[str, Any]) -> HTML
             <h2>🎉 SSO Login Successful!</h2>
             <p>Successfully authenticated with Keycloak and retrieved user data.</p>
         </div>
-        
+
         <div class="data-section">
             <h3>👤 User Information (from /userinfo endpoint)</h3>
             <pre>{json.dumps(user_info, indent=2)}</pre>
         </div>
-        
+
         <div class="data-section">
             <h3>🔑 Token Information</h3>
             <p><strong>Token Type:</strong> <span class="highlight">{tokens.get("token_type", "N/A")}</span></p>
@@ -283,19 +283,19 @@ def display_user_data(tokens: dict[str, Any], user_info: dict[str, Any]) -> HTML
             <p><strong>Refresh Token:</strong> <span class="highlight">{"Present" if tokens.get("refresh_token") else "Not provided"}</span></p>
             <p><strong>Scope:</strong> <span class="highlight">{tokens.get("scope", "N/A")}</span></p>
         </div>
-        
+
         <div class="data-section">
             <h3>📋 Access Token Claims (decoded JWT payload)</h3>
             <p><em>Note: In production, always verify JWT signature before trusting claims!</em></p>
             <pre>{json.dumps(payload, indent=2)}</pre>
         </div>
-        
+
         <div class="data-section">
             <h3>🔧 Raw Token Response</h3>
             <pre>{json.dumps(filtered_tokens, indent=2)}</pre>
             <p><strong>Access Token:</strong> {access_token_preview}... (truncated for display)</p>
         </div>
-        
+
         <a href="/" class="btn">🏠 Back to Home</a>
         <a href="/login" class="btn">🔄 Login Again</a>
     </body>

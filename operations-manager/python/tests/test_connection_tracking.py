@@ -7,6 +7,8 @@ import asyncio
 import logging
 import sys
 
+import pytest
+
 # Add the current directory to Python path for imports
 sys.path.insert(0, ".")
 
@@ -18,6 +20,8 @@ from opi.core.database_pools import (
     initialize_database_pools,
     log_active_connections_for_all_pools,
 )
+
+pytestmark = pytest.mark.slow
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

@@ -81,7 +81,7 @@ class MinioManager:
                     return None
             elif isinstance(service, dict):
                 # Configured format: "- minio-storage: ..."
-                service_name = list(service.keys())[0] if service else None
+                service_name = next(iter(service.keys())) if service else None
                 if service_name == ServiceType.MINIO_STORAGE.value:
                     config = service.get(service_name, {}).get("config")
                     if config:

@@ -3,11 +3,6 @@
 Test with the exact context and indentation from the real template.
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../jinja-roos-components"))
-
 
 def test_exact_context():
     """Test with the exact context from the template."""

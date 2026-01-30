@@ -6,7 +6,7 @@ Since we already use sops for infra encoding files, we will also use this for en
 The idea is as follows:
 - we create an age-key, as we do for all namespaces, but this one is created in the argo-cd namespace, manually on creation
 - the operation manager can read this secret and uses it to decode password strings
-- 
+-
 
 # Generate new key pair
 age-keygen > key.txt

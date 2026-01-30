@@ -6,7 +6,10 @@ Verify what's actually in the deployment-1 source database using direct pg_dump
 import asyncio
 import os
 
+import pytest
 from opi.core.config import settings
+
+pytestmark = pytest.mark.slow
 
 
 async def test_direct_pgdump():

@@ -269,7 +269,7 @@ def _sanitize_log_line(line: str) -> str:
 
 
 @logs_websocket_router.websocket("/stream/{project_name}")
-async def stream_logs(  # noqa: C901
+async def stream_logs(
     websocket: WebSocket,
     project_name: str,
     deployment: str = Query(..., description="Deployment name"),
@@ -619,7 +619,7 @@ async def stream_logs(  # noqa: C901
                             async with process_lock:
                                 if process:
                                     process.terminate()
-                                    with contextlib.suppress(Exception):
+                                    with contextlib.suppress(OSError, asyncio.TimeoutError):
                                         await asyncio.wait_for(process.wait(), timeout=2.0)
 
                                 current_component = new_component
@@ -711,7 +711,7 @@ async def stream_logs(  # noqa: C901
 
     except Exception as e:
         logger.exception(f"Error in WebSocket handler: {e}")
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(OSError, RuntimeError):
             await send_message(websocket, "error", message="Internal server error")
 
     finally:
@@ -722,7 +722,7 @@ async def stream_logs(  # noqa: C901
                 await asyncio.wait_for(process.wait(), timeout=5.0)
             except TimeoutError:
                 process.kill()
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(OSError):
                     await process.wait()
             except Exception as e:
                 logger.error(f"Error terminating kubectl process: {e}")
@@ -732,7 +732,7 @@ async def stream_logs(  # noqa: C901
             await _unregister_connection(user_email, websocket)
 
         # Close WebSocket if still open
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(OSError, RuntimeError):
             if websocket.client_state == WebSocketState.CONNECTED:
                 await websocket.close()
 

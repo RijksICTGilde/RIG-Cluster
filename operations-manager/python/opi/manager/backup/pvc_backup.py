@@ -328,7 +328,9 @@ class PVCBackupManager(BaseBackupManager):
 
             # Generate backup_run_id for this backup run
             backup_run_id = generate_backup_run_id()
-            logger.info(f"Found {len(pvcs)} PVC(s) to backup in namespace {namespace} (all mode), backup_run_id={backup_run_id}")
+            logger.info(
+                f"Found {len(pvcs)} PVC(s) to backup in namespace {namespace} (all mode), backup_run_id={backup_run_id}"
+            )
 
             for pvc_name in pvcs:
                 await self.lock.update_progress(namespace, pvc_name)
