@@ -256,6 +256,4 @@ class TestRouteRequiresSso:
         for line in source.split("\n"):
             stripped = line.strip()
             if "_requires_sso" in stripped and "getattr" in stripped:
-                assert "False)" in stripped, (
-                    f"getattr default for _requires_sso should be False: {stripped}"
-                )
+                assert "False)" in stripped, f"getattr default for _requires_sso should be False: {stripped}"
