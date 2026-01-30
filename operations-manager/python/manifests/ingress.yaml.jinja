@@ -6,7 +6,7 @@ metadata:
     # ============================================================
     # OpenShift/HAProxy annotations
     # ============================================================
-    haproxy.router.openshift.io/ip_whitelist: {{ ip_whitelist | default("0.0.0.0") }}
+    haproxy.router.openshift.io/ip_whitelist: {{ ip_whitelist | default("0.0.0.0/0,::/0") }}
     haproxy.router.openshift.io/timeout: "300s"
 {% if enable_tls %}
     # HSTS for internet.nl compliance (1 year, includeSubDomains, preload)

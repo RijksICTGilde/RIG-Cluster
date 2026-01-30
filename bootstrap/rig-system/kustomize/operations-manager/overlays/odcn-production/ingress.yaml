@@ -5,7 +5,7 @@ metadata:
   namespace: rig-system
   annotations:
 #    haproxy.router.openshift.io/ip_whitelist: 147.181.0.0/16 # ODCN VPN only
-    haproxy.router.openshift.io/ip_whitelist: 0.0.0.0/0
+    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
     haproxy.router.openshift.io/timeout: "300s"
 spec:
   rules:
