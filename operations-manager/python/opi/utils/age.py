@@ -6,6 +6,7 @@ import asyncio
 import base64
 import logging
 import subprocess
+import tempfile
 from typing import cast
 
 from opi.core.config import settings
@@ -32,11 +33,21 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
     if not encrypted_content or not private_key:
         raise ValueError("Missing encrypted content or private key for decryption")
 
-    cmd = ["bash", "-c", f'echo "{encrypted_content}" | age -d -i <(echo "{private_key}")']
+    # Write private key to a temporary file to avoid shell injection
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".key", delete=True) as key_file:
+        key_file.write(private_key)
+        key_file.flush()
 
-    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-
-    stdout, stderr = await process.communicate()
+        process = await asyncio.create_subprocess_exec(
+            "age",
+            "-d",
+            "-i",
+            key_file.name,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate(input=encrypted_content.encode())
 
     if process.returncode != 0:
         error_msg = stderr.decode("utf-8").strip()
@@ -114,13 +125,20 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | 
         logger.error(f"Private key provided: {bool(private_key)}")
         return None
 
-    # Use echo to pipe encrypted content to age for decryption
-    # echo "encrypted_content" | age -d -i <(echo "private_key")
-    cmd = ["bash", "-c", f'echo "{encrypted_content}" | age -d -i <(echo "{private_key}")']
-    logger.debug("Running age decryption command with piped input (sync)")
-    logger.debug(f"Command: {' '.join(cmd[:2])} [REDACTED_SECRETS]")
+    # Write private key to a temporary file to avoid shell injection
+    logger.debug("Running age decryption command (sync)")
 
-    process = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".key", delete=True) as key_file:
+        key_file.write(private_key)
+        key_file.flush()
+
+        process = subprocess.run(
+            ["age", "-d", "-i", key_file.name],
+            input=encrypted_content,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     if process.returncode != 0:
         error_msg = process.stderr.strip()

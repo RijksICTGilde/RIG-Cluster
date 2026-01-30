@@ -76,8 +76,9 @@ class TestAgePasswordDecryption:
         # Verify subprocess was called with age command
         assert mock_subprocess.called
         call_args = mock_subprocess.call_args[0][0]
-        assert "bash" in call_args
-        assert "age -d" in call_args[2]
+        assert call_args[0] == "age"
+        assert "-d" in call_args
+        assert "-i" in call_args
 
         # Verify result
         assert result == "decrypted_password_123"
@@ -128,6 +129,6 @@ class TestAgePasswordDecryption:
 
         # Verify the age command structure
         call_args = mock_subprocess.call_args[0][0]
-        assert len(call_args) == 3  # ["bash", "-c", "command"]
-        assert "age -d -i" in call_args[2]
-        assert self.private_key in call_args[2]
+        assert call_args[0] == "age"
+        assert "-d" in call_args
+        assert "-i" in call_args
