@@ -1502,7 +1502,7 @@ class GitConnector:
             logger.warning(f"Error checking repository existence: {e}, proceeding with creation")
 
         # Commands to execute on the remote server (only if repo doesn't exist)
-        commands = [f"mkdir -p {repo_path}", f"git-init -b main --bare {repo_path}"]
+        commands = [f"mkdir -p {repo_path}", f"git init -b main --bare {repo_path}"]
 
         # Execute each command
         for cmd in commands:

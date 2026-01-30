@@ -131,10 +131,10 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                 endpoint = getattr(route, "endpoint", None)
                 if endpoint:
                     # Check for our custom SSO requirement attribute
-                    requires_sso = getattr(endpoint, "_requires_sso", False)  # Default to True
+                    requires_sso = getattr(endpoint, "_requires_sso", False)
                     logger.debug(f"Route {request.url.path} SSO requirement: {requires_sso}")
                     return requires_sso
 
         # Default behavior for unmatched routes or routes without annotations
-        logger.debug(f"Could not determine SSO requirement for {request.url.path}, defaulting to NOT require SSO")
+        logger.debug(f"Could not determine SSO requirement for {request.url.path}, defaulting to require SSO")
         return True

@@ -196,7 +196,10 @@ class DatabaseSecret(BaseSecret):
     def _convert_field_value(cls, field_name: str, value: str) -> str | int:
         """Convert port to integer."""
         if field_name == "port":
-            return int(value)
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
         return value
 
 
@@ -241,7 +244,10 @@ class MinIOSecret(BaseSecret):
     def _convert_field_value(cls, field_name: str, value: str) -> str | int:
         """Convert port to integer."""
         if field_name == "port":
-            return int(value)
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
         return value
 
 
@@ -294,7 +300,10 @@ class RedisSecret(BaseSecret):
     def _convert_field_value(cls, field_name: str, value: str) -> str | int:
         """Convert port to integer."""
         if field_name == "port":
-            return int(value)
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port value '{value}': {e}") from e
         return value
 
 
@@ -328,7 +337,7 @@ class RegistrySecret(BaseSecret):
     username: str
     password: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-{registry}-registry"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-registry"
 
     def __post_init__(self) -> None:
         """Validate registry secret data."""
@@ -377,6 +386,8 @@ class RegistrySecret(BaseSecret):
         # Decode auth field if present
         if "auth" in auth_data:
             auth_decoded = base64.b64decode(auth_data["auth"]).decode()
+            if ":" not in auth_decoded:
+                raise ValueError(f"Invalid auth format for registry '{registry_url}': expected 'username:password'")
             username, password = auth_decoded.split(":", 1)
         else:
             # Fallback to legacy username/password fields

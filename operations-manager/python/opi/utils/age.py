@@ -192,15 +192,17 @@ def parse_password_with_prefix(password: str) -> tuple[str, str]:
         Tuple of (type, content) where type is 'plain', 'age', or 'base64+age'
     """
     if not password:
-        return "plain", password
+        return "plain", password or ""
 
     password = password.strip()
 
     # Check for explicit prefixes
     if password.startswith("age:"):
-        return "age", password[4:]  # Remove 'age:' prefix
+        content = password[4:]
+        return ("age", content) if content else ("plain", password)
     elif password.startswith("base64+age:"):
-        return "base64+age", password[11:]  # Remove 'base64+age:' prefix
+        content = password[11:]
+        return ("base64+age", content) if content else ("plain", password)
     elif password.startswith("plain:"):
         return "plain", password[6:]  # Remove 'plain:' prefix
 

@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, cast
 
 from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector

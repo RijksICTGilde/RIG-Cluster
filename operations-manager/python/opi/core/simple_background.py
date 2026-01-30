@@ -64,10 +64,6 @@ async def _continuous_monitoring(task_id: str, project_name: str) -> None:
                                 )
                                 if deployment_logs:
                                     logs.extend([f"[{deployment_name}] {log}" for log in deployment_logs[-20:]])
-                else:
-                    # If no namespace is set yet, skip monitoring this cycle
-                    continue
-
                     # Update project with latest monitoring data
                     if events and len(events) > 0:
                         _projects[task_id].events = events[-20:]  # Keep last 20 events
@@ -81,7 +77,10 @@ async def _continuous_monitoring(task_id: str, project_name: str) -> None:
                     current_time = time.strftime("%H:%M:%S")
                     _projects[
                         task_id
-                    ].current_step = f"📡 Live monitoring actief voor {project_name} (laatste update: {current_time})"
+                    ].current_step = f"Live monitoring actief voor {project_name} (laatste update: {current_time})"
+                else:
+                    # If no namespace is set yet, skip monitoring this cycle
+                    continue
 
             except Exception as e:
                 logger.warning(f"Error in continuous monitoring cycle {cycle + 1}: {e}")

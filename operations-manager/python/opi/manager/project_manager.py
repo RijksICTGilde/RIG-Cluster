@@ -942,7 +942,7 @@ class ProjectManager:
             elif storage_type == "ephemeral":
                 service_type = ServiceType.TEMP_STORAGE
             else:
-                raise ValueError("Unkown storage type: {storage_type}")
+                raise ValueError(f"Unknown storage type: {storage_type}")
 
             # Generate env vars using service variable definitions
             for var_def in ServiceAdapter.get_service_definition(service_type).variables:
@@ -1933,7 +1933,7 @@ class ProjectManager:
             logger.info(f"Creating SOPS secrets only for deployment: {deployment_name}")
 
         if not deployments:
-            logger.warning("No deployments found in project: {project_name}")
+            logger.warning(f"No deployments found in project: {project_name}")
             return
 
         for deployment in deployments:
@@ -3076,7 +3076,7 @@ class ProjectManager:
                 for key, value in env_vars.items():
                     # Decrypt if value is AGE-encrypted
                     if isinstance(value, str) and "-----BEGIN AGE ENCRYPTED FILE-----" in value:
-                        decrypted_value = decrypt_age_content(value, private_key)
+                        decrypted_value = await decrypt_age_content(value, private_key)
                         cmp_env_vars.append(f"{key}={decrypted_value}")
                     else:
                         cmp_env_vars.append(f"{key}={value}")
@@ -4685,7 +4685,7 @@ class ProjectManager:
             matches = jsonpath_expr.find(project_data)
             return matches[0].value if matches else None
         except Exception as e:
-            raise Exception(f"Error querying JSONPath '{json_path}") from e
+            raise Exception(f"Error querying JSONPath '{json_path}'") from e
 
     async def get_api_key(self) -> str:
         """

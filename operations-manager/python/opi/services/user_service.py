@@ -36,7 +36,7 @@ class UserService:
             logger.error("Cannot store user without email address")
             return
 
-        email = user_info["email"]
+        email = user_info["email"].lower()
 
         # Process and enrich user information
         enriched_user_info = self._enrich_user_info(user_info.copy())
@@ -184,7 +184,7 @@ class UserService:
         Returns:
             User information dictionary if found, None otherwise
         """
-        user_info = self._users.get(email)
+        user_info = self._users.get(email.lower())
         if user_info:
             logger.debug(f"Retrieved user information for: {email}")
         else:
@@ -202,11 +202,13 @@ class UserService:
         Returns:
             True if user was updated, False if user not found
         """
-        if email not in self._users:
+        email_key = email.lower()
+        if email_key not in self._users:
             logger.warning(f"Cannot update user - not found: {email}")
             return False
 
-        self._users[email].update(user_info)
+        merged = {**self._users[email_key], **user_info}
+        self._users[email_key] = self._enrich_user_info(merged)
         logger.info(f"Updated user information for: {email}")
         return True
 
@@ -220,11 +222,12 @@ class UserService:
         Returns:
             True if user was removed, False if user not found
         """
-        if email not in self._users:
+        email_key = email.lower()
+        if email_key not in self._users:
             logger.warning(f"Cannot remove user - not found: {email}")
             return False
 
-        del self._users[email]
+        del self._users[email_key]
         logger.info(f"Removed user: {email}")
         return True
 
