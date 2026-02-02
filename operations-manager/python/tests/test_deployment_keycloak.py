@@ -21,7 +21,7 @@ sys.path.insert(0, str(project_root))
 
 from opi.connectors.keycloak import create_keycloak_connector  # noqa: E402
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

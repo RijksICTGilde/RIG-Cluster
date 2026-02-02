@@ -797,7 +797,6 @@ async def project_details(request: Request, project_name: str):
                 logger.info(f"Processing user-env-vars for component '{component_name}'")
                 try:
                     decrypted_yaml = await decrypt_age_content(raw_user_env_vars, project_private_key)
-                    logger.info(f"Decrypted content for '{component_name}': {decrypted_yaml[:200]}...")
 
                     # Try YAML parsing first
                     parsed_env_vars = load_yaml_from_string(decrypted_yaml)

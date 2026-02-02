@@ -13,7 +13,7 @@ from opi.core.database_pools import close_database_pools, get_database_pool, ini
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.project_manager import ProjectManager
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 logger = logging.getLogger(__name__)
 

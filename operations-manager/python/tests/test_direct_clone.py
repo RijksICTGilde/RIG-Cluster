@@ -11,7 +11,7 @@ from opi.connectors.postgres import create_postgres_connector
 from opi.core.config import settings
 from opi.core.database_pools import close_database_pools, get_database_pool, initialize_database_pools
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 logger = logging.getLogger(__name__)
 

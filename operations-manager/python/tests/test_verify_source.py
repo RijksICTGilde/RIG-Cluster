@@ -9,7 +9,7 @@ import os
 import pytest
 from opi.core.config import settings
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 
 async def test_direct_pgdump():

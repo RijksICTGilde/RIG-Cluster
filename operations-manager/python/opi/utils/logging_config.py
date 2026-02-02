@@ -3,6 +3,15 @@ import logging.handlers
 from pathlib import Path
 
 
+class HealthEndpointFilter(logging.Filter):
+    """Filter to exclude health endpoint requests from uvicorn access logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Exclude /health requests from access logs
+        message = record.getMessage()
+        return '"GET /health' not in message and '"HEAD /health' not in message
+
+
 def setup_logging(log_to_file: bool = False, log_file_path: str = "log.txt") -> None:
     """
     Configure logging to output to stdout and optionally to a file.
@@ -27,6 +36,10 @@ def setup_logging(log_to_file: bool = False, log_file_path: str = "log.txt") -> 
 
     # Configure specific module log levels for known noisy modules
     logging.getLogger("jinja_roos_components.extension").setLevel(logging.INFO)
+
+    # Filter out health endpoint requests from uvicorn access logs
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    uvicorn_access_logger.addFilter(HealthEndpointFilter())
 
     # Always add stdout handler
     stdout_handler = logging.StreamHandler()

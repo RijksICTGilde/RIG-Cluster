@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 sys.path.insert(0, ".")
 

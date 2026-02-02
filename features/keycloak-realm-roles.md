@@ -52,10 +52,10 @@ services:
       realm-roles:
         - name: allowed-user
           description: Access to MijnBureau applications
-      restrict_access:
+      restrict-access:
         enabled: true
         realm-role: allowed-user  # Uses realm role instead of client role
-        error_message: ${accessDeniedNoPermission}
+        error-message: ${accessDeniedNoPermission}
 ```
 
 ### Assigning Realm Roles via Invites
@@ -149,7 +149,7 @@ services:
             - https://grist.rijksapp.nl/*
 
       # Restrict access using realm role
-      restrict_access:
+      restrict-access:
         enabled: true
         realm-role: allowed-user
 
@@ -194,12 +194,12 @@ Each app needs separate role assignment:
 
 ```yaml
 # App 1
-restrict_access:
+restrict-access:
   enabled: true
   role: app1-user  # Client role specific to app1
 
 # App 2
-restrict_access:
+restrict-access:
   enabled: true
   role: app2-user  # Different client role for app2
 ```
@@ -219,7 +219,7 @@ All apps use the same realm role:
 
 ```yaml
 # Both apps
-restrict_access:
+restrict-access:
   enabled: true
   realm-role: allowed-user  # Same realm role for all apps
 ```
@@ -267,7 +267,7 @@ client_roles:
 
 Ensure all applications use `realm-role` (not `role`) in `restrict_access`:
 ```yaml
-restrict_access:
+restrict-access:
   enabled: true
   realm-role: allowed-user  # NOT: role: allowed-user
 ```
