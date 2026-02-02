@@ -363,33 +363,17 @@ data:
               fi
             done
 
-            # If no folders were processed, set to current directory to indicate we checked
-            if [ -z "$PROCESSED_FOLDERS" ]; then
-              PROCESSED_FOLDERS="."
-            fi
+            # Calculate hash of all Secrets and ConfigMaps to trigger pod restarts on config changes
+            # This hash is injected into workload pod templates as an annotation
+            CONFIG_HASH=$(yq eval-all 'select(.kind == "Secret" or .kind == "ConfigMap")' "$TEMP_OUTPUT" 2>/dev/null | sha256sum | cut -d' ' -f1)
+            CONFIG_HASH="${CONFIG_HASH:0:16}"  # Truncate to 16 chars for readability
+            echo "DEBUG: Config hash (Secrets+ConfigMaps): $CONFIG_HASH" >&2
 
-            # Create cache buster hash from combined output and secret key
-            OUTPUT_HASH=$(cat "$TEMP_OUTPUT" | sha256sum | cut -d' ' -f1)
-            SECRET_HASH=$(echo "$SOPS_AGE_KEY" | sha256sum | cut -d' ' -f1)
-            FOLDERS_HASH=$(echo "$PROCESSED_FOLDERS" | sha256sum | cut -d' ' -f1)
-            CACHE_BUSTER="${OUTPUT_HASH:0:8}-${SECRET_HASH:0:8}-${FOLDERS_HASH:0:8}"
-            TIMESTAMP=$(date -Iseconds)
-
-            # Output the kustomize manifests
-            cat "$TEMP_OUTPUT"
-
-            # Add cache buster secret
-            echo "---"
-            echo "apiVersion: v1"
-            echo "kind: Secret"
-            echo "type: Opaque"
-            echo "metadata:"
-            echo "  name: argocd-cache-buster-${ARGOCD_APP_NAME}"
-            echo "  namespace: ${ARGOCD_APP_NAMESPACE}"
-            echo "  labels:"
-            echo "    app.kubernetes.io/managed-by: argocd"
-            echo "    app.kubernetes.io/component: cache-buster"
-            echo "data:"
-            echo "  cache-key: $(echo -n "${CACHE_BUSTER}" | base64 -w 0)"
-            echo "  generated-at: $(echo -n "${TIMESTAMP}" | base64 -w 0)"
-            echo "  processed-folders: $(echo -n "${PROCESSED_FOLDERS}" | base64 -w 0)"
+            # Inject config hash annotation into all Deployments, StatefulSets, and DaemonSets
+            # This causes pods to restart when any Secret or ConfigMap in the app changes
+            export CONFIG_HASH
+            yq eval-all '
+              with(select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet");
+                .spec.template.metadata.annotations["checksum/config"] = env(CONFIG_HASH)
+              )
+            ' "$TEMP_OUTPUT"

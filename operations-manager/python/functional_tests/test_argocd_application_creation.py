@@ -23,7 +23,7 @@ import tempfile
 # Add the parent directory to Python path so we can import from opi
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from opi.core.config import get_settings
+from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
 
 # Set up logging
@@ -35,7 +35,7 @@ class TestArgocdApplicationCreation:
     """Functional test class for ArgoCD application creation."""
 
     def __init__(self):
-        self.settings = get_settings()
+        self.settings = settings
         self.project_manager = ProjectManager()
         self.project_file_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "..", "projects", "simple-example.yaml"

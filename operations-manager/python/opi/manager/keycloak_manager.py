@@ -796,7 +796,9 @@ class KeycloakManager:
                     # Uses keycloak_url (expected correct URL) not keycloak_host (may have old value)
                     await self._ensure_idp_and_platform_client_configuration(project_name, cluster, keycloak_url)
                     # Always ensure clients from YAML template are created (idempotent)
-                    await self._ensure_realm_clients(project_name, cluster, realm_name, keycloak_host, config)
+                    await self._ensure_realm_clients(
+                        project_name, cluster, realm_name, keycloak_host, config, ingress_hosts
+                    )
                     # Ensure realm roles exist (idempotent)
                     realm_roles = config.get("realm_roles", [])
                     if realm_roles:
@@ -1226,6 +1228,7 @@ class KeycloakManager:
         realm_name: str,
         keycloak_url: str,
         config: dict[str, Any],
+        ingress_hosts: list[str] | None = None,
     ) -> None:
         """
         Ensure all clients from YAML template exist in the realm.
@@ -1240,6 +1243,7 @@ class KeycloakManager:
             realm_name: Name of the realm
             keycloak_url: Base URL of the Keycloak server
             config: Keycloak configuration dict with template and variables
+            ingress_hosts: List of ingress hostnames for redirect URIs
         """
         template_name = config.get("template", "sso-only")
         yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
@@ -1271,6 +1275,13 @@ class KeycloakManager:
             "operations_manager_domain": operations_manager_domain,
             "invite_client_id": settings.INVITE_CLIENT_ID,
         }
+
+        # Add redirect URIs from component ingress hosts if provided
+        if ingress_hosts:
+            support_http = get_keycloak_support_http(cluster)
+            first_redirect_uri = f"http://{ingress_hosts[0]}/*" if support_http else f"https://{ingress_hosts[0]}/*"
+            context["frontend_redirect_uris"] = first_redirect_uri
+            logger.debug(f"Added frontend_redirect_uris to context: {first_redirect_uri}")
 
         # Merge user-provided variables
         user_variables = config.get("variables", {})
@@ -1647,8 +1658,6 @@ class KeycloakManager:
             admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
         )
 
-        support_http = get_keycloak_support_http(cluster)
-
         for client_config in additional_clients:
             client_name = client_config.get("name")
             if not client_name:
@@ -1680,9 +1689,10 @@ class KeycloakManager:
                 cluster=cluster,
             )
 
-            logger.info(
-                f"Created additional client '{client_name}' in realm '{realm_name}', secret stored in Kubernetes"
-            )
+            if result.get("created", True):
+                logger.info(f"Created additional client '{client_name}' in realm '{realm_name}'")
+            else:
+                logger.info(f"Additional client '{client_name}' already exists in realm '{realm_name}'")
 
         return client_secrets
 

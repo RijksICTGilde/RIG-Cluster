@@ -9,9 +9,7 @@ class HealthEndpointFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         # Exclude /health requests from access logs
         message = record.getMessage()
-        if '"GET /health' in message or '"HEAD /health' in message:
-            return False
-        return True
+        return '"GET /health' not in message and '"HEAD /health' not in message
 
 
 def setup_logging(log_to_file: bool = False, log_file_path: str = "log.txt") -> None:

@@ -11,7 +11,7 @@ import pytest
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 
 async def test_table_permissions():
