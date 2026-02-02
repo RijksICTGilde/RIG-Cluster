@@ -264,12 +264,29 @@ class KeycloakConnector:
         try:
             # Switch to target realm
             self.admin.change_current_realm(realm_name)
-            self.admin.create_client(payload=client_data)
+
+            try:
+                self.admin.create_client(payload=client_data)
+                logger.info(f"Successfully created OIDC client '{client_id}'")
+                client_data["created"] = True
+            except KeycloakPostError as e:
+                if "409" in str(e) or "Conflict" in str(e):
+                    logger.info(f"Client '{client_id}' already exists in realm '{realm_name}', returning existing")
+                    # Get existing client info - we're already in the target realm context
+                    all_clients = self.admin.get_clients()
+                    existing_client = next((c for c in all_clients if c.get("clientId") == client_id), None)
+                    if existing_client:
+                        # Get the client secret
+                        existing_secret = self.admin.get_client_secrets(existing_client["id"])
+                        client_data["secret"] = existing_secret.get("value", "")
+                        client_data["created"] = False
+                    else:
+                        raise
+                else:
+                    raise
+
             # Switch back to master
             self.admin.change_current_realm("master")
-
-            client_data["created"] = True
-            logger.info(f"Successfully created OIDC client '{client_id}'")
             return client_data
 
         except KeycloakError as e:

@@ -8,10 +8,10 @@ import logging
 
 import pytest
 from opi.connectors.postgres import create_postgres_connector
-from opi.core.database_pools import get_database_pool
+from opi.core.database_pools import close_database_pools, get_database_pool, initialize_database_pools
 from opi.utils.naming import generate_resource_identifier
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +33,10 @@ async def test_clone_setup():
     print(f"Source: {source_database}.{source_schema}")
     print(f"Target: {target_database}.{target_schema}")
 
-    # Get database pools
-    db_pools = await get_database_pool()
-    postgres_connector = await create_postgres_connector(db_pools.postgres)
+    # Initialize and get database pools
+    await initialize_database_pools()
+    postgres_pool = get_database_pool("main")
+    postgres_connector = await create_postgres_connector(postgres_pool)
 
     try:
         # Check source database exists
@@ -105,7 +106,7 @@ async def test_clone_setup():
 
     finally:
         await postgres_connector.close()
-        await db_pools.close_all()
+        await close_database_pools()
 
 
 if __name__ == "__main__":

@@ -10,7 +10,8 @@
       "Bash(kubectl logs:*)",
       "Bash(git checkout:*)",
       "Bash(git log:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(uv run pytest:*)"
     ],
     "deny": []
   }

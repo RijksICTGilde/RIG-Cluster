@@ -123,7 +123,7 @@ services:
             - https://nextcloud.rijksapp.nl/*
             - https://nextcloud.rijksapp.nl/apps/user_oidc/code
       # Restrict access using realm role
-      restrict_access:
+      restrict-access:
         enabled: true
         realm-role: allowed-user
 ```

@@ -388,11 +388,11 @@ class KeycloakManager:
                 "additional_redirect_uris": [...]  # Optional additional redirect URIs
                 "additional_clients": [...]  # Optional additional clients to create
                 "realm_roles": [...]  # Optional realm roles to create
-                "restrict_access": {       # Optional access restriction config
+                "restrict_access": {       # Optional access restriction config (YAML: restrict-access)
                     "enabled": True,
                     "role": "allowed-user",  # Client role
-                    "realm_role": "mijnbureau-user",  # Or realm role (takes precedence)
-                    "error_message": "${accessDeniedNoPermission}"
+                    "realm_role": "allowed-user",  # Or realm role (takes precedence, YAML: realm-role)
+                    "error_message": "${accessDeniedNoPermission}"  # YAML: error-message
                 }
             }
 
@@ -486,11 +486,11 @@ class KeycloakManager:
             merged_config["additional_redirect_uris"] = additional_uris
             logger.info(f"Found {len(additional_uris)} additional redirect URIs in config")
 
-        # Extract and validate restrict_access
-        if "restrict_access" in user_config:
-            restrict_access = user_config["restrict_access"]
+        # Extract and validate restrict-access
+        if "restrict-access" in user_config:
+            restrict_access = user_config["restrict-access"]
             if not isinstance(restrict_access, dict):
-                raise ValueError(f"restrict_access must be a dict, got {type(restrict_access).__name__}")
+                raise ValueError(f"restrict-access must be a dict, got {type(restrict_access).__name__}")
 
             # Validate required fields if enabled
             if restrict_access.get("enabled", False):
@@ -499,16 +499,16 @@ class KeycloakManager:
                 has_realm_role = "realm-role" in restrict_access
                 if not has_role and not has_realm_role:
                     raise ValueError(
-                        "restrict_access.role or restrict_access.realm-role is required "
-                        "when restrict_access.enabled is True"
+                        "restrict-access.role or restrict-access.realm-role is required "
+                        "when restrict-access.enabled is True"
                     )
                 if has_role and not isinstance(restrict_access["role"], str):
                     raise ValueError(
-                        f"restrict_access.role must be a string, got {type(restrict_access['role']).__name__}"
+                        f"restrict-access.role must be a string, got {type(restrict_access['role']).__name__}"
                     )
                 if has_realm_role and not isinstance(restrict_access["realm-role"], str):
                     raise ValueError(
-                        f"restrict_access.realm-role must be a string, "
+                        f"restrict-access.realm-role must be a string, "
                         f"got {type(restrict_access['realm-role']).__name__}"
                     )
 
@@ -516,7 +516,7 @@ class KeycloakManager:
                 "enabled": restrict_access.get("enabled", False),
                 "role": restrict_access.get("role"),  # Client role (may be None if realm-role is used)
                 "realm_role": restrict_access.get("realm-role"),  # Realm role (takes precedence)
-                "error_message": restrict_access.get("error_message", "${accessDeniedNoPermission}"),
+                "error_message": restrict_access.get("error-message", "${accessDeniedNoPermission}"),
             }
             if merged_config["restrict_access"]["realm_role"]:
                 logger.info(
@@ -555,8 +555,13 @@ class KeycloakManager:
             merged_config["realm_roles"] = realm_roles
             logger.info(f"Found {len(realm_roles)} realm roles to create")
 
-        # For external keycloak, skip template validation
+        # For external keycloak, copy the external config fields and skip template validation
         if merged_config["type"] == "external":
+            # Copy external keycloak config fields (host, realm, client-id, client-secret)
+            # These are passed directly from the YAML config section
+            for key in ["host", "realm", "client-id", "client-secret"]:
+                if key in user_config:
+                    merged_config[key] = user_config[key]
             logger.info("External keycloak - skipping template validation")
             return merged_config
 
@@ -791,7 +796,9 @@ class KeycloakManager:
                     # Uses keycloak_url (expected correct URL) not keycloak_host (may have old value)
                     await self._ensure_idp_and_platform_client_configuration(project_name, cluster, keycloak_url)
                     # Always ensure clients from YAML template are created (idempotent)
-                    await self._ensure_realm_clients(project_name, cluster, realm_name, keycloak_host, config)
+                    await self._ensure_realm_clients(
+                        project_name, cluster, realm_name, keycloak_host, config, ingress_hosts
+                    )
                     # Ensure realm roles exist (idempotent)
                     realm_roles = config.get("realm_roles", [])
                     if realm_roles:
@@ -1221,6 +1228,7 @@ class KeycloakManager:
         realm_name: str,
         keycloak_url: str,
         config: dict[str, Any],
+        ingress_hosts: list[str] | None = None,
     ) -> None:
         """
         Ensure all clients from YAML template exist in the realm.
@@ -1235,6 +1243,7 @@ class KeycloakManager:
             realm_name: Name of the realm
             keycloak_url: Base URL of the Keycloak server
             config: Keycloak configuration dict with template and variables
+            ingress_hosts: List of ingress hostnames for redirect URIs
         """
         template_name = config.get("template", "sso-only")
         yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
@@ -1266,6 +1275,13 @@ class KeycloakManager:
             "operations_manager_domain": operations_manager_domain,
             "invite_client_id": settings.INVITE_CLIENT_ID,
         }
+
+        # Add redirect URIs from component ingress hosts if provided
+        if ingress_hosts:
+            support_http = get_keycloak_support_http(cluster)
+            first_redirect_uri = f"http://{ingress_hosts[0]}/*" if support_http else f"https://{ingress_hosts[0]}/*"
+            context["frontend_redirect_uris"] = first_redirect_uri
+            logger.debug(f"Added frontend_redirect_uris to context: {first_redirect_uri}")
 
         # Merge user-provided variables
         user_variables = config.get("variables", {})
@@ -1642,8 +1658,6 @@ class KeycloakManager:
             admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
         )
 
-        support_http = get_keycloak_support_http(cluster)
-
         for client_config in additional_clients:
             client_name = client_config.get("name")
             if not client_name:
@@ -1675,9 +1689,10 @@ class KeycloakManager:
                 cluster=cluster,
             )
 
-            logger.info(
-                f"Created additional client '{client_name}' in realm '{realm_name}', secret stored in Kubernetes"
-            )
+            if result.get("created", True):
+                logger.info(f"Created additional client '{client_name}' in realm '{realm_name}'")
+            else:
+                logger.info(f"Additional client '{client_name}' already exists in realm '{realm_name}'")
 
         return client_secrets
 
@@ -1796,7 +1811,7 @@ class KeycloakManager:
     async def _get_external_keycloak_credentials(
         self,
         config: dict[str, Any],
-        cluster: str,
+        project_private_key: str,
     ) -> dict[str, Any]:
         """
         Get Keycloak credentials from external config values.
@@ -1810,8 +1825,8 @@ class KeycloakManager:
                 - host: Keycloak base URL
                 - realm: Realm name
                 - client-id: OIDC client ID
-                - client-secret: OIDC client secret (can be AGE encrypted)
-            cluster: Cluster name (for context)
+                - client-secret: OIDC client secret (AGE encrypted with project's public key)
+            project_private_key: The project's AGE private key for decryption
 
         Returns:
             Dictionary with keycloak credentials
@@ -1830,10 +1845,10 @@ class KeycloakManager:
         client_id = config["client-id"]
         client_secret_raw = config["client-secret"]
 
-        # Decrypt client secret if encrypted
-        from opi.utils.age import decrypt_password_smart_auto
+        # Decrypt client secret using project's private key
+        from opi.utils.age import decrypt_password_smart
 
-        client_secret = await decrypt_password_smart_auto(client_secret_raw)
+        client_secret = await decrypt_password_smart(client_secret_raw, project_private_key)
 
         # Build discovery URL from host and realm
         discovery_url = f"{host}/realms/{realm}/.well-known/openid-configuration"
@@ -1856,22 +1871,28 @@ class KeycloakManager:
         config: dict[str, Any],
     ) -> None:
         """
-        Handle external keycloak configuration by reading credentials from Kubernetes secret.
+        Handle external keycloak configuration by reading credentials from inline config.
 
         This is used when a project uses a keycloak realm managed by another project.
-        Instead of creating a realm/client, we read the credentials from a pre-created
-        Kubernetes secret and store them in the deployment's keycloak secret.
+        Instead of creating a realm/client, we read the credentials from the project
+        file config and store them in the deployment's keycloak secret.
 
         Args:
             project_name: Name of the project
             deployment_name: Name of the deployment
             cluster: Cluster name
-            config: External keycloak configuration with 'secret-name'
+            config: External keycloak configuration with inline credentials
         """
         logger.info(f"Handling external keycloak for project {project_name}, deployment {deployment_name}")
 
-        # Get credentials from the source Kubernetes secret
-        credentials = await self._get_external_keycloak_credentials(config, cluster)
+        # Get project's private key for decrypting the client-secret
+        from opi.utils.age import get_decoded_project_private_key
+
+        project_data = await self.project_manager.get_contents()
+        project_private_key = await get_decoded_project_private_key(project_data)
+
+        # Get credentials from the config (decrypt client-secret with project's key)
+        credentials = await self._get_external_keycloak_credentials(config, project_private_key)
 
         # Create KeycloakSecret instance with the external credentials
         keycloak_secret = KeycloakSecret(

@@ -19,8 +19,6 @@ spec:
   template:
     metadata:
       annotations:
-        # Timestamp to force pod restart when secrets are regenerated
-        opi.rig.nl/generated-at: "{{ generated_at }}"
         # Prometheus scraping annotations
         prometheus.io/scrape: "true"
         prometheus.io/port: "{{ metrics_port if metrics_port else application_port }}"

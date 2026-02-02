@@ -182,7 +182,7 @@ title = "opi"
 testpaths = [
     "tests"
 ]
-addopts = "--strict-markers -v -q"
+addopts = "--strict-markers -v -q -m 'not requires_infra'"
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::UserWarning"
@@ -192,7 +192,8 @@ log_cli_level = "INFO"
 faulthandler_timeout = 60
 markers = [
    "slow: marks tests as slow",
-   "enable_auth: marks tests that require authentication"
+   "enable_auth: marks tests that require authentication",
+   "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)"
 ]
 pythonpath = "."
 

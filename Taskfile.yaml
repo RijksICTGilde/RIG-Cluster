@@ -689,8 +689,16 @@ tasks:
           --timeout=300s
 
         echo ""
+        echo "🔧 Enabling snippet annotations for security headers..."
+        # Enable configuration-snippet annotations (disabled by default since v1.9.0)
+        # Required for setting security headers like Permissions-Policy via ingress annotations
+        kubectl patch configmap ingress-nginx-controller -n ingress-nginx \
+          --type merge -p '{"data":{"allow-snippet-annotations":"true"}}'
+
+        echo ""
         echo "✅ NGINX Ingress Controller installed successfully!"
         echo "   Configured to run on control-plane node (ingress-ready=true)"
+        echo "   Snippet annotations enabled for security headers"
         echo ""
         echo "Verify with: kubectl get pods -n ingress-nginx -o wide"
     silent: false

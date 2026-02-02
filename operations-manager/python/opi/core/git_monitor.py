@@ -151,9 +151,6 @@ async def file_change_handler(file_path: str, content: dict) -> None:
         finally:
             await project_manager.close()
 
-    # Keep the original debug output
-    logger.debug(f"Full content: {content}")
-
     # Process other content types if needed
     if "services" in content:
         logger.info(f"Services defined: {len(content['services'])}")

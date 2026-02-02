@@ -8,7 +8,7 @@ import asyncio
 import asyncpg
 import pytest
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 
 async def test_deployment2_source():

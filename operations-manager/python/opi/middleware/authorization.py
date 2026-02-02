@@ -91,16 +91,17 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
             return RedirectResponse(url="/auth/login", status_code=302)
 
         # Store/update user information in the user service if authenticated
-        if user and user.get("email"):
-            user_service = get_user_service()
-            user_service.store_user(user)
-
-            # Check if user's email is allowed access
+        if user:
             user_email = user.get("email")
-            if route_requires_sso and not user_service.is_email_allowed(user_email):
-                logger.warning(f"Access denied for user {user_email} - not in allowlist")
-                # Redirect to permission denied page instead of login
-                return RedirectResponse(url="/permission-denied", status_code=302)
+            if user_email:
+                user_service = get_user_service()
+                user_service.store_user(user)
+
+                # Check if user's email is allowed access
+                if route_requires_sso and not user_service.is_email_allowed(user_email):
+                    logger.warning(f"Access denied for user {user_email} - not in allowlist")
+                    # Redirect to permission denied page instead of login
+                    return RedirectResponse(url="/permission-denied", status_code=302)
 
         # Add user to request state for use in handlers
         request.state.user = user
@@ -131,7 +132,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                 endpoint = getattr(route, "endpoint", None)
                 if endpoint:
                     # Check for our custom SSO requirement attribute
-                    requires_sso = getattr(endpoint, "_requires_sso", False)
+                    requires_sso = getattr(endpoint, "_requires_sso", False)  # Default to False
                     logger.debug(f"Route {request.url.path} SSO requirement: {requires_sso}")
                     return requires_sso
 

@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from opi.connectors.git import create_git_repository
-from opi.core.config import get_settings
+from opi.core.config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class TestInfrastructureSetup:
     """Helper class to set up test infrastructure."""
 
     def __init__(self):
-        self.settings = get_settings()
+        self.settings = settings
 
     async def setup_argo_applications_repository(self):
         """Create the ArgoCD applications repository if it doesn't exist."""

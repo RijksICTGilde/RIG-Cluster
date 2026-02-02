@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from opi.connectors.git import GitConnector, create_git_repository
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 
 @pytest.mark.asyncio

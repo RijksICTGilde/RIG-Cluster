@@ -12,7 +12,7 @@ sys.path.insert(0, ".")
 # Import directly to avoid other dependencies
 from opi.connectors.postgres import PostgresConnector
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)

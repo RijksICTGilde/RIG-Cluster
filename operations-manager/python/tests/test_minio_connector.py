@@ -9,6 +9,7 @@ import logging
 
 import pytest
 from opi.connectors.minio_mc import MinioConnectionError, MinioConnector, MinioExecutionError, MinioValidationError
+from opi.core.config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +70,7 @@ def test_validation():
 
 
 @pytest.mark.slow
+@pytest.mark.requires_infra
 def test_connection():
     """Test MinIO connection using settings from config."""
     connector = MinioConnector()
@@ -92,6 +94,7 @@ def test_connection():
 
 
 @pytest.mark.slow
+@pytest.mark.requires_infra
 def test_bucket_operations():
     """Test bucket CRUD operations."""
     connector = MinioConnector()
@@ -151,6 +154,7 @@ def test_bucket_operations():
 
 
 @pytest.mark.slow
+@pytest.mark.requires_infra
 def test_user_operations():
     """Test user CRUD operations."""
     connector = MinioConnector()
@@ -214,6 +218,7 @@ def test_user_operations():
 
 
 @pytest.mark.slow
+@pytest.mark.requires_infra
 def test_access_control():
     """Test access control operations."""
     connector = MinioConnector()

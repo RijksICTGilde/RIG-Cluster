@@ -10,7 +10,7 @@ import sys
 import asyncpg
 import pytest
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
 
 async def test_database_connection() -> None:
