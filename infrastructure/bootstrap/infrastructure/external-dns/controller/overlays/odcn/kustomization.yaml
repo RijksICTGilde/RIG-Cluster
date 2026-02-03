@@ -14,6 +14,9 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --domain-filter=rijks.app
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --domain-filter=rijksapp.nl
       # Use Capsule Proxy for tenant-scoped ingress watching
       - op: add
         path: /spec/template/spec/containers/0/env/-
