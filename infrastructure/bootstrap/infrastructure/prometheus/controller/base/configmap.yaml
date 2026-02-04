@@ -30,6 +30,26 @@ data:
             regex: __meta_kubernetes_node_label_(.+)
         metrics_path: /metrics/cadvisor
 
+      # Scrape kubelet for PVC volume stats (kubelet_volume_stats_*)
+      - job_name: 'kubernetes-kubelet'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+        metrics_path: /metrics
+        metric_relabel_configs:
+          # Only keep kubelet_volume_stats metrics to avoid duplicates with cadvisor
+          - source_labels: [__name__]
+            regex: 'kubelet_volume_stats_.*'
+            action: keep
+
       # Scrape pods with prometheus.io/scrape annotation
       # Pods need: prometheus.io/scrape: "true" and optionally prometheus.io/port: "8080"
       - job_name: 'kubernetes-pods'

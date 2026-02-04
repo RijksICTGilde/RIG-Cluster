@@ -46,6 +46,7 @@ from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.handlers.sops import SopsHandler
+from opi.manager.revision_manager import RevisionManager
 from opi.services import ServiceAdapter, ServiceType, VariableDefinition
 from opi.services.project_service import ProjectUser, get_project_service
 from opi.utils.age import (
@@ -135,6 +136,7 @@ class ProjectManager:
         self._sops_handler = SopsHandler(self._kubectl_connector)
         self._manifest_generator = ManifestGenerator()
         self._project_file_handler = ProjectFileHandler()
+        self._revision_manager = RevisionManager(self._project_file_handler)
         self.__git_connector_for_project_files = git_connector_for_project_files
         # Track ownership: if connector was injected, we don't own it and shouldn't close it
         self.__owns_git_connector_for_project_files = git_connector_for_project_files is None
@@ -162,6 +164,12 @@ class ProjectManager:
         # Structure: {deployment_name: DeploymentResult}
         # Contains URLs, status, and errors for each processed deployment
         self._deployment_results: dict[str, DeploymentResult] = {}
+
+        # Track clones performed during processing
+        # Structure: {deployment_name: {service_type: {"generation": int | None, "timestamp": str}}}
+        # Example: {"productie": {"postgresql-database": {"generation": None, "timestamp": "..."}}}
+        # Services report clones here; project_manager updates clone-from status at the end
+        self._clones_performed: dict[str, dict[str, dict[str, Any]]] = {}
 
         # Service managers for handling service-specific operations
         # Import here to avoid circular dependencies
@@ -383,6 +391,43 @@ class ProjectManager:
             self._secrets_to_create[deployment_name] = {}
         self._secrets_to_create[deployment_name][secret_type] = secret_data
         logger.debug(f"Added {secret_type} secret for deployment {deployment_name} to secrets map")
+
+    def report_clone_performed(
+        self,
+        deployment_name: str,
+        service_type: str,
+        generation: int | None = None,
+    ) -> None:
+        """
+        Report that a clone operation was performed by a service.
+
+        Services call this method after successfully completing a clone operation.
+        Project manager will use this information to update clone-from status
+        after all services complete.
+
+        Args:
+            deployment_name: Name of the deployment
+            service_type: Type of service (e.g., "postgresql-database", "minio-storage")
+            generation: Generation number if applicable (for versioned resources)
+        """
+        from datetime import UTC, datetime
+
+        if deployment_name not in self._clones_performed:
+            self._clones_performed[deployment_name] = {}
+
+        self._clones_performed[deployment_name][service_type] = {
+            "generation": generation,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        logger.info(f"Clone reported: {deployment_name}/{service_type} (generation={generation})")
+
+    def has_clones_performed(self, deployment_name: str) -> bool:
+        """Check if any clones were performed for a deployment."""
+        return deployment_name in self._clones_performed and len(self._clones_performed[deployment_name]) > 0
+
+    def clear_clones_performed(self) -> None:
+        """Clear the clones tracking (called at start of processing)."""
+        self._clones_performed = {}
 
     def _get_secret_from_map(
         self, deployment_name: str, secret_type: str, secret_class: type[T] | None = None
@@ -3495,10 +3540,31 @@ class ProjectManager:
 
             for deployment in deployments:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
+                    current_deployment_name = deployment.get("name")
                     await db_manager.create_resources_for_deployment(project_data, deployment, force_clone)
                     await self._minio_manager.create_resources_for_deployment(project_data, deployment, force_clone)
                     await self._keycloak_manager.create_resources_for_deployment(project_data, deployment)
                     await self._redis_manager.create_resources_for_deployment(project_data, deployment)
+
+                    # Update clone-from status if any clones were performed for this deployment
+                    if current_deployment_name and self.has_clones_performed(current_deployment_name):
+                        # Get timestamp from the last clone operation
+                        clone_info = self._clones_performed.get(current_deployment_name, {})
+                        timestamps: list[str] = [
+                            ts for info in clone_info.values() if (ts := info.get("timestamp")) is not None
+                        ]
+                        timestamp = max(timestamps) if timestamps else datetime.now(UTC).isoformat()
+
+                        self._project_file_handler.set_clone_status(
+                            project_data, current_deployment_name, completed=True, timestamp=timestamp
+                        )
+                        logger.info(
+                            f"Updated clone-from status to completed for deployment {current_deployment_name} "
+                            f"(clones: {list(self._clones_performed.get(current_deployment_name, {}).keys())})"
+                        )
+
+            # Clear clones tracking after all deployments processed
+            self.clear_clones_performed()
 
             await self._process_application_manifests(deployment_name)
 

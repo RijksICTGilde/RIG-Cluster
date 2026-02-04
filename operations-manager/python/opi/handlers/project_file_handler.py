@@ -982,7 +982,7 @@ class ProjectFileHandler:
             Generation number if set, None if not present
         """
         return self._get_service_config_generation(
-            project_data, deployment_name, component_name, "database", reference_name
+            project_data, deployment_name, component_name, ServiceType.POSTGRESQL_DATABASE.value, reference_name
         )
 
     def set_database_generation(
@@ -1011,7 +1011,12 @@ class ProjectFileHandler:
             Updated project_data dictionary
         """
         return self._set_service_config_generation(
-            project_data, deployment_name, component_name, "database", reference_name, generation
+            project_data,
+            deployment_name,
+            component_name,
+            ServiceType.POSTGRESQL_DATABASE.value,
+            reference_name,
+            generation,
         )
 
     def get_bucket_generation(
@@ -1071,84 +1076,31 @@ class ProjectFileHandler:
     # These methods store/retrieve generation at the deployment level for
     # services like database and minio that are deployment-wide resources.
     # Structure: deployments[name].services.{service_type}.generation
+    #
+    # Callers should use ServiceType enum values for service_type parameter:
+    # - ServiceType.POSTGRESQL_DATABASE.value ("postgresql-database")
+    # - ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value ("namespace-postgresql-database")
+    # - ServiceType.MINIO_STORAGE.value ("minio-storage")
 
-    def get_deployment_database_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
-        """
-        Get the database generation for a deployment.
-
-        Path: deployments[name].services.database.generation
-
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-
-        Returns:
-            Generation number if set, None if not present
-        """
-        return self._get_deployment_service_generation(project_data, deployment_name, "database")
-
-    def set_deployment_database_generation(
-        self, project_data: dict[str, Any], deployment_name: str, generation: int
-    ) -> dict[str, Any]:
-        """
-        Set the database generation for a deployment.
-
-        Path: deployments[name].services.database.generation
-
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-            generation: Generation number to set
-
-        Returns:
-            Updated project_data dictionary
-        """
-        return self._set_deployment_service_generation(project_data, deployment_name, "database", generation)
-
-    def get_deployment_bucket_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
-        """
-        Get the bucket/minio generation for a deployment.
-
-        Path: deployments[name].services.minio-storage.generation
-
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-
-        Returns:
-            Generation number if set, None if not present
-        """
-        return self._get_deployment_service_generation(project_data, deployment_name, "minio-storage")
-
-    def set_deployment_bucket_generation(
-        self, project_data: dict[str, Any], deployment_name: str, generation: int
-    ) -> dict[str, Any]:
-        """
-        Set the bucket/minio generation for a deployment.
-
-        Path: deployments[name].services.minio-storage.generation
-
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-            generation: Generation number to set
-
-        Returns:
-            Updated project_data dictionary
-        """
-        return self._set_deployment_service_generation(project_data, deployment_name, "minio-storage", generation)
-
-    def _get_deployment_service_generation(
+    def get_deployment_service_generation(
         self, project_data: dict[str, Any], deployment_name: str, service_type: str
     ) -> int | None:
         """
         Get generation from deployment-level services block.
 
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            service_type: Service type (use ServiceType enum values)
+
+        Returns:
+            Generation number if set, None if not present
+
         Expected format:
         deployments:
           - name: deployment-1
             services:
-              - reference: database
+              - reference: postgresql-database
                 config:
                   generation: 1
               - reference: minio-storage
@@ -1176,17 +1128,26 @@ class ProjectFileHandler:
                 return None
         return None
 
-    def _set_deployment_service_generation(
+    def set_deployment_service_generation(
         self, project_data: dict[str, Any], deployment_name: str, service_type: str, generation: int
     ) -> dict[str, Any]:
         """
         Set generation in deployment-level services block.
 
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            service_type: Service type (use ServiceType enum values)
+            generation: Generation number to set
+
+        Returns:
+            Updated project_data dictionary
+
         Format:
         deployments:
           - name: deployment-1
             services:
-              - reference: database
+              - reference: postgresql-database
                 config:
                   generation: 1
         """

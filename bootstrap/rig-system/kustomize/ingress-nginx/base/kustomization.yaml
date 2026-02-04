@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Use upstream ingress-nginx manifest for KIND
+resources:
+- https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+patches:
+# Enable configuration-snippet annotations (disabled by default since v1.9.0)
+# Required for setting security headers like Permissions-Policy via ingress annotations
+- target:
+    kind: ConfigMap
+    name: ingress-nginx-controller
+    namespace: ingress-nginx
+  patch: |-
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+    data:
+      allow-snippet-annotations: "true"
+      annotations-risk-level: "Critical"
+
+# Ensure ingress controller runs on control-plane node with ingress-ready=true label
+# KIND clusters have port mappings (80/443) only on the control-plane node
+- target:
+    kind: Deployment
+    name: ingress-nginx-controller
+    namespace: ingress-nginx
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/nodeSelector
+      value:
+        ingress-ready: "true"
+        kubernetes.io/os: linux

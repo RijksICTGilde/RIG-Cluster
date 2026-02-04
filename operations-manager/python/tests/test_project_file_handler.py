@@ -1,7 +1,7 @@
 """
 Tests for opi.handlers.project_file_handler module.
 
-Tests for _parse_deepdiff_path, _set_deployment_service_generation, and related methods.
+Tests for _parse_deepdiff_path, set_deployment_service_generation, and related methods.
 """
 
 from opi.handlers.project_file_handler import ProjectFileHandler
@@ -45,12 +45,12 @@ class TestParseDeepDiffPath:
 
 
 class TestSetDeploymentServiceGeneration:
-    """Tests for _set_deployment_service_generation."""
+    """Tests for set_deployment_service_generation."""
 
     def test_sets_generation_on_empty_services(self):
         handler = ProjectFileHandler()
         project_data = {"deployments": [{"name": "staging", "services": []}]}
-        handler._set_deployment_service_generation(project_data, "staging", "database", 1)
+        handler.set_deployment_service_generation(project_data, "staging", "database", 1)
 
         services = project_data["deployments"][0]["services"]
         assert len(services) == 1
@@ -67,7 +67,7 @@ class TestSetDeploymentServiceGeneration:
                 }
             ]
         }
-        handler._set_deployment_service_generation(project_data, "staging", "database", 2)
+        handler.set_deployment_service_generation(project_data, "staging", "database", 2)
 
         services = project_data["deployments"][0]["services"]
         assert len(services) == 1
@@ -88,7 +88,7 @@ class TestSetDeploymentServiceGeneration:
             ]
         }
         # Set a new generation for database - this should also preserve minio-storage
-        handler._set_deployment_service_generation(project_data, "staging", "database", 3)
+        handler.set_deployment_service_generation(project_data, "staging", "database", 3)
 
         services = project_data["deployments"][0]["services"]
         assert isinstance(services, list), "Services should be converted to list"
@@ -105,7 +105,7 @@ class TestSetDeploymentServiceGeneration:
     def test_creates_services_list_when_missing(self):
         handler = ProjectFileHandler()
         project_data = {"deployments": [{"name": "staging"}]}
-        handler._set_deployment_service_generation(project_data, "staging", "database", 1)
+        handler.set_deployment_service_generation(project_data, "staging", "database", 1)
 
         services = project_data["deployments"][0]["services"]
         assert isinstance(services, list)

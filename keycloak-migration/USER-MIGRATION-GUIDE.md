@@ -10,17 +10,17 @@ Complete checklist for migrating users between Keycloak realms with passwords.
 
 ```bash
 # Digilab (Source)
-export SOURCE_CONTEXT="aks-apps-sandbox-westeu-001-admin-pinniped"
+export SOURCE_CONTEXT="digilab"
 export SOURCE_NAMESPACE="tn-ai-validation-keycloak"
-export SOURCE_POD="keycloak-dpl-84ccc45bb-mstq9"
+export SOURCE_POD="keycloak-dpl-84ccc45bb-6jhr7"
 export SOURCE_REALM="algoritmes"
 export SOURCE_KEYCLOAK_URL="https://keycloak.apps.digilab.network"
 
 # Local (Target)
 export TARGET_CONTEXT="kind-gitops-fluxcd"
 export TARGET_NAMESPACE="rig-system"
-export TARGET_POD="keycloak-7cc6485ff5-mhzft"
-export TARGET_REALM="amt-136-local"
+export TARGET_POD="keycloak-64859cc45f-t7v7s"
+export TARGET_REALM="amt-test-migration"
 export TARGET_KEYCLOAK_URL="http://keycloak.kind"
 
 # Working directory
@@ -83,7 +83,7 @@ kubectl exec -n $SOURCE_NAMESPACE $SOURCE_POD -- /opt/keycloak/bin/kc.sh export 
 kubectl exec -n $SOURCE_NAMESPACE $SOURCE_POD -- ls -lh /tmp/export/
 ```
 
-Expected output: `<realm>-users-0.json` file should exist
+Expected output: `<realm>-realm.json` file should exist
 
 **Preview export to verify password hashes are included:**
 

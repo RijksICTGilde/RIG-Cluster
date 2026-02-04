@@ -14,8 +14,8 @@ RUN curl -Lo kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/r
 # Download kustomize
 RUN curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- /tools
 
-# Download sops
-RUN curl -Lo sops https://github.com/mozilla/sops/releases/download/v3.8.1/sops-v3.8.1.linux.amd64 && \
+# Download sops - using 3.9.2 for compatibility testing
+RUN curl -Lo sops https://github.com/getsops/sops/releases/download/v3.9.2/sops-v3.9.2.linux.amd64 && \
     chmod +x sops
 
 # Download yq
@@ -42,12 +42,13 @@ RUN mkdir -p $HELM_DATA_HOME/plugins && \
     mv $HELM_DATA_HOME/plugins/diff $HELM_DATA_HOME/plugins/helm-diff && \
     ls -la $HELM_DATA_HOME/plugins/helm-diff/
 
-# Download KSOPS plugin using the official install script
-RUN echo "Downloading KSOPS using official install script..." && \
-    curl -s https://raw.githubusercontent.com/viaduct-ai/kustomize-sops/master/scripts/install-ksops-archive.sh | bash && \
+# Download KSOPS plugin - pinned to v4.3.2 for stability
+RUN KSOPS_VERSION="4.3.2" && \
+    ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+    echo "Downloading KSOPS v${KSOPS_VERSION} for ${ARCH}..." && \
+    curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/v${KSOPS_VERSION}/ksops_${KSOPS_VERSION}_Linux_${ARCH}.tar.gz" | tar xz -C /tools && \
+    chmod +x /tools/ksops && \
     echo "KSOPS installation complete" && \
-    echo "Copying ksops to tools directory:" && \
-    cp /usr/local/bin/ksops /tools/ksops && \
     ls -la /tools/ksops && \
     echo "KSOPS verification:" && \
     /tools/ksops --help 2>&1 | head -5

@@ -305,6 +305,51 @@
                     <p class="rvo-text--md">Geen components in deze deployment</p>
                 </div>
                 {% endif %}
+
+                {# PVC Storage Section - Deployment Level #}
+                {% set pvc_storage = deployment_pvc_storage.get(deployment.name, {}) %}
+                {% if pvc_storage %}
+                <div class="pvc-storage-section" style="margin-top: 24px;">
+                    <div class="pvc-storage-header" style="margin-bottom: 16px;">
+                        <c-heading type="h4"><c-icon icon="database" size="md" color="donkerblauw" />Persistent Storage</c-heading>
+                        <p class="rvo-text--subtle rvo-text--sm">PVC disk usage (laatste uur)</p>
+                    </div>
+                    <div class="metrics-grid">
+                        {% for pvc_name, pvc_data in pvc_storage.items() %}
+                        <c-card class="metrics-component-card" padding="lg" backgroundColor="grijs-050" outline="true">
+                            <c-layout-flow gap="md">
+                                <div class="metrics-component-header">
+                                    <c-icon icon="database" size="md" color="donkerblauw" />
+                                    <c-heading type="h5" textContent="{{ pvc_name }}" />
+                                </div>
+                                <div class="chart-item">
+                                    <div class="chart-label">Storage Usage (GB) - Capacity: {{ "%.1f"|format(pvc_data.capacity_gb) }} GB</div>
+                                    <div class="chart-wrapper">
+                                        <canvas id="pvc-chart-{{ deployment.name }}-{{ pvc_name | replace('.', '-') | replace(':', '-') }}"
+                                                class="metrics-chart pvc-storage-chart"
+                                                data-timestamps='{{ pvc_data["timestamps"] | default([]) | tojson }}'
+                                                data-values='{{ pvc_data["values"] | default([]) | map(attribute="value") | list | tojson }}'
+                                                data-limit='{{ pvc_data.capacity_gb | default("null") }}'
+                                                data-warning='{{ pvc_data.warning_threshold_gb | default("null") }}'
+                                                data-critical='{{ pvc_data.critical_threshold_gb | default("null") }}'
+                                                data-color="#6a1b9a"></canvas>
+                                    </div>
+                                    {% if pvc_data["values"] %}
+                                    {% set current_used = pvc_data["values"][-1].value %}
+                                    {% set usage_percent = (current_used / pvc_data.capacity_gb * 100) if pvc_data.capacity_gb else 0 %}
+                                    <div class="chart-current {% if usage_percent >= 90 %}critical{% elif usage_percent >= 80 %}warning{% endif %}">
+                                        Current: {{ "%.2f"|format(current_used) }} GB / {{ "%.1f"|format(pvc_data.capacity_gb) }} GB ({{ "%.0f"|format(usage_percent) }}%)
+                                    </div>
+                                    {% else %}
+                                    <div class="chart-current no-data">No PVC data</div>
+                                    {% endif %}
+                                </div>
+                            </c-layout-flow>
+                        </c-card>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
             </div>
             {% endfor %}
         </c-layout-flow>
@@ -1825,6 +1870,20 @@
     .chart-current.no-data {
         color: var(--rvo-color-grijs-400);
         font-style: italic;
+    }
+
+    .chart-current.warning {
+        color: #e17000;
+        background-color: #fff3e0;
+        padding: 2px 8px;
+        border-radius: 4px;
+    }
+
+    .chart-current.critical {
+        color: #d52b1e;
+        background-color: #ffebee;
+        padding: 2px 8px;
+        border-radius: 4px;
     }
 
     /* Services Grid */
@@ -3967,6 +4026,13 @@
             const limitStr = canvas.dataset.limit;
             const limit = (limitStr && limitStr !== 'null' && limitStr !== 'None') ? parseFloat(limitStr) : null;
 
+            // Parse warning and critical thresholds for PVC storage charts
+            const warningStr = canvas.dataset.warning;
+            const criticalStr = canvas.dataset.critical;
+            const warning = (warningStr && warningStr !== 'null' && warningStr !== 'None') ? parseFloat(warningStr) : null;
+            const critical = (criticalStr && criticalStr !== 'null' && criticalStr !== 'None') ? parseFloat(criticalStr) : null;
+            const isPvcChart = canvas.classList.contains('pvc-storage-chart');
+
             if (timestamps.length === 0 || values.length === 0) {
                 // Draw "no data" message
                 const ctx = canvas.getContext('2d');
@@ -3979,7 +4045,64 @@
 
             // Build annotation config for limit line
             const annotations = {};
-            if (limit !== null) {
+
+            // For PVC storage charts, add warning and critical threshold lines
+            if (isPvcChart) {
+                if (warning !== null) {
+                    annotations.warningLine = {
+                        type: 'line',
+                        yMin: warning,
+                        yMax: warning,
+                        borderColor: '#e17000',
+                        borderWidth: 2,
+                        borderDash: [4, 4],
+                        label: {
+                            display: true,
+                            content: '80%',
+                            position: 'start',
+                            backgroundColor: '#e17000',
+                            color: '#fff',
+                            font: { size: 9 }
+                        }
+                    };
+                }
+                if (critical !== null) {
+                    annotations.criticalLine = {
+                        type: 'line',
+                        yMin: critical,
+                        yMax: critical,
+                        borderColor: '#d52b1e',
+                        borderWidth: 2,
+                        borderDash: [4, 4],
+                        label: {
+                            display: true,
+                            content: '90%',
+                            position: 'start',
+                            backgroundColor: '#d52b1e',
+                            color: '#fff',
+                            font: { size: 9 }
+                        }
+                    };
+                }
+                if (limit !== null) {
+                    annotations.capacityLine = {
+                        type: 'line',
+                        yMin: limit,
+                        yMax: limit,
+                        borderColor: '#154273',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        label: {
+                            display: true,
+                            content: 'Capacity',
+                            position: 'end',
+                            backgroundColor: '#154273',
+                            color: '#fff',
+                            font: { size: 9 }
+                        }
+                    };
+                }
+            } else if (limit !== null) {
                 annotations.limitLine = {
                     type: 'line',
                     yMin: limit,
@@ -4027,10 +4150,13 @@
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
-                                    let label = context.parsed.y.toFixed(1);
+                                    let label = context.parsed.y.toFixed(isPvcChart ? 2 : 1);
+                                    if (isPvcChart) {
+                                        label += ' GB';
+                                    }
                                     if (limit) {
                                         const pct = ((context.parsed.y / limit) * 100).toFixed(0);
-                                        label += ` (${pct}% of limit)`;
+                                        label += ` (${pct}% of ${isPvcChart ? 'capacity' : 'limit'})`;
                                     }
                                     return label;
                                 }

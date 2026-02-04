@@ -1006,6 +1006,8 @@ async def project_details(request: Request, project_name: str):
         deployment_metrics_timeseries: dict[str, dict[str, dict[str, list]]] = {}
         # Track discovered workloads for helm-based deployments (for template display)
         discovered_workloads: dict[str, list[dict[str, Any]]] = {}
+        # Track PVC storage data per deployment (namespace-level)
+        deployment_pvc_storage: dict[str, dict[str, dict[str, Any]]] = {}
         prometheus_available = False
         try:
             from opi.connectors.prometheus import get_metrics_connector
@@ -1057,6 +1059,21 @@ async def project_details(request: Request, project_name: str):
                             logger.debug(
                                 f"Discovered {len(workloads)} workloads and fetched metrics for helm deployment {deployment_name}"
                             )
+
+                    # Fetch PVC storage data for the namespace (works for both component and helm deployments)
+                    try:
+                        pvc_storage = prom.get_pvc_storage_by_namespace(
+                            namespace=k8s_namespace,
+                            duration_minutes=60,
+                            step_minutes=5,
+                        )
+                        if pvc_storage:
+                            deployment_pvc_storage[deployment_name] = pvc_storage
+                            logger.debug(
+                                f"Fetched PVC storage for {len(pvc_storage)} PVCs in deployment {deployment_name}"
+                            )
+                    except Exception as pvc_error:
+                        logger.warning(f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}")
 
         except Exception as metrics_error:
             logger.warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
@@ -1307,6 +1324,7 @@ async def project_details(request: Request, project_name: str):
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
                 "deployment_metrics_timeseries": deployment_metrics_timeseries,
+                "deployment_pvc_storage": deployment_pvc_storage,
                 "discovered_workloads": discovered_workloads,
                 "prometheus_available": prometheus_available,
                 "argocd_status": argocd_status,
