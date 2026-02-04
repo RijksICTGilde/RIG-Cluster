@@ -724,6 +724,90 @@ class GrafanaPrometheusConnector:
 
         return result
 
+    def get_pvc_storage_by_namespace(
+        self, namespace: str, duration_minutes: int = 60, step_minutes: int = 5
+    ) -> dict[str, dict[str, Any]]:
+        """
+        Get PVC storage usage time-series for all PVCs in a namespace.
+
+        This method queries all PVCs in a namespace without any name pattern matching,
+        making it simple and reliable across different environments.
+
+        Args:
+            namespace: The Kubernetes namespace
+            duration_minutes: How far back to query (default: 60 minutes)
+            step_minutes: Interval between data points (default: 5 minutes)
+
+        Returns:
+            Dictionary mapping PVC names to their storage data:
+            {
+                "pvc-name": {
+                    "values": [{"timestamp": ts, "value": gb}, ...],
+                    "timestamps": [ts, ...],
+                    "capacity_gb": float,
+                    "warning_threshold_gb": float,  # 80% of capacity
+                    "critical_threshold_gb": float,  # 90% of capacity
+                }
+            }
+        """
+        if not GrafanaPrometheusConnector.is_connected:
+            return {}
+
+        end_time = datetime.now(UTC)
+        start_time = end_time - timedelta(minutes=duration_minutes)
+        step = f"{step_minutes}m"
+
+        result: dict[str, dict[str, Any]] = {}
+
+        try:
+            # Query all PVC usage in the namespace - simple namespace filter only
+            pvc_used_query = f'kubelet_volume_stats_used_bytes{{namespace="{namespace}"}}'
+            pvc_used_result = self._execute_query(
+                pvc_used_query, instant=False, start_time=start_time, end_time=end_time, step=step
+            )
+
+            # Get PVC capacities (current values)
+            pvc_capacity_query = f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}"}}'
+            pvc_capacity_result = self._execute_query(pvc_capacity_query, instant=True)
+
+            # Build capacity lookup by PVC name
+            pvc_capacities: dict[str, float] = {}
+            for item in pvc_capacity_result:
+                pvc_name = item.get("metric", {}).get("persistentvolumeclaim", "")
+                if pvc_name:
+                    capacity_bytes = float(item["value"][1])
+                    pvc_capacities[pvc_name] = capacity_bytes
+
+            # Process time-series data for each PVC
+            if pvc_used_result:
+                for series in pvc_used_result:
+                    pvc_name = series.get("metric", {}).get("persistentvolumeclaim", "")
+                    if not pvc_name or "values" not in series:
+                        continue
+
+                    capacity_bytes = pvc_capacities.get(pvc_name, 0)
+                    capacity_gb = capacity_bytes / (1024 * 1024 * 1024)
+
+                    pvc_data: dict[str, Any] = {
+                        "values": [],
+                        "timestamps": [],
+                        "capacity_gb": round(capacity_gb, 2),
+                        "warning_threshold_gb": round(capacity_gb * 0.8, 2),
+                        "critical_threshold_gb": round(capacity_gb * 0.9, 2),
+                    }
+
+                    for ts, value in series["values"]:
+                        used_gb = float(value) / (1024 * 1024 * 1024)
+                        pvc_data["values"].append({"timestamp": ts, "value": round(used_gb, 3)})
+                        pvc_data["timestamps"].append(ts)
+
+                    result[pvc_name] = pvc_data
+
+        except Exception as e:
+            logger.warning(f"Failed to get PVC storage metrics for namespace {namespace}: {e}")
+
+        return result
+
     def discover_workloads_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
         """Discover workloads in a namespace via Prometheus metrics."""
         if not GrafanaPrometheusConnector.is_connected:

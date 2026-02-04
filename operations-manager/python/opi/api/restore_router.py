@@ -29,6 +29,7 @@ from opi.manager.backup import (
     create_database_backup_manager,
 )
 from opi.manager.project_manager import ProjectManager
+from opi.services import ServiceType
 from opi.services.project_service import get_project_service
 from opi.utils.naming import (
     generate_bucket_name,
@@ -1099,14 +1100,26 @@ def _set_generation(
                 project_data, update.deployment, update.component, update.reference, update.new_generation
             )
         case ResourceType.DATABASE:
-            # Database is deployment-level
-            project_file_handler.set_deployment_database_generation(
-                project_data, update.deployment, update.new_generation
+            # Database is deployment-level - determine service type from project config
+            project_services = project_data.get("services", [])
+            uses_namespace_postgresql = any(
+                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                if isinstance(service_item, str)
+                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
+                for service_item in (project_services or [])
+            )
+            service_type = (
+                ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                if uses_namespace_postgresql
+                else ServiceType.POSTGRESQL_DATABASE.value
+            )
+            project_file_handler.set_deployment_service_generation(
+                project_data, update.deployment, service_type, update.new_generation
             )
         case ResourceType.BUCKET:
             # Bucket is deployment-level
-            project_file_handler.set_deployment_bucket_generation(
-                project_data, update.deployment, update.new_generation
+            project_file_handler.set_deployment_service_generation(
+                project_data, update.deployment, ServiceType.MINIO_STORAGE.value, update.new_generation
             )
 
 
@@ -1647,14 +1660,26 @@ async def restore_deployment_resource(
                     project_data, deployment_name, body.component_name, body.reference_name, result["new_generation"]
                 )
             elif body.resource_type == "database":
-                # Database is deployment-level
-                project_file_handler.set_deployment_database_generation(
-                    project_data, deployment_name, result["new_generation"]
+                # Database is deployment-level - determine service type from project config
+                project_services = project_data.get("services", [])
+                uses_namespace_postgresql = any(
+                    service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                    if isinstance(service_item, str)
+                    else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
+                    for service_item in (project_services or [])
+                )
+                service_type = (
+                    ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                    if uses_namespace_postgresql
+                    else ServiceType.POSTGRESQL_DATABASE.value
+                )
+                project_file_handler.set_deployment_service_generation(
+                    project_data, deployment_name, service_type, result["new_generation"]
                 )
             else:  # minio
                 # Bucket is deployment-level
-                project_file_handler.set_deployment_bucket_generation(
-                    project_data, deployment_name, result["new_generation"]
+                project_file_handler.set_deployment_service_generation(
+                    project_data, deployment_name, ServiceType.MINIO_STORAGE.value, result["new_generation"]
                 )
             save_project_file(project_file_path, project_data)
 

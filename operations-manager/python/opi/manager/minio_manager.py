@@ -41,7 +41,9 @@ class MinioManager:
             Generation number if set, None otherwise
         """
         project_file_handler = self.project_manager._project_file_handler
-        return project_file_handler.get_deployment_bucket_generation(project_data, deployment_name)
+        return project_file_handler.get_deployment_service_generation(
+            project_data, deployment_name, ServiceType.MINIO_STORAGE.value
+        )
 
     def _get_minio_service_config(self, project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
         """
@@ -848,6 +850,10 @@ class MinioManager:
 
         # Handle bucket creation based on existence and force_clone flag
         # Generational approach: never delete, increment generation instead
+        # Track if clone was actually performed and final generation used
+        clone_performed = False
+        final_generation = current_generation
+
         if target_bucket_exists and not force_clone:
             logger.info(
                 f"Target MinIO bucket '{target_bucket}' already exists for {target_deployment_name}, "
@@ -878,8 +884,23 @@ class MinioManager:
 
             # Update generation in project file
             project_file_handler = self.project_manager._project_file_handler
-            project_file_handler.set_deployment_bucket_generation(project_data, target_deployment_name, new_generation)
+            project_file_handler.set_deployment_service_generation(
+                project_data, target_deployment_name, ServiceType.MINIO_STORAGE.value, new_generation
+            )
             logger.info(f"Updated bucket generation in project file: {new_generation}")
+
+            # Record revision for the new generation
+            self.project_manager._revision_manager.record_clone(
+                project_data=project_data,
+                deployment_name=target_deployment_name,
+                service_type=ServiceType.MINIO_STORAGE.value,
+                generation=new_generation,
+                resource_name=target_bucket,
+                source=f"deployment:{source_deployment_name}",
+            )
+
+            clone_performed = True
+            final_generation = new_generation
         else:
             # Fresh clone - no existing bucket
             logger.info(
@@ -897,6 +918,20 @@ class MinioManager:
                 await self._copy_bucket_data(minio_connector, alias_name, source_bucket, target_bucket)
             else:
                 logger.info(f"Skipping data copy - source bucket {source_bucket} does not exist")
+
+            # Record revision for initial creation
+            initial_gen = current_generation if current_generation is not None else 1
+            self.project_manager._revision_manager.record_clone(
+                project_data=project_data,
+                deployment_name=target_deployment_name,
+                service_type=ServiceType.MINIO_STORAGE.value,
+                generation=initial_gen,
+                resource_name=target_bucket,
+                source=f"deployment:{source_deployment_name}",
+            )
+
+            clone_performed = True
+            final_generation = current_generation
 
         # Apply versioning configuration to cloned bucket (works on create, refresh, and update)
         minio_config = self._get_minio_service_config(project_data, target_deployment_name)
@@ -920,6 +955,12 @@ class MinioManager:
         )
 
         logger.info(f"MinIO clone credentials stored for deployment {target_deployment_name}")
+
+        # Report clone to project_manager for status tracking (only if clone was actually performed)
+        if clone_performed:
+            self.project_manager.report_clone_performed(
+                target_deployment_name, ServiceType.MINIO_STORAGE.value, final_generation
+            )
 
     async def _create_user_and_bucket_for_clone(
         self,
@@ -1363,6 +1404,11 @@ class MinioManager:
         if not result.get("success"):
             raise RuntimeError(f"Remote source MinIO clone failed: {result.get('errors', ['Unknown error'])}")
 
+        # Report clone to project_manager for status tracking
+        # Get generation from project file (updated during clone if needed)
+        generation = self._get_deployment_bucket_generation(project_data, deployment_name)
+        self.project_manager.report_clone_performed(deployment_name, ServiceType.MINIO_STORAGE.value, generation)
+
     def _get_remote_source_config(self, project_data: dict[str, Any], remote_source_name: str) -> dict[str, Any] | None:
         """
         Get remote source configuration by name from project data.
@@ -1682,6 +1728,19 @@ class MinioManager:
                 )
 
                 result["operations"].append({"type": "target_prepared", "status": "success"})
+
+                # Record revision for initial creation (if not already incremented)
+                if not generation_was_incremented:
+                    initial_gen = current_generation if current_generation is not None else 1
+                    source_desc = f"external:{source_host}:{source_port}/{source_bucket}"
+                    self.project_manager._revision_manager.record_clone(
+                        project_data=project_data,
+                        deployment_name=deployment_name,
+                        service_type=ServiceType.MINIO_STORAGE.value,
+                        generation=initial_gen,
+                        resource_name=target_bucket,
+                        source=source_desc,
+                    )
             except Exception as e:
                 logger.error(f"Target preparation failed: {e}")
                 result["errors"].append(f"Target preparation failed: {e!s}")
@@ -1746,8 +1805,22 @@ class MinioManager:
             if generation_was_incremented:
                 try:
                     project_file_handler = self.project_manager._project_file_handler
-                    project_file_handler.set_deployment_bucket_generation(project_data, deployment_name, new_generation)
+                    project_file_handler.set_deployment_service_generation(
+                        project_data, deployment_name, ServiceType.MINIO_STORAGE.value, new_generation
+                    )
                     logger.info(f"Updated bucket generation in project file: {new_generation}")
+
+                    # Record revision for the new generation
+                    source_desc = f"external:{source_host}:{source_port}/{source_bucket}"
+                    self.project_manager._revision_manager.record_clone(
+                        project_data=project_data,
+                        deployment_name=deployment_name,
+                        service_type=ServiceType.MINIO_STORAGE.value,
+                        generation=new_generation,
+                        resource_name=target_bucket,
+                        source=source_desc,
+                    )
+
                     result["operations"].append(
                         {
                             "type": "generation_updated_in_project",
