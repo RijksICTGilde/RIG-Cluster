@@ -18,7 +18,7 @@ patches:
       - op: add
         path: /metadata/annotations/haproxy.router.openshift.io~1ip_whitelist
         #value: "147.181.0.0/16"
-        value: "0.0.0.0/0"
+        value: "0.0.0.0/0,::/0"
       - op: remove
         path: /spec/ingressClassName
       - op: add

@@ -5,7 +5,7 @@ metadata:
   namespace: rig-system
   annotations:
     cert-manager.io/issuer: letsencrypt-keycloak
-    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0"
+    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
 spec:
   rules:
     - host: keycloak.rijksapp.nl

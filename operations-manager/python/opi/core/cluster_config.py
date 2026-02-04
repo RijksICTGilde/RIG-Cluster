@@ -63,7 +63,7 @@ CLUSTER_CONFIG = {
         "ingress": {
             "enable_tls": True,
             # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
-            "ip_whitelist": "0.0.0.0/0",  # VPN only: "147.181.0.0/16"
+            "ip_whitelist": "0.0.0.0/0,::/0",  # VPN only: "147.181.0.0/16"
         },
         "storage": {
             "storage_class_name": "ocs-storagecluster-ceph-rbd",
@@ -256,7 +256,7 @@ def get_ingress_config(cluster_name: str) -> dict:
         ValueError: If cluster is not found in configuration
     """
     cluster_config = get_cluster_config(cluster_name)
-    return cluster_config.get("ingress", {"enable_tls": False, "ip_whitelist": "0.0.0.0"})
+    return cluster_config.get("ingress", {"enable_tls": False, "ip_whitelist": "0.0.0.0/0,::/0"})
 
 
 def get_ingress_tls_enabled(cluster_name: str) -> bool:
