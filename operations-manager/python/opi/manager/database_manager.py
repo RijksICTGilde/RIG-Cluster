@@ -65,22 +65,33 @@ class DatabaseManager:
             await self._postgres_connector.close()
             self._postgres_connector = None
 
-    def _get_deployment_database_generation(self, project_data: dict[str, Any], deployment_name: str) -> int | None:
+    def _get_deployment_database_generation(
+        self, project_data: dict[str, Any], deployment_name: str, service_type: str | None = None
+    ) -> int | None:
         """
         Get the database generation for a deployment from the project file.
 
         Reads from the deployment-level services block:
-        deployments[name].services.database.generation
+        deployments[name].services.{service_type}.generation
 
         Args:
             project_data: The project configuration data
             deployment_name: Name of the deployment
+            service_type: Service type (uses ServiceType enum values). If None, determines
+                          from project config (namespace-postgresql-database or postgresql-database)
 
         Returns:
             Generation number if set, None otherwise
         """
+        if service_type is None:
+            # Determine service type from project configuration
+            if self._project_uses_namespace_postgresql(project_data):
+                service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+            else:
+                service_type = ServiceType.POSTGRESQL_DATABASE.value
+
         project_file_handler = self.project_manager._project_file_handler
-        return project_file_handler.get_deployment_database_generation(project_data, deployment_name)
+        return project_file_handler.get_deployment_service_generation(project_data, deployment_name, service_type)
 
     async def create_resources_for_deployment(
         self,
@@ -194,7 +205,7 @@ class DatabaseManager:
 
             # PHASE 2: DATABASE STATE VERIFICATION - Ensure database exists with correct state
             logger.info(f"Phase 2: Verifying database state for {project_name}/{deployment_name}")
-            await self._ensure_database_state(
+            resolved_password = await self._ensure_database_state(
                 project_name,
                 deployment_name,
                 deployment,
@@ -207,13 +218,16 @@ class DatabaseManager:
                 generation,
             )
 
+            # Use the resolved password from clone operation if available, otherwise use Phase 1 password
+            final_password = resolved_password if resolved_password is not None else db_password
+
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
             logger.info(f"Phase 3: Storing final credentials for {project_name}/{deployment_name}")
             database_secret = DatabaseSecret(
                 host=db_host,  # Use namespace-specific or shared host
                 port=5432,  # Standard PostgreSQL port
                 username=db_username,
-                password=db_password,
+                password=final_password,
                 schema=db_schema,
                 database=db_database,
             )
@@ -395,7 +409,7 @@ class DatabaseManager:
         project_data: dict[str, Any] | None = None,
         force_clone_override: bool = False,
         generation: int | None = None,
-    ) -> None:
+    ) -> str | None:
         """
         Ensure the database exists in the correct state, handling clone-from and force-clone logic.
         This runs regardless of whether credentials existed initially.
@@ -419,6 +433,10 @@ class DatabaseManager:
             db_password: Password for the owner
             project_data: Project configuration data (needed for remote-source clones)
             force_clone_override: Runtime override for force_clone (from API)
+
+        Returns:
+            The resolved password if credentials were resolved during a remote-source clone,
+            None otherwise (caller should use the original db_password).
         """
         clone_from = deployment.get("clone-from")
         # Use runtime override if True, otherwise fall back to deployment config
@@ -499,10 +517,13 @@ class DatabaseManager:
                 if not result.get("success"):
                     raise RuntimeError(f"Remote source clone failed: {result.get('errors', ['Unknown error'])}")
 
-                # Update clone status after successful clone
-                await self._update_clone_status(project_data, deployment_name)
+                # Report clone to project_manager for status tracking
+                self.project_manager.report_clone_performed(
+                    deployment_name, ServiceType.POSTGRESQL_DATABASE.value, generation
+                )
 
-                return  # Skip normal create flow
+                # Return the resolved password so the caller uses the correct credentials
+                return result.get("resolved_password")
             elif clone_type == "deployment":
                 # Local deployment clone - extract reference
                 clone_from = clone_from.get("reference")
@@ -553,11 +574,27 @@ class DatabaseManager:
 
                 # Update generation in project file
                 if project_data:
+                    # Determine service type from project configuration
+                    service_type = (
+                        ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                        if self._project_uses_namespace_postgresql(project_data)
+                        else ServiceType.POSTGRESQL_DATABASE.value
+                    )
                     project_file_handler = self.project_manager._project_file_handler
-                    project_file_handler.set_deployment_database_generation(
-                        project_data, deployment_name, new_generation
+                    project_file_handler.set_deployment_service_generation(
+                        project_data, deployment_name, service_type, new_generation
                     )
                     logger.info(f"Updated database generation in project file: {new_generation}")
+
+                    # Record revision for the new generation
+                    self.project_manager._revision_manager.record_clone(
+                        project_data=project_data,
+                        deployment_name=deployment_name,
+                        service_type=service_type,
+                        generation=new_generation,
+                        resource_name=db_database,
+                        source=f"deployment:{clone_from}",
+                    )
             elif database_result["status"] == "created":
                 logger.info(f"Created database for cloning: {db_database}")
             else:
@@ -595,11 +632,10 @@ class DatabaseManager:
             logger.info(f"Successfully cloned database from {source_database} to {db_database}")
             logger.info(f"Schema cloned with target name '{db_schema}' - no additional rename needed")
 
-            # Update clone status after successful local deployment clone
-            # Note: For local deployment clones, the original clone_from dict is in deployment
-            # We need to check if the original config was dict format with mode support
-            if is_dict_format and project_data:
-                await self._update_clone_status(project_data, deployment_name)
+            # Report clone to project_manager for status tracking
+            self.project_manager.report_clone_performed(
+                deployment_name, ServiceType.POSTGRESQL_DATABASE.value, generation
+            )
         else:
             # Normal flow: ensure database and schema exist
             database_result = await self.postgres_connector.create_database(
@@ -649,6 +685,8 @@ class DatabaseManager:
                 logger.info(f"Created database schema: {db_schema}")
             else:
                 logger.info(f"Database schema already exists: {db_schema}")
+
+        return None  # No password override needed, caller uses original db_password
 
     async def _update_clone_status(
         self,
@@ -1665,10 +1703,14 @@ class DatabaseManager:
             service_config = self._get_database_service_config(project_data) if uses_namespace_postgresql else {}
             database_privileges = service_config.get("privileges", [])
 
+            # Get current generation from project file (for generational versioning)
+            generation = self._get_deployment_database_generation(project_data, deployment_name)
+
             # STEP 4: Resolve target credentials (reuse existing method)
-            # Use base name (None generation) for external clone targets
+            # Username is never versioned (same user accesses all versions)
             target_username = generate_database_name(project_name, deployment_name, None)
-            target_database = target_username
+            # Database/schema use current generation (may be updated in STEP 5 if force_clone)
+            target_database = generate_database_name(project_name, deployment_name, generation)
             target_schema = target_database
 
             try:
@@ -1685,46 +1727,106 @@ class DatabaseManager:
                     database_privileges=database_privileges,
                 )
                 result["target"] = {"database": target_database, "schema": target_schema, "username": target_username}
+                result["resolved_password"] = target_password  # For callers that need the resolved password
                 result["operations"].append({"type": "credentials_resolved", "status": "success"})
             except Exception as e:
                 result["errors"].append(f"Credential resolution failed: {e!s}")
                 result["operations"].append({"type": "credentials_resolved", "status": "failed", "error": str(e)})
                 return result
 
-            # STEP 5: Handle force_clone (drop + recreate database)
-            if force_clone:
-                try:
-                    drop_result = await self.postgres_connector.delete_database(
-                        database_name=target_database,
-                    )
-                    if drop_result["status"] == "deleted":
-                        result["operations"].append({"type": "database_dropped", "status": "success"})
+            # STEP 5: Prepare target database (generational approach for force_clone)
+            try:
+                # Check if target database exists by attempting to create it
+                create_result = await self.postgres_connector.create_database(
+                    database_name=target_database,
+                    owner=target_username,
+                )
+                target_db_exists = create_result["status"] == "exists"
 
+                if force_clone and target_db_exists:
+                    # Generational approach: increment generation and create new versioned database
+                    # Instead of destroying the old database, create a new versioned one
+                    new_generation = (generation or 0) + 1
+                    target_database = generate_database_name(project_name, deployment_name, new_generation)
+                    target_schema = target_database  # Schema matches database name
+
+                    logger.info(
+                        f"force_clone=True: Using generational approach. "
+                        f"Creating new database {target_database} (generation {generation} -> {new_generation})"
+                    )
+
+                    # Create new versioned database (old database is preserved)
                     create_result = await self.postgres_connector.create_database(
                         database_name=target_database,
                         owner=target_username,
                     )
                     if create_result["status"] != "created":
-                        raise Exception(f"Failed to recreate database: {create_result.get('message')}")
+                        raise Exception(
+                            f"Failed to create versioned database {target_database}: {create_result.get('message', 'Unknown error')}"
+                        )
+                    logger.info(f"Created new versioned database: {target_database}")
 
-                    result["operations"].append({"type": "database_recreated", "status": "success"})
-                except Exception as e:
-                    result["errors"].append(f"Force clone preparation failed: {e!s}")
-                    result["operations"].append({"type": "database_dropped", "status": "failed", "error": str(e)})
-                    return result
-            else:
-                # Ensure target database exists
-                try:
-                    create_result = await self.postgres_connector.create_database(
-                        database_name=target_database,
-                        owner=target_username,
+                    # Update generation in project file
+                    service_type = (
+                        ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                        if uses_namespace_postgresql
+                        else ServiceType.POSTGRESQL_DATABASE.value
                     )
-                    status = "created" if create_result["status"] == "created" else "exists"
-                    result["operations"].append({"type": "database_prepared", "status": status})
-                except Exception as e:
-                    result["errors"].append(f"Database preparation failed: {e!s}")
-                    result["operations"].append({"type": "database_prepared", "status": "failed", "error": str(e)})
-                    return result
+                    project_file_handler = self.project_manager._project_file_handler
+                    project_file_handler.set_deployment_service_generation(
+                        project_data, deployment_name, service_type, new_generation
+                    )
+                    logger.info(f"Updated database generation in project file: {new_generation}")
+
+                    # Record revision for the new generation
+                    source_desc = f"external:{source_host}:{source_port}/{source_database}"
+                    self.project_manager._revision_manager.record_clone(
+                        project_data=project_data,
+                        deployment_name=deployment_name,
+                        service_type=service_type,
+                        generation=new_generation,
+                        resource_name=target_database,
+                        source=source_desc,
+                    )
+
+                    result["operations"].append(
+                        {
+                            "type": "database_versioned",
+                            "status": "success",
+                            "generation": new_generation,
+                            "database": target_database,
+                        }
+                    )
+                    # Update result target info with new database name
+                    result["target"]["database"] = target_database
+                    result["target"]["schema"] = target_schema
+                elif create_result["status"] == "created":
+                    logger.info(f"Created database for cloning: {target_database}")
+                    result["operations"].append({"type": "database_prepared", "status": "created"})
+
+                    # Record revision for initial creation
+                    current_gen = generation if generation is not None else 1
+                    service_type = (
+                        ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                        if uses_namespace_postgresql
+                        else ServiceType.POSTGRESQL_DATABASE.value
+                    )
+                    source_desc = f"external:{source_host}:{source_port}/{source_database}"
+                    self.project_manager._revision_manager.record_clone(
+                        project_data=project_data,
+                        deployment_name=deployment_name,
+                        service_type=service_type,
+                        generation=current_gen,
+                        resource_name=target_database,
+                        source=source_desc,
+                    )
+                else:
+                    logger.info(f"Database already exists for cloning: {target_database}")
+                    result["operations"].append({"type": "database_prepared", "status": "exists"})
+            except Exception as e:
+                result["errors"].append(f"Database preparation failed: {e!s}")
+                result["operations"].append({"type": "database_prepared", "status": "failed", "error": str(e)})
+                return result
 
             # STEP 6: Execute clone (reuse existing connector method)
             # Source credentials passed as parameters, target uses bound connector
