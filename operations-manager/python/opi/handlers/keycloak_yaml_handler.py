@@ -322,6 +322,8 @@ class KeycloakYamlHandler:
     async def _process_identity_providers(self, idp_section: Any, variables: dict[str, Any]) -> None:
         """Process identityProviders section.
 
+        Supports both OIDC and SAML identity providers based on the providerId field.
+
         Args:
             idp_section: Identity providers YAML section
             variables: Context variables
@@ -343,17 +345,42 @@ class KeycloakYamlHandler:
                 continue
 
             config = item.get("config", {})
-            logger.info(f"Adding identity provider: {alias} to realm {realm_name}")
+            provider_id = item.get("providerId", "oidc")
+            logger.info(f"Adding {provider_id} identity provider: {alias} to realm {realm_name}")
 
-            await self.keycloak.add_identity_provider(
-                realm_name=realm_name,
-                provider_alias=alias,
-                display_name=item.get("displayName", alias),
-                client_id=config.get("clientId"),
-                client_secret=config.get("clientSecret"),
-                discovery_url=config.get("discoveryUrl"),
-                authenticate_by_default=item.get("authenticateByDefault", True),
-            )
+            if provider_id == "saml":
+                # SAML identity provider
+                await self.keycloak.add_saml_identity_provider(
+                    realm_name=realm_name,
+                    provider_alias=alias,
+                    display_name=item.get("displayName", alias),
+                    idp_entity_id=config.get("idpEntityId"),
+                    single_sign_on_service_url=config.get("singleSignOnServiceUrl"),
+                    single_logout_service_url=config.get("singleLogoutServiceUrl"),
+                    name_id_policy_format=config.get(
+                        "nameIDPolicyFormat", "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+                    ),
+                    principal_type=config.get("principalType", "SUBJECT"),
+                    signing_certificate=config.get("signingCertificate"),
+                    sp_entity_id=config.get("entityId"),
+                    validate_signature=config.get("validateSignature", False),
+                    want_assertions_signed=config.get("wantAssertionsSigned", False),
+                    want_assertions_encrypted=config.get("wantAssertionsEncrypted", False),
+                    authenticate_by_default=item.get("authenticateByDefault", False),
+                    sync_mode=config.get("syncMode", "FORCE"),
+                    enabled=item.get("enabled", True),
+                )
+            else:
+                # OIDC identity provider (default)
+                await self.keycloak.add_identity_provider(
+                    realm_name=realm_name,
+                    provider_alias=alias,
+                    display_name=item.get("displayName", alias),
+                    client_id=config.get("clientId"),
+                    client_secret=config.get("clientSecret"),
+                    discovery_url=config.get("discoveryUrl"),
+                    authenticate_by_default=item.get("authenticateByDefault", True),
+                )
 
             # Process mappers if present
             if "mappers" in item:
@@ -362,18 +389,40 @@ class KeycloakYamlHandler:
     async def _process_idp_mappers(
         self, realm_name: str, provider_alias: str, mappers: list[dict[str, Any]], variables: dict[str, Any]
     ) -> None:
-        """Process identity provider mappers.
+        """Process identity provider mappers from YAML configuration.
 
         Args:
             realm_name: Realm name
             provider_alias: Identity provider alias
-            mappers: List of mapper definitions
+            mappers: List of mapper definitions from YAML
             variables: Context variables
         """
-        # For now, use the connector's ensure_standard_oidc_mappers method
-        # which creates the standard 9 mappers we need
-        logger.info(f"Adding standard OIDC mappers to {provider_alias}")
-        await self.keycloak.ensure_standard_oidc_mappers(realm_name, provider_alias)
+        logger.info(f"Processing {len(mappers)} mappers for {provider_alias}")
+
+        # Get existing mappers to avoid duplicates
+        existing_mappers = await self.keycloak.get_identity_provider_mappers(realm_name, provider_alias)
+        existing_mapper_names = {m.get("name") for m in existing_mappers}
+
+        for mapper_def in mappers:
+            mapper_name = mapper_def.get("name")
+            if not mapper_name:
+                logger.warning("Mapper missing 'name' field, skipping")
+                continue
+
+            if mapper_name in existing_mapper_names:
+                logger.debug(f"Mapper '{mapper_name}' already exists, skipping")
+                continue
+
+            # Build mapper config for Keycloak API
+            mapper_config = {
+                "name": mapper_name,
+                "identityProviderAlias": provider_alias,
+                "identityProviderMapper": mapper_def.get("identityProviderMapper"),
+                "config": mapper_def.get("config", {}),
+            }
+
+            logger.info(f"Creating mapper: {mapper_name}")
+            await self.keycloak.create_identity_provider_mapper(realm_name, provider_alias, mapper_config)
 
     async def _process_authentication_flows(self, flows_section: Any, variables: dict[str, Any]) -> None:
         """Process authenticationFlows section.

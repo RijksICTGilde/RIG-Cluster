@@ -1,6 +1,92 @@
 # SSO-Rijk IDP Migration Guide
 
-This guide covers migrating the `sso-rijk` IDP from OIDC (via digilab) to SAML (direct SSO-Rijk connection).
+This guide covers migrating the `sso-rijk` IDP from OIDC (via Digilab) to SAML (direct SSO-Rijk connection).
+
+## Overview
+
+The migration swaps the active IDP without disrupting users:
+- **Before**: `sso-rijk` (OIDC via Digilab) is active, `sso-rijk-direct` (SAML) exists but is disabled
+- **After**: `sso-rijk` (SAML, former `sso-rijk-direct`) is active, `sso-rijk-obsolete` (former OIDC) is disabled
+
+The swap preserves user federated identities because they reference the IDP by **alias** (`sso-rijk`), which is taken over by the SAML IDP.
+
+## Prerequisites
+
+1. **Bootstrap has run**: Both IDPs exist in Keycloak (OIDC active, SAML disabled)
+2. **SSO-Rijk registration**: Register with SSO-Rijk using:
+   - Entity ID: `https://keycloak.rijksapp.nl/realms/rig-platform`
+   - ACS URL: `https://keycloak.rijksapp.nl/realms/rig-platform/broker/sso-rijk/endpoint`
+
+---
+
+## Quick Migration (with Bootstrap Integration)
+
+This is the recommended approach when using the operations-manager bootstrap.
+
+### Step 1: Dry Run
+
+```bash
+# Port-forward to database first
+kubectl port-forward svc/rig-db-rw -n rig-system 5432:5432
+
+# Get credentials
+KEYCLOAK_PWD=$(kubectl get secret -n rig-system keycloak-credentials -o jsonpath='{.data.admin-password}' | base64 -d)
+DB_PWD=$(kubectl get secret -n rig-system keycloak-db-credentials -o jsonpath='{.data.password}' | base64 -d)
+
+# Dry run - shows what will happen
+python migrate_sso_idp.py swap \
+  --keycloak-url https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl \
+  --admin-password "$KEYCLOAK_PWD" \
+  --old-alias sso-rijk \
+  --new-alias sso-rijk-direct \
+  --db-password "$DB_PWD" \
+  --bootstrap-yaml /path/to/operations-manager/python/opi/configs/keycloak/bootstrap.yaml \
+  --dry-run
+```
+
+### Step 2: Execute Migration
+
+```bash
+python migrate_sso_idp.py swap \
+  --keycloak-url https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl \
+  --admin-password "$KEYCLOAK_PWD" \
+  --old-alias sso-rijk \
+  --new-alias sso-rijk-direct \
+  --db-password "$DB_PWD" \
+  --bootstrap-yaml /path/to/operations-manager/python/opi/configs/keycloak/bootstrap.yaml
+```
+
+This will:
+1. Rename `sso-rijk` (OIDC) to `sso-rijk-obsolete` (disabled)
+2. Rename `sso-rijk-direct` (SAML) to `sso-rijk` (enabled)
+3. Update `bootstrap.yaml` to match the new state
+
+### Step 3: Commit and Restart
+
+```bash
+# Commit the updated bootstrap.yaml
+cd /path/to/operations-manager
+git add python/opi/configs/keycloak/bootstrap.yaml
+git commit -m "Update bootstrap.yaml after SSO-Rijk migration"
+
+# Restart Keycloak to clear caches
+kubectl rollout restart deployment/keycloak -n rig-system
+```
+
+### Step 4: Verify
+
+1. Test login with an existing user
+2. Verify user attributes are populated correctly
+3. Check no new user accounts were created (same user linked)
+
+### Rollback (if needed)
+
+The old IDP is preserved as `sso-rijk-obsolete`. To rollback:
+1. Restore database from backup
+2. Restore bootstrap.yaml from git or backup
+3. Restart Keycloak
+
+---
 
 ## Table of Contents
 

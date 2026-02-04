@@ -1,0 +1,226 @@
+# Bootstrap Keycloak Configuration for Local Kind Clusters
+# Purpose: Setup a local Keycloak that uses the production RIG Platform Keycloak as upstream IDP
+# This allows local development with real SSO-Rijk authentication via the production Keycloak
+#
+# Prerequisites:
+# 1. The production Keycloak must have the 'local-cluster' client configured (see bootstrap.yaml)
+# 2. You need the client secret from the production Keycloak
+#
+# Usage:
+# Set these environment variables to point to the production Keycloak:
+#   KEYCLOAK_MASTER_OIDC_CLIENT_ID=local-cluster
+#   KEYCLOAK_MASTER_OIDC_CLIENT_SECRET=<secret from production>
+#   KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl/realms/rig-platform/.well-known/openid-configuration
+#
+# Then run the operations-manager with KEYCLOAK_BOOTSTRAP_CONFIG=local
+
+---
+realms:
+  - name: "{{ realm_name }}"
+    displayName: "{{ realm_display_name }}"
+    enabled: true
+    registrationAllowed: false
+    loginWithEmailAllowed: false
+    bruteForceProtected: true
+    loginTheme: "nl-design-system"
+
+identityProviders:
+  # OIDC connection to production RIG Platform Keycloak
+  # This passes through SSO-Rijk authentication from the production environment
+  - alias: "sso-rijk"
+    displayName: "SSO Rijk (via RIG Platform)"
+    providerId: "oidc"
+    enabled: true
+    authenticateByDefault: true
+    config:
+      clientId: "{{ sso_client_id }}"
+      clientSecret: "{{ sso_client_secret }}"
+      discoveryUrl: "{{ sso_discovery_url }}"
+      syncMode: "FORCE"
+    mappers:
+      # Map username from email
+      - name: "email-to-username"
+        identityProviderMapper: "oidc-username-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          template: "${CLAIM.email}"
+
+      # Map email attribute
+      - name: "email-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "email"
+          user.attribute: "email"
+
+      # Map first name
+      - name: "first-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "given_name"
+          user.attribute: "firstName"
+
+      # Map last name
+      - name: "last-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "family_name"
+          user.attribute: "lastName"
+
+      # Map display name
+      - name: "full-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "name"
+          user.attribute: "displayName"
+
+      # Map organization number (passed through from SSO-Rijk)
+      - name: "organization-number-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "organization.number"
+          user.attribute: "organization.number"
+
+      # Map organization name (passed through from SSO-Rijk)
+      - name: "organization-name-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          claim: "organization.name"
+          user.attribute: "organization.name"
+
+      # Map SSO-Rijk user ID (the original urn:collab:person:... identifier)
+      - name: "sso-rijk-userid-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "FORCE"
+          claim: "sso-rijk-userid"
+          user.attribute: "sso-rijk-userid"
+
+      # Map SSO-Rijk user ID lowercase
+      - name: "sso-rijk-userid-lowercase-mapper"
+        identityProviderMapper: "oidc-user-attribute-idp-mapper"
+        config:
+          syncMode: "FORCE"
+          claim: "sso-rijk-userid-lowercase"
+          user.attribute: "sso-rijk-userid-lowercase"
+
+authenticationFlows:
+  - alias: "External IDP Redirector"
+    description: "Automatically redirect to upstream RIG Platform Keycloak"
+    providerId: "basic-flow"
+    topLevel: true
+    builtIn: false
+    executions:
+      - authenticator: "auth-cookie"
+        requirement: "ALTERNATIVE"
+        priority: 10
+
+      - authenticator: "identity-provider-redirector"
+        requirement: "ALTERNATIVE"
+        priority: 20
+        authenticatorConfig:
+          alias: "sso-rijk-redirector"
+          config:
+            defaultProvider: "sso-rijk"
+
+    # Set as browser flow for the realm
+    setAsBrowserFlow: true
+
+clientScopes:
+  - name: "custom_attributes_passthrough"
+    description: "Custom attributes passthrough for local development"
+    realmType: "PLATFORM"
+    protocol: "openid-connect"
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      - name: "Organization Name Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "organization.name"
+          claim.name: "organization.name"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "Organization Number Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "organization.number"
+          claim.name: "organization.number"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Override (sub)"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid"
+          claim.name: "sub"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Lowercase Override"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid-lowercase"
+          claim.name: "preferred_username"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid"
+          claim.name: "sso-rijk-userid"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+      - name: "SSO-Rijk UserID Lowercase Passthrough"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-usermodel-attribute-mapper"
+        config:
+          user.attribute: "sso-rijk-userid-lowercase"
+          claim.name: "sso-rijk-userid-lowercase"
+          jsonType.label: "String"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+    # Assign as realm-level default client scope
+    defaultScope: true
+
+clients:
+  - clientId: "{{ client_id }}"
+    name: "{{ client_name }}"
+    enabled: true
+    publicClient: false
+    protocol: "openid-connect"
+    redirectUris: "{{ redirect_uris }}"
+    webOrigins: "{{ web_origins }}"
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: true
+    serviceAccountsEnabled: true
+
+    # Automatically includes custom_attributes_passthrough scope as default
+    defaultClientScopes:
+      - "custom_attributes_passthrough"
