@@ -16,4 +16,4 @@ spec:
           ingressTemplate:
             metadata:
               annotations:
-                haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0"
+                haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
