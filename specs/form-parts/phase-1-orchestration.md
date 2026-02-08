@@ -122,11 +122,12 @@ These decisions constrain Phase 2 and later implementations:
 
 Phase 1 is a spec-only phase — no code is produced. Verification is manual review:
 
-- [x] Each spec (01–07) defines complete `ProjectEditable` instances for all YAML fields
-- [x] Each spec defines an `EditablePart` with layout
-- [x] Cross-part dependencies are documented in the dependency map above
-- [x] Spec 08 composes all parts into wizard and tabs flows
-- [x] All specs reference infrastructure from Phase 2 sub-parts (protocols, converters, validators, enforcers, providers)
-- [x] No spec assumes infrastructure that isn't covered by a Phase 2 sub-part
+- [x] ✅🔍 Each spec (01–07) defines complete `ProjectEditable` instances for all YAML fields
+- [x] ✅🔍 Each spec defines an `EditablePart` with layout
+- [x] ✅🔍 Cross-part dependencies are documented in the dependency map above
+- [x] ✅🔍 Spec 08 composes all parts into wizard and tabs flows
+- [x] ✅🔍 All specs reference infrastructure from Phase 2 sub-parts (protocols, converters, validators, enforcers, providers)
+- [x] ✅🔍 No spec assumes infrastructure that isn't covered by a Phase 2 sub-part
 
 BUILD_COMPLETE_MARKER
+VERIFY_COMPLETE_MARKER
