@@ -313,6 +313,51 @@ class ROOSWidgetAdapter(WidgetAdapter):
 }}
 </style>"""
 
+    def render_display_card(self, field: "FormField") -> str:
+        """Render a read-only display card using ROOS c-card component.
+
+        Used for encrypted fields, configuration status, and other
+        display-only information. The field.value should already be
+        a display string (via converter.view()).
+
+        Icon and color can be customized via field.attributes:
+        - attributes["icon"] — ROOS icon name (default: "sleutel")
+        - attributes["icon_color"] — ROOS color (default: "blauw")
+        """
+        icon = field.attributes.get("icon", "sleutel")
+        icon_color = field.attributes.get("icon_color", "blauw")
+
+        value_html = ""
+        if field.value:
+            value_str = self.escape_html(str(field.value))
+            # Detect status messages from EncryptedDisplayConverter
+            if value_str in ("Versleuteld opgeslagen", "Geconfigureerd"):
+                value_html = f'<c-tag type="success" size="sm">{value_str}</c-tag>'
+            elif value_str == "Niet geconfigureerd":
+                value_html = f'<c-tag type="warning" size="sm">{value_str}</c-tag>'
+            else:
+                # Plain display value (e.g., truncated key)
+                value_html = f'<span class="rvo-text--sm rvo-text--subtle">{value_str}</span>'
+
+        description_html = ""
+        if field.description:
+            description_html = self._render_helper_text(field.description)
+
+        return (
+            f'<c-card padding="md" outline>\n'
+            f'    <c-layout-flow gap="xs">\n'
+            f'        <div class="rvo-display-field__header">\n'
+            f'            <c-icon icon="{self.escape_html(icon)}" '
+            f'size="md" color="{self.escape_html(icon_color)}" />\n'
+            f'            <span class="utrecht-form-label">'
+            f"{self.escape_html(field.label)}</span>\n"
+            f"        </div>\n"
+            f"        {value_html}\n"
+            f"        {description_html}\n"
+            f"    </c-layout-flow>\n"
+            f"</c-card>"
+        )
+
     def render_nested(self, field: "FormField", children_html: list[str]) -> str:
         """Render a nested model's fields grouped together."""
         children_content = "\n".join(children_html)
