@@ -53,10 +53,20 @@ class KeycloakSetup:
                 "client_name": "rig-platform - operations-manager",
                 "redirect_uris": [settings.OWN_DOMAIN],
                 "web_origins": [settings.OWN_DOMAIN],
+                # SAML SP Entity ID for direct SSO-Rijk connection
+                "saml_sp_entity_id": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_DEFAULT_REALM}",
             }
 
-            # Execute YAML configuration
-            yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / "bootstrap.yaml"
+            # Select bootstrap configuration based on setting
+            bootstrap_config = settings.KEYCLOAK_BOOTSTRAP_CONFIG
+            if bootstrap_config == "local":
+                yaml_filename = "bootstrap-local.yaml"
+                logger.info("Using local bootstrap configuration (upstream IDP mode)")
+            else:
+                yaml_filename = "bootstrap.yaml"
+                logger.info("Using default bootstrap configuration (production mode)")
+
+            yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / yaml_filename
             handler = KeycloakYamlHandler(self.keycloak)
             await handler.execute_config(yaml_path, context)
 

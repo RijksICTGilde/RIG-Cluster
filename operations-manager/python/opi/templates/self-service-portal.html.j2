@@ -1116,12 +1116,6 @@ Available variables depend on selected services:
             actionGroup.style.pointerEvents = 'auto';
           }
         }
-
-        // Also disable all form inputs during submission to prevent edits
-        const formInputs = document.querySelectorAll('#project-form input, #project-form select, #project-form textarea');
-        formInputs.forEach(input => {
-          input.disabled = loading;
-        });
       }
 
       function addUserRow() {

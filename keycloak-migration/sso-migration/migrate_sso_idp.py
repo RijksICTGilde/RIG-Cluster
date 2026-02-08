@@ -579,15 +579,19 @@ class DatabaseMigrator:
 
     def swap_idps(self, realm_id: str, old_alias: str, new_alias: str, dry_run: bool = False) -> None:
         """
-        Swap IDPs at database level.
+        Swap IDPs at database level (safe version - preserves old IDP).
 
-        1. Delete old IDP (config, mappers, then IDP itself)
-        2. Rename new IDP to old alias
-        3. Update mapper references
+        1. Rename old IDP to {old_alias}-obsolete (keep as fallback)
+        2. Update old IDP mappers to use new alias
+        3. Disable the old IDP
+        4. Rename new IDP to take over old alias
+        5. Update new IDP mappers to use old alias
 
-        Note: federated_identity entries are NOT deleted - they reference the alias
-        which will be taken over by the renamed IDP.
+        Note: federated_identity entries are NOT modified - they reference the alias
+        which will be taken over by the renamed new IDP.
         """
+        obsolete_alias = f"{old_alias}-obsolete"
+
         old_idp = self.get_idp_info(realm_id, old_alias)
         new_idp = self.get_idp_info(realm_id, new_alias)
 
@@ -596,56 +600,66 @@ class DatabaseMigrator:
         if not new_idp:
             raise ValueError(f"New IDP not found: {new_alias}")
 
+        # Check if obsolete alias already exists
+        obsolete_idp = self.get_idp_info(realm_id, obsolete_alias)
+        if obsolete_idp:
+            raise ValueError(f"Obsolete IDP already exists: {obsolete_alias}. Delete it first or use a different name.")
+
         fed_count = self.get_federated_identities_count(realm_id, old_alias)
 
         logger.info("=" * 60)
-        logger.info("IDP SWAP SUMMARY")
+        logger.info("IDP SWAP SUMMARY (SAFE MODE)")
         logger.info("=" * 60)
-        logger.info(f"Old IDP: {old_alias} (provider: {old_idp['provider_id']}, id: {old_idp['internal_id']})")
-        logger.info(f"New IDP: {new_alias} (provider: {new_idp['provider_id']}, id: {new_idp['internal_id']})")
+        logger.info(f"Old IDP: {old_alias} -> {obsolete_alias} (will be disabled, kept as fallback)")
+        logger.info(f"  Provider: {old_idp['provider_id']}, ID: {old_idp['internal_id']}")
+        logger.info(f"New IDP: {new_alias} -> {old_alias} (will take over)")
+        logger.info(f"  Provider: {new_idp['provider_id']}, ID: {new_idp['internal_id']}")
         logger.info(f"Federated identities to preserve: {fed_count}")
         logger.info("=" * 60)
 
         if dry_run:
             logger.info("[DRY RUN] Would execute:")
-            logger.info(f"  1. DELETE identity_provider_mapper WHERE identity_provider_id = '{old_idp['internal_id']}'")
-            logger.info(f"  2. DELETE identity_provider_config WHERE identity_provider_id = '{old_idp['internal_id']}'")
-            logger.info(f"  3. DELETE identity_provider WHERE internal_id = '{old_idp['internal_id']}'")
-            logger.info(f"  4. UPDATE identity_provider SET provider_alias = '{old_alias}' WHERE internal_id = '{new_idp['internal_id']}'")
-            logger.info(f"  5. UPDATE identity_provider_mapper SET idp_alias = '{old_alias}' WHERE idp_alias = '{new_alias}'")
+            logger.info(f"  1. UPDATE identity_provider SET provider_alias = '{obsolete_alias}', "
+                       f"display_name = 'SSO Rijk (OBSOLETE)', enabled = false "
+                       f"WHERE internal_id = '{old_idp['internal_id']}'")
+            logger.info(f"  2. UPDATE identity_provider_mapper SET idp_alias = '{obsolete_alias}' "
+                       f"WHERE idp_alias = '{old_alias}'")
+            logger.info(f"  3. UPDATE identity_provider SET provider_alias = '{old_alias}', "
+                       f"display_name = 'SSO Rijk', enabled = true, authenticate_by_default = true "
+                       f"WHERE internal_id = '{new_idp['internal_id']}'")
+            logger.info(f"  4. UPDATE identity_provider_mapper SET idp_alias = '{old_alias}' "
+                       f"WHERE idp_alias = '{new_alias}'")
             return
 
         with self._connect() as conn:
             with conn.cursor() as cur:
-                logger.info(f"Step 1: Deleting mappers for '{old_alias}'...")
+                logger.info(f"Step 1: Renaming '{old_alias}' to '{obsolete_alias}' and disabling...")
                 cur.execute(
-                    "DELETE FROM identity_provider_mapper WHERE identity_provider_id = %s",
-                    (old_idp["internal_id"],),
+                    """UPDATE identity_provider
+                       SET provider_alias = %s, display_name = 'SSO Rijk (OBSOLETE)', enabled = false
+                       WHERE internal_id = %s""",
+                    (obsolete_alias, old_idp["internal_id"]),
                 )
-                logger.info(f"  Deleted {cur.rowcount} mappers")
+                logger.info(f"  Updated {cur.rowcount} IDP")
 
-                logger.info(f"Step 2: Deleting config for '{old_alias}'...")
+                logger.info(f"Step 2: Updating old IDP mapper references to '{obsolete_alias}'...")
                 cur.execute(
-                    "DELETE FROM identity_provider_config WHERE identity_provider_id = %s",
-                    (old_idp["internal_id"],),
+                    "UPDATE identity_provider_mapper SET idp_alias = %s WHERE idp_alias = %s",
+                    (obsolete_alias, old_alias),
                 )
-                logger.info(f"  Deleted {cur.rowcount} config entries")
+                logger.info(f"  Updated {cur.rowcount} mappers")
 
-                logger.info(f"Step 3: Deleting IDP '{old_alias}'...")
+                logger.info(f"Step 3: Renaming '{new_alias}' to '{old_alias}' and enabling as default...")
                 cur.execute(
-                    "DELETE FROM identity_provider WHERE internal_id = %s",
-                    (old_idp["internal_id"],),
-                )
-                logger.info(f"  Deleted {cur.rowcount} IDP")
-
-                logger.info(f"Step 4: Renaming '{new_alias}' to '{old_alias}'...")
-                cur.execute(
-                    "UPDATE identity_provider SET provider_alias = %s WHERE internal_id = %s",
+                    """UPDATE identity_provider
+                       SET provider_alias = %s, display_name = 'SSO Rijk',
+                           enabled = true, authenticate_by_default = true
+                       WHERE internal_id = %s""",
                     (old_alias, new_idp["internal_id"]),
                 )
                 logger.info(f"  Updated {cur.rowcount} IDP")
 
-                logger.info(f"Step 5: Updating mapper references...")
+                logger.info(f"Step 4: Updating new IDP mapper references to '{old_alias}'...")
                 cur.execute(
                     "UPDATE identity_provider_mapper SET idp_alias = %s WHERE idp_alias = %s",
                     (old_alias, new_alias),
@@ -654,6 +668,115 @@ class DatabaseMigrator:
 
                 conn.commit()
                 logger.info("IDP swap completed successfully!")
+                logger.info(f"Old IDP is now '{obsolete_alias}' (disabled) - can be deleted manually later")
+
+
+# =============================================================================
+# BOOTSTRAP YAML UPDATER
+# =============================================================================
+
+def update_bootstrap_yaml(
+    yaml_path: str,
+    old_alias: str,
+    new_alias: str,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Update bootstrap.yaml after IDP swap to reflect the new configuration.
+
+    1. Remove the old OIDC IDP entry (now obsolete)
+    2. Rename the SAML IDP from new_alias to old_alias
+    3. Enable the SAML IDP
+
+    Args:
+        yaml_path: Path to bootstrap.yaml
+        old_alias: The alias that was swapped (e.g., 'sso-rijk')
+        new_alias: The alias that took over (e.g., 'sso-rijk-direct')
+        dry_run: If True, only show what would be changed
+
+    Returns:
+        True if update was successful
+    """
+    try:
+        from ruamel.yaml import YAML
+    except ImportError:
+        logger.error("ruamel.yaml not installed. Run: pip install ruamel.yaml")
+        return False
+
+    yaml = YAML()
+    yaml.preserve_quotes = True
+
+    path = Path(yaml_path)
+    if not path.exists():
+        logger.error(f"Bootstrap YAML not found: {yaml_path}")
+        return False
+
+    # Read the YAML
+    with path.open("r") as f:
+        config = yaml.load(f)
+
+    if not config or "identityProviders" not in config:
+        logger.error("Invalid bootstrap YAML: missing identityProviders section")
+        return False
+
+    idps = config["identityProviders"]
+    old_idp_index = None
+    new_idp_index = None
+
+    # Find the IDPs
+    for i, idp in enumerate(idps):
+        if idp.get("alias") == old_alias:
+            old_idp_index = i
+        elif idp.get("alias") == new_alias:
+            new_idp_index = i
+
+    if old_idp_index is None:
+        logger.warning(f"Old IDP '{old_alias}' not found in bootstrap.yaml (may already be removed)")
+    if new_idp_index is None:
+        logger.error(f"New IDP '{new_alias}' not found in bootstrap.yaml")
+        return False
+
+    if dry_run:
+        logger.info("[DRY RUN] Would update bootstrap.yaml:")
+        if old_idp_index is not None:
+            logger.info(f"  1. Remove OIDC IDP entry: '{old_alias}'")
+        logger.info(f"  2. Rename SAML IDP: '{new_alias}' -> '{old_alias}'")
+        logger.info(f"  3. Set enabled: true, authenticateByDefault: true")
+        logger.info(f"  4. Update displayName: 'SSO Rijk'")
+        return True
+
+    # Update the new IDP (SAML) to take over the old alias
+    new_idp = idps[new_idp_index]
+    new_idp["alias"] = old_alias
+    new_idp["displayName"] = "SSO Rijk"
+    new_idp["enabled"] = True
+    new_idp["authenticateByDefault"] = True
+
+    # Remove comment about being disabled (update the description in the YAML)
+    # The comment handling is tricky with ruamel.yaml, so we'll leave comments as-is
+
+    # Remove the old IDP entry (OIDC)
+    if old_idp_index is not None:
+        # Adjust index if we're removing an item before new_idp_index
+        del idps[old_idp_index]
+        logger.info(f"Removed old OIDC IDP entry: '{old_alias}'")
+
+    # Write the updated YAML
+    # Create backup first
+    backup_path = path.with_suffix(".yaml.bak")
+    import shutil
+    shutil.copy(path, backup_path)
+    logger.info(f"Created backup: {backup_path}")
+
+    with path.open("w") as f:
+        yaml.dump(config, f)
+
+    logger.info(f"Updated bootstrap.yaml:")
+    logger.info(f"  - Removed old OIDC IDP entry")
+    logger.info(f"  - Renamed '{new_alias}' to '{old_alias}'")
+    logger.info(f"  - Enabled IDP with authenticateByDefault: true")
+
+    return True
 
 
 # =============================================================================
@@ -799,6 +922,18 @@ def cmd_swap(args):
     # Execute swap
     db.swap_idps(realm_id, args.old_alias, args.new_alias, dry_run=args.dry_run)
 
+    # Update bootstrap.yaml if path provided
+    if args.bootstrap_yaml:
+        logger.info("\n" + "-" * 60)
+        logger.info("Updating bootstrap.yaml...")
+        logger.info("-" * 60)
+        update_bootstrap_yaml(
+            yaml_path=args.bootstrap_yaml,
+            old_alias=args.old_alias,
+            new_alias=args.new_alias,
+            dry_run=args.dry_run,
+        )
+
     if not args.dry_run:
         logger.info("\n" + "=" * 60)
         logger.info("MIGRATION COMPLETE!")
@@ -808,8 +943,10 @@ def cmd_swap(args):
         logger.info("   kubectl rollout restart deployment/keycloak -n rig-system")
         logger.info("2. Test login with an existing user")
         logger.info("3. Verify user attributes are populated correctly")
+        if args.bootstrap_yaml:
+            logger.info("4. Commit the updated bootstrap.yaml to git")
         if not args.skip_backup:
-            logger.info(f"4. If issues, restore from backup: {backup_file}")
+            logger.info(f"5. If issues, restore from backup: {backup_file}")
 
 
 def cmd_status(args):
@@ -905,7 +1042,7 @@ Examples:
     # swap command
     swap_parser = subparsers.add_parser("swap", help="Swap IDPs at database level")
     swap_parser.add_argument("--old-alias", default="sso-rijk", help="Old IDP alias to replace")
-    swap_parser.add_argument("--new-alias", default="sso-rijk-new", help="New IDP alias")
+    swap_parser.add_argument("--new-alias", default="sso-rijk-direct", help="New IDP alias (default: sso-rijk-direct)")
     swap_parser.add_argument("--db-host", default="localhost", help="Database host")
     swap_parser.add_argument("--db-port", type=int, default=5432, help="Database port")
     swap_parser.add_argument("--db-name", default="keycloak", help="Database name")
@@ -916,6 +1053,10 @@ Examples:
     swap_parser.add_argument("--dry-run", action="store_true", help="Show what would be done")
     swap_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     swap_parser.add_argument("--force", action="store_true", help="Proceed even if backup fails")
+    swap_parser.add_argument(
+        "--bootstrap-yaml",
+        help="Path to bootstrap.yaml to update after swap (removes old IDP, renames new IDP)"
+    )
 
     args = parser.parse_args()
 

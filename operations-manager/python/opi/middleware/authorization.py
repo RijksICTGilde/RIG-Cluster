@@ -21,6 +21,14 @@ if typing.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# URL prefixes that skip authorization checks and logging (health checks, metrics, etc.)
+SKIP_AUTH_PREFIXES = (
+    "/health",
+    "/metrics",
+    "/ready",
+    "/static/",
+)
+
 RequestResponseEndpoint = typing.Callable[[Request], typing.Awaitable[Response]]
 
 
@@ -70,8 +78,8 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         """
         path = request.url.path
 
-        # Always allow static files
-        if path.startswith("/static/"):
+        # Skip auth checks and logging for infrastructure endpoints
+        if path.startswith(SKIP_AUTH_PREFIXES):
             return await call_next(request)
 
         # API routes should use API key authentication, not SSO by default

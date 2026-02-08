@@ -226,6 +226,11 @@ class Settings(BaseSettings):
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"
 
+    # Bootstrap configuration type: "default" or "local"
+    # - "default": Production setup with direct SSO-Rijk integration
+    # - "local": Local Kind cluster using production Keycloak as upstream IDP
+    KEYCLOAK_BOOTSTRAP_CONFIG: str = "default"
+
     # Master OIDC provider configuration (to be added to shared realm)
     KEYCLOAK_MASTER_OIDC_CLIENT_ID: str = "dummy-client-id"
     KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: str = "dummy-client-secret-123"

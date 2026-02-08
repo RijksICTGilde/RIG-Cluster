@@ -171,6 +171,9 @@ class ProjectManager:
         # Services report clones here; project_manager updates clone-from status at the end
         self._clones_performed: dict[str, dict[str, dict[str, Any]]] = {}
 
+        # Runtime force_clone override from API (used by PVC manager and other nested calls)
+        self._force_clone_override: bool = False
+
         # Service managers for handling service-specific operations
         # Import here to avoid circular dependencies
         # TODO: fix me, we don't want this
@@ -3461,6 +3464,9 @@ class ProjectManager:
         """
         logger.info(f"Processing project file: {self._project_file_relative_path}")
 
+        # Store force_clone override for nested calls (e.g., PVC manager)
+        self._force_clone_override = force_clone
+
         try:
             project_data = await self.get_contents()
             project_name = await self.get_name()
@@ -4351,6 +4357,7 @@ class ProjectManager:
                     cluster=cluster,
                     full_output_dir=full_output_dir,
                     manifest_generator=self._manifest_generator,
+                    force_clone_override=self._force_clone_override,
                 )
                 created_files.extend(created_pvc_files)
 
@@ -4883,12 +4890,13 @@ class ProjectManager:
                     if source_deployment:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
-                        # Clone all properties except name and components
+                        # Clone all properties except name, components, and subdomain
+                        # subdomain must be unique per deployment to avoid domain conflicts
                         new_deployment.update(
                             {
                                 key: value
                                 for key, value in source_deployment.items()
-                                if key not in ["name", "components"]
+                                if key not in ["name", "components", "subdomain"]
                             }
                         )
 

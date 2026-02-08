@@ -771,26 +771,45 @@ class ProjectFileHandler:
         # Navigate manually since JSONPath with nested array filters can be tricky
         deployments = project_data.get("deployments", [])
 
+        # Log available deployments for debugging
+        deployment_names = [d.get("name") for d in deployments]
+        logger.info(
+            f"Looking for generation: deployment={deployment_name}, component={component_name}, "
+            f"service_type={service_type}, reference={reference_name}. "
+            f"Available deployments: {deployment_names}"
+        )
+
         for deployment in deployments:
             if deployment.get("name") == deployment_name:
                 components = deployment.get("components", [])
+                component_refs = [c.get("reference") for c in components]
+                logger.info(f"Found deployment '{deployment_name}', components: {component_refs}")
+
                 for component in components:
                     if component.get("reference") == component_name:
                         services = component.get("services", {})
+                        logger.info(f"Found component '{component_name}', services keys: {list(services.keys())}")
                         service_items = services.get(service_type, [])
 
                         # Handle list format (new pattern)
                         if isinstance(service_items, list):
+                            item_refs = [i.get("reference") if isinstance(i, dict) else str(i) for i in service_items]
+                            logger.info(f"Service items (list format) for '{service_type}': {item_refs}")
+
                             for item in service_items:
                                 if isinstance(item, dict) and item.get("reference") == reference_name:
                                     config = item.get("config", {})
                                     generation = config.get("generation")
+                                    logger.info(
+                                        f"Found item '{reference_name}', config={config}, generation={generation}"
+                                    )
                                     if generation is not None:
-                                        logger.debug(
-                                            f"Service generation for {deployment_name}/{component_name}/"
-                                            f"{service_type}/{reference_name}: {generation}"
+                                        logger.info(
+                                            f"Returning generation {generation} for {deployment_name}/{component_name}/"
+                                            f"{service_type}/{reference_name}"
                                         )
                                         return int(generation)
+                                    logger.info(f"Generation is None for {reference_name}, returning None")
                                     return None
 
                         # Handle dict format (old pattern - backward compatibility)
@@ -806,7 +825,7 @@ class ProjectFileHandler:
                                     return int(generation)
                                 return None
 
-        logger.debug(f"No generation found for {deployment_name}/{component_name}/{service_type}/{reference_name}")
+        logger.info(f"No generation found for {deployment_name}/{component_name}/{service_type}/{reference_name}")
         return None
 
     def _set_service_config_generation(
