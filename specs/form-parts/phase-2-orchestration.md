@@ -25,21 +25,21 @@ New protocols (sync, NOT async):
 
 ```
 LAYER 0 — No Dependencies (run in parallel)
-  ├─ Sub-part A: Core Dataclasses    → impl-A-core-dataclasses.md  [DONE]
-  ├─ Sub-part B: Path Utilities      → impl-B-path-utilities.md    [DONE]
-  └─ Sub-part C: Providers           → impl-C-providers.md         [DONE]
+  ├─ Sub-part A: Core Dataclasses    → impl-A-core-dataclasses.md  [DONE] ✅🔍
+  ├─ Sub-part B: Path Utilities      → impl-B-path-utilities.md    [DONE] ✅🔍
+  └─ Sub-part C: Providers           → impl-C-providers.md         [DONE] ✅🔍
 
 LAYER 1 — Depends on Layer 0 (run in parallel after Layer 0)
-  ├─ Sub-part D: Converters          → impl-D-converters.md      [DONE]
-  ├─ Sub-part E: Validators          → impl-E-validators.md      [DONE]
-  └─ Sub-part F: Enforcers           → impl-F-enforcers.md       [DONE]
+  ├─ Sub-part D: Converters          → impl-D-converters.md      [DONE] ✅🔍
+  ├─ Sub-part E: Validators          → impl-E-validators.md      [DONE] ✅🔍
+  └─ Sub-part F: Enforcers           → impl-F-enforcers.md       [DONE] ✅🔍
 
 LAYER 2 — Depends on Layer 0+1 (run in parallel)
-  ├─ Sub-part G: Bridge              → impl-G-bridge.md          [DONE]
-  └─ Sub-part H: Widget Extension    → impl-H-widget-extension.md [DONE]
+  ├─ Sub-part G: Bridge              → impl-G-bridge.md          [DONE] ✅🔍
+  └─ Sub-part H: Widget Extension    → impl-H-widget-extension.md [DONE] ✅🔍
 
 LAYER 3 — Assembly (sequential, after all above)
-  └─ Sub-part I: Package Init        → impl-I-package-init.md    [DONE]
+  └─ Sub-part I: Package Init        → impl-I-package-init.md    [DONE] ✅🔍
 ```
 
 ## Execution Phases
@@ -131,3 +131,4 @@ uv run pyright opi/forms/editables/
 - [x] `render_field()` dispatches `display_card` widget type correctly
 
 BUILD_COMPLETE_MARKER
+VERIFY_COMPLETE_MARKER
