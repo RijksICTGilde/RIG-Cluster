@@ -86,6 +86,100 @@ identityProviders:
           claim: "preferred_username"
           user.attribute: "sso-rijk-userid-lowercase"
 
+  # Direct SSO-Rijk SAML connection (for future migration from Digilab)
+  # This IDP connects directly to SSO-Rijk without going through Digilab as intermediary
+  # Disabled by default - enable after SSO-Rijk SP registration is complete
+  - alias: "sso-rijk-direct"
+    displayName: "SSO Rijk (Direct)"
+    providerId: "saml"
+    enabled: false
+    authenticateByDefault: false
+    config:
+      idpEntityId: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/authentication/idp/metadata"
+      singleSignOnServiceUrl: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/authentication/idp/single-sign-on"
+      singleLogoutServiceUrl: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/logout"
+      nameIDPolicyFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+      principalType: "SUBJECT"
+      syncMode: "FORCE"
+      # SP Entity ID - our Keycloak's identifier for SSO-Rijk registration
+      entityId: "{{ saml_sp_entity_id }}"
+      # SSO-Rijk signing certificate (from their metadata)
+      signingCertificate: "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"
+      validateSignature: false
+      wantAssertionsSigned: false
+      wantAssertionsEncrypted: false
+    mappers:
+      # Extract NameID (SSO-Rijk user identifier) to sso-rijk-userid attribute
+      - name: "sso-rijk-userid"
+        identityProviderMapper: "saml-unrestricted-xpath-idp-mapper"
+        config:
+          syncMode: "FORCE"
+          xpath.expression: "//*[local-name()='Subject']/*[local-name()='NameID']/text()"
+          user.attribute: "sso-rijk-userid"
+
+      # Extract NameID lowercase for username matching
+      - name: "sso-rijk-userid-lowercase"
+        identityProviderMapper: "saml-unrestricted-xpath-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          xpath.expression: "//*[local-name()='Subject']/*[local-name()='NameID']/text()"
+          user.attribute: "sso-rijk-userid-lowercase"
+          value.transformation: "LOWERCASE"
+
+      # Map email from SAML attribute
+      - name: "email"
+        identityProviderMapper: "saml-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          user.attribute: "email"
+          attribute.name.format: "ATTRIBUTE_FORMAT_BASIC"
+          attribute.name: "urn:rijksoverheid:federation:emailAddress"
+
+      # Map first name from SAML attribute
+      - name: "firstName"
+        identityProviderMapper: "saml-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          user.attribute: "firstName"
+          attribute.name.format: "ATTRIBUTE_FORMAT_BASIC"
+          attribute.name: "urn:rijksoverheid:federation:givenName"
+
+      # Map last name from SAML attribute
+      - name: "lastName"
+        identityProviderMapper: "saml-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          user.attribute: "lastName"
+          attribute.name.format: "ATTRIBUTE_FORMAT_BASIC"
+          attribute.name: "urn:rijksoverheid:federation:surName"
+
+      # Map display name from SAML attribute
+      - name: "displayName"
+        identityProviderMapper: "saml-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          user.attribute: "displayname"
+          attribute.name.format: "ATTRIBUTE_FORMAT_BASIC"
+          attribute.name: "urn:rijksoverheid:federation:displayName"
+
+      # Map organization name from SAML attribute
+      - name: "organizationName"
+        identityProviderMapper: "saml-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          user.attribute: "organizationName"
+          attribute.name.format: "ATTRIBUTE_FORMAT_BASIC"
+          attribute.name: "urn:rijksoverheid:federation:organizationDisplayName"
+
+      # Map organization number from SAML attribute
+      - name: "organizationNumber"
+        identityProviderMapper: "saml-user-attribute-idp-mapper"
+        config:
+          syncMode: "INHERIT"
+          user.attribute: "organizationNumber"
+          attribute.name.format: "ATTRIBUTE_FORMAT_BASIC"
+          attribute.name: "urn:rijksoverheid:federation:organizationNumber"
+
 authenticationFlows:
   - alias: "External IDP Redirector"
     description: "Automatically redirect to external identity provider"
@@ -199,5 +293,31 @@ clients:
     serviceAccountsEnabled: true
 
     # Automatically includes custom_attributes_passthrough scope as default
+    defaultClientScopes:
+      - "custom_attributes_passthrough"
+
+  # Client for local Kind clusters to use this Keycloak as upstream IDP
+  # Local clusters authenticate users via this Keycloak, which in turn uses SSO-Rijk
+  - clientId: "local-cluster"
+    name: "Local Kind Cluster"
+    enabled: true
+    publicClient: false
+    protocol: "openid-connect"
+    # Allow redirects from local Kind cluster Keycloak instances
+    redirectUris:
+      - "https://keycloak.kind/*"
+      - "http://keycloak.kind/*"
+      - "https://localhost:*/*"
+      - "http://localhost:*/*"
+    webOrigins:
+      - "https://keycloak.kind"
+      - "http://keycloak.kind"
+      - "https://localhost"
+      - "http://localhost"
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+
+    # Pass through SSO-Rijk attributes to local clusters
     defaultClientScopes:
       - "custom_attributes_passthrough"

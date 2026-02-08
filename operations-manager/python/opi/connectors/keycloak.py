@@ -841,6 +841,127 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             raise
 
+    async def add_saml_identity_provider(
+        self,
+        realm_name: str,
+        provider_alias: str,
+        display_name: str,
+        idp_entity_id: str,
+        single_sign_on_service_url: str,
+        single_logout_service_url: str | None = None,
+        name_id_policy_format: str = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+        principal_type: str = "SUBJECT",
+        signing_certificate: str | None = None,
+        sp_entity_id: str | None = None,
+        validate_signature: bool = False,
+        want_assertions_signed: bool = False,
+        want_assertions_encrypted: bool = False,
+        authenticate_by_default: bool = True,
+        sync_mode: str = "FORCE",
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Add a SAML identity provider to a realm.
+
+        Args:
+            realm_name: Name of the realm
+            provider_alias: Alias for the identity provider
+            display_name: Display name shown in the UI
+            idp_entity_id: Entity ID of the external IDP (metadata URL)
+            single_sign_on_service_url: SSO service URL of the external IDP
+            single_logout_service_url: Logout service URL of the external IDP
+            name_id_policy_format: NameID policy format (default: persistent)
+            principal_type: Principal type (SUBJECT, ATTRIBUTE, FRIENDLY_ATTRIBUTE)
+            signing_certificate: IDP signing certificate (PEM format, without headers)
+            sp_entity_id: Our SP entity ID (defaults to realm issuer)
+            validate_signature: Validate SAML response signatures
+            want_assertions_signed: Require signed assertions
+            want_assertions_encrypted: Require encrypted assertions
+            authenticate_by_default: Auto-redirect to this IDP on login
+            sync_mode: Sync mode for attributes (FORCE, IMPORT, INHERIT)
+            enabled: Whether the IDP is enabled
+
+        Returns:
+            Dictionary containing provider information
+        """
+        logger.info(f"Adding SAML identity provider {provider_alias} to realm {realm_name}")
+
+        # Build SAML configuration
+        provider_config = {
+            "idpEntityId": idp_entity_id,
+            "singleSignOnServiceUrl": single_sign_on_service_url,
+            "singleLogoutServiceUrl": single_logout_service_url or "",
+            "nameIDPolicyFormat": name_id_policy_format,
+            "principalType": principal_type,
+            "syncMode": sync_mode,
+            "validateSignature": "true" if validate_signature else "false",
+            "wantAssertionsSigned": "true" if want_assertions_signed else "false",
+            "wantAssertionsEncrypted": "true" if want_assertions_encrypted else "false",
+            "wantAuthnRequestsSigned": "false",
+            "postBindingAuthnRequest": "false",
+            "postBindingResponse": "false",
+            "postBindingLogout": "false",
+            "backchannelSupported": "false",
+            "forceAuthn": "false",
+            "allowCreate": "true",
+            "loginHint": "false",
+            "hideOnLoginPage": "false",
+            "addExtensionsElementWithKeyInfo": "false",
+            "attributeConsumingServiceIndex": "0",
+        }
+
+        # Add SP entity ID if provided
+        if sp_entity_id:
+            provider_config["entityId"] = sp_entity_id
+
+        # Add signing certificate if provided
+        if signing_certificate:
+            provider_config["signingCertificate"] = signing_certificate
+            provider_config["validateSignature"] = "true" if validate_signature else "false"
+
+        provider_data = {
+            "alias": provider_alias,
+            "displayName": display_name,
+            "providerId": "saml",
+            "enabled": enabled,
+            "updateProfileFirstLoginMode": "on",
+            "trustEmail": True,
+            "storeToken": False,
+            "addReadTokenRoleOnCreate": False,
+            "authenticateByDefault": authenticate_by_default,
+            "linkOnly": False,
+            "firstBrokerLoginFlowAlias": "first broker login",
+            "config": provider_config,
+        }
+
+        try:
+            # Switch to target realm
+            self.admin.change_current_realm(realm_name)
+
+            try:
+                self.admin.create_idp(payload=provider_data)
+                logger.info(f"Created new SAML identity provider {provider_alias} in realm {realm_name}")
+            except KeycloakPostError as e:
+                if "409" in str(e) or "Conflict" in str(e):
+                    logger.info(f"SAML identity provider {provider_alias} already exists in realm {realm_name}")
+                else:
+                    raise
+
+            # Get the provider info
+            provider_info = self.admin.get_idp(idp_alias=provider_alias)
+
+            # Switch back to master
+            self.admin.change_current_realm("master")
+
+            logger.info(f"Successfully added SAML identity provider {provider_alias} to realm {realm_name}")
+            return provider_info
+
+        except KeycloakError as e:
+            logger.error(f"Failed to add SAML identity provider {provider_alias} to realm {realm_name}: {e}")
+            # Switch back to master
+            self.admin.change_current_realm("master")
+            raise
+
     async def update_identity_provider(
         self, realm_name: str, provider_alias: str, provider_type: str = "oidc", config: dict[str, Any] | None = None
     ) -> dict[str, Any]:

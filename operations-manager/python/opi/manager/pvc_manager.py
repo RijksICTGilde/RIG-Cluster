@@ -138,6 +138,7 @@ class PVCManager:
         cluster: str,
         full_output_dir: str,
         manifest_generator: "ManifestGenerator",
+        force_clone_override: bool = False,
     ) -> list[str]:
         """
         Create PVC manifests for a component, handling generation and cleanup.
@@ -146,6 +147,7 @@ class PVCManager:
         1. Reads generation for each storage from project data
         2. Deletes old generation manifest files if generation > 0
         3. Creates new PVC manifest with current generation
+        4. Handles clone-from logic with mode/status checking (consistent with database/minio)
 
         Args:
             project_data: The parsed project data
@@ -157,6 +159,7 @@ class PVCManager:
             cluster: Cluster name
             full_output_dir: Output directory for manifests
             manifest_generator: ManifestGenerator instance
+            force_clone_override: Runtime override for force_clone (from API)
 
         Returns:
             List of created manifest filenames
@@ -215,14 +218,69 @@ class PVCManager:
                 "backup_enabled": backup_enabled,
             }
 
-            # Handle clone-from logic for PVC
+            # Handle clone-from logic for PVC (consistent with database_manager and minio_manager)
             clone_from = deployment.get("clone-from")
-            if clone_from:
-                # Generate source PVC name using the same naming convention
-                source_unique_name = generate_unique_name(clone_from, component_name)
-                source_pvc_name = generate_pvc_name(source_unique_name, storage_name, generation)
-                pvc_variables["source_pvc_name"] = source_pvc_name
-                logger.info(f"PVC {pvc_variables['name']} will be cloned from {source_pvc_name}")
+            force_clone = force_clone_override or deployment.get("force-clone", False)
+            should_skip_clone = False
+
+            # Check clone mode and status for dict format
+            if clone_from and isinstance(clone_from, dict):
+                clone_mode = clone_from.get("mode", "once")
+                clone_status = clone_from.get("status", {})
+                clone_completed = clone_status.get("completed", False) if isinstance(clone_status, dict) else False
+
+                if clone_mode == "once" and clone_completed and not force_clone:
+                    logger.info(
+                        f"Skipping PVC clone for {deployment_name}/{component_name}/{storage_name}: "
+                        f"mode is 'once' and already completed "
+                        f"(timestamp: {clone_status.get('timestamp', 'unknown')}). "
+                        "Proceeding with normal PVC creation."
+                    )
+                    should_skip_clone = True
+                elif clone_mode == "once" and clone_completed and force_clone:
+                    logger.info(
+                        f"PVC clone mode 'once' for {deployment_name}/{component_name}/{storage_name} "
+                        f"but force_clone=True, proceeding with clone"
+                    )
+                elif clone_mode == "always":
+                    logger.info(f"PVC clone mode 'always' for {deployment_name}/{component_name}/{storage_name}")
+
+            if clone_from and not should_skip_clone:
+                # Handle both dict format (new) and string format (legacy)
+                if isinstance(clone_from, dict):
+                    clone_type = clone_from.get("type")
+                    if clone_type == "deployment":
+                        # Local deployment clone
+                        source_deployment = clone_from.get("reference")
+                    elif clone_type == "remote-source":
+                        # PVC cannot clone from remote source (Kubernetes dataSource only works locally)
+                        logger.warning(
+                            f"PVC clone-from type 'remote-source' is not supported for {deployment_name}/{component_name}/{storage_name}. "
+                            "Kubernetes PVC dataSource only supports local cloning. Skipping PVC clone."
+                        )
+                        source_deployment = None
+                    else:
+                        logger.warning(f"Unknown clone-from type '{clone_type}' for PVC, skipping clone")
+                        source_deployment = None
+                else:
+                    # Legacy format: clone_from is a string (deployment name)
+                    source_deployment = clone_from
+
+                if source_deployment:
+                    # Look up the SOURCE deployment's PVC generation (not target's)
+                    source_generation = self.project_manager._project_file_handler.get_storage_generation(
+                        project_data, source_deployment, component_name, storage_name
+                    )
+                    logger.info(
+                        f"Source deployment '{source_deployment}' has PVC generation: {source_generation} "
+                        f"for {component_name}/{storage_name}"
+                    )
+
+                    # Generate source PVC name using source deployment's generation
+                    source_unique_name = generate_unique_name(source_deployment, component_name)
+                    source_pvc_name = generate_pvc_name(source_unique_name, storage_name, source_generation)
+                    pvc_variables["source_pvc_name"] = source_pvc_name
+                    logger.info(f"PVC {pvc_variables['name']} will be cloned from {source_pvc_name}")
 
             # Create PVC manifest using centralized naming utility with generation
             manifest_type = generate_pvc_manifest_type(storage_name)
