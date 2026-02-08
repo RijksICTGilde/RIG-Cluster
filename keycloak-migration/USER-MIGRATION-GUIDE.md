@@ -13,7 +13,7 @@ Complete checklist for migrating users between Keycloak realms with passwords.
 export SOURCE_CONTEXT="digilab"
 export SOURCE_NAMESPACE="tn-ai-validation-keycloak"
 export SOURCE_POD="keycloak-dpl-84ccc45bb-6jhr7"
-export SOURCE_REALM="algoritmes"
+export SOURCE_REALM="Algoritmes-BZK"
 export SOURCE_KEYCLOAK_URL="https://keycloak.apps.digilab.network"
 
 # Local (Target)

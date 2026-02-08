@@ -457,8 +457,8 @@ class DatabaseManager:
                 force_clone = True
                 logger.info(f"Clone mode 'always' for {deployment_name}, forcing clone")
 
-            # mode: "once" with completed status - skip clone entirely
-            if clone_mode == "once" and clone_status_completed:
+            # mode: "once" with completed status - skip clone entirely (unless force_clone is True)
+            if clone_mode == "once" and clone_status_completed and not force_clone:
                 logger.info(
                     f"Clone mode 'once' for {deployment_name} and clone already completed "
                     f"(timestamp: {status.get('timestamp', 'unknown')}), skipping clone"
@@ -466,6 +466,8 @@ class DatabaseManager:
                 # Still need to ensure database exists (in case cluster was rebuilt)
                 # but skip the clone operation
                 clone_from = None  # Set to None to skip clone logic but continue to normal flow
+            elif clone_mode == "once" and clone_status_completed and force_clone:
+                logger.info(f"Clone mode 'once' for {deployment_name} but force_clone=True, proceeding with clone")
 
         # Handle clone-from configuration - can be dict (new format) or string (legacy)
         if clone_from and isinstance(clone_from, dict):
