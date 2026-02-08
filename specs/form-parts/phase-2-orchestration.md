@@ -30,7 +30,7 @@ LAYER 0 — No Dependencies (run in parallel)
   └─ Sub-part C: Providers           → impl-C-providers.md         [DONE]
 
 LAYER 1 — Depends on Layer 0 (run in parallel after Layer 0)
-  ├─ Sub-part D: Converters          → impl-D-converters.md      (needs A)
+  ├─ Sub-part D: Converters          → impl-D-converters.md      [DONE]
   ├─ Sub-part E: Validators          → impl-E-validators.md      (needs A)
   └─ Sub-part F: Enforcers           → impl-F-enforcers.md       (needs A)
 
