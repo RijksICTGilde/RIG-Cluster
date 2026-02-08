@@ -27,7 +27,7 @@ New protocols (sync, NOT async):
 LAYER 0 — No Dependencies (run in parallel)
   ├─ Sub-part A: Core Dataclasses    → impl-A-core-dataclasses.md  [DONE]
   ├─ Sub-part B: Path Utilities      → impl-B-path-utilities.md    [DONE]
-  └─ Sub-part C: Providers           → impl-C-providers.md
+  └─ Sub-part C: Providers           → impl-C-providers.md         [DONE]
 
 LAYER 1 — Depends on Layer 0 (run in parallel after Layer 0)
   ├─ Sub-part D: Converters          → impl-D-converters.md      (needs A)
