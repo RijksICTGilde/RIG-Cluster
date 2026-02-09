@@ -1108,15 +1108,97 @@ async def project_details(request: Request, project_name: str):
                                 errors = []
                                 for resource in status.get("resources", []):
                                     resource_health = resource.get("health", {})
-                                    if resource_health.get("status") in ["Degraded", "Missing"]:
-                                        error_msg = resource_health.get("message", "Unknown error")
+                                    health_status = resource_health.get("status")
+                                    health_msg = resource_health.get("message", "")
+                                    if health_status in ["Degraded", "Missing"]:
+                                        error_msg = health_msg or "Unknown error"
                                         resource_name = (
                                             f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
                                         )
                                         errors.append({"resource": resource_name, "message": error_msg})
+                                    elif health_status == "Progressing" and health_msg:
+                                        resource_name = (
+                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                        )
+                                        errors.append({"resource": resource_name, "message": health_msg})
 
-                                # Check for sync errors
-                                if operation_state.get("phase") == "Failed":
+                                # Fetch resource tree for child-level errors (Pods, ReplicaSets)
+                                # This reveals errors like image pull failures that don't show
+                                # on top-level resources
+                                app_health = health.get("status", "Unknown")
+                                if app_health not in ("Healthy",):
+                                    try:
+                                        tree_nodes = await argo_connector.get_application_resource_tree(app_name)
+                                        for node in tree_nodes:
+                                            node_health = node.get("health", {})
+                                            node_health_status = node_health.get("status")
+                                            node_health_msg = node_health.get("message", "")
+                                            if not node_health_msg:
+                                                continue
+                                            node_kind = node.get("kind", "")
+                                            # Only include child resources (Pods, ReplicaSets)
+                                            # that have actionable error messages
+                                            if node_kind not in ("Pod", "ReplicaSet"):
+                                                continue
+                                            if node_health_status in ("Degraded", "Missing"):
+                                                node_name = node.get("name", "unknown")
+                                                errors.append(
+                                                    {
+                                                        "resource": f"{node_kind}/{node_name}",
+                                                        "message": node_health_msg,
+                                                    }
+                                                )
+                                    except Exception as tree_error:
+                                        logger.debug(f"Could not fetch resource tree for {app_name}: {tree_error}")
+
+                                    # Fetch Kubernetes events from the namespace for
+                                    # actionable details (e.g. ImagePullBackOff, CrashLoopBackOff)
+                                    try:
+                                        from opi.connectors.kubectl import KubectlConnector
+                                        from opi.core.cluster_config import get_prefixed_namespace
+
+                                        base_ns = deployment.get("namespace")
+                                        dep_cluster = deployment.get("cluster")
+                                        if base_ns and dep_cluster:
+                                            k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
+                                            kubectl = KubectlConnector()
+                                            events = await kubectl.get_namespace_events(k8s_ns, limit=30)
+                                            for event in events:
+                                                if event.get("type") == "Warning":
+                                                    obj = event.get("object", "unknown")
+                                                    reason = event.get("reason", "")
+                                                    msg = event.get("message", "")
+                                                    if msg:
+                                                        errors.append(
+                                                            {
+                                                                "resource": f"Event/{obj}",
+                                                                "message": f"[{reason}] {msg}",
+                                                            }
+                                                        )
+                                    except Exception as events_error:
+                                        logger.debug(
+                                            f"Could not fetch namespace events for {deployment_name}: {events_error}"
+                                        )
+
+                                # Extract per-resource sync failures from syncResult
+                                sync_result = operation_state.get("syncResult", {})
+                                for resource in sync_result.get("resources", []):
+                                    if resource.get("status") == "SyncFailed":
+                                        resource_name = (
+                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                        )
+                                        error_msg = resource.get("message", "Sync failed")
+                                        errors.append({"resource": resource_name, "message": error_msg})
+
+                                # Extract application-level conditions
+                                for condition in status.get("conditions", []):
+                                    condition_type = condition.get("type", "Unknown")
+                                    condition_msg = condition.get("message", "")
+                                    if condition_msg:
+                                        errors.append({"resource": condition_type, "message": condition_msg})
+
+                                # Check for sync operation errors
+                                if operation_state.get("phase") in ("Failed", "Error"):
                                     op_message = operation_state.get("message", "Sync operation failed")
                                     errors.append({"resource": "SyncOperation", "message": op_message})
 
