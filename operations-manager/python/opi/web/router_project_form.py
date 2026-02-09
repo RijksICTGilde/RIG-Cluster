@@ -6,7 +6,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from ruamel.yaml import YAML
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
@@ -16,6 +15,7 @@ from opi.forms.editables.project_registry import (
     get_all_project_editables,
     get_project_form_layout,
 )
+from opi.handlers.project_file_handler import save_project_file
 from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
@@ -144,12 +144,3 @@ async def save_project_form(request: Request, project_name: str) -> HTMLResponse
         url=f"/projects/details/{project_name}",
         status_code=302,
     )
-
-
-def save_project_file(file_path: str, data: dict) -> None:
-    """Save project data to a YAML file preserving formatting."""
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    yaml.default_flow_style = False
-    with open(file_path, "w") as f:
-        yaml.dump(data, f)
