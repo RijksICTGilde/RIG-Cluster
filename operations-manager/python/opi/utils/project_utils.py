@@ -22,6 +22,29 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 logger = logging.getLogger(__name__)
 
 
+def normalize_container_image(image: str) -> tuple[str, bool]:
+    """
+    Normalize a container image reference to lowercase.
+
+    The OCI Distribution Specification requires repository names to be lowercase.
+    This function ensures compliance and reports if normalization was needed.
+
+    Args:
+        image: Container image reference (e.g., "ghcr.io/Org/Repo:tag")
+
+    Returns:
+        Tuple of (normalized_image, was_normalized) where was_normalized is True
+        if the original image contained uppercase characters that were lowercased.
+    """
+    normalized = image.lower()
+    was_normalized = normalized != image
+    if was_normalized:
+        logger.warning(
+            f"Container image contained uppercase characters and was normalized: '{image}' -> '{normalized}'"
+        )
+    return normalized, was_normalized
+
+
 def validate_project_name(name: str) -> bool:
     """
     Validate project name: must start with lowercase letter, then lowercase a-z, numbers 0-9, dash -, max 20 characters.
@@ -169,7 +192,8 @@ dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
         # Build component references for all components
         component_refs = []
         for idx, comp in enumerate(project_data.components):
-            component_refs.append({"reference": f"component-{idx + 1}", "image": comp.image or "nginx:latest"})
+            image, _ = normalize_container_image(comp.image or "nginx:latest")
+            component_refs.append({"reference": f"component-{idx + 1}", "image": image})
 
         # Create a single deployment with all components
         # Use deployment_name from form data (defaults to "main")

@@ -169,6 +169,7 @@ class Settings(BaseSettings):
 
     # Access control settings
     ALLOWED_EMAILS: str | None = None  # Comma-separated list of allowed email addresses
+    ADMIN_EMAILS: str | None = None  # Comma-separated list of admin emails (can view all projects)
 
     # Git projects server settings - for monitoring and retrieving project files
     ENABLE_GIT_MONITOR: bool = False

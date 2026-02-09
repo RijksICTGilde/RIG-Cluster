@@ -143,3 +143,41 @@ class TestCaseInsensitiveEmailMatching:
         service.register("proj", "k", "f.yaml")
         assert service.is_user_authorized_for_project("proj", "a@b.com") is False
         assert service.get_user_role_for_project("proj", "a@b.com") is None
+
+
+class TestAdminEmails:
+    """Admin users bypass per-project user lists and can view all projects."""
+
+    def test_admin_authorized_for_any_project(self, service):
+        service.add_admin_emails(["admin@example.com"])
+        service.register("proj", "k", "f.yaml", users=[ProjectUser(email="other@x.com", role="dev")])
+        assert service.is_user_authorized_for_project("proj", "admin@example.com") is True
+
+    def test_admin_authorized_even_without_users(self, service):
+        service.add_admin_emails(["admin@example.com"])
+        service.register("proj", "k", "f.yaml")
+        assert service.is_user_authorized_for_project("proj", "admin@example.com") is True
+
+    def test_admin_check_is_case_insensitive(self, service):
+        service.add_admin_emails(["Admin@Example.COM"])
+        service.register("proj", "k", "f.yaml")
+        assert service.is_admin("admin@example.com") is True
+        assert service.is_user_authorized_for_project("proj", "ADMIN@EXAMPLE.COM") is True
+
+    def test_non_admin_still_denied(self, service):
+        service.add_admin_emails(["admin@example.com"])
+        service.register("proj", "k", "f.yaml", users=[ProjectUser(email="other@x.com", role="dev")])
+        assert service.is_user_authorized_for_project("proj", "nobody@x.com") is False
+
+    def test_is_admin_returns_false_for_unknown(self, service):
+        assert service.is_admin("unknown@x.com") is False
+
+    def test_admin_gets_admin_role_for_any_project(self, service):
+        service.add_admin_emails(["admin@example.com"])
+        service.register("proj", "k", "f.yaml", users=[ProjectUser(email="other@x.com", role="dev")])
+        assert service.get_user_role_for_project("proj", "admin@example.com") == "admin"
+
+    def test_admin_gets_admin_role_even_without_users(self, service):
+        service.add_admin_emails(["admin@example.com"])
+        service.register("proj", "k", "f.yaml")
+        assert service.get_user_role_for_project("proj", "admin@example.com") == "admin"

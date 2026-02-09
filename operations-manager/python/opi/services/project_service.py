@@ -52,6 +52,7 @@ class ProjectService:
             # In-memory storage for project mappings
             # In the future, this will be replaced with database tables
             self._projects: dict[str, Project] = {}
+            self._admin_emails: set[str] = set()
             ProjectService._initialized = True
             logger.debug("ProjectService singleton initialized")
         else:
@@ -173,6 +174,16 @@ class ProjectService:
         self._projects.clear()
         logger.debug("Cleared all project mappings")
 
+    def add_admin_emails(self, emails: list[str]) -> None:
+        """Add emails that have admin access to all projects."""
+        for email in emails:
+            self._admin_emails.add(email.lower())
+        logger.info(f"Added {len(emails)} admin emails")
+
+    def is_admin(self, email: str) -> bool:
+        """Check if an email has admin access to all projects."""
+        return email.lower() in self._admin_emails
+
     def load_project_from_data(self, project_data: dict[str, Any], filename: str) -> bool:
         """
         Load project from a project data dictionary.
@@ -243,6 +254,8 @@ class ProjectService:
         """
         Check if a user is authorized to access a specific project.
 
+        Admin users are always authorized for all projects.
+
         Args:
             project_name: The project identifier
             user_email: The user's email address
@@ -250,6 +263,10 @@ class ProjectService:
         Returns:
             True if user is authorized, False otherwise
         """
+        if self.is_admin(user_email):
+            logger.debug(f"User {user_email} authorized for project {project_name} (admin)")
+            return True
+
         users = self.get_project_users(project_name)
         if not users:
             logger.debug(f"No users found for project: {project_name}")
@@ -267,6 +284,8 @@ class ProjectService:
         """
         Get a user's role for a specific project.
 
+        Global admin users always get the "admin" role.
+
         Args:
             project_name: The project identifier
             user_email: The user's email address
@@ -274,6 +293,9 @@ class ProjectService:
         Returns:
             User's role if found, None otherwise
         """
+        if self.is_admin(user_email):
+            return "admin"
+
         users = self.get_project_users(project_name)
         if not users:
             return None
