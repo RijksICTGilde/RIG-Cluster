@@ -626,6 +626,19 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             user_service.add_allowed_emails(env_emails)
             logger.info(f"Added {len(env_emails)} allowed emails from ALLOWED_EMAILS setting")
 
+    # Initialize admin emails (can view all projects)
+    project_service = get_project_service()
+    default_admin_emails = [
+        "robbert.uittenbroek@rijksoverheid.nl",
+    ]
+    project_service.add_admin_emails(default_admin_emails)
+
+    if settings.ADMIN_EMAILS:
+        env_admin_emails = [email.strip() for email in settings.ADMIN_EMAILS.split(",") if email.strip()]
+        if env_admin_emails:
+            project_service.add_admin_emails(env_admin_emails)
+            logger.info(f"Added {len(env_admin_emails)} admin emails from ADMIN_EMAILS setting")
+
     # Get the list of project files to process
     # Create a shared git connector that will be reused across all ProjectManagers
     shared_git_connector = None

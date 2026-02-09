@@ -82,6 +82,7 @@ from opi.utils.naming import (
     generate_unique_name,
     get_component_ingress_map,
 )
+from opi.utils.project_utils import normalize_container_image
 from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
@@ -4835,20 +4836,29 @@ class ProjectManager:
                         # Update images for existing components, add new ones
                         existing_components = {c["reference"]: c for c in deployment.get("components", [])}
 
+                        normalized_warnings: list[str] = []
                         for component in components:
+                            # Normalize image to lowercase (OCI spec requirement)
+                            normalized_image, was_normalized = normalize_container_image(component.image)
+                            if was_normalized:
+                                normalized_warnings.append(
+                                    f"Image for component '{component.reference}' was normalized to lowercase: "
+                                    f"'{component.image}' -> '{normalized_image}'"
+                                )
+
                             if component.reference in existing_components:
                                 # Update existing component's image
-                                existing_components[component.reference]["image"] = component.image
+                                existing_components[component.reference]["image"] = normalized_image
                                 logger.info(
-                                    f"Updated image for component '{component.reference}' to '{component.image}'"
+                                    f"Updated image for component '{component.reference}' to '{normalized_image}'"
                                 )
                             else:
                                 # Add new component
                                 deployment["components"].append(
-                                    {"reference": component.reference, "image": component.image}
+                                    {"reference": component.reference, "image": normalized_image}
                                 )
                                 logger.info(
-                                    f"Added new component '{component.reference}' with image '{component.image}'"
+                                    f"Added new component '{component.reference}' with image '{normalized_image}'"
                                 )
 
                         # Handle clone_from only if force_clone is true
@@ -4867,7 +4877,10 @@ class ProjectManager:
                 await git_connector.commit_and_push(commit_message)
 
                 logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")
-                return {"success": True, "created": False, "error": None, "error_type": None}
+                result: dict[str, Any] = {"success": True, "created": False, "error": None, "error_type": None}
+                if normalized_warnings:
+                    result["warnings"] = normalized_warnings
+                return result
 
             else:
                 # CREATE new deployment
@@ -4877,8 +4890,16 @@ class ProjectManager:
                 new_deployment = {"name": deployment_name, "components": []}
 
                 # Convert components from router objects to dict format
+                normalized_warnings_create: list[str] = []
                 for component in components:
-                    new_deployment["components"].append({"reference": component.reference, "image": component.image})
+                    # Normalize image to lowercase (OCI spec requirement)
+                    normalized_image, was_normalized = normalize_container_image(component.image)
+                    if was_normalized:
+                        normalized_warnings_create.append(
+                            f"Image for component '{component.reference}' was normalized to lowercase: "
+                            f"'{component.image}' -> '{normalized_image}'"
+                        )
+                    new_deployment["components"].append({"reference": component.reference, "image": normalized_image})
 
                 # Handle clone-from logic for new deployments
                 if clone_from:
@@ -4961,7 +4982,10 @@ class ProjectManager:
                 await git_connector.commit_and_push(commit_message)
 
                 logger.info(f"Successfully created deployment '{deployment_name}' in project '{project_name}'")
-                return {"success": True, "created": True, "error": None, "error_type": None}
+                result_create: dict[str, Any] = {"success": True, "created": True, "error": None, "error_type": None}
+                if normalized_warnings_create:
+                    result_create["warnings"] = normalized_warnings_create
+                return result_create
 
         except Exception as e:
             error_msg = f"Error upserting deployment '{deployment_name}': {e}"
@@ -5004,6 +5028,10 @@ class ProjectManager:
         """
 
         project_name = await self.get_name()
+
+        # Normalize image to lowercase (OCI spec requirement)
+        new_image_url, image_was_normalized = normalize_container_image(new_image_url)
+
         logger.info(f"Updating image for {project_name}/{deployment_name}/{component_name} to {new_image_url}")
 
         # 1. Load project data
@@ -5114,7 +5142,7 @@ class ProjectManager:
             "status": "success",
             "message": f"Successfully updated {component_name} in {deployment_name}",
             "updates": {
-                "image": {"old": old_image, "new": new_image_url},
+                "image": {"old": old_image, "new": new_image_url, "normalized": image_was_normalized},
                 "storage_generations": generation_changes,
             },
             "actions_performed": actions_performed,

@@ -20,7 +20,7 @@ from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
 from opi.utils.naming import sanitize_kubernetes_name
-from opi.utils.project_utils import generate_self_service_project_yaml, validate_project_name
+from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -889,19 +889,24 @@ async def upsert_deployment(
                     "urls": dep_result.urls,
                 }
 
-            content = {
+            content: dict[str, Any] = {
                 "status": "success",
                 "message": f"Deployment '{deployment_data.deploymentName}' {action} successfully",
                 "deployment": {
                     "name": deployment_data.deploymentName,
                     "project": project_name,
-                    "components": [{"reference": c.reference, "image": c.image} for c in deployment_data.components],
+                    "components": [
+                        {"reference": c.reference, "image": normalize_container_image(c.image)[0]}
+                        for c in deployment_data.components
+                    ],
                     "forceClone": deployment_data.forceClone,
                     "created": result.get("created", False),
                 },
                 "urls": urls,
                 "processing": {"status": "completed" if processing_result else "failed"},
             }
+            if result.get("warnings"):
+                content["warnings"] = result["warnings"]
             return JSONResponse(content=content, status_code=status_code)
         else:
             # Determine appropriate HTTP status code based on error type

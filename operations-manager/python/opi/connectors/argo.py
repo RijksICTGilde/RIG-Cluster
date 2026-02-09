@@ -305,6 +305,44 @@ class ArgoConnector:
             logger.error(f"Error getting application status: {e}")
             raise RuntimeError(f"Error getting application status: {e}")
 
+    async def get_application_resource_tree(self, app_name: str | None = None) -> list[dict[str, Any]]:
+        """
+        Get the resource tree for an ArgoCD application.
+
+        The resource tree includes child resources (Pods, ReplicaSets) with their
+        health status and messages, which provides more detail than the top-level
+        application status (e.g., image pull errors on Pods).
+
+        Args:
+            app_name: Name of the application. If None, uses default_app_name
+
+        Returns:
+            List of resource tree nodes, or empty list on error
+        """
+        app_name = app_name or self.default_app_name
+        logger.info(f"Getting resource tree for application: {app_name}")
+
+        tree_url = f"{self._actual_base_url}/api/v1/applications/{app_name}/resource-tree"
+
+        try:
+            status_code, response_text = await self._make_authenticated_request("GET", tree_url)
+
+            if status_code == 200:
+                tree_data = json.loads(response_text)
+                nodes = tree_data.get("nodes", [])
+                logger.info(f"Successfully retrieved resource tree for {app_name}: {len(nodes)} nodes")
+                return nodes
+            elif status_code == 404:
+                logger.info(f"Application {app_name} not found (404)")
+                return []
+            else:
+                logger.error(f"Resource tree request failed with status {status_code}: {response_text}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Error getting resource tree for {app_name}: {e}")
+            return []
+
     async def list_applications(self) -> list[dict[str, Any]]:
         """
         List all ArgoCD applications.
