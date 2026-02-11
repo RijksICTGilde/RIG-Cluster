@@ -1,0 +1,8 @@
+name: operations-manager
+display-name: Operations Manager
+description: RIG Platform Operations Manager
+
+services:
+  - keycloak:
+      config:
+        template: sso-only

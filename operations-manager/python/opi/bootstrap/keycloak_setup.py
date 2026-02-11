@@ -3,13 +3,20 @@ Keycloak bootstrap setup logic.
 
 This module contains the business logic for setting up Keycloak during application startup.
 It orchestrates the proper sequence of operations using YAML configuration.
+
+The setup creates two realms:
+1. rig-platform realm (from bootstrap YAML) - the platform realm with SSO configuration
+2. operations-manager realm (from project file) - OPI's own realm, like any other project
 """
 
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from ruamel.yaml import YAML
 
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
@@ -17,8 +24,11 @@ from opi.core.cluster_config import get_namespace
 from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.utils.naming import extract_domain_from_url
 
 logger = logging.getLogger(__name__)
+
+OPERATIONS_REALM_NAME = "operations-manager"
 
 
 class KeycloakSetup:
@@ -32,10 +42,15 @@ class KeycloakSetup:
         """
         Run the complete Keycloak setup sequence using YAML configuration.
 
+        This creates:
+        1. The rig-platform realm (from bootstrap YAML)
+        2. The operations-manager realm (from project file, like any other project)
+        3. A deployment client in the operations-manager realm
+
         Returns:
             True if all setup steps completed successfully
         """
-        logger.info("Starting Keycloak setup from bootstrap.yaml")
+        logger.info("Starting Keycloak setup")
 
         try:
             # Initialize connectors
@@ -49,10 +64,6 @@ class KeycloakSetup:
                 "sso_client_id": settings.KEYCLOAK_MASTER_OIDC_CLIENT_ID,
                 "sso_client_secret": settings.KEYCLOAK_MASTER_OIDC_CLIENT_SECRET,
                 "sso_discovery_url": settings.KEYCLOAK_MASTER_OIDC_DISCOVERY_URL,
-                "client_id": "rig-platform-operations-manager",
-                "client_name": "rig-platform - operations-manager",
-                "redirect_uris": [settings.OWN_DOMAIN],
-                "web_origins": [settings.OWN_DOMAIN],
                 # SAML SP Entity ID for direct SSO-Rijk connection
                 "saml_sp_entity_id": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_DEFAULT_REALM}",
             }
@@ -62,45 +73,134 @@ class KeycloakSetup:
             if bootstrap_config == "local":
                 yaml_filename = "bootstrap-local.yaml"
                 logger.info("Using local bootstrap configuration (upstream IDP mode)")
+            elif bootstrap_config == "sandbox":
+                yaml_filename = "bootstrap-sandbox.yaml"
+                logger.info("Using sandbox bootstrap configuration (upstream IDP mode)")
             else:
                 yaml_filename = "bootstrap.yaml"
                 logger.info("Using default bootstrap configuration (production mode)")
 
+            # Step 1: Execute bootstrap (creates rig-platform realm)
             yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / yaml_filename
             handler = KeycloakYamlHandler(self.keycloak)
             await handler.execute_config(yaml_path, context)
+            logger.info("Bootstrap realm setup completed")
 
-            # Create client and update secret (this part stays in Python for now)
-            success = await self.setup_operations_client()
+            # Step 2: Create OPI's own realm (like any other project)
+            await self.setup_operations_realm()
+
+            # Step 3: Create deployment client in OPI realm and update K8s secret
+            success = await self.setup_operations_client(realm_name=OPERATIONS_REALM_NAME)
 
             if success:
                 logger.info("Keycloak setup completed successfully")
             else:
-                logger.error("❌ Failed to setup operations client")
+                logger.error("Failed to setup operations client")
 
             return success
 
         except Exception as e:
-            logger.error(f"❌ Keycloak setup failed with exception: {e}")
+            logger.error(f"Keycloak setup failed with exception: {e}")
             return False
 
-    # Note: setup_realm, setup_external_sso, and setup_client_scopes have been replaced
-    # by YAML configuration (bootstrap.yaml) and are executed in setup_all()
+    async def setup_operations_realm(self) -> None:
+        """Create OPI's own realm using project file config (like any other project).
 
-    async def setup_operations_client(self) -> bool:
+        Selects the appropriate project file based on KEYCLOAK_BOOTSTRAP_CONFIG:
+        - "local" or "sandbox": uses operations-manager-local.yaml (sso-support + admin user)
+        - "default" (production): uses operations-manager.yaml (sso-only)
         """
-        Step 4: Setup the operations manager's own client.
+        # Select project file based on bootstrap config
+        if settings.KEYCLOAK_BOOTSTRAP_CONFIG in ("local", "sandbox"):
+            project_filename = "operations-manager-local.yaml"
+        else:
+            project_filename = "operations-manager.yaml"
+
+        project_file = Path(__file__).parent.parent / "configs" / "projects" / project_filename
+        logger.info(f"Setting up OPI realm from project file: {project_filename}")
+
+        # Read bundled project file
+        yaml_parser = YAML()
+        with project_file.open() as f:
+            project_data = yaml_parser.load(f)
+
+        # Extract keycloak config from services section
+        keycloak_config = self._extract_keycloak_service_config(project_data)
+        template_name = keycloak_config["template"]
+
+        # Build context for the template
+        operations_manager_domain = extract_domain_from_url(settings.OWN_DOMAIN)
+
+        context = {
+            "project_name": "rig-platform",
+            "cluster": settings.CLUSTER_MANAGER,
+            "keycloak_url": settings.KEYCLOAK_URL,
+            "platform_realm_name": settings.KEYCLOAK_DEFAULT_REALM,
+            "project_realm_name": OPERATIONS_REALM_NAME,
+            "project_display_name": "Operations Manager",
+            "platform_client_id": f"operations-manager-{settings.CLUSTER_MANAGER}-platform",
+            "realm_name": OPERATIONS_REALM_NAME,
+            "realm_display_name": "Operations Manager",
+            "operations_manager_domain": operations_manager_domain,
+            "invite_client_id": settings.INVITE_CLIENT_ID,
+        }
+        context.update(keycloak_config.get("variables", {}))
+
+        # Execute YAML template (creates realm, IDP, client scopes, invite client)
+        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
+        handler = KeycloakYamlHandler(self.keycloak)
+        await handler.execute_config(yaml_path, context)
+        logger.info(f"Created OPI realm '{OPERATIONS_REALM_NAME}' using template '{template_name}'")
+
+        # Create default users from project file (if defined)
+        users = keycloak_config.get("users", [])
+        if users:
+            variables = {**context, "project_realm_name": OPERATIONS_REALM_NAME}
+            await handler._process_users(users, variables)
+            logger.info(f"Created {len(users)} default user(s) in realm '{OPERATIONS_REALM_NAME}'")
+
+    def _extract_keycloak_service_config(self, project_data: dict) -> dict:
+        """Extract keycloak config from project file services section.
+
+        Simplified version of keycloak_manager._get_keycloak_service_config()
+        for the OPI's own project files.
+
+        Args:
+            project_data: The project file data
+
+        Returns:
+            Dictionary with template, variables, and users config
+        """
+        default: dict[str, Any] = {"template": "sso-support", "variables": {}, "users": []}
+        services = project_data.get("services", [])
+        for service in services:
+            if isinstance(service, dict) and "keycloak" in service:
+                config = service["keycloak"].get("config", {})
+                return {
+                    "template": config.get("template", "sso-support"),
+                    "variables": config.get("variables", {}),
+                    "restrict_access": config.get("restrict_access"),
+                    "users": config.get("users", []),
+                }
+        return default
+
+    async def setup_operations_client(self, realm_name: str | None = None) -> bool:
+        """
+        Setup the operations manager's deployment client.
 
         Creates the client for the operations manager GUI and updates the
         Kubernetes secret with the credentials.
 
+        Args:
+            realm_name: The realm to create the client in. Defaults to KEYCLOAK_DEFAULT_REALM.
+
         Returns:
             True if operations client setup was successful
         """
-        logger.info("🔧 Step 4: Setting up operations manager client")
+        target_realm = realm_name or settings.KEYCLOAK_DEFAULT_REALM
+        logger.info(f"Setting up operations manager client in realm '{target_realm}'")
 
         try:
-            realm_name = settings.KEYCLOAK_DEFAULT_REALM
             deployment_name = "operations-manager"
             project_name = "rig-platform"
             expected_client_id = f"{project_name}-{deployment_name}"
@@ -114,12 +214,12 @@ class KeycloakSetup:
 
             logger.info(f"Creating/updating client '{expected_client_id}' with domains: {ingress_hosts}")
 
-            # Create or get the client (without realm setup)
+            # Create or get the client
             client_info = await self.keycloak.create_deployment_client(
                 deployment_name=deployment_name,
                 project_name=project_name,
                 ingress_hosts=ingress_hosts,
-                realm_name=realm_name,
+                realm_name=target_realm,
             )
 
             logger.info(f"Successfully created/retrieved client: {expected_client_id}")
@@ -208,6 +308,21 @@ class KeycloakSetup:
         except Exception as e:
             logger.error(f"Error updating operations secret: {e}")
             return False
+
+
+def extract_realm_from_discovery_url(discovery_url: str | None) -> str | None:
+    """Extract realm name from OIDC discovery URL.
+
+    Args:
+        discovery_url: The OIDC discovery URL (e.g., https://keycloak.example.com/realms/my-realm/.well-known/...)
+
+    Returns:
+        The realm name, or None if not extractable
+    """
+    if not discovery_url:
+        return None
+    match = re.search(r"/realms/([^/]+)/", discovery_url)
+    return match.group(1) if match else None
 
 
 # Convenience function for startup

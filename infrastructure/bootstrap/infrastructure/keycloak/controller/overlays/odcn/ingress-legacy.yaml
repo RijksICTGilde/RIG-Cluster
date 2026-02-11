@@ -1,14 +1,16 @@
+# Legacy ingress for the old hostname (transition period)
+# Keep this ingress active until all references to the old hostname have been migrated.
+# Can be removed once all clients and external registrations use keycloak.rijksapp.nl.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: keycloak-rijksapp
+  name: keycloak-legacy
   namespace: rig-system
   annotations:
-    cert-manager.io/issuer: letsencrypt-keycloak
     haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
 spec:
   rules:
-    - host: keycloak.rijksapp.nl
+    - host: keycloak.rig.prd1.gn2.quattro.rijksapps.nl
       http:
         paths:
           - backend:
@@ -19,6 +21,4 @@ spec:
             path: /
             pathType: Prefix
   tls:
-    - hosts:
-        - keycloak.rijksapp.nl
-      secretName: keycloak-rijksapp-tls
+    - {}

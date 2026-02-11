@@ -28,8 +28,9 @@ tasks:
         echo "Available clusters:"
         echo "1) local (kind cluster)"
         echo "2) odcn-production"
+        echo "3) sandboxed-local (self-contained sandbox with Forgejo)"
         echo ""
-        printf "Select cluster [1-2]: "
+        printf "Select cluster [1-3]: "
         read -r CLUSTER_CHOICE
 
         case $CLUSTER_CHOICE in
@@ -40,6 +41,10 @@ tasks:
           2)
             ENV_FILE=".env-taskfile-odcn-production"
             CLUSTER_NAME="odcn-production"
+            ;;
+          3)
+            ENV_FILE=".env-taskfile-sandboxed-local"
+            CLUSTER_NAME="sandboxed-local"
             ;;
           *)
             echo "❌ Invalid selection. Defaulting to local cluster."
@@ -176,7 +181,7 @@ tasks:
         rm -rf $TEMP_DIR
 
         echo "✅ ArgoCD operator preparation complete"
-    silent: false
+    silent: true
 
   generate-age-key:
     desc: "Generate AGE key for SOPS encryption (only if security/key.txt doesn't exist)"
@@ -556,6 +561,7 @@ tasks:
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
+      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
     cmds:
       - |
 
@@ -569,27 +575,33 @@ tasks:
         fi
 
         # Build and apply
-        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
 
-        # Restart ArgoCD deployments to ensure they pick up any configuration changes
+        # Wait for ArgoCD operator to create deployments, then restart to pick up config
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
+          echo "Waiting for ArgoCD deployments to be created by the operator..."
+          until kubectl get deployment argocd-repo-server -n {{.RIG_NAMESPACE}} &>/dev/null; do
+            sleep 5
+          done
+          until kubectl get deployment argocd-server -n {{.RIG_NAMESPACE}} &>/dev/null; do
+            sleep 5
+          done
           echo "Restarting ArgoCD deployments to apply configuration changes..."
-          kubectl rollout restart deployment/argocd-repo-server
-          kubectl rollout restart deployment/argocd-server
+          kubectl rollout restart deployment/argocd-repo-server -n {{.RIG_NAMESPACE}}
+          kubectl rollout restart deployment/argocd-server -n {{.RIG_NAMESPACE}}
+
+          echo "Waiting for ArgoCD repo server (incl. CMP sidecar) to be ready..."
+          kubectl rollout status deployment/argocd-repo-server -n {{.RIG_NAMESPACE}} --timeout=120s
+
+          echo "Waiting for ArgoCD server to be ready..."
+          kubectl rollout status deployment/argocd-server -n {{.RIG_NAMESPACE}} --timeout=120s
+
+          echo "Waiting for ArgoCD application controller to be ready..."
+          kubectl rollout status statefulset/argocd-application-controller -n {{.RIG_NAMESPACE}} --timeout=120s
         fi
 
         echo "✅ Bootstrap applied successfully!"
-        echo "#TODO: info below is for local only and should be cluster specific"
-        echo "ArgoCD will now deploy the infrastructure components."
-        echo "You can check the status using:"
-        echo "kubectl get pods -n {{.RIG_NAMESPACE}}"
-        echo ""
-        echo "To access the ArgoCD UI, run:"
-        echo "kubectl port-forward svc/argocd-server -n {{.RIG_NAMESPACE}} 8080:80"
-        echo "Then open http://localhost:8080 in your browser"
-        echo "If ingress is set up, use: http://argo.kind/"
-        echo "Default credentials: admin / admin"
-    silent: false
+    silent: true
 
   uninstall-local-kind-cluster:
     desc: "Uninstall local set-up by deleting the Kind cluster."
@@ -640,8 +652,8 @@ tasks:
           exit 0
         fi
 
-        echo "📦 Installing CloudNativePG operator v1.23.0..."
-        kubectl apply -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.23/releases/cnpg-1.23.0.yaml
+        echo "📦 Installing CloudNativePG operator v1.27.3..."
+        kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.3.yaml
 
         echo ""
         echo "⏳ Waiting for operator to be ready..."
@@ -652,7 +664,7 @@ tasks:
         echo "✅ CloudNativePG operator installed successfully!"
         echo ""
         echo "Verify with: kubectl get pods -n cnpg-system"
-    silent: false
+    silent: true
 
   install-ingress-nginx:
     desc: "Install NGINX Ingress Controller for Kind"
@@ -678,6 +690,11 @@ tasks:
 
         echo ""
         echo "⏳ Waiting for ingress controller to be ready..."
+        # Wait for pods to be created before waiting for readiness
+        until kubectl get pods --namespace ingress-nginx --selector=app.kubernetes.io/component=controller -o name 2>/dev/null | grep -q .; do
+          echo "  Waiting for controller pod to be created..."
+          sleep 5
+        done
         kubectl wait --namespace ingress-nginx \
           --for=condition=ready pod \
           --selector=app.kubernetes.io/component=controller \
@@ -689,7 +706,7 @@ tasks:
         echo "   Snippet annotations enabled for security headers"
         echo ""
         echo "Verify with: kubectl get pods -n ingress-nginx -o wide"
-    silent: false
+    silent: true
 
   setup-local-cluster:
     desc: "Complete setup: create cluster, install operators, and bootstrap infrastructure"
@@ -734,7 +751,7 @@ tasks:
         echo ""
         echo "5. Access services:"
         echo "   - ArgoCD: https://argo.kind (admin/admin)"
-        echo "   - Forgejo: https://forgejo.kind (admin/admin)"
+        echo "   - Forgejo: https://forgejo.kind (rig-admin/admin1234)"
         echo "   - Keycloak: https://keycloak.kind"
         echo "   - Operations Manager: https://operations-manager.kind"
     silent: false
@@ -827,12 +844,12 @@ tasks:
     cmds:
       - |
         echo "Building operations-manager Docker image with BuildKit optimizations..."
-        # Use image-based caching which is compatible with standard Docker driver
-        DOCKER_BUILDKIT=1 docker build \
+        docker buildx build \
           --target application \
           --cache-from operations-manager:latest \
           --cache-from operations-manager:cache-base-system \
           --cache-from operations-manager:cache-dependencies \
+          --load \
           -t operations-manager \
           -f operations-manager/Dockerfile .
       - |
@@ -955,10 +972,11 @@ tasks:
             CACHE_FLAG="--cache-from {{.CACHE_IMAGE}}"
           fi
 
-          DOCKER_BUILDKIT=1 docker build \
+          docker buildx build \
             $TARGET_FLAG \
             $CACHE_FLAG \
             --cache-from {{.IMAGE_NAME}}:latest \
+            --load \
             -t {{.IMAGE_NAME}}:test \
             -f {{.BUILD_CONTEXT}}/{{.DOCKERFILE_PATH}} \
             {{.BUILD_CONTEXT}}
@@ -1083,6 +1101,7 @@ tasks:
           BUILD_TARGET: application
           CACHE_IMAGE: ghcr.io/minbzk/base-images/operations-manager:cache
           BUILDER_NAME: operations-manager-builder
+          PLATFORMS: linux/amd64,linux/arm64
 
   update-cmp-kustomize-sops:
     desc: "Build and deploy the cmp-kustomize-sops image to the local kind cluster"
@@ -1091,7 +1110,7 @@ tasks:
     cmds:
       - |
         echo "Building cmp-kustomize-sops Docker image..."
-        docker build --no-cache --progress=plain -t rig-cmp-argo-kustomize-sops:latest -f images/cmp-kustomize-sops/Dockerfile .
+        docker buildx build --no-cache --progress=plain --load -t rig-cmp-argo-kustomize-sops:latest -f images/cmp-kustomize-sops/Dockerfile .
       - |
         echo "Loading image into kind cluster..."
         kind load docker-image rig-cmp-argo-kustomize-sops:latest --name {{.KIND_CLUSTER_NAME}}
@@ -1112,6 +1131,19 @@ tasks:
           IMAGE_NAME: rig-cmp-argo-kustomize-sops
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           BUILDER_NAME: operations-manager-builder
+          PLATFORMS: linux/amd64,linux/arm64
+
+  publish-hello-world:
+    desc: "Build and publish the hello-world image to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/hello-world
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: hello-world
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          PLATFORMS: linux/amd64,linux/arm64
 
   build-postgresql-image:
     desc: "Build and load PostgreSQL image with dictionary files into kind cluster"
@@ -1160,14 +1192,16 @@ tasks:
       OUTPUT_DIR: '{{.OUTPUT_DIR}}'
       CLUSTER_TYPE: '{{.CLUSTER_TYPE}}'
       CLUSTER_FOLDER: '{{.CLUSTER_FOLDER}}'
+      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      FIXED_PASSWORD: '{{default "" .FIXED_PASSWORD}}'  # If set, use this instead of random passwords (for sandbox/dev)
     cmds:
       - |
         if [ ! -f ".env-taskfile-current" ]; then
           echo "❌ No cluster selected. Please run 'task select-cluster' first."
           exit 1
         fi
-        if [ ! -f "security/key.txt" ]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [ ! -f "{{.KEY_FILE}}" ]; then
+          echo "❌ {{.KEY_FILE}} not found. Please generate an AGE key first."
           exit 1
         fi
       - |
@@ -1254,11 +1288,19 @@ tasks:
             # Generate password based on type
             case "$password_type" in
               "random")
-                password=$(openssl rand -base64 $password_length | tr -d "=+/" | cut -c1-$password_length)
+                if [ -n "{{.FIXED_PASSWORD}}" ]; then
+                  password="{{.FIXED_PASSWORD}}"
+                else
+                  password=$(openssl rand -base64 $password_length | tr -d "=+/" | cut -c1-$password_length)
+                fi
                 ;;
               "bcrypt")
-                plain_password=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
-                password=$(echo -n "$plain_password" | openssl passwd -6 -stdin)
+                if [ -n "{{.FIXED_PASSWORD}}" ]; then
+                  plain_password="{{.FIXED_PASSWORD}}"
+                else
+                  plain_password=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+                fi
+                password=$(htpasswd -nbBC 10 "" "$plain_password" | tr -d ':\n' | sed 's/$2b/$2y/')
                 ;;
               *)
                 echo "❌ Unknown password type: $password_type"
@@ -1291,7 +1333,7 @@ tasks:
           output_file="{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/${filename}.sops.yaml"
           cp "$temp_file" "$output_file"
 
-          AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+          AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
           echo "  Encrypting: $output_file"
           sops --encrypt --output-type yaml --age "$AGE_PUBLIC_KEY" --in-place "$output_file"
 
@@ -1696,3 +1738,857 @@ tasks:
     cmds:
       - kubectl logs -n test-project deployment/log-generator -f
     silent: false
+
+  # ==========================================================================
+  # Sandboxed Local Development Environment
+  # Self-contained sandbox with in-cluster Forgejo as git source
+  # ==========================================================================
+
+  sandbox:setup:
+    desc: "Complete setup: create sandboxed-local cluster with in-cluster Forgejo"
+    cmds:
+      - task: requirements-check
+      - |
+        cat banner.txt
+        cat docs/sandbox-prerequisites.md
+        echo ""
+        read -p "Press Enter to continue or Ctrl+C to cancel... "
+      - |
+        echo "========================================="
+        echo "Setting up Sandboxed Local Environment"
+        echo "========================================="
+        echo ""
+        echo "Activating sandboxed-local configuration..."
+        cp .env-taskfile-sandboxed-local .env-taskfile-current
+      # Collect all user input upfront
+      - task: sandbox:decrypt-wildcard-cert
+      - task: sandbox:ask-sso
+      - task: sandbox:ask-build-mode
+      - |
+        echo ""
+        echo "All questions answered. Starting unattended setup..."
+        echo ""
+      # Generate keys and secrets
+      - task: sandbox:generate-age-key
+      - task: sandbox:generate-infrastructure-secrets
+      - task: sandbox:generate-bootstrap-secrets
+      - task: sandbox:apply-sso
+      - task: sandbox:generate-env-secrets
+      # Phase 1: Create cluster and install operators/CRDs
+      - task: sandbox:create-cluster
+      - task: install-ingress-nginx
+      - task: install-cnpg-operator
+      - task: sandbox:install-csi-snapshot
+      - task: sandbox:configure-coredns
+      - task: sandbox:create-namespace
+      - task: sandbox:import-wildcard-cert
+      - task: sandbox:create-sops-age-secret
+      # Phase 2: Bootstrap Forgejo (minimal direct deploys, just enough for git)
+      - task: sandbox:deploy-postgresql-direct
+      - task: sandbox:deploy-forgejo-direct
+      - task: sandbox:wait-forgejo
+      - task: sandbox:init-forgejo
+      # Configure images based on earlier build mode choice
+      - task: sandbox:configure-local-images
+      # Phase 3: Sync infrastructure (including generated secrets) to Forgejo
+      - task: sandbox:sync
+      # Phase 4: Build images (dev mode only), bootstrap ArgoCD + Operations Manager
+      - task: prepare-argocd-operator
+      - |
+        MODE=$(cat .sandbox-mode 2>/dev/null || echo "demo")
+        if [ "$MODE" = "dev" ]; then
+          echo "Building CMP image..."
+          docker buildx build --no-cache --progress=plain --load -t rig-cmp-argo-kustomize-sops:latest -f images/cmp-kustomize-sops/Dockerfile .
+          kind load docker-image rig-cmp-argo-kustomize-sops:latest --name {{.KIND_CLUSTER_NAME}}
+          echo "CMP image built and loaded"
+
+          echo "Building Operations Manager image..."
+          docker buildx build --target application --cache-from operations-manager:latest --load -t operations-manager -f operations-manager/Dockerfile .
+          kind load docker-image operations-manager --name {{.KIND_CLUSTER_NAME}}
+          echo "Operations Manager image built and loaded"
+        else
+          echo "Using pre-built images from GitHub Container Registry (pulled by Kubernetes)"
+        fi
+      - task: bootstrap-argo-system
+        vars:
+          KEY_FILE: security/sandbox-key.txt
+      # - task: sandbox:update-dns  # Not needed when *.sandbox.rijksapp.dev resolves to 127.0.0.1 via public DNS
+      # Phase 5: Wait for everything to be deployed and ready
+      - task: sandbox:wait-ready
+      - |
+        echo ""
+        echo "========================================="
+        echo "Sandboxed local cluster setup complete!"
+        echo "========================================="
+        echo ""
+        cat docs/sandbox-reference.md
+        echo ""
+        echo "This reference card is saved at: docs/sandbox-reference.md"
+    silent: true
+
+  sandbox:create-cluster:
+    desc: "Create Kind cluster for sandboxed-local environment"
+    cmds:
+      - |
+        echo "Creating Kind cluster: rig-sandbox..."
+        if kind get clusters 2>/dev/null | grep -q "^rig-sandbox$"; then
+          echo "Cluster rig-sandbox already exists"
+          exit 0
+        fi
+        kind create cluster --name rig-sandbox --config sandboxed-local/kind-config.yaml
+        echo "Cluster rig-sandbox created successfully"
+    silent: true
+
+  sandbox:install-csi-snapshot:
+    desc: "Install CSI VolumeSnapshot CRDs for sandboxed-local cluster"
+    cmds:
+      - |
+        echo "Installing CSI VolumeSnapshot CRDs..."
+        if kubectl get crd volumesnapshots.snapshot.storage.k8s.io 2>/dev/null; then
+          echo "CSI VolumeSnapshot CRDs already installed"
+          exit 0
+        fi
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.2.0/client/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.2.0/client/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.2.0/client/config/crd/snapshot.storage.k8s.io_volumesnapshots.yaml
+        echo "CSI VolumeSnapshot CRDs installed"
+    silent: true
+
+  sandbox:configure-coredns:
+    desc: "Configure CoreDNS to resolve *.sandbox.rijksapp.dev domains to ingress controller"
+    cmds:
+      - |
+        echo "Configuring CoreDNS to resolve *.sandbox.rijksapp.dev domains..."
+
+        # Get current CoreDNS Corefile
+        CURRENT_COREFILE=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}')
+
+        # Check if rewrite rule already exists
+        if echo "$CURRENT_COREFILE" | grep -q "name regex.*\.sandbox\.rijksapp\.dev"; then
+          echo "CoreDNS rewrite rule for *.sandbox.rijksapp.dev already exists"
+          exit 0
+        fi
+
+        echo "Adding rewrite rule for *.sandbox.rijksapp.dev domains..."
+
+        # Create new Corefile with rewrite rule inserted after 'ready' line
+        NEW_COREFILE=$(echo "$CURRENT_COREFILE" | awk '
+          /ready/ {
+            print
+            print "    rewrite stop {"
+            print "        name regex (.+)\\.sandbox\\.rijksapp\\.dev ingress-nginx-controller.ingress-nginx.svc.cluster.local"
+            print "        answer auto"
+            print "    }"
+            next
+          }
+          {print}
+        ')
+
+        # Create a temporary file with the patch
+        TEMP_FILE=$(mktemp)
+        cat > "$TEMP_FILE" <<EOF
+        {
+          "data": {
+            "Corefile": $(echo "$NEW_COREFILE" | jq -Rs .)
+          }
+        }
+        EOF
+
+        # Apply the patch
+        kubectl patch configmap coredns -n kube-system --type merge --patch-file "$TEMP_FILE"
+
+        # Clean up temp file
+        rm "$TEMP_FILE"
+
+        # Restart CoreDNS to apply changes
+        kubectl rollout restart deployment coredns -n kube-system
+
+        echo "CoreDNS configured for *.sandbox.rijksapp.dev"
+    silent: true
+
+  sandbox:create-namespace:
+    desc: "Create rig-system namespace for sandboxed-local cluster"
+    cmds:
+      - |
+        if kubectl get namespace rig-system 2>/dev/null; then
+          echo "Namespace rig-system already exists"
+          exit 0
+        fi
+        kubectl create namespace rig-system
+        echo "Namespace rig-system created"
+    silent: true
+
+  sandbox:decrypt-wildcard-cert:
+    desc: "Decrypt AGE-encrypted wildcard TLS certificate using developer key"
+    cmds:
+      - |
+        CERT_DIR="security/tls/sandbox-wildcard"
+        KEY_FILE="security/developer-key.txt"
+
+        # Skip if plaintext certs already exist
+        if [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
+          echo "Wildcard TLS certificates already decrypted"
+          exit 0
+        fi
+
+        # Check encrypted files exist
+        if [ ! -f "$CERT_DIR/fullchain.pem.age" ] || [ ! -f "$CERT_DIR/privkey.pem.age" ]; then
+          echo "Encrypted certificate files not found in $CERT_DIR/"
+          echo "Expected files: fullchain.pem.age, privkey.pem.age"
+          exit 1
+        fi
+
+        # Prompt for developer key if not present
+        if [ ! -f "$KEY_FILE" ]; then
+          echo "The sandbox TLS certificates and other secrets are stored"
+          echo "encrypted in the repository. A decryption key is needed to"
+          echo "unlock them."
+          echo ""
+          echo "If you don't have this key, ask the ZAD developers."
+          echo ""
+          echo "Paste the AGE private key (starts with AGE-SECRET-KEY-...):"
+          read -r AGE_SECRET_KEY
+          if [[ ! "$AGE_SECRET_KEY" =~ ^AGE-SECRET-KEY- ]]; then
+            echo "Invalid key format. Expected a key starting with AGE-SECRET-KEY-"
+            exit 1
+          fi
+          echo "$AGE_SECRET_KEY" > "$KEY_FILE"
+          echo "Developer key saved to $KEY_FILE"
+        fi
+
+        echo "Decrypting wildcard TLS certificates..."
+        age --decrypt -i "$KEY_FILE" -o "$CERT_DIR/fullchain.pem" "$CERT_DIR/fullchain.pem.age"
+        age --decrypt -i "$KEY_FILE" -o "$CERT_DIR/privkey.pem" "$CERT_DIR/privkey.pem.age"
+        echo "Wildcard TLS certificates decrypted"
+    silent: true
+
+  sandbox:ask-build-mode:
+    desc: "Ask whether to use pre-built images (demo) or build locally (development)"
+    cmds:
+      - |
+        echo ""
+        echo "How will you use the sandbox?"
+        echo "  1) Demo/test - uses pre-built images from GitHub (fast)"
+        echo "  2) Development - builds images locally (slower, allows code changes)"
+        echo ""
+        read -p "Choose [1/2] (default: 1): " BUILD_CHOICE
+        if [ "$BUILD_CHOICE" = "2" ]; then
+          echo "dev" > .sandbox-mode
+          echo "Development mode selected - images will be built locally"
+        else
+          echo "demo" > .sandbox-mode
+          echo "Demo mode selected - using pre-built images"
+        fi
+    silent: true
+
+  sandbox:configure-local-images:
+    desc: "Patch overlay files to use locally built images with imagePullPolicy: Never"
+    cmds:
+      - |
+        MODE=$(cat .sandbox-mode 2>/dev/null || echo "demo")
+        if [ "$MODE" != "dev" ]; then
+          exit 0
+        fi
+
+        echo "Configuring overlays for local images..."
+
+        # Operations Manager: use local image + Never
+        OM_PATCH="bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml"
+        sed -i '' 's|image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest|image: operations-manager:latest|' "$OM_PATCH"
+        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$OM_PATCH"
+
+        # CMP sidecar in ArgoCD deployment: use local image + Never
+        ARGO_DEPLOY="bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml"
+        sed -i '' 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$ARGO_DEPLOY"
+        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$ARGO_DEPLOY"
+
+        # CMP sidecar kustomize patch: Always -> Never
+        KUST="bootstrap/rig-system/kustomize/overlays/sandboxed-local/kustomization.yaml"
+        sed -i '' 's|value: Always|value: Never|' "$KUST"
+
+        # CMP sidecar in shared sops-plugin component: use local image + Never
+        CMP_COMPONENT="bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml"
+        sed -i '' 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
+        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$CMP_COMPONENT"
+
+        echo "Overlays configured for local images"
+    silent: true
+
+  sandbox:import-wildcard-cert:
+    desc: "Import wildcard TLS certificate for *.sandbox.rijksapp.dev"
+    cmds:
+      - |
+        echo "Importing wildcard TLS certificate..."
+
+        CERT_DIR="security/tls/sandbox-wildcard"
+        if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ]; then
+          echo "Certificate files not found in $CERT_DIR/"
+          echo "Run 'task sandbox:decrypt-wildcard-cert' first, or place PEM files manually."
+          exit 1
+        fi
+
+        kubectl create secret tls sandbox-wildcard-tls \
+          --cert="$CERT_DIR/fullchain.pem" \
+          --key="$CERT_DIR/privkey.pem" \
+          -n rig-system \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "Wildcard TLS certificate imported as sandbox-wildcard-tls"
+    silent: true
+
+  sandbox:generate-age-key:
+    desc: "Generate AGE key for sandbox SOPS encryption (security/sandbox-key.txt)"
+    cmds:
+      - |
+        if [[ -f "security/sandbox-key.txt" ]]; then
+          echo "AGE key already exists: security/sandbox-key.txt"
+          echo "Current public key: $(sed -n '2p' security/sandbox-key.txt | sed 's/# public key: //')"
+          echo "To generate a new key, first remove the existing security/sandbox-key.txt file"
+          exit 0
+        fi
+
+        if ! command -v age-keygen &> /dev/null; then
+          echo "age-keygen is not installed. Please install age or add it to your PATH."
+          echo "  MacOS: brew install age"
+          echo "  Linux: apt-get install age or download from https://github.com/FiloSottile/age"
+          exit 1
+        fi
+
+        mkdir -p security
+
+        echo "Generating new AGE key for sandbox SOPS encryption..."
+        age-keygen -o security/sandbox-key.txt
+
+        PUBLIC_KEY=$(sed -n '2p' security/sandbox-key.txt | sed 's/# public key: //')
+
+        echo ""
+        echo "AGE key generated successfully!"
+        echo "Key saved to: security/sandbox-key.txt"
+        echo "Public key: $PUBLIC_KEY"
+    silent: true
+
+  sandbox:generate-infrastructure-secrets:
+    desc: "Generate SOPS-encrypted infrastructure secrets for sandboxed-local cluster"
+    cmds:
+      - task: _generate-secrets-shared
+        vars:
+          MODE: "infrastructure"
+          TEMPLATES_DIR: "infrastructure/bootstrap/infrastructure/secrets/templates"
+          OUTPUT_DIR: "infrastructure/bootstrap/infrastructure/secrets/config/overlays"
+          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
+          CLUSTER_FOLDER: "{{.INFRASTRUCTURE_CLUSTER_FOLDER}}"
+          KEY_FILE: "security/sandbox-key.txt"
+          FIXED_PASSWORD: "admin1234"
+
+  sandbox:generate-bootstrap-secrets:
+    desc: "Generate SOPS-encrypted bootstrap secrets for sandboxed-local cluster"
+    cmds:
+      - task: _generate-secrets-shared
+        vars:
+          MODE: "bootstrap"
+          TEMPLATES_DIR: "bootstrap/rig-system/kustomize/secrets/templates"
+          OUTPUT_DIR: "bootstrap/rig-system/kustomize/overlays"
+          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
+          CLUSTER_FOLDER: "{{.BOOTSTRAP_CLUSTER_FOLDER}}"
+          KEY_FILE: "security/sandbox-key.txt"
+          FIXED_PASSWORD: "admin1234"
+
+  sandbox:generate-env-secrets:
+    desc: "Generate SOPS-encrypted env secrets for sandbox operations-manager"
+    vars:
+      ENV_FILE: 'operations-manager/python/.env.sandboxed-local.secrets'
+      OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local'
+      SECRET_NAME: 'operations-manager-env-secrets'
+      NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
+    cmds:
+      - |
+        if [ ! -f "security/sandbox-key.txt" ]; then
+          echo "Sandbox AGE key not found: security/sandbox-key.txt"
+          echo "Run 'task sandbox:generate-age-key' first"
+          exit 1
+        fi
+
+        echo "Generating SOPS-encrypted env secrets for sandbox..."
+        mkdir -p "{{.OUTPUT_DIR}}"
+
+        SECRET_FILE="{{.OUTPUT_DIR}}/{{.SECRET_NAME}}.yaml"
+
+        cat > "$SECRET_FILE" << 'EOF'
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: operations-manager-env-secrets
+          namespace: rig-system
+        type: Opaque
+        stringData:
+          OIDC_CLIENT_SECRET: ""
+          KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: ""
+        EOF
+
+        # Overlay values from secrets file if it exists and has content
+        if [ -f "{{.ENV_FILE}}" ] && grep -v '^[[:space:]]*#' "{{.ENV_FILE}}" | grep -v '^[[:space:]]*$' | grep -q .; then
+          grep -v '^[[:space:]]*#' "{{.ENV_FILE}}" | grep -v '^[[:space:]]*$' | while IFS='=' read -r key value; do
+            value=$(echo "$value" | sed 's/^["'\'']//' | sed 's/["'\'']$//')
+            # Replace the empty value in the template with the actual value
+            sed -i '' "s|$key: \"\"|$key: \"$value\"|" "$SECRET_FILE"
+            echo "  Set: $key"
+          done
+        else
+          echo "No secrets file found or empty, generating with empty values"
+        fi
+
+        AGE_PUBLIC_KEY="$(sed -n '2p' security/sandbox-key.txt | sed 's/# public key: //')"
+        sops --encrypt --output-type yaml --age "$AGE_PUBLIC_KEY" --in-place "$SECRET_FILE"
+        echo "SOPS-encrypted secret generated: $SECRET_FILE"
+    silent: true
+
+  sandbox:ask-sso:
+    desc: "Ask whether to configure SSO (saves answer for later)"
+    cmds:
+      - |
+        echo ""
+        echo "========================================="
+        echo "SSO Configuration (Optional)"
+        echo "========================================="
+        echo ""
+        echo "The sandbox can use the production Keycloak (keycloak.rijksapp.nl) for real"
+        echo "SSO-Rijk authentication. This requires the client secret for the"
+        echo "'development-clusters' client in the production rig-platform realm."
+        echo ""
+        echo "Without SSO, the sandbox still works using a local Keycloak admin user."
+        echo "Applications deployed in the sandbox will use Keycloak but cannot use SSO."
+        echo ""
+        printf "Do you want to configure SSO? [y/N]: "
+        read -r CONFIGURE_SSO
+
+        if [ "$CONFIGURE_SSO" != "y" ] && [ "$CONFIGURE_SSO" != "Y" ]; then
+          echo "no" > .sandbox-sso
+          echo "Skipping SSO configuration."
+          echo "You can configure it later by running: task sandbox:configure-sso"
+          exit 0
+        fi
+
+        echo ""
+        echo "Enter the client secret for the 'development-clusters' client from"
+        echo "the production Keycloak (keycloak.rijksapp.nl > rig-platform realm > Clients):"
+        echo ""
+        printf "Client secret: "
+        read -r CLIENT_SECRET
+
+        if [ -z "$CLIENT_SECRET" ]; then
+          echo "no" > .sandbox-sso
+          echo "No secret provided. Skipping SSO configuration."
+          exit 0
+        fi
+
+        echo "$CLIENT_SECRET" > .sandbox-sso
+        echo "SSO client secret saved"
+    silent: true
+
+  sandbox:apply-sso:
+    desc: "Apply SSO configuration from earlier prompt"
+    cmds:
+      - |
+        SSO_VALUE=$(cat .sandbox-sso 2>/dev/null || echo "no")
+        if [ "$SSO_VALUE" = "no" ] || [ -z "$SSO_VALUE" ]; then
+          exit 0
+        fi
+
+        ENV_FILE="operations-manager/python/.env.sandboxed-local.secrets"
+        cat > "$ENV_FILE" << SECRETS_EOF
+        # Sandbox SSO secrets (generated by sandbox:apply-sso)
+        # This file is gitignored - do not commit
+        KEYCLOAK_MASTER_OIDC_CLIENT_SECRET=$SSO_VALUE
+        SECRETS_EOF
+
+        echo "SSO secret saved to: $ENV_FILE"
+    silent: true
+
+  sandbox:configure-sso:
+    desc: "Configure SSO for sandbox (standalone - asks and applies immediately)"
+    cmds:
+      - task: sandbox:ask-sso
+      - task: sandbox:apply-sso
+      - task: sandbox:generate-env-secrets
+    silent: true
+
+  sandbox:wait-ready:
+    desc: "Wait for all sandbox services to be deployed and healthy"
+    cmds:
+      - |
+        echo "Waiting for infrastructure to be deployed by ArgoCD..."
+        echo ""
+
+        # Force ArgoCD to refresh applications (clears any cached comparison errors)
+        for APP in sandbox-infrastructure user-applications; do
+          kubectl annotate application -n {{.RIG_NAMESPACE}} "$APP" \
+            argocd.argoproj.io/refresh=normal --overwrite 2>/dev/null || true
+        done
+
+        # Wait for sandbox-infrastructure to sync (up to 5 minutes)
+        MAX_ATTEMPTS=60
+        for i in $(seq 1 $MAX_ATTEMPTS); do
+          SYNC_STATUS=$(kubectl get application -n {{.RIG_NAMESPACE}} sandbox-infrastructure -o jsonpath='{.status.sync.status}' 2>/dev/null)
+          HEALTH_STATUS=$(kubectl get application -n {{.RIG_NAMESPACE}} sandbox-infrastructure -o jsonpath='{.status.health.status}' 2>/dev/null)
+
+          if [ "$SYNC_STATUS" = "Synced" ] && [ "$HEALTH_STATUS" = "Healthy" ]; then
+            echo "Infrastructure application: Synced + Healthy"
+            break
+          fi
+
+          # If stuck with comparison error, force another refresh
+          if [ "$SYNC_STATUS" = "Unknown" ] && [ $((i % 10)) -eq 0 ]; then
+            echo "  Forcing ArgoCD refresh (sync status still Unknown)..."
+            kubectl annotate application -n {{.RIG_NAMESPACE}} sandbox-infrastructure \
+              argocd.argoproj.io/refresh=normal --overwrite 2>/dev/null || true
+          fi
+
+          echo "  [$i/$MAX_ATTEMPTS] sync=$SYNC_STATUS health=$HEALTH_STATUS - waiting 5s..."
+          sleep 5
+        done
+
+        if [ "$SYNC_STATUS" != "Synced" ]; then
+          echo "WARNING: Infrastructure did not reach Synced state within timeout"
+          echo "  Current: sync=$SYNC_STATUS health=$HEALTH_STATUS"
+          echo "  Continuing anyway - services may still be starting..."
+        fi
+
+        echo ""
+        echo "Waiting for Keycloak to be ready..."
+        kubectl wait --for=condition=available deployment/keycloak -n {{.RIG_NAMESPACE}} --timeout=300s 2>/dev/null || {
+          echo "WARNING: Keycloak deployment not available within timeout"
+        }
+
+        echo "Waiting for operations manager to be ready..."
+        kubectl wait --for=condition=available deployment/operations-manager -n {{.RIG_NAMESPACE}} --timeout=300s 2>/dev/null || {
+          echo "WARNING: Operations manager deployment not available within timeout"
+        }
+
+        echo ""
+        echo "All services are deployed and available"
+    silent: true
+
+  sandbox:create-sops-age-secret:
+    desc: "Create sops-age-key Kubernetes secret from sandbox AGE key"
+    cmds:
+      - |
+        if [ ! -f "security/sandbox-key.txt" ]; then
+          echo "security/sandbox-key.txt not found. Run 'task sandbox:generate-age-key' first."
+          exit 1
+        fi
+
+        kubectl create secret generic sops-age-key \
+          --from-file=key=security/sandbox-key.txt \
+          -n rig-system \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "sops-age-key secret created in rig-system"
+    silent: true
+
+  sandbox:deploy-postgresql-direct:
+    desc: "Deploy minimal PostgreSQL directly (pre-ArgoCD, just enough for Forgejo)"
+    cmds:
+      - |
+        echo "Deploying minimal PostgreSQL cluster..."
+
+        # Wait for CNPG webhook to be ready
+        echo "Waiting for CNPG operator webhook to be ready..."
+        kubectl wait --for=condition=Available --timeout=120s \
+          deployment/cnpg-controller-manager -n cnpg-system
+        sleep 5
+
+        SECRETS_DIR="infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local"
+
+        # Decrypt and apply the SOPS-encrypted secrets (same passwords ArgoCD will use later)
+        echo "Applying SOPS-decrypted database credential secrets..."
+        for SECRET in postgres-admin-secret forgejo-db-credentials-secret keycloak-db-credentials-secret; do
+          SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" sops --decrypt "$SECRETS_DIR/${SECRET}.yaml.sops.yaml" | kubectl apply -f -
+        done
+
+        # Apply just the Cluster resource - ArgoCD will manage the full overlay later
+        echo "Applying PostgreSQL Cluster resource..."
+        kubectl apply -f infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml
+
+        echo "Waiting for PostgreSQL cluster to be ready..."
+        until kubectl get cluster rig-db -n rig-system 2>/dev/null; do
+          echo "  Waiting for Cluster resource to appear..."
+          sleep 5
+        done
+        kubectl wait --for=condition=Ready cluster/rig-db -n rig-system --timeout=300s
+
+        # Create individual databases (forgejo, keycloak) via CNPG Database CRD
+        echo "Creating databases..."
+        kubectl apply -f infrastructure/bootstrap/infrastructure/postgresql/database/base/databases.yaml
+
+        echo "PostgreSQL cluster is ready with databases"
+    silent: true
+
+  sandbox:deploy-forgejo-direct:
+    desc: "Deploy Forgejo directly (pre-ArgoCD bootstrap)"
+    cmds:
+      - |
+        echo "Deploying Forgejo..."
+        kustomize build infrastructure/bootstrap/infrastructure/forgejo/controller/overlays/sandboxed-local | kubectl apply -f -
+        echo "Forgejo StatefulSet, Service, and Ingress applied"
+    silent: true
+
+  sandbox:wait-forgejo:
+    desc: "Wait for Forgejo pod to be healthy"
+    cmds:
+      - |
+        echo "Waiting for Forgejo pod to be ready..."
+        kubectl wait --for=condition=Ready pod/forgejo-0 -n rig-system --timeout=300s 2>/dev/null || {
+          echo "Pod not found yet, waiting..."
+          sleep 15
+          kubectl wait --for=condition=Ready pod/forgejo-0 -n rig-system --timeout=300s
+        }
+        echo "Forgejo is ready"
+    silent: true
+
+  sandbox:init-forgejo:
+    desc: "Initialize Forgejo: create admin user and repositories"
+    cmds:
+      - |
+        echo "Initializing Forgejo..."
+
+        # Create admin user via kubectl exec (username "admin" is reserved in Forgejo)
+        echo "Creating rig-admin user..."
+        kubectl exec -n rig-system forgejo-0 -- forgejo admin user create \
+          --admin --username rig-admin --password admin1234 \
+          --email admin@example.com --must-change-password=false 2>&1 || {
+          echo "rig-admin user may already exist (this is OK)"
+        }
+
+        # Wait a moment for the user to be fully created
+        sleep 2
+
+        # Create repositories via Forgejo API
+        echo "Creating repositories..."
+        for REPO in zad-projects zad-argo-user-applications zad-argo-infrastructure zad-deployments; do
+          echo "  Creating: $REPO"
+          kubectl exec -n rig-system forgejo-0 -- wget -q -O- \
+            --header="Content-Type: application/json" \
+            --post-data="{\"name\":\"$REPO\",\"private\":false,\"auto_init\":true,\"default_branch\":\"main\"}" \
+            "http://rig-admin:admin1234@localhost:3000/api/v1/user/repos" 2>/dev/null || echo "  $REPO may already exist"
+        done
+
+        # Verify git repos exist on disk, manually init if auto_init failed
+        # (The rootless image may fail to init bare repos if the repository root didn't exist yet)
+        echo "Verifying git repositories on disk..."
+        kubectl exec -n rig-system forgejo-0 -- sh -c '
+          REPO_ROOT="/var/lib/gitea/git/repositories/rig-admin"
+          mkdir -p "$REPO_ROOT"
+          # Ensure /tmp/gitea exists (rootless image sets TMPDIR=/tmp/gitea)
+          mkdir -p /tmp/gitea
+          for REPO in zad-projects zad-argo-user-applications zad-argo-infrastructure zad-deployments; do
+            REPO_PATH="$REPO_ROOT/${REPO}.git"
+            if [ ! -d "$REPO_PATH/refs" ]; then
+              echo "  Initializing bare repo on disk: $REPO"
+              git init --bare "$REPO_PATH" 2>/dev/null
+              git -C "$REPO_PATH" symbolic-ref HEAD refs/heads/main
+              # Create initial commit in a temp work dir
+              WORK="/tmp/gitea/init-${REPO}"
+              rm -rf "$WORK"
+              git clone "$REPO_PATH" "$WORK" 2>/dev/null
+              cd "$WORK"
+              git checkout -b main 2>/dev/null
+              git config user.email "admin@example.com"
+              git config user.name "rig-admin"
+              echo "# ${REPO}" > README.md
+              git add README.md
+              git commit -m "Initial commit" 2>/dev/null
+              git push origin main 2>/dev/null
+              cd /
+              rm -rf "$WORK"
+            else
+              echo "  $REPO: OK (already initialized)"
+            fi
+          done
+        '
+
+        echo ""
+        echo "Forgejo initialized with rig-admin/admin1234 and 4 repositories"
+    silent: true
+
+  sandbox:sync:
+    desc: "Sync infrastructure/ directory to Forgejo zad-argo-infrastructure repo"
+    cmds:
+      - |
+        echo "Syncing infrastructure/ to Forgejo zad-argo-infrastructure..."
+
+        FORGEJO_REPO="https://rig-admin:admin1234@forgejo.sandbox.rijksapp.dev/rig-admin/zad-argo-infrastructure.git"
+        TEMP_DIR=$(mktemp -d)
+
+        # Clone the repo (use HTTPS to avoid credential stripping on HTTP->HTTPS redirect)
+        git clone "$FORGEJO_REPO" "$TEMP_DIR" 2>/dev/null || {
+          echo "Could not clone via ingress, trying in-cluster port-forward..."
+          # Fallback: use kubectl port-forward
+          kubectl port-forward -n rig-system svc/forgejo 3000:3000 &
+          PF_PID=$!
+          sleep 3
+          FORGEJO_REPO="http://rig-admin:admin1234@localhost:3000/rig-admin/zad-argo-infrastructure.git"
+          git clone "$FORGEJO_REPO" "$TEMP_DIR"
+          kill $PF_PID 2>/dev/null || true
+        }
+
+        # Sync infrastructure directory content (strip infrastructure/ prefix)
+        rsync -av --delete --exclude='.git' infrastructure/ "$TEMP_DIR/"
+
+        # Commit and push
+        cd "$TEMP_DIR"
+        git add -A
+        git diff --cached --quiet || {
+          git -c user.name="sandbox-sync" -c user.email="sync@sandbox" commit -m "Sync infrastructure from local"
+          git push origin main
+          echo "Changes pushed to Forgejo"
+        }
+        cd -
+
+        # Clean up
+        rm -rf "$TEMP_DIR"
+
+        echo "Infrastructure sync complete"
+    silent: true
+
+  sandbox:update-dns:
+    desc: "Configure dnsmasq to resolve *.sandbox.rijksapp.dev to 127.0.0.1"
+    cmds:
+      - |
+        DOMAIN="sandbox.rijksapp.dev"
+        DNSMASQ_ENTRY="address=/.${DOMAIN}/127.0.0.1"
+
+        # Find dnsmasq config
+        DNSMASQ_CONF=""
+        if [ -f "/opt/homebrew/etc/dnsmasq.conf" ]; then
+          DNSMASQ_CONF="/opt/homebrew/etc/dnsmasq.conf"
+        elif [ -f "/usr/local/etc/dnsmasq.conf" ]; then
+          DNSMASQ_CONF="/usr/local/etc/dnsmasq.conf"
+        fi
+
+        if [ -z "$DNSMASQ_CONF" ]; then
+          echo "dnsmasq not found. Install with: brew install dnsmasq"
+          echo "Then run: brew services start dnsmasq"
+          exit 1
+        fi
+
+        # Check if dnsmasq already has the entry
+        if grep -qF "$DNSMASQ_ENTRY" "$DNSMASQ_CONF" 2>/dev/null; then
+          echo "dnsmasq already configured for *.${DOMAIN}"
+        else
+          echo "Adding wildcard DNS entry to dnsmasq..."
+          echo "$DNSMASQ_ENTRY" >> "$DNSMASQ_CONF"
+          sudo brew services restart dnsmasq
+          echo "dnsmasq updated and restarted"
+        fi
+
+        # Create macOS resolver file
+        RESOLVER_FILE="/etc/resolver/${DOMAIN}"
+        if [ -f "$RESOLVER_FILE" ]; then
+          echo "Resolver file already exists: $RESOLVER_FILE"
+        else
+          echo "Creating resolver file (requires sudo)..."
+          sudo mkdir -p /etc/resolver
+          echo "nameserver 127.0.0.1" | sudo tee "$RESOLVER_FILE" > /dev/null
+          echo "Resolver file created: $RESOLVER_FILE"
+        fi
+
+        echo ""
+        echo "*.${DOMAIN} now resolves to 127.0.0.1"
+    silent: true
+
+  sandbox:build-operations-manager-image:
+    desc: "Build operations-manager image and load into Kind (no deploy)"
+    cmds:
+      - |
+        echo "Building operations-manager Docker image..."
+        docker buildx build \
+          --target application \
+          --cache-from operations-manager:latest \
+          --load \
+          -t operations-manager \
+          -f operations-manager/Dockerfile .
+      - |
+        echo "Loading image into Kind cluster..."
+        kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
+        echo "Operations manager image loaded"
+    silent: true
+
+  sandbox:update-operations-manager:
+    desc: "Build and deploy the operations-manager to the sandbox cluster"
+    cmds:
+      - |
+        echo "Building operations-manager Docker image..."
+        docker buildx build \
+          --target application \
+          --cache-from operations-manager:latest \
+          --load \
+          -t operations-manager \
+          -f operations-manager/Dockerfile .
+      - |
+        echo "Loading image into kind cluster..."
+        kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
+      - |
+        echo "Updating operations-manager deployment..."
+        SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local --load-restrictor LoadRestrictionsNone | kubectl apply -f -
+        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+      - echo "Operations manager updated successfully"
+    silent: true
+
+  sandbox:skaffold-dev:
+    desc: "Start Skaffold with hot-reload for sandbox development"
+    cmds:
+      - echo "Starting Skaffold in hot-reload mode (sandboxed-local)..."
+      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local.yaml
+
+  sandbox:build-cmp-image:
+    desc: "Build CMP kustomize-sops image and load into Kind (no ArgoCD restart)"
+    cmds:
+      - |
+        echo "Building cmp-kustomize-sops Docker image..."
+        docker buildx build --no-cache --progress=plain --load -t rig-cmp-argo-kustomize-sops:latest -f images/cmp-kustomize-sops/Dockerfile .
+      - |
+        echo "Loading image into kind cluster..."
+        kind load docker-image rig-cmp-argo-kustomize-sops:latest --name {{.KIND_CLUSTER_NAME}}
+      - echo "CMP kustomize-sops image built and loaded into Kind"
+    silent: true
+
+  sandbox:destroy:
+    desc: "Destroy the sandboxed-local Kind cluster and clean up generated files"
+    cmds:
+      - |
+        echo "Destroying sandboxed-local cluster..."
+        kind delete cluster --name rig-sandbox
+
+        # Clean up generated secret overview files
+        rm -f secrets-overview-bootstrap-sandboxed-local.yaml
+        rm -f secrets-overview-infrastructure-sandboxed-local.yaml
+
+        # Clean up generated SOPS-encrypted secrets and decrypt-sops.yaml (recreated by generate task)
+        rm -f infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/*.sops.yaml
+        rm -f infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/decrypt-sops.yaml
+        rm -f bootstrap/rig-system/kustomize/overlays/sandboxed-local/*.sops.yaml
+        rm -f bootstrap/rig-system/kustomize/overlays/sandboxed-local/decrypt-sops.yaml
+
+        # Clean up SOPS-encrypted env secrets for operations-manager
+        rm -f bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/operations-manager-env-secrets.yaml
+
+        # Clean up sandbox AGE key
+        rm -f security/sandbox-key.txt
+
+        # Clean up local secrets file (gitignored)
+        rm -f operations-manager/python/.env.sandboxed-local.secrets
+
+        # Clean up sandbox state files
+        rm -f .sandbox-mode
+        rm -f .sandbox-sso
+
+        # Restore overlay files if patched for dev mode
+        git checkout -- \
+          bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml \
+          bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml \
+          bootstrap/rig-system/kustomize/overlays/sandboxed-local/kustomization.yaml \
+          bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml \
+          2>/dev/null || true
+
+        echo "Cluster rig-sandbox deleted and sandbox artifacts cleaned up"
+    silent: true

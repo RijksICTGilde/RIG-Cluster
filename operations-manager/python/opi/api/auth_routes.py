@@ -76,7 +76,7 @@ async def login(request: Request) -> Response:
             logger.error(f"OIDC_DISCOVERY_URL being used: {settings.OIDC_DISCOVERY_URL}")
             logger.error("Check if this URL is accessible from inside the Kubernetes pod")
             logger.error(
-                "For production, it should typically be an external URL like: https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl/realms/rig-platform/.well-known/openid-configuration"
+                "For production, it should typically be an external URL like: https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration"
             )
 
         # Don't catch and swallow the exception - let it bubble up with more context

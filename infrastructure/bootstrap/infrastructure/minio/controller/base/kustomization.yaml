@@ -3,8 +3,5 @@ kind: Kustomization
 
 resources:
   - deployment.yaml
-  - deployment-versioned.yaml
   - service.yaml
-  - service-versioned.yaml
   - pvc.yaml
-  - pvc-versioned.yaml

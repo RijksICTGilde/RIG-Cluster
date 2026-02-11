@@ -4,13 +4,18 @@ __pycache__/
 .venv/
 /CLAUDE.md
 /.claude/settings.local.json
-/security/key.txt
-/security/tls/
+# Security - ignore private keys, allow encrypted certs and readme
+/security/*
+!/security/readme.md
+!/security/tls/
+/security/tls/**/*.pem
 /operations-manager/python/log*
 /operations-manager/python/.env.local
 /operations-manager/python/.env.secrets
 /operations-manager/python/.env.*.secrets
 /.env-taskfile-current
+/.sandbox-mode
+/.sandbox-sso
 
 # Local symlink to jinja-roos-components (for Docker builds)
 /jinja-roos-components/
@@ -22,4 +27,7 @@ secrets-overview-*.yaml
 /output.yaml
 /operations-manager/python/.env.my-machine
 /keycloak-migration/custom-mapper/target/
-/security/
+/infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/
+/operations-manager/docs/interview.sh
+/operations-manager/docs/business-case-interview-prompt.md
+/operations-manager/docs/business-case-answers/

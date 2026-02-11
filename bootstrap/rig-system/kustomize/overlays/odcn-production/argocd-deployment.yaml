@@ -107,10 +107,10 @@ spec:
         value: "true"
     resources:
       limits:
-        cpu: "1"
+        cpu: "2"
         memory: 1Gi
       requests:
-        cpu: "500m"
+        cpu: "1"
         memory: 128Mi
     serviceaccount: argocd-argocd-server
     sidecarContainers:
@@ -200,11 +200,11 @@ spec:
     processors: {}
     resources:
       limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
         cpu: "1"
         memory: 2Gi
-      requests:
-        cpu: "500m"
-        memory: 256Mi
     # Sharding disabled - not needed for current cluster size.
     # Enable when managing 100+ applications for better performance.
     # sharding:

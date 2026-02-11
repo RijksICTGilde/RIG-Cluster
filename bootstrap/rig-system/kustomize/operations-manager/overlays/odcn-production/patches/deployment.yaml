@@ -8,6 +8,13 @@ spec:
       containers:
       - name: operations-manager
         image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest
+        resources:
+          limits:
+            cpu: "3"
+            memory: 2Gi
+          requests:
+            cpu: "500m"
+            memory: 1Gi
         env:
         - name: KUBERNETES_SERVICE_HOST
           value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl

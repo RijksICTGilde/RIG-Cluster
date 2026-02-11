@@ -75,6 +75,7 @@ spec:
   #       compression: gzip
   #       maxParallel: 2
 
-  # Enable monitoring
   monitoring:
-    enablePodMonitor: true
+    enablePodMonitor: false
+    # PodMonitor is managed as a separate resource (see podmonitor.yaml)
+    # enablePodMonitor is deprecated in CNPG v1.27+

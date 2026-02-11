@@ -50,12 +50,41 @@ CLUSTER_CONFIG = {
             "supported_domains": ["kind", "local"],  # Domains that support nice URL pattern
         },
     },
+    "sandboxed-local": {
+        "ingress_postfix": ".sandbox.rijksapp.dev",
+        "namespace_prefix": "rig-",
+        "argo_namespace": "rig-system",
+        "namespace": "rig-system",
+        "keycloak_discovery_url": "https://keycloak.sandbox.rijksapp.dev",
+        "database_server": "rig-db-rw.rig-system.svc.cluster.local",
+        "minio_host": "minio.rig-system.svc.cluster.local",
+        "minio_port": 9000,
+        "redis_server": "rig-redis.rig-system.svc.cluster.local",
+        "ingress": {
+            "enable_tls": True,
+            "ip_whitelist": "0.0.0.0/0,::/0",
+        },
+        "storage": {
+            "storage_class_name": "standard",
+            "access_modes": ["ReadWriteOnce"],
+        },
+        "keycloak": {
+            "support_http": False,
+        },
+        "uses_capsule": False,
+        "letsencrypt": {
+            "contact_email": "rig-platform@rijksoverheid.nl",
+        },
+        "nice_url": {
+            "supported_domains": ["sandbox.rijksapp.dev"],
+        },
+    },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
         "namespace_prefix": "rig-prd-",
         "namespace": "rig-prd-operations",
         "argo_namespace": "rig-prd-operations",
-        "keycloak_discovery_url": "https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl",  # For pods in cluster
+        "keycloak_discovery_url": "https://keycloak.rijksapp.nl",
         "database_server": "rig-db-rw.rig-prd-operations.svc.cluster.local",  # Assuming production DB is in operations namespace
         "minio_host": "minio.rig-prd-operations.svc.cluster.local",
         "minio_port": 9000,

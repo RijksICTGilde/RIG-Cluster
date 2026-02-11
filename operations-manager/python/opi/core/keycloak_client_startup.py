@@ -33,7 +33,11 @@ async def validate_oidc_credentials() -> bool:
     logger.info(f"Validating existing OIDC credentials: OIDC_CLIENT_SECRET = {settings.OIDC_CLIENT_SECRET[:4]}***")
 
     try:
-        realm_name = settings.KEYCLOAK_DEFAULT_REALM
+        from opi.bootstrap.keycloak_setup import extract_realm_from_discovery_url
+
+        realm_name = extract_realm_from_discovery_url(settings.OIDC_DISCOVERY_URL)
+        if not realm_name:
+            realm_name = settings.KEYCLOAK_DEFAULT_REALM
         token_url = f"{settings.KEYCLOAK_URL}/realms/{realm_name}/protocol/openid-connect/token"
 
         async with httpx.AsyncClient() as client:
@@ -84,7 +88,7 @@ async def ensure_keycloak_credentials() -> bool:
 
     # Phase 2: Get or create credentials using existing Keycloak setup logic
     try:
-        from opi.bootstrap.keycloak_setup import KeycloakSetup
+        from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME, KeycloakSetup
 
         keycloak_setup = KeycloakSetup()
 
@@ -92,11 +96,8 @@ async def ensure_keycloak_credentials() -> bool:
         keycloak_setup.keycloak = await create_keycloak_connector()
         keycloak_setup.kubectl = KubectlConnector()
 
-        # Use the existing setup_operations_client method which handles:
-        # - Finding existing client or creating new one
-        # - Updating the operations-manager-keycloak secret
-        # - Updating current settings
-        success = await keycloak_setup.setup_operations_client()
+        # Recovery: always create in OPI's own realm
+        success = await keycloak_setup.setup_operations_client(realm_name=OPERATIONS_REALM_NAME)
 
         if success:
             # Phase 3: Final validation

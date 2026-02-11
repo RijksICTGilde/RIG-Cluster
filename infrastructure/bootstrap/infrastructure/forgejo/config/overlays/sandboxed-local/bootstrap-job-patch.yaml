@@ -1,0 +1,78 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-bootstrap
+spec:
+  template:
+    spec:
+      containers:
+      - name: bootstrap
+        image: codeberg.org/forgejo/forgejo:14-rootless
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+
+          echo "========================================="
+          echo "Forgejo Bootstrap Job (sandboxed-local)"
+          echo "========================================="
+
+          # Install required tools (curl and jq)
+          echo "Installing required tools..."
+          apk add --no-cache curl jq
+
+          FORGEJO_URL="http://forgejo.rig-system.svc.cluster.local:3000"
+          ADMIN_USER="rig-admin"
+          ADMIN_PASSWORD="admin1234"
+          ADMIN_EMAIL="admin@example.com"
+
+          # Step 1: Create admin user
+          echo ""
+          echo "Step 1: Creating admin user..."
+          forgejo admin user create \
+            --admin \
+            --username "$ADMIN_USER" \
+            --password "$ADMIN_PASSWORD" \
+            --email "$ADMIN_EMAIL" \
+            --must-change-password=false \
+            -c /etc/gitea/app.ini 2>&1 || {
+            echo "Admin user may already exist (this is OK)"
+          }
+
+          # Step 2: Create 4 repositories via API
+          echo ""
+          echo "Step 2: Creating repositories..."
+
+          for REPO in zad-projects zad-argo-user-applications zad-argo-infrastructure zad-deployments; do
+            echo "Creating repository: $REPO"
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+              -d "{
+                \"name\":\"$REPO\",
+                \"description\":\"$REPO repository for RIG sandbox\",
+                \"private\":false,
+                \"auto_init\":true,
+                \"default_branch\":\"main\",
+                \"gitignores\":\"\",
+                \"license\":\"\",
+                \"readme\":\"Default\"
+              }" \
+              "$FORGEJO_URL/api/v1/user/repos" || echo "Repository $REPO may already exist"
+          done
+
+          echo ""
+          echo "========================================="
+          echo "Bootstrap completed successfully!"
+          echo "========================================="
+          echo "Forgejo URL: https://forgejo.sandbox.rijksapp.dev"
+          echo "Admin user: $ADMIN_USER"
+          echo "Admin password: $ADMIN_PASSWORD"
+          echo ""
+          echo "Repositories created:"
+          echo "  - $FORGEJO_URL/rig-admin/zad-projects"
+          echo "  - $FORGEJO_URL/rig-admin/zad-argo-user-applications"
+          echo "  - $FORGEJO_URL/rig-admin/zad-argo-infrastructure"
+          echo "  - $FORGEJO_URL/rig-admin/zad-deployments"
+          echo "========================================="

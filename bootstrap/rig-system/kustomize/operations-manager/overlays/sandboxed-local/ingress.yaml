@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: operations-manager
+  namespace: rig-system
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: operations-manager.sandbox.rijksapp.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: operations-manager
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - operations-manager.sandbox.rijksapp.dev
+      secretName: sandbox-wildcard-tls

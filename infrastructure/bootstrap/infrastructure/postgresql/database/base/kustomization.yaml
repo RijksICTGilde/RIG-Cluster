@@ -4,3 +4,4 @@ resources:
 - cluster.yaml
 - databases.yaml
 - users.yaml
+- podmonitor.yaml

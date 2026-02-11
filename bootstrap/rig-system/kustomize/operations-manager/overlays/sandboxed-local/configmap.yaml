@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: operations-manager-config
+  namespace: rig-system
+data:
+  .env: |
+    CLUSTER_MANAGER=sandboxed-local
+    KEYCLOAK_BOOTSTRAP_CONFIG=sandbox
+
+    ENABLE_GIT_MONITOR=false
+    GIT_PROJECTS_SERVER_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git
+    GIT_PROJECTS_SERVER_USERNAME=rig-admin
+    GIT_PROJECTS_SERVER_PASSWORD=plain:admin1234
+    GIT_PROJECTS_SERVER_REPO_PATH=/
+    GIT_PROJECTS_SERVER_FILE_PATH=projects/simple-example.yaml
+    GIT_PROJECTS_SERVER_BRANCH=main
+    GIT_PROJECTS_SERVER_POLL_INTERVAL=120
+
+    GIT_ARGO_APPLICATIONS_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
+    GIT_ARGO_APPLICATIONS_KEY=""
+    GIT_ARGO_APPLICATIONS_USERNAME=rig-admin
+    GIT_ARGO_APPLICATIONS_PASSWORD=plain:admin1234
+    GIT_ARGO_APPLICATIONS_BRANCH=main
+
+    DATABASE_HOST=rig-db-rw
+    MINIO_HOST=minio:9000
+    ARGOCD_HOST=argocd-server
+    ARGOCD_PASSWORD=admin1234
+
+    KEYCLOAK_URL=https://keycloak.sandbox.rijksapp.dev
+    # OIDC credentials are set dynamically by OPI after creating its own realm
+
+    # Upstream IDP: production Keycloak for SSO-Rijk authentication
+    # The client secret is provided via operations-manager-env-secrets (from .env.sandboxed-local.secrets)
+    # Without this, the sandbox works with local admin user only (no SSO)
+    KEYCLOAK_MASTER_OIDC_CLIENT_ID=development-clusters
+    KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
+
+    OWN_DOMAIN=operations-manager.sandbox.rijksapp.dev
+
+    ALLOWED_EMAILS=admin@sandbox.rijksapp.dev
+    ADMIN_EMAILS=admin@sandbox.rijksapp.dev
+
+    PROJECT_REPO_URL=https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-deployments.git
+    PROJECT_REPO_USERNAME=rig-admin
+    PROJECT_REPO_PASSWORD=plain:admin1234
+    PROJECT_REPO_BRANCH=main
+
+    LOG_TO_FILE=false

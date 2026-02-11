@@ -7,22 +7,8 @@ resources:
 patches:
   - target:
       kind: PersistentVolumeClaim
-      name: minio-storage
-    patch: |-
-      - op: replace
-        path: /spec/storageClassName
-        value: ocs-storagecluster-ceph-rbd
-  - target:
-      kind: PersistentVolumeClaim
       name: minio-storage-versioned
     patch: |-
       - op: replace
         path: /spec/storageClassName
         value: ocs-storagecluster-ceph-rbd
-  - target:
-      kind: Service
-      name: minio
-    patch: |-
-      - op: replace
-        path: /spec/selector/app
-        value: minio-versioned

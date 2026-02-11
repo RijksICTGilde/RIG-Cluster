@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: forgejo
+spec:
+  rules:
+  - host: forgejo.sandbox.rijksapp.dev
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: forgejo
+            port:
+              number: 3000
+  tls:
+  - hosts:
+    - forgejo.sandbox.rijksapp.dev
+    secretName: sandbox-wildcard-tls

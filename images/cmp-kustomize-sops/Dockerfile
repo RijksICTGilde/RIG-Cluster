@@ -1,6 +1,9 @@
 # Multi-stage build to download tools
 FROM alpine:3.19 AS tools-downloader
 
+# TARGETARCH is set automatically by Docker buildx (amd64 or arm64)
+ARG TARGETARCH
+
 # Install curl, bash, git and other tools for downloading
 RUN apk add --no-cache curl bash tar file git
 
@@ -8,28 +11,30 @@ RUN apk add --no-cache curl bash tar file git
 WORKDIR /tools
 
 # Download kubectl
-RUN curl -Lo kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+RUN curl -Lo kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl" && \
     chmod +x kubectl
 
 # Download kustomize
-RUN curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- /tools
+RUN KUSTOMIZE_VERSION="5.8.1" && \
+    curl -fsSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_${TARGETARCH}.tar.gz" | tar xz && \
+    chmod +x kustomize
 
-# Download sops - using 3.9.2 for compatibility testing
-RUN curl -Lo sops https://github.com/getsops/sops/releases/download/v3.9.2/sops-v3.9.2.linux.amd64 && \
+# Download sops
+RUN curl -Lo sops "https://github.com/getsops/sops/releases/download/v3.9.2/sops-v3.9.2.linux.${TARGETARCH}" && \
     chmod +x sops
 
 # Download yq
-RUN curl -Lo yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && \
+RUN curl -Lo yq "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${TARGETARCH}" && \
     chmod +x yq
 
 # Download helm
-RUN curl -fsSL https://get.helm.sh/helm-v3.19.4-linux-amd64.tar.gz | tar xz && \
-    mv linux-amd64/helm . && \
-    rm -rf linux-amd64 && \
+RUN curl -fsSL "https://get.helm.sh/helm-v3.19.4-linux-${TARGETARCH}.tar.gz" | tar xz && \
+    mv linux-${TARGETARCH}/helm . && \
+    rm -rf linux-${TARGETARCH} && \
     chmod +x helm
 
 # Download helmfile
-RUN curl -fsSL https://github.com/helmfile/helmfile/releases/download/v0.169.2/helmfile_0.169.2_linux_amd64.tar.gz | tar xz && \
+RUN curl -fsSL "https://github.com/helmfile/helmfile/releases/download/v0.169.2/helmfile_0.169.2_linux_${TARGETARCH}.tar.gz" | tar xz && \
     chmod +x helmfile
 
 # Install helm-diff plugin (required by helmfile)
@@ -37,16 +42,18 @@ RUN curl -fsSL https://github.com/helmfile/helmfile/releases/download/v0.169.2/h
 # The tarball extracts to diff/, so we extract to plugins/ and rename
 ENV HELM_DATA_HOME=/tools/helm-data
 RUN mkdir -p $HELM_DATA_HOME/plugins && \
-    curl -fsSL https://github.com/databus23/helm-diff/releases/download/v3.9.12/helm-diff-linux-amd64.tgz | \
+    curl -fsSL "https://github.com/databus23/helm-diff/releases/download/v3.9.12/helm-diff-linux-${TARGETARCH}.tgz" | \
     tar xz -C $HELM_DATA_HOME/plugins && \
     mv $HELM_DATA_HOME/plugins/diff $HELM_DATA_HOME/plugins/helm-diff && \
     ls -la $HELM_DATA_HOME/plugins/helm-diff/
 
 # Download KSOPS plugin - pinned to v4.3.2 for stability
+# KSOPS uses x86_64 instead of amd64 in release filenames
 RUN KSOPS_VERSION="4.3.2" && \
-    ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
-    echo "Downloading KSOPS v${KSOPS_VERSION} for ${ARCH}..." && \
-    curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/v${KSOPS_VERSION}/ksops_${KSOPS_VERSION}_Linux_${ARCH}.tar.gz" | tar xz -C /tools && \
+    KSOPS_ARCH="${TARGETARCH}" && \
+    if [ "$KSOPS_ARCH" = "amd64" ]; then KSOPS_ARCH="x86_64"; fi && \
+    echo "Downloading KSOPS v${KSOPS_VERSION} for ${KSOPS_ARCH}..." && \
+    curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/v${KSOPS_VERSION}/ksops_${KSOPS_VERSION}_Linux_${KSOPS_ARCH}.tar.gz" | tar xz -C /tools && \
     chmod +x /tools/ksops && \
     echo "KSOPS installation complete" && \
     ls -la /tools/ksops && \
@@ -55,6 +62,7 @@ RUN KSOPS_VERSION="4.3.2" && \
 
 # Verify all tools downloaded
 RUN echo "=== Downloaded tools verification ===" && \
+    echo "Target architecture: ${TARGETARCH}" && \
     echo "Directory contents:" && ls -la /tools/ && \
     echo "" && \
     echo "kubectl test:" && ./kubectl version --client && \
@@ -67,7 +75,6 @@ RUN echo "=== Downloaded tools verification ===" && \
     echo "=== KSOPS detailed check ===" && \
     echo "KSOPS file info:" && ls -la ./ksops && \
     echo "KSOPS file type:" && file ./ksops && \
-    echo "KSOPS size:" && du -h ./ksops && \
     echo "KSOPS execution test:" && (./ksops --help 2>&1 | head -3 || echo "KSOPS execution failed in downloader stage") && \
     echo "=== Downloader verification complete ==="
 

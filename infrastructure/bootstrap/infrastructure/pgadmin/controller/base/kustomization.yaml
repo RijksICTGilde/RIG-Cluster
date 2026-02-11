@@ -9,6 +9,8 @@ resources:
 
 namespace: rig-system
 
-commonLabels:
-  app.kubernetes.io/name: pgadmin
-  app.kubernetes.io/component: database-admin
+labels:
+  - pairs:
+      app.kubernetes.io/name: pgadmin
+      app.kubernetes.io/component: database-admin
+    includeSelectors: true

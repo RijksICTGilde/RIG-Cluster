@@ -131,6 +131,8 @@ spec:
           volumeMounts:
             - name: keycloak-provider
               mountPath: /opt/keycloak/providers/
+            - name: tmp-volume
+              mountPath: /opt/keycloak/data/tmp
       volumes:
         - name: keycloak-provider
           emptyDir: {}

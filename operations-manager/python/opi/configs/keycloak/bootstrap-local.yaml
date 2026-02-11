@@ -3,14 +3,14 @@
 # This allows local development with real SSO-Rijk authentication via the production Keycloak
 #
 # Prerequisites:
-# 1. The production Keycloak must have the 'local-cluster' client configured (see bootstrap.yaml)
+# 1. The production Keycloak must have the 'development-clusters' client configured (see bootstrap.yaml)
 # 2. You need the client secret from the production Keycloak
 #
 # Usage:
 # Set these environment variables to point to the production Keycloak:
-#   KEYCLOAK_MASTER_OIDC_CLIENT_ID=local-cluster
+#   KEYCLOAK_MASTER_OIDC_CLIENT_ID=development-clusters
 #   KEYCLOAK_MASTER_OIDC_CLIENT_SECRET=<secret from production>
-#   KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl/realms/rig-platform/.well-known/openid-configuration
+#   KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
 #
 # Then run the operations-manager with KEYCLOAK_BOOTSTRAP_CONFIG=local
 
@@ -208,19 +208,3 @@ clientScopes:
 
     # Assign as realm-level default client scope
     defaultScope: true
-
-clients:
-  - clientId: "{{ client_id }}"
-    name: "{{ client_name }}"
-    enabled: true
-    publicClient: false
-    protocol: "openid-connect"
-    redirectUris: "{{ redirect_uris }}"
-    webOrigins: "{{ web_origins }}"
-    standardFlowEnabled: true
-    directAccessGrantsEnabled: true
-    serviceAccountsEnabled: true
-
-    # Automatically includes custom_attributes_passthrough scope as default
-    defaultClientScopes:
-      - "custom_attributes_passthrough"
