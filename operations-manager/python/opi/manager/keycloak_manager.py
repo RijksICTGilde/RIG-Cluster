@@ -1,6 +1,5 @@
 """Keycloak service manager for handling SSO resources."""
 
-import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -790,23 +789,30 @@ class KeycloakManager:
 
                 if await verify_keycloak.realm_exists(realm_name):
                     logger.info(f"Verified project realm {realm_name} exists in Keycloak")
+
+                    # Update project file if keycloak host has changed (e.g., domain migration)
+                    if keycloak_host != keycloak_url:
+                        logger.info(f"Updating project keycloak host from {keycloak_host} to {keycloak_url}")
+                        keycloak_host = keycloak_url
+                        kc_config["host"] = keycloak_url
+                        await self.project_manager.save_project_data()
+
                     # Always ensure authentication flow is correctly configured (idempotent)
-                    await self._ensure_realm_authentication_flow(realm_name, keycloak_host, config)
+                    await self._ensure_realm_authentication_flow(realm_name, keycloak_url, config)
                     # Always ensure IdP and platform client have correct URLs (idempotent)
-                    # Uses keycloak_url (expected correct URL) not keycloak_host (may have old value)
                     await self._ensure_idp_and_platform_client_configuration(project_name, cluster, keycloak_url)
                     # Always ensure clients from YAML template are created (idempotent)
                     await self._ensure_realm_clients(
-                        project_name, cluster, realm_name, keycloak_host, config, ingress_hosts
+                        project_name, cluster, realm_name, keycloak_url, config, ingress_hosts
                     )
                     # Ensure realm roles exist (idempotent)
                     realm_roles = config.get("realm_roles", [])
                     if realm_roles:
-                        await self._ensure_realm_roles(realm_name, keycloak_host, realm_roles)
+                        await self._ensure_realm_roles(realm_name, keycloak_url, realm_roles)
                     # Create additional clients for other projects (idempotent)
                     additional_clients = config.get("additional_clients", [])
                     if additional_clients:
-                        await self._create_additional_clients(realm_name, keycloak_host, additional_clients, cluster)
+                        await self._create_additional_clients(realm_name, keycloak_url, additional_clients, cluster)
                 else:
                     logger.warning(
                         f"Project realm config exists but realm {realm_name} not found in Keycloak - will recreate"
@@ -823,7 +829,6 @@ class KeycloakManager:
                     raise RuntimeError(f"Failed to create project realm for cluster {cluster}")
 
             realm_name = kc_config["realm"]
-            keycloak_host = kc_config["host"]
 
             logger.info(f"Using project realm {realm_name} for deployment {deployment_name}")
 
@@ -839,7 +844,7 @@ class KeycloakManager:
                 restrict_access = config.get("restrict_access")
                 if restrict_access and restrict_access.get("enabled", False):
                     keycloak = await create_keycloak_connector(
-                        keycloak_url=keycloak_host,
+                        keycloak_url=keycloak_url,
                         admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
                         admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
                     )
@@ -850,11 +855,35 @@ class KeycloakManager:
                         restrict_access=restrict_access,
                     )
 
+                # Ensure base_url and discovery_url use the current keycloak URL
+                cluster_discovery_url = get_keycloak_discovery_url(cluster)
+                expected_discovery_url = f"{cluster_discovery_url}/realms/{realm_name}/.well-known/openid-configuration"
+                base_url = existing_credentials.base_url
+                discovery_url = existing_credentials.discovery_url
+
+                if base_url != keycloak_url or discovery_url != expected_discovery_url:
+                    logger.info(
+                        f"Updating stale Keycloak credentials for {deployment_name}: "
+                        f"base_url {base_url} -> {keycloak_url}"
+                    )
+                    base_url = keycloak_url
+                    discovery_url = expected_discovery_url
+
+                    # Update the stored secret so the new URLs get written
+                    updated_secret = KeycloakSecret(
+                        client_id=existing_credentials.client_id,
+                        client_secret=existing_credentials.client_secret,
+                        discovery_url=discovery_url,
+                        base_url=base_url,
+                        realm=realm_name,
+                    )
+                    self.project_manager._add_secret_to_create(deployment_name, "keycloak", updated_secret)
+
                 return {
                     "client_id": existing_credentials.client_id,
                     "client_secret": existing_credentials.client_secret,
-                    "discovery_url": existing_credentials.discovery_url,
-                    "base_url": existing_credentials.base_url,
+                    "discovery_url": discovery_url,
+                    "base_url": base_url,
                     "realm": existing_credentials.realm,
                 }
 
@@ -865,7 +894,7 @@ class KeycloakManager:
             )
 
             keycloak = await create_keycloak_connector(
-                keycloak_url=keycloak_host,
+                keycloak_url=keycloak_url,
                 admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
                 admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
             )
@@ -904,7 +933,7 @@ class KeycloakManager:
                 "client_id": client_info["client_id"],
                 "client_secret": client_info["client_secret"],
                 "discovery_url": realm_discovery_url,
-                "base_url": keycloak_host,
+                "base_url": keycloak_url,
                 "realm": realm_name,
             }
 
@@ -913,7 +942,7 @@ class KeycloakManager:
                 client_id=client_info["client_id"],
                 client_secret=client_info["client_secret"],
                 discovery_url=realm_discovery_url,
-                base_url=keycloak_host,
+                base_url=keycloak_url,
                 realm=realm_name,
             )
             self.project_manager._add_secret_to_create(deployment_name, "keycloak", keycloak_secret)
@@ -1329,99 +1358,83 @@ class KeycloakManager:
         )
 
         # 1. Check and update IdP configuration in project realm
-        try:
-            idp_configs = await keycloak.get_identity_providers(realm_name)
-            for idp in idp_configs:
-                if idp.get("alias") == idp_alias:
-                    config = idp.get("config", {})
-                    needs_update = False
-                    updated_fields = []
+        idp_configs = await keycloak.get_identity_providers(realm_name)
+        for idp in idp_configs:
+            if idp.get("alias") == idp_alias:
+                config = idp.get("config", {})
+                needs_update = False
+                updated_fields = []
 
-                    # Check all URL fields that should use keycloak_url
-                    url_fields = [
-                        "userInfoUrl",
-                        "tokenUrl",
-                        "jwksUrl",
-                        "authorizationUrl",
-                        "logoutUrl",
-                        "discoveryEndpoint",
-                    ]
+                # Check all URL fields that should use keycloak_url
+                url_fields = [
+                    "userInfoUrl",
+                    "tokenUrl",
+                    "jwksUrl",
+                    "authorizationUrl",
+                    "logoutUrl",
+                    "discoveryEndpoint",
+                ]
 
-                    for field in url_fields:
-                        current_url = config.get(field, "")
-                        # Check if URL needs updating (wrong base URL and contains /realms/)
-                        if (
-                            current_url
-                            and not current_url.startswith(expected_keycloak_url)
-                            and "/realms/" in current_url
-                        ):
-                            # Extract the path part and rebuild with correct base URL
-                            # e.g., http://keycloak.kind/realms/... -> https://keycloak.kind/realms/...
-                            path_part = "/realms/" + current_url.split("/realms/", 1)[1]
-                            new_url = f"{expected_keycloak_url}{path_part}"
-                            config[field] = new_url
-                            needs_update = True
-                            updated_fields.append(field)
+                for field in url_fields:
+                    current_url = config.get(field, "")
+                    # Check if URL needs updating (wrong base URL and contains /realms/)
+                    if current_url and not current_url.startswith(expected_keycloak_url) and "/realms/" in current_url:
+                        # Extract the path part and rebuild with correct base URL
+                        # e.g., http://keycloak.kind/realms/... -> https://keycloak.kind/realms/...
+                        path_part = "/realms/" + current_url.split("/realms/", 1)[1]
+                        new_url = f"{expected_keycloak_url}{path_part}"
+                        config[field] = new_url
+                        needs_update = True
+                        updated_fields.append(field)
 
-                    if needs_update:
-                        logger.info(
-                            f"Updating IdP '{idp_alias}' in realm '{realm_name}' - "
-                            f"fixing URLs for fields: {updated_fields}"
-                        )
-                        await keycloak.update_identity_provider(
-                            realm_name=realm_name,
-                            provider_alias=idp_alias,
-                            updates=config,
-                        )
-                        logger.info(f"Successfully updated IdP '{idp_alias}' URLs to use {expected_keycloak_url}")
-                    else:
-                        logger.debug(f"IdP '{idp_alias}' URLs are already correct")
-                    break
-        except Exception as e:
-            logger.warning(f"Failed to check/update IdP configuration: {e}")
+                if needs_update:
+                    logger.info(
+                        f"Updating IdP '{idp_alias}' in realm '{realm_name}' - fixing URLs for fields: {updated_fields}"
+                    )
+                    await keycloak.update_identity_provider(
+                        realm_name=realm_name,
+                        provider_alias=idp_alias,
+                        config=config,
+                    )
+                    logger.info(f"Successfully updated IdP '{idp_alias}' URLs to use {expected_keycloak_url}")
+                else:
+                    logger.debug(f"IdP '{idp_alias}' URLs are already correct")
+                break
 
         # 2. Check and update platform client redirect URI in rig-platform realm
-        try:
-            expected_redirect_uri = f"{expected_keycloak_url}/realms/{realm_name}/broker/{idp_alias}/endpoint/*"
+        expected_redirect_uri = f"{expected_keycloak_url}/realms/{realm_name}/broker/{idp_alias}/endpoint/*"
 
-            # Find the platform client in rig-platform realm
-            client = await keycloak.find_client_by_client_id(platform_client_id, platform_realm)
+        # Find the platform client in rig-platform realm
+        client = await keycloak.find_client_by_client_id(platform_client_id, platform_realm)
 
-            if client:
-                current_redirect_uris = client.get("redirectUris", [])
+        if client:
+            current_redirect_uris = client.get("redirectUris", [])
 
-                # Check if expected redirect URI is present
-                if expected_redirect_uri not in current_redirect_uris:
-                    # Build new redirect URIs list - replace any old broker endpoint URIs
-                    new_redirect_uris = [
-                        uri for uri in current_redirect_uris if f"/broker/{idp_alias}/endpoint" not in uri
-                    ]
-                    new_redirect_uris.append(expected_redirect_uri)
+            # Check if expected redirect URI is present
+            if expected_redirect_uri not in current_redirect_uris:
+                # Build new redirect URIs list - replace any old broker endpoint URIs
+                new_redirect_uris = [uri for uri in current_redirect_uris if f"/broker/{idp_alias}/endpoint" not in uri]
+                new_redirect_uris.append(expected_redirect_uri)
 
-                    logger.info(
-                        f"Updating platform client '{platform_client_id}' redirect URIs in realm '{platform_realm}'"
-                    )
+                logger.info(
+                    f"Updating platform client '{platform_client_id}' redirect URIs in realm '{platform_realm}'"
+                )
 
-                    # Update the client using admin API
-                    keycloak.admin.change_current_realm(platform_realm)
+                # Update the client using admin API
+                keycloak.admin.change_current_realm(platform_realm)
+                try:
                     keycloak.admin.update_client(
                         client_id=client["id"],
                         payload={"redirectUris": new_redirect_uris},
                     )
+                finally:
                     keycloak.admin.change_current_realm("master")
 
-                    logger.info(f"Successfully updated platform client redirect URI to: {expected_redirect_uri}")
-                else:
-                    logger.debug(f"Platform client '{platform_client_id}' redirect URIs are already correct")
+                logger.info(f"Successfully updated platform client redirect URI to: {expected_redirect_uri}")
             else:
-                logger.warning(f"Platform client '{platform_client_id}' not found in realm '{platform_realm}'")
-
-        except Exception as e:
-            logger.warning(f"Failed to check/update platform client configuration: {e}")
-            # Ensure we're back in master realm (ignore errors during cleanup — broad
-            # suppress is intentional since the keycloak client can raise any exception)
-            with contextlib.suppress(Exception):
-                keycloak.admin.change_current_realm("master")
+                logger.debug(f"Platform client '{platform_client_id}' redirect URIs are already correct")
+        else:
+            logger.warning(f"Platform client '{platform_client_id}' not found in realm '{platform_realm}'")
 
     async def _setup_project_keycloak_realm(
         self,

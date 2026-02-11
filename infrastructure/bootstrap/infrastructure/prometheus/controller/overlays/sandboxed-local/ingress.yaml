@@ -3,9 +3,8 @@ kind: Ingress
 metadata:
   name: prometheus
   namespace: rig-system
-  annotations:
-    cert-manager.io/cluster-issuer: null
 spec:
+  ingressClassName: nginx
   rules:
     - host: prometheus.sandbox.rijksapp.dev
       http:

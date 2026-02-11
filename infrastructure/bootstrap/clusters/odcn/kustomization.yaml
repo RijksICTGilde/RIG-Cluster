@@ -12,7 +12,7 @@ resources:
 #  - ../../infrastructure/pgadmin/config/overlays/odcn
   - ../../infrastructure/minio/controller/overlays/odcn
 #  - ../../infrastructure/minio/config/overlays/odcn
-#  - ../../infrastructure/prometheus/controller/overlays/odcn
+  - ../../infrastructure/prometheus/controller/overlays/odcn
   - ../../infrastructure/redis/controller/overlays/odcn
   - ../../infrastructure/external-dns/controller/overlays/odcn
 #  - ../../infrastructure/backup-destination/controller/overlays/odcn

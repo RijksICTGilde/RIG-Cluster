@@ -19,6 +19,10 @@ spec:
     metadata:
       labels:
         app: operations-manager
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: namespace-manager
       containers:

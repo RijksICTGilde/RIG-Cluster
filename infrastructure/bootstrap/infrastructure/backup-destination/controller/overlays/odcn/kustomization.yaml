@@ -3,9 +3,12 @@ kind: Kustomization
 
 namespace: rig-prd-backup
 
+generators:
+  - decrypt-sops.yaml
+
 resources:
   - ../../base
-  - secret.sops.yaml
+  - network-policies/minio-networkpolicy.yaml
 
 patches:
   # Update namespace name
