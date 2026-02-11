@@ -2,6 +2,18 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: forgejo-db
+  namespace: rig-system
+spec:
+  cluster:
+    name: rig-db
+  name: forgejo
+  owner: forgejo
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: keycloak-db
   namespace: rig-system
 spec:

@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI
+from keycloak.exceptions import KeycloakError
 from tenacity import (
     after_log,
     before_sleep_log,
@@ -26,6 +27,7 @@ from opi.bootstrap.keycloak_setup import setup_keycloak
 from opi.connectors.git import (
     create_git_connector_for_project_files,
 )
+from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
@@ -67,6 +69,8 @@ async def create_subdomain_registry_table() -> None:
             httpx.RemoteProtocolError,
             httpx.ReadTimeout,
             httpx.ConnectTimeout,
+            httpx.HTTPStatusError,
+            KeycloakError,  # python-keycloak wraps 503/connection errors in its own exception types
             ConnectionError,
             OSError,
         )
@@ -703,24 +707,6 @@ async def run_startup_tasks(app: FastAPI) -> bool:
         if all_allowed_emails:
             logger.info(f"Allowed user emails ({len(all_allowed_emails)}): {', '.join(sorted(all_allowed_emails))}")
 
-        # Always ensure operations manager has valid Keycloak credentials
-        # This is needed for the operations manager's own authentication system
-        logger.info("Ensuring operations manager has valid Keycloak credentials")
-        credentials_success = await keycloak_client_exists_and_works()
-        if credentials_success:
-            logger.info("Operations manager Keycloak credentials ensured successfully")
-        else:
-            logger.error("Failed to ensure operations manager Keycloak credentials")
-            all_successful = False
-
-        # Always register OAuth client - this is internal configuration, not external resource creation
-        if app:
-            logger.info("Registering OAuth client")
-            await register_oauth_client_after_keycloak_setup(app)
-            logger.info("OAuth client registration completed successfully")
-        else:
-            raise RuntimeError("No app instance provided - cannot register OAuth client")
-
         # Skip external resource creation when SKIP_STARTUP_CHECKS is enabled
         if not skip_checks:
             logger.info("Checking MinIO CLI availability")
@@ -731,6 +717,9 @@ async def run_startup_tasks(app: FastAPI) -> bool:
                 logger.error("MinIO CLI check failed")
                 all_successful = False
 
+            logger.info("Waiting for Keycloak to become available")
+            await wait_for_keycloak_availability()
+
             logger.info("Setting up Keycloak (realm, SSO, scopes, and operations client)")
             keycloak_success = await setup_keycloak()
             if not keycloak_success:
@@ -739,6 +728,24 @@ async def run_startup_tasks(app: FastAPI) -> bool:
             logger.info("Complete Keycloak setup completed successfully")
         else:
             logger.warning("Skipped external resource creation (SKIP_STARTUP_CHECKS=True)")
+
+        # Ensure operations manager has valid Keycloak credentials
+        # This runs after setup_keycloak() which creates the realm and initial client
+        logger.info("Ensuring operations manager has valid Keycloak credentials")
+        credentials_success = await keycloak_client_exists_and_works()
+        if credentials_success:
+            logger.info("Operations manager Keycloak credentials ensured successfully")
+        else:
+            logger.error("Failed to ensure operations manager Keycloak credentials")
+            all_successful = False
+
+        # Register OAuth client using credentials from Keycloak setup
+        if app:
+            logger.info("Registering OAuth client")
+            await register_oauth_client_after_keycloak_setup(app)
+            logger.info("OAuth client registration completed successfully")
+        else:
+            raise RuntimeError("No app instance provided - cannot register OAuth client")
 
         # API keys are now loaded inline during project file processing above
         logger.info("Project API keys loaded during project processing")

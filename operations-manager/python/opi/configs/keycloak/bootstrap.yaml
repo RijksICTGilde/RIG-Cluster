@@ -167,7 +167,7 @@ identityProviders:
         identityProviderMapper: "saml-user-attribute-idp-mapper"
         config:
           syncMode: "INHERIT"
-          user.attribute: "organizationName"
+          user.attribute: "organization.name"
           attribute.name.format: "ATTRIBUTE_FORMAT_BASIC"
           attribute.name: "urn:rijksoverheid:federation:organizationDisplayName"
 
@@ -176,7 +176,7 @@ identityProviders:
         identityProviderMapper: "saml-user-attribute-idp-mapper"
         config:
           syncMode: "INHERIT"
-          user.attribute: "organizationNumber"
+          user.attribute: "organization.number"
           attribute.name.format: "ATTRIBUTE_FORMAT_BASIC"
           attribute.name: "urn:rijksoverheid:federation:organizationNumber"
 
@@ -281,25 +281,10 @@ clientScopes:
     defaultScope: true
 
 clients:
-  - clientId: "{{ client_id }}"
-    name: "{{ client_name }}"
-    enabled: true
-    publicClient: false
-    protocol: "openid-connect"
-    redirectUris: "{{ redirect_uris }}"
-    webOrigins: "{{ web_origins }}"
-    standardFlowEnabled: true
-    directAccessGrantsEnabled: true
-    serviceAccountsEnabled: true
-
-    # Automatically includes custom_attributes_passthrough scope as default
-    defaultClientScopes:
-      - "custom_attributes_passthrough"
-
-  # Client for local Kind clusters to use this Keycloak as upstream IDP
-  # Local clusters authenticate users via this Keycloak, which in turn uses SSO-Rijk
-  - clientId: "local-cluster"
-    name: "Local Kind Cluster"
+  # Shared client for development clusters (local Kind and sandbox) to use this Keycloak as upstream IDP
+  # These clusters authenticate users via this Keycloak, which in turn uses SSO-Rijk
+  - clientId: "development-clusters"
+    name: "Development Clusters (Local & Sandbox)"
     enabled: true
     publicClient: false
     protocol: "openid-connect"
@@ -309,11 +294,13 @@ clients:
       - "http://keycloak.kind/*"
       - "https://localhost:*/*"
       - "http://localhost:*/*"
+      - "https://keycloak.sandbox.rijksapp.dev/*"
     webOrigins:
       - "https://keycloak.kind"
       - "http://keycloak.kind"
       - "https://localhost"
       - "http://localhost"
+      - "https://keycloak.sandbox.rijksapp.dev"
     standardFlowEnabled: true
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: false

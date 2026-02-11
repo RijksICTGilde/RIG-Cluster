@@ -48,7 +48,7 @@ spec:
 
       containers:
       - name: bootstrap
-        image: codeberg.org/forgejo/forgejo:7
+        image: codeberg.org/forgejo/forgejo:14
         command:
         - sh
         - -c

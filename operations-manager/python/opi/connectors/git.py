@@ -246,7 +246,11 @@ class GitConnector:
         base_url = self.repo_url
 
         # For HTTPS URLs, embed credentials if provided
-        if self.url_config and self.url_config.get("scheme") == "https" and (self.username or self._decrypted_password):
+        if (
+            self.url_config
+            and self.url_config.get("scheme") in ("https", "http")
+            and (self.username or self._decrypted_password)
+        ):
             from urllib.parse import urlparse, urlunparse
 
             parsed = urlparse(self.repo_url)

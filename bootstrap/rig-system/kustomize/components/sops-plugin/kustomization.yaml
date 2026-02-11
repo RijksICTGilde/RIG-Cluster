@@ -36,7 +36,7 @@ patches:
         sidecarContainers:
           - name: cmp-server
             image: rig-cmp-argo-kustomize-sops:latest
-            imagePullPolicy: Always
+            imagePullPolicy: Never
             command: ["/var/run/argocd/argocd-cmp-server"]
             env:
               - name: KUSTOMIZE_PLUGIN_HOME

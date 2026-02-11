@@ -3,9 +3,10 @@ kind: Kustomization
 namespace: rig-system
 resources:
 - ../../base
-# Additional hostname keycloak.rijksapp.nl with Let's Encrypt (transition period)
+# Let's Encrypt issuer for keycloak.rijksapp.nl TLS certificate
 - issuer-letsencrypt.yaml
-- ingress-rijksapp.yaml
+# Legacy ingress for old hostname (transition period, can be removed later)
+- ingress-legacy.yaml
 
 patches:
   - target:
@@ -14,17 +15,21 @@ patches:
     patch: |-
       - op: replace
         path: /spec/rules/0/host
-        value: keycloak.rig.prd1.gn2.quattro.rijksapps.nl
+        value: keycloak.rijksapp.nl
       - op: add
         path: /metadata/annotations/haproxy.router.openshift.io~1ip_whitelist
-        #value: "147.181.0.0/16"
         value: "0.0.0.0/0,::/0"
+      - op: replace
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+        value: letsencrypt-keycloak
       - op: remove
         path: /spec/ingressClassName
-      - op: add
+      - op: replace
         path: /spec/tls
         value:
-          - {}
+          - hosts:
+              - keycloak.rijksapp.nl
+            secretName: keycloak-rijksapp-tls
   - target:
       kind: Deployment
       name: keycloak
@@ -34,4 +39,4 @@ patches:
         value: "KC_HOSTNAME"
       - op: replace
         path: /spec/template/spec/containers/0/env/6/value
-        value: "https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl"
+        value: "https://keycloak.rijksapp.nl"

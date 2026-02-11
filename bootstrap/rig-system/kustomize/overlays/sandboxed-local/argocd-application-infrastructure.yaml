@@ -1,0 +1,26 @@
+# ArgoCD Application for infrastructure - points to Forgejo zad-argo-infrastructure repo
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sandbox-infrastructure
+  namespace: rig-system
+spec:
+  project: default
+  source:
+    repoURL: http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-infrastructure.git
+    path: bootstrap/clusters/sandboxed-local
+    targetRevision: main
+    plugin:
+      name: kustomize-sops-v1.0
+      env:
+        - name: SOPS_KEY_SECRET
+          value: "sops-age-key"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

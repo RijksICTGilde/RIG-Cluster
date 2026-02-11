@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: forgejo
+spec:
+  template:
+    spec:
+      containers:
+      - name: forgejo
+        image: codeberg.org/forgejo/forgejo:14-rootless
+        env:
+        - name: USER_UID
+          value: "1000"
+        - name: USER_GID
+          value: "1000"
+        - name: FORGEJO__security__INSTALL_LOCK
+          value: "true"
+        - name: FORGEJO__server__ROOT_URL
+          value: "https://forgejo.sandbox.rijksapp.dev"
+        - name: FORGEJO__server__HTTP_PORT
+          value: "3000"
+        - name: FORGEJO__server__DOMAIN
+          value: "forgejo.sandbox.rijksapp.dev"
+        - name: FORGEJO__server__PROTOCOL
+          value: "http"
+        - name: FORGEJO__database__DB_TYPE
+          value: "postgres"
+        - name: FORGEJO__database__HOST
+          value: "rig-db-rw.rig-system.svc.cluster.local:5432"
+        - name: FORGEJO__database__NAME
+          value: "forgejo"
+        - name: FORGEJO__database__USER
+          value: "forgejo"
+        - name: FORGEJO__database__PASSWD
+          valueFrom:
+            secretKeyRef:
+              name: forgejo-db-credentials
+              key: password
+        - name: FORGEJO__database__SSL_MODE
+          value: "disable"
+        - name: FORGEJO__database__SCHEMA
+          value: "public"
+        - name: FORGEJO__service__DISABLE_REGISTRATION
+          value: "true"
+        - name: FORGEJO__service__REQUIRE_SIGNIN_VIEW
+          value: "false"
+        - name: FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE
+          value: "true"
+        - name: FORGEJO__repository__DEFAULT_BRANCH
+          value: "main"
+        - name: FORGEJO__repository__DEFAULT_PRIVATE
+          value: "false"
+        - name: FORGEJO__webhook__ALLOWED_HOST_LIST
+          value: "*"
+        - name: FORGEJO__webhook__SKIP_TLS_VERIFY
+          value: "true"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/gitea

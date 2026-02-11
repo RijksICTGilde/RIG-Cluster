@@ -16,6 +16,7 @@ from opi.connectors.subdomain import (
 )
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.core.config import settings
 from opi.core.templates import get_templates
 from opi.utils.csrf import ensure_csrf_token
 from opi.web.menu import get_menu_items
@@ -35,6 +36,7 @@ def get_cluster_options_for_template() -> list[dict]:
     """
     cluster_labels = {
         "local": "Lokaal",
+        "sandboxed-local": "Sandbox (lokaal)",
         "odcn-production": "Productie Cluster (ODC-Noord)",
     }
 
@@ -105,6 +107,7 @@ async def self_service_portal(request: Request):
                 "user": user,
                 "cluster_options": cluster_options,
                 "cluster_base_domains_json": json.dumps(cluster_base_domains),
+                "current_cluster": settings.CLUSTER_MANAGER,
                 "csrf_token": csrf_token,
             },
         )

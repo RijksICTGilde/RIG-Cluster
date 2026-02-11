@@ -181,6 +181,13 @@ class Settings(BaseSettings):
     GIT_PROJECTS_SERVER_BRANCH: str = "main"
     GIT_PROJECTS_SERVER_POLL_INTERVAL: int = 120  # seconds
 
+    # Project deployment repository - shared repo where all project manifests are pushed
+    # This is a single shared repository; projects are separated by subdirectories internally
+    PROJECT_REPO_URL: str = "https://github.com/RijksICTGilde/rig-cluster-application-test.git"
+    PROJECT_REPO_USERNAME: str = "git"
+    PROJECT_REPO_PASSWORD: str = "base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NCd1lVWk1ZVFZ1Ukd4dmJrUjZNelZRCksxbFVVVE5qWm5wNllYRjBUVXBsWjJWc2VuSjRRa00xZW1wdkNpOUdNakpQVldSTWNrUnRSakUyWTNObVlXcFUKZEZOMGMzZHlVbG8wY0ZkTFQwWnhhWFZ4U21wVmNVMEtMUzB0SUdReFJtUldWSGRhTVdVd1dqaHRSVW92WnlzeQpkVTlNWmpSMFZWSjFTWFZIVDFZd2NIZFZVekJwY1RnSzNvYVR4b3YwRW1RcVkrRjlTWkgzVjBONHFXd25ESEllCjI4U05ud2ZxaWthQWE1dGNWcmIvOW4xM3BLN3NEQVQ2bXpZS3NKeFhxdDV0UnpJeWxUWHk5dkk0REticmRiSmkKLS0tLS1FTkQgQUdFIEVOQ1JZUFRFRCBGSUxFLS0tLS0="
+    PROJECT_REPO_BRANCH: str = "main"
+
     # ArgoCD Applications Git repository - simplified to just URL and credentials
     GIT_ARGO_APPLICATIONS_URL: str = "ssh://git@localhost:2222/srv/git/argo-applications.git"
     GIT_ARGO_APPLICATIONS_KEY: str = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/keys/git-server-key"
@@ -227,9 +234,11 @@ class Settings(BaseSettings):
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"
 
-    # Bootstrap configuration type: "default" or "local"
+    # Bootstrap configuration type: "default", "local", or "sandbox"
     # - "default": Production setup with direct SSO-Rijk integration
     # - "local": Local Kind cluster using production Keycloak as upstream IDP
+    # - "sandbox": Sandbox cluster with upstream IDP (production Keycloak)
+    # In all cases, OPI creates its own realm during startup using the project file config.
     KEYCLOAK_BOOTSTRAP_CONFIG: str = "default"
 
     # Master OIDC provider configuration (to be added to shared realm)
