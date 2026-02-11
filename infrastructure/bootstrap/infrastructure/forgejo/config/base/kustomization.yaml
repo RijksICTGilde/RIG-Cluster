@@ -4,7 +4,9 @@ kind: Kustomization
 resources:
 - bootstrap-job.yaml
 
-commonLabels:
-  app.kubernetes.io/name: forgejo
-  app.kubernetes.io/component: bootstrap
-  app.kubernetes.io/part-of: rig-platform
+labels:
+  - pairs:
+      app.kubernetes.io/name: forgejo
+      app.kubernetes.io/component: bootstrap
+      app.kubernetes.io/part-of: rig-platform
+    includeSelectors: true

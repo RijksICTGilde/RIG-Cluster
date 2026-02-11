@@ -101,16 +101,8 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         logger.error(f"Failed to generate encrypted API key: {e}")
         raise HTTPException(status_code=500, detail=f"Cannot create project: API key encryption failed. {e!s}")
 
-    # Default encrypted password for git repository
-    # TODO: this should be read from the config file
-    age_password = """-----BEGIN AGE ENCRYPTED FILE-----
-YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBwYUZMYTVuRGxvbkR6MzVQ
-K1lUUTNjZnp6YXF0TUplZ2VsenJ4QkM1empvCi9GMjJPVWRMckRtRjE2Y3NmYWpU
-dFN0c3dyUlo0cFdLT0ZxaXVxSmpVcU0KLS0tIGQxRmRWVHdaMWUwWjhtRUovZysy
-dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
-28SNnwfqikaAa5tcVrb/9n13pK7sDAT6mzYKsJxXqt5tRzIylTXy9vI4DKbrdbJi
------END AGE ENCRYPTED FILE-----
-"""
+    # Repository password from settings (supports plain:, age:, base64+age: prefixes)
+    repo_password = settings.PROJECT_REPO_PASSWORD
 
     # Parse project-level services using the service adapter
     project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])
@@ -279,10 +271,10 @@ dU9MZjR0VVJ1SXVHT1YwcHdVUzBpcTgK3oaTxov0EmQqY+F9SZH3V0N4qWwnDHIe
         "repositories": [
             {
                 "name": "main-repo",
-                "url": "https://github.com/RijksICTGilde/rig-cluster-application-test.git",
-                "username": "git",
-                "password": age_password,
-                "branch": "main",
+                "url": settings.PROJECT_REPO_URL,
+                "username": settings.PROJECT_REPO_USERNAME,
+                "password": repo_password,
+                "branch": settings.PROJECT_REPO_BRANCH,
                 "path": ".",
             }
         ],

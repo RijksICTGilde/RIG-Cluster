@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../infrastructure/secrets/config/overlays/sandboxed-local
+  - ../../infrastructure/postgresql/database/overlays/sandboxed-local
+  - ../../infrastructure/forgejo/controller/overlays/sandboxed-local
+  # forgejo/config (bootstrap job) excluded - sandbox:init-forgejo handles initialization
+  - ../../infrastructure/keycloak/controller/overlays/sandboxed-local
+  - ../../infrastructure/keycloak/config/overlays/sandboxed-local
+  - ../../infrastructure/minio/controller/overlays/sandboxed-local
+  - ../../infrastructure/prometheus/controller/overlays/sandboxed-local

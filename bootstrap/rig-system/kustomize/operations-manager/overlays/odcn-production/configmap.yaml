@@ -30,9 +30,9 @@ data:
     ADDITIONAL_DOMAINS="zad.rijksapp.nl"
 
     OIDC_CLIENT_ID=rig-platform-operations-manager
-    OIDC_DISCOVERY_URL=https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl/realms/rig-platform/.well-known/openid-configuration
+    OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
 
-    KEYCLOAK_URL=https://keycloak.rig.prd1.gn2.quattro.rijksapps.nl
+    KEYCLOAK_URL=https://keycloak.rijksapp.nl
 
     ARGOCD_HOST=argocd-server
     ARGOCD_PORT=80
@@ -41,3 +41,4 @@ data:
     USE_UNSAFE_API_KEY=false
 
     ALLOWED_EMAILS=anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
+    GRAFANA_DATASOURCE_UID=mimir-prd

@@ -1,0 +1,35 @@
+# ArgoCD Application for user applications - points to Forgejo zad-argo-user-applications repo
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: user-applications
+  namespace: rig-system
+spec:
+  project: default
+  sources:
+    - repoURL: http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
+      path: .
+      targetRevision: main
+      plugin:
+        name: kustomize-sops-v1.0
+        env:
+          - name: SOPS_KEY_SECRET
+            value: "sops-age-key"
+          - name: KUSTOMIZE_FOLDERS
+            value: "subfolders"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: "rig-system"
+  syncPolicy:
+    automated:
+      allowEmpty: true
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: -1
+      backoff:
+        duration: "30s"
+        factor: 1
+        maxDuration: "30s"

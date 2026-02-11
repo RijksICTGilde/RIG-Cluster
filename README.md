@@ -1,73 +1,85 @@
 # RIG-Cluster
 
-Het RIG cluster is een Kubernetes platform in het ODC-Noord.
+RIG-Cluster is a Kubernetes platform for RIG projects in ODC-Noord, supporting POC, Pilot, and Production environments.
 
-Het is bedoeld voor RIG projecten die in POC of Pilot fase zitten, maar biedt ook mogelijkheden voor productie.
-
-Het uitgangspunt is dat je snel en flexibel een plek kunt opzetten voor jouw project.
-
-Dit gaan we doen via een 'self service portal', waarbij je een project kunt aanmaken en kunt aangeven welke services je nodig hebt,
-welke namespaces en wie rechten nodig heeft op dat project.
-
-Services willen we centraal aanbieden. Mogelijke service zijn vooralsnog een Minio storage, PostgresSQL database, koppeling met de Keycloak. Dit kan aangevuld worden.
+At its core is **ZAD** (Zelfservice Applicatie Deployment) — a self-service portal where developers define what their project needs in a single declarative file. ZAD provisions the infrastructure (PostgreSQL, Keycloak, MinIO, Redis), generates credentials, creates Kubernetes deployments, and configures everything end-to-end. It integrates into CI/CD through a GitHub Action and exposes an API for controlling deployments, updating images, creating backups, spinning up feature branch environments, and cleaning up.
 
 ## Getting Started
 
-To bootstrap a new cluster:
+The recommended way to get started is the **sandboxed-local** setup, which runs a fully self-contained cluster on your machine. See:
 
-1. Clone this repository
-2. Install the required tools:
-   - kubectl
-   - kustomize
-   - task (from taskfile.dev)
+- **[Getting Started Guide](docs/getting-started.md)** — step-by-step setup instructions
 
-3. Bootstrap the minimal setup (creates namespace and deploys ArgoCD):
-   ```bash
-   task bootstrap-minimal
-   ```
+Quick start:
 
-4. For local development with Kind:
-   ```bash
-   # Create a Kind cluster
-   task create-k8s-cluster
+```bash
+# Install required tools
+brew install go-task kind kubectl kustomize sops age ksops pwgen jq rsync skaffold
 
-   # Apply bootstrap
-   task bootstrap-minimal SOURCE_TYPE=local-filesystem
-   ```
+# Run the setup (interactive, takes ~5-10 minutes)
+task sandbox:setup
+```
 
-5. For production with GitHub repository:
-   ```bash
-   task bootstrap-minimal SOURCE_TYPE=github
-   ```
+You will need the developer AGE private key to decrypt the TLS certificates. Ask the ZAD developers if you don't have it.
 
-6. Access ArgoCD UI:
-   ```bash
-   kubectl port-forward svc/argocd-server -n rig-system 8080:80
-   ```
-   Then open http://localhost:8080 in your browser (username: admin, password: admin)
+## Architecture
 
-Het beoogde voordeel van centraal aanbieden is dat we de inrichting maar eenmalig hoeven te doen, inclusief backup mogelijkheden etc. Daarnaast is de verwachting dat dit ook resources scheelt. Bovendien kunnen we 'configuration as code' toepassen, waarbij alle
-benodigde informatie in een VCS is vastgelegd. Dit maakt migratie of (disaster)-recovery mogelijk.
+The platform uses a GitOps approach with ArgoCD. The Operations Manager (ZAD) drives three Git repositories:
 
-Vooralsnog beginnen we met de volgende services:
-- Flux
-- Vault
-- Keycloak
-- PostgresSQL
-- PGAdmin
-- Bitnami Sealed Secrets (of SOPS)
-- Minio
-- Prometheus
-- Grafana
+1. **zad-projects** — declarative project definitions (one file per project: services, configuration, user accounts, SSO setup)
+2. **zad-argo-user-applications** — ArgoCD Application manifests, generated from project definitions
+3. **zad-deployments** — Kubernetes manifests (secrets, configmaps, deployments) generated for each project
 
-Eventueel op aanvraag of later of wanneer nodig:
-- Redis
-- RabbitMQ
-- Kafka
-- Harbor
+Project definitions go in, ArgoCD applications and deployment manifests come out, and ArgoCD deploys them to the cluster.
 
-Node setup:
+## Cluster Types
 
-Indien we een leeg cluster hebben en zelf alles moeten inrichten, moet we ook kijken naar logscraping etc.
-* Fluent Bit/Fluentd-based of Beats
-* Loki with Promtail
+| Type | Description |
+|------|-------------|
+| `sandboxed-local` | Self-contained Kind cluster with in-cluster Forgejo, real TLS (`*.sandbox.rijksapp.dev`) |
+| `local` | Kind cluster with external Git (GitHub + git daemon), self-signed CA |
+| `odcn-production` | Production cluster in ODC-Noord |
+
+## Services
+
+| Service | Purpose |
+|---------|---------|
+| ArgoCD | GitOps deployment controller |
+| Forgejo | In-cluster Git server (sandboxed-local) |
+| PostgreSQL | CNPG-managed database cluster |
+| Keycloak | Identity and access management, SSO |
+| MinIO | S3-compatible object storage |
+| Operations Manager | ZAD self-service portal and API |
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md) — local setup guide
+- [Local Kind Cluster Setup](docs/local-kind-cluster-setup.md) — alternative local setup with external Git
+- [Keycloak Configuration](docs/keycloak.md) — Keycloak administration
+- [Keycloak YAML Configuration](docs/keycloak-yaml-configuration.md) — declarative Keycloak setup
+
+### Feature Documentation
+
+Feature-specific documentation is in the [`features/`](features/) directory. Key features:
+
+- [Sandboxed Local Development](features/sandboxed-local-development.md) — sandbox architecture and configuration
+- [Sandbox SSO Setup](features/sandbox-sso-setup.md) — connecting to production Keycloak for SSO
+- [Backup System](features/backup-system.md) — PVC backup and restore
+- [Bootstrap API Actions](features/bootstrap-api-actions.md) — API operations
+- [Namespace PostgreSQL Database](features/namespace-postgresql-database.md) — per-project database provisioning
+
+## Tools
+
+All operations use [Taskfile](https://taskfile.dev). Key commands:
+
+```bash
+task sandbox:setup                    # Full sandbox setup
+task sandbox:sync                     # Sync infrastructure changes to Forgejo
+task sandbox:skaffold-dev             # Hot-reload development
+task sandbox:update-operations-manager # Rebuild and deploy Operations Manager
+task sandbox:destroy                  # Tear down sandbox
+```
+
+## Secret Management
+
+Secrets are managed with SOPS and AGE encryption. Templates in the infrastructure overlays use `@secret-gen:random:XX` annotations for automatic password generation. The sandbox uses a per-setup AGE key (`security/sandbox-key.txt`), while shared secrets (TLS certificates) use a developer AGE key distributed out-of-band.
