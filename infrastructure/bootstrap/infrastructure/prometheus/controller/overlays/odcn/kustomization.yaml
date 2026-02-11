@@ -1,15 +1,29 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+namespace: rig-prd-operations
+
 resources:
   - ../../base
-  # Prometheus RBAC (namespace-scoped)
+  - ingress.yaml
+  # Prometheus RBAC (namespace-scoped) - kept for future kubernetes_sd_configs
   - role.yaml
   - rolebinding.yaml
-  # kube-state-metrics RBAC (namespace-scoped)
-  - kube-state-metrics-role.yaml
-  - kube-state-metrics-rolebinding.yaml
+  # kube-state-metrics RBAC - disabled until we need full cluster metrics
+  # - kube-state-metrics-role.yaml
+  # - kube-state-metrics-rolebinding.yaml
 
-# Production may need a different configmap that doesn't try to scrape
-# kubelet cAdvisor (requires node-level access)
-# For now, using the same config - adjust as needed based on cluster permissions
+patches:
+  # Override configmap with minimal static-only config (no k8s API access needed)
+  - target:
+      kind: ConfigMap
+      name: prometheus-config
+    path: configmap-patch.yaml
+  # Scale down kube-state-metrics (not needed for static scraping)
+  - target:
+      kind: Deployment
+      name: kube-state-metrics
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0

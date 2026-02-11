@@ -218,6 +218,9 @@ class Settings(BaseSettings):
     SOPS_AGE_PUBLIC_KEY: str | None = None  # Public key for SOPS age encryption
     SOPS_AGE_PRIVATE_KEY: str | None = None  # Private key for SOPS age decryption
 
+    # Prometheus metrics configuration
+    ENABLE_TRACEMALLOC: bool = False  # Enable tracemalloc for Python memory allocation tracking (adds ~10-30% overhead)
+
     # Logging configuration
     LOG_TO_FILE: bool = False  # Enable file logging alongside stdout
     LOG_FILE_PATH: str = "log.txt"  # Path to log file when LOG_TO_FILE is enabled

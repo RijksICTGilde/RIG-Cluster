@@ -163,7 +163,9 @@ class KopiaConnector:
         logger.debug("Initializing KopiaConnector")
 
         # Setup environment variables
+        # Set HOME to /tmp to avoid Kopia writing to non-existent /home/appuser
         self.env = os.environ.copy()
+        self.env["HOME"] = os.environ.get("TMPDIR", "/tmp")
 
         # Test Kopia CLI availability synchronously during initialization
         try:

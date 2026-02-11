@@ -5,9 +5,9 @@ resources:
   # Prometheus (uses namespace-manager service account from operations-manager)
   - deployment.yaml
   - service.yaml
-  - ingress.yaml
   - configmap.yaml
   - pvc.yaml
+  # Ingress is environment-specific - each overlay adds its own
   # kube-state-metrics (also uses namespace-manager service account)
   - kube-state-metrics-deployment.yaml
   - kube-state-metrics-service.yaml
