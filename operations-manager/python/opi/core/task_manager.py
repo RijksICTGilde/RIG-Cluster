@@ -707,7 +707,9 @@ async def _monitor_project_applications_continuously(
                                     "name": app_name,
                                     "sync": sync_status,
                                     "health": health_status,
-                                    "sync_message": sync_message[:100] + "..." if len(sync_message) > 100 else sync_message,
+                                    "sync_message": sync_message[:100] + "..."
+                                    if len(sync_message) > 100
+                                    else sync_message,
                                     "health_message": health_message[:100] + "..."
                                     if len(health_message) > 100
                                     else health_message,
@@ -818,7 +820,9 @@ async def _monitor_project_applications_continuously(
             logger.warning(
                 f"Continuous monitoring for project {project_name} ended after {elapsed_minutes:.1f} minutes without full completion"
             )
-            update_progress(task_id, 84, f"Monitoring gestopt na {elapsed_minutes:.1f} min - controleer ArgoCD handmatig")
+            update_progress(
+                task_id, 84, f"Monitoring gestopt na {elapsed_minutes:.1f} min - controleer ArgoCD handmatig"
+            )
 
     finally:
         # Clean up tracking entry so a new app monitoring task can be started if needed
