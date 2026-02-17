@@ -59,6 +59,7 @@ class ProjectInfo:
     events: list[dict[str, str]] | None = None
     namespace: str | None = None
     web_addresses: dict[str, str] | None = None  # component_name -> web_address
+    completed_at: float | None = None  # time.time() when project reached terminal status
 
 
 # Simple in-memory storage for projects only
@@ -133,11 +134,13 @@ class TaskProgressManager:
         """Mark the entire project as completed."""
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.COMPLETED
+            _projects[self.project_id].completed_at = time.time()
 
     def fail_project(self, error: str) -> None:
         """Mark the entire project as failed."""
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.FAILED
+            _projects[self.project_id].completed_at = time.time()
 
     def set_namespace(self, namespace: str) -> None:
         """Set namespace for monitoring and start monitoring."""
@@ -222,9 +225,8 @@ def _cleanup_completed_projects() -> None:
     cutoff = time.time() - 1800  # 30 minutes
     to_remove = []
     for project_id, project in _projects.items():
-        if project.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
-            # Use created_at as a proxy; completed projects older than 30 min are stale
-            if project.created_at.timestamp() < cutoff:
+        if project.status in [TaskStatus.COMPLETED, TaskStatus.FAILED] and project.completed_at:
+            if project.completed_at < cutoff:
                 to_remove.append(project_id)
     for project_id in to_remove:
         del _projects[project_id]
@@ -266,6 +268,7 @@ def complete_task(task_id: str, result: dict[str, Any]) -> None:
     if task_id in _projects:
         _projects[task_id].status = TaskStatus.COMPLETED
         _projects[task_id].current_step = "Completed"
+        _projects[task_id].completed_at = time.time()
         logger.info(f"Task {task_id} completed")
     else:
         logger.info(f"Task {task_id} completed (task not found)")
@@ -276,6 +279,7 @@ def fail_task(task_id: str, error: str) -> None:
     if task_id in _projects:
         _projects[task_id].status = TaskStatus.FAILED
         _projects[task_id].current_step = "Failed"
+        _projects[task_id].completed_at = time.time()
         logger.error(f"Task {task_id} failed: {error}")
     else:
         logger.error(f"Task {task_id} failed: {error} (task not found)")
