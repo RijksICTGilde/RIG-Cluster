@@ -292,11 +292,25 @@ class TestCleanupCompletedProjects:
         assert old_id not in _projects
         assert new_id in _projects
 
-    def test_get_task_triggers_cleanup(self):
+    def test_get_task_does_not_trigger_cleanup(self):
         old_id = self._make_old_completed_project()
-        # get_task should also trigger cleanup
+        # get_task should NOT trigger cleanup (only create_task and periodic loop do)
         get_task("nonexistent")
-        assert old_id not in _projects
+        assert old_id in _projects
+
+    def test_cleanup_removes_stuck_running_projects(self):
+        task_id = create_task("stuck-project")
+        _projects[task_id].status = TaskStatus.RUNNING
+        _projects[task_id].created_at = datetime.now() - timedelta(hours=3)
+        _cleanup_completed_projects()
+        assert task_id not in _projects
+
+    def test_cleanup_keeps_recent_running_projects(self):
+        task_id = create_task("active-project")
+        _projects[task_id].status = TaskStatus.RUNNING
+        _projects[task_id].created_at = datetime.now() - timedelta(minutes=30)
+        _cleanup_completed_projects()
+        assert task_id in _projects
 
 
 class TestPeriodicCleanup:

@@ -221,13 +221,18 @@ def _start_app_monitoring_if_not_active(task_id: str, project_name: str, applica
 
 
 def _cleanup_completed_projects() -> None:
-    """Remove projects that have been COMPLETED or FAILED for more than 30 minutes."""
+    """Remove projects that have been COMPLETED or FAILED for more than 30 minutes,
+    and RUNNING projects stuck for more than 2 hours (likely orphaned)."""
     cutoff = datetime.now(tz=UTC) - timedelta(minutes=30)
+    stuck_cutoff = datetime.now(tz=UTC) - timedelta(hours=2)
     to_remove = []
     for project_id, project in _projects.items():
         if project.status in [TaskStatus.COMPLETED, TaskStatus.FAILED] and project.completed_at:
             if project.completed_at < cutoff:
                 to_remove.append(project_id)
+        elif project.status == TaskStatus.RUNNING and project.created_at < stuck_cutoff:
+            logger.warning(f"Cleaning up stuck RUNNING project {project_id} (created {project.created_at})")
+            to_remove.append(project_id)
     for project_id in to_remove:
         del _projects[project_id]
         _project_managers.pop(project_id, None)
@@ -252,7 +257,7 @@ async def _periodic_cleanup_loop() -> None:
         try:
             _cleanup_completed_projects()
         except Exception as e:
-            logger.warning(f"Error in periodic cleanup: {e}")
+            logger.error(f"Error in periodic cleanup: {e}")
 
 
 def start_periodic_cleanup() -> None:
@@ -287,7 +292,6 @@ def create_task(project_name: str) -> str:
 
 def get_task(task_id: str) -> ProjectInfo | None:
     """Get project information by ID."""
-    _cleanup_completed_projects()
     return _projects.get(task_id)
 
 
@@ -609,6 +613,7 @@ async def _monitor_project_progress(project_id: str) -> None:
     finally:
         # Clean up tracking entry so a new monitoring task can be started if needed
         _active_monitoring_tasks.pop(project_id, None)
+        logger.debug(f"Removed monitoring tracking entry for project {project_id}")
 
     logger.debug(f"Finished monitoring project {project_id}")
 
@@ -818,6 +823,7 @@ async def _monitor_project_applications_continuously(
     finally:
         # Clean up tracking entry so a new app monitoring task can be started if needed
         _active_app_monitoring_tasks.pop(task_id, None)
+        logger.debug(f"Removed app monitoring tracking entry for project {task_id}")
 
     logger.info(f"Finished continuous monitoring for project {project_name} applications")
 
