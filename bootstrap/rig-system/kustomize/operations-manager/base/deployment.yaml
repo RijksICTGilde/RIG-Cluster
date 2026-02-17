@@ -61,10 +61,10 @@ spec:
         resources:
           limits:
             cpu: "1"
-            memory: 1Gi
+            memory: 512Mi
           requests:
             cpu: "200m"
-            memory: 512Mi
+            memory: 256Mi
         volumeMounts:
         - name: kube-api-access
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount

@@ -28,6 +28,7 @@ from opi.core.database_pools import close_database_pools
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks
+from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.web.router import web_router
 
@@ -71,7 +72,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error(f"Failed to start Git monitoring service: {e}")
 
+    # Start periodic task cleanup
+    start_periodic_cleanup()
+
     yield
+
+    # Stop periodic task cleanup
+    stop_periodic_cleanup()
 
     # Stop Git monitoring service
     if settings.ENABLE_GIT_MONITOR:

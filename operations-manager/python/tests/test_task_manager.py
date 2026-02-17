@@ -1,17 +1,16 @@
 """
 Tests for task_manager: monitoring deduplication, cleanup, completed_at tracking,
-and close() idempotency on GitConnector and ProjectManager.
+close() idempotency, and integration-level monitoring storm prevention.
 """
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from opi.core.task_manager import (
-    ProjectInfo,
     Task,
     TaskProgressManager,
     TaskStatus,
@@ -20,11 +19,12 @@ from opi.core.task_manager import (
     _cleanup_completed_projects,
     _project_managers,
     _projects,
-    _start_app_monitoring_if_not_active,
-    _start_monitoring_if_not_active,
     complete_task,
     create_task,
     fail_task,
+    get_task,
+    start_periodic_cleanup,
+    stop_periodic_cleanup,
 )
 
 
@@ -62,84 +62,94 @@ class TestTaskCreatedAtDefault:
 
 
 class TestCompletedAtTracking:
-    """Verify completed_at is set in all terminal paths."""
+    """Verify completed_at is set as datetime in all terminal paths."""
 
     def test_complete_task_sets_completed_at(self):
         task_id = create_task("test-project")
-        assert _projects[task_id].completed_at is None
+        project = get_task(task_id)
+        assert project is not None
+        assert project.completed_at is None
         complete_task(task_id, {"status": "ok"})
-        assert _projects[task_id].completed_at is not None
-        assert isinstance(_projects[task_id].completed_at, float)
+        project = get_task(task_id)
+        assert project is not None
+        assert project.completed_at is not None
+        assert isinstance(project.completed_at, datetime)
 
     def test_fail_task_sets_completed_at(self):
         task_id = create_task("test-project")
-        assert _projects[task_id].completed_at is None
         fail_task(task_id, "something broke")
-        assert _projects[task_id].completed_at is not None
-        assert isinstance(_projects[task_id].completed_at, float)
+        project = get_task(task_id)
+        assert project is not None
+        assert project.completed_at is not None
+        assert isinstance(project.completed_at, datetime)
 
     def test_progress_manager_complete_project_sets_completed_at(self):
         task_id = create_task("test-project")
         pm = TaskProgressManager(task_id, "test-project")
         pm.complete_project()
-        assert _projects[task_id].completed_at is not None
+        project = get_task(task_id)
+        assert project is not None
+        assert project.completed_at is not None
+        assert isinstance(project.completed_at, datetime)
 
     def test_progress_manager_fail_project_sets_completed_at(self):
         task_id = create_task("test-project")
         pm = TaskProgressManager(task_id, "test-project")
         pm.fail_project("error")
-        assert _projects[task_id].completed_at is not None
+        project = get_task(task_id)
+        assert project is not None
+        assert project.completed_at is not None
+        assert isinstance(project.completed_at, datetime)
 
 
 class TestMonitoringDeduplication:
-    """Verify _start_monitoring_if_not_active prevents duplicate monitoring tasks."""
+    """Verify monitoring deduplication prevents duplicate tasks."""
 
     @pytest.mark.asyncio
     @patch("opi.core.task_manager._monitor_project_progress", new_callable=AsyncMock)
-    async def test_start_monitoring_creates_task(self, mock_monitor):
+    async def test_start_monitoring_via_progress_manager(self, mock_monitor):
+        """Test that TaskProgressManager.start_monitoring() creates a tracked task."""
         mock_monitor.return_value = None
         task_id = create_task("test-project")
-        _projects[task_id].namespace = "test-ns"
-
-        _start_monitoring_if_not_active(task_id)
+        pm = TaskProgressManager(task_id, "test-project")
+        pm.set_namespace("test-ns")
+        # set_namespace calls start_monitoring internally
         assert task_id in _active_monitoring_tasks
-        # Allow the task to start
         await asyncio.sleep(0)
 
     @pytest.mark.asyncio
     @patch("opi.core.task_manager._monitor_project_progress", new_callable=AsyncMock)
-    async def test_start_monitoring_deduplicates(self, mock_monitor):
+    async def test_multiple_set_namespace_calls_only_one_task(self, mock_monitor):
+        """Calling set_namespace multiple times should not create multiple tasks."""
         mock_monitor.return_value = None
         task_id = create_task("test-project")
-        _projects[task_id].namespace = "test-ns"
-
-        _start_monitoring_if_not_active(task_id)
+        pm = TaskProgressManager(task_id, "test-project")
+        pm.set_namespace("test-ns")
         first_task = _active_monitoring_tasks[task_id]
 
-        _start_monitoring_if_not_active(task_id)
+        pm.set_namespace("test-ns-2")
         second_task = _active_monitoring_tasks[task_id]
 
         # Should be the same task object -- not replaced
         assert first_task is second_task
-        # mock should only have been wrapped in create_task once
         await asyncio.sleep(0)
 
     @pytest.mark.asyncio
     @patch("opi.core.task_manager._monitor_project_progress", new_callable=AsyncMock)
-    async def test_start_monitoring_replaces_done_task(self, mock_monitor):
+    async def test_replaces_done_monitoring_task(self, mock_monitor):
+        """After a monitoring task completes, a new one can be started."""
         mock_monitor.return_value = None
         task_id = create_task("test-project")
-        _projects[task_id].namespace = "test-ns"
-
-        _start_monitoring_if_not_active(task_id)
+        pm = TaskProgressManager(task_id, "test-project")
+        pm.set_namespace("test-ns")
         first_task = _active_monitoring_tasks[task_id]
 
         # Let the first task complete
         await asyncio.sleep(0.01)
         assert first_task.done()
 
-        # Now a new one should be created
-        _start_monitoring_if_not_active(task_id)
+        # Calling start_monitoring again should create a new task
+        pm.start_monitoring()
         second_task = _active_monitoring_tasks[task_id]
         assert first_task is not second_task
         await asyncio.sleep(0)
@@ -149,7 +159,10 @@ class TestMonitoringDeduplication:
         "opi.core.task_manager._monitor_project_applications_continuously",
         new_callable=AsyncMock,
     )
-    async def test_start_app_monitoring_deduplicates(self, mock_monitor):
+    async def test_app_monitoring_deduplicates(self, mock_monitor):
+        """Application monitoring also deduplicates per project."""
+        from opi.core.task_manager import _start_app_monitoring_if_not_active
+
         mock_monitor.return_value = None
         task_id = create_task("test-project")
         _projects[task_id].namespace = "test-ns"
@@ -164,55 +177,84 @@ class TestMonitoringDeduplication:
         await asyncio.sleep(0)
 
 
-class TestCleanupCompletedProjects:
-    """Verify _cleanup_completed_projects removes stale projects and cancels tasks."""
+class TestMonitoringStormPrevention:
+    """Integration test: simulate the actual bug scenario where multiple callers
+    trigger monitoring and verify only one monitoring task runs at a time."""
 
-    def test_cleanup_removes_old_completed_projects(self):
+    @pytest.mark.asyncio
+    @patch("opi.core.task_manager._monitor_project_progress", new_callable=AsyncMock)
+    async def test_multiple_callers_produce_single_monitoring_task(self, mock_monitor):
+        """Simulate the storm: set_namespace, start_monitoring, and start_task_monitoring
+        all try to start monitoring concurrently. Only one task should exist."""
+        from opi.core.task_manager import start_task_monitoring
+
+        mock_monitor.return_value = None
+        task_id = create_task("test-project")
+        pm = TaskProgressManager(task_id, "test-project")
+
+        # Caller 1: set_namespace (which calls start_monitoring internally)
+        pm.set_namespace("test-ns")
+        first_task = _active_monitoring_tasks.get(task_id)
+        assert first_task is not None
+
+        # Caller 2: explicit start_monitoring
+        pm.start_monitoring()
+        assert _active_monitoring_tasks[task_id] is first_task
+
+        # Caller 3: start_task_monitoring (used from process_project_background)
+        await start_task_monitoring(task_id)
+        assert _active_monitoring_tasks[task_id] is first_task
+
+        # Only one task should have been created total
+        assert mock_monitor.call_count == 1
+        await asyncio.sleep(0)
+
+
+class TestCleanupCompletedProjects:
+    """Verify cleanup removes stale projects and cancels tasks."""
+
+    def _make_old_completed_project(self) -> str:
+        """Helper: create a project completed 1 hour ago."""
         task_id = create_task("old-project")
         _projects[task_id].status = TaskStatus.COMPLETED
-        _projects[task_id].completed_at = time.time() - 3600  # 1 hour ago
+        _projects[task_id].completed_at = datetime.now() - timedelta(hours=1)
+        return task_id
 
+    def test_cleanup_removes_old_completed_projects(self):
+        task_id = self._make_old_completed_project()
         _cleanup_completed_projects()
         assert task_id not in _projects
 
     def test_cleanup_removes_old_failed_projects(self):
         task_id = create_task("failed-project")
         _projects[task_id].status = TaskStatus.FAILED
-        _projects[task_id].completed_at = time.time() - 3600
-
+        _projects[task_id].completed_at = datetime.now() - timedelta(hours=1)
         _cleanup_completed_projects()
         assert task_id not in _projects
 
     def test_cleanup_keeps_recent_completed_projects(self):
         task_id = create_task("recent-project")
         _projects[task_id].status = TaskStatus.COMPLETED
-        _projects[task_id].completed_at = time.time() - 60  # 1 minute ago
-
+        _projects[task_id].completed_at = datetime.now() - timedelta(minutes=1)
         _cleanup_completed_projects()
         assert task_id in _projects
 
     def test_cleanup_keeps_running_projects(self):
         task_id = create_task("running-project")
         _projects[task_id].status = TaskStatus.RUNNING
-
         _cleanup_completed_projects()
         assert task_id in _projects
 
     def test_cleanup_keeps_completed_without_timestamp(self):
         task_id = create_task("no-timestamp-project")
         _projects[task_id].status = TaskStatus.COMPLETED
-        # completed_at is None -- should not be cleaned up
         assert _projects[task_id].completed_at is None
-
         _cleanup_completed_projects()
         assert task_id in _projects
 
     def test_cleanup_cancels_monitoring_tasks(self):
-        task_id = create_task("old-project")
-        _projects[task_id].status = TaskStatus.COMPLETED
-        _projects[task_id].completed_at = time.time() - 3600
+        task_id = self._make_old_completed_project()
 
-        # Simulate active monitoring tasks
         mock_task = MagicMock(spec=asyncio.Task)
         mock_task.done.return_value = False
         _active_monitoring_tasks[task_id] = mock_task
@@ -229,36 +271,62 @@ class TestCleanupCompletedProjects:
         assert task_id not in _active_app_monitoring_tasks
 
     def test_cleanup_skips_cancel_on_already_done_tasks(self):
-        task_id = create_task("old-project")
-        _projects[task_id].status = TaskStatus.COMPLETED
-        _projects[task_id].completed_at = time.time() - 3600
+        task_id = self._make_old_completed_project()
 
         mock_task = MagicMock(spec=asyncio.Task)
         mock_task.done.return_value = True
         _active_monitoring_tasks[task_id] = mock_task
 
         _cleanup_completed_projects()
-
         mock_task.cancel.assert_not_called()
 
     def test_cleanup_also_removes_project_managers(self):
-        task_id = create_task("old-project")
+        task_id = self._make_old_completed_project()
         _project_managers[task_id] = MagicMock()
-        _projects[task_id].status = TaskStatus.COMPLETED
-        _projects[task_id].completed_at = time.time() - 3600
-
         _cleanup_completed_projects()
         assert task_id not in _project_managers
 
     def test_create_task_triggers_cleanup(self):
-        old_id = create_task("old-project")
-        _projects[old_id].status = TaskStatus.COMPLETED
-        _projects[old_id].completed_at = time.time() - 3600
-
-        # Creating a new task should trigger cleanup of the old one
+        old_id = self._make_old_completed_project()
         new_id = create_task("new-project")
         assert old_id not in _projects
         assert new_id in _projects
+
+    def test_get_task_triggers_cleanup(self):
+        old_id = self._make_old_completed_project()
+        # get_task should also trigger cleanup
+        get_task("nonexistent")
+        assert old_id not in _projects
+
+
+class TestPeriodicCleanup:
+    """Verify the periodic cleanup task lifecycle."""
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_periodic_cleanup(self):
+        from opi.core.task_manager import _cleanup_task
+
+        start_periodic_cleanup()
+        from opi.core import task_manager
+
+        assert task_manager._cleanup_task is not None
+        assert not task_manager._cleanup_task.done()
+
+        stop_periodic_cleanup()
+        assert task_manager._cleanup_task is None
+
+    @pytest.mark.asyncio
+    async def test_start_periodic_cleanup_idempotent(self):
+        start_periodic_cleanup()
+        from opi.core import task_manager
+
+        first = task_manager._cleanup_task
+
+        start_periodic_cleanup()
+        second = task_manager._cleanup_task
+        assert first is second
+
+        stop_periodic_cleanup()
 
 
 class TestGitConnectorCloseIdempotency:
