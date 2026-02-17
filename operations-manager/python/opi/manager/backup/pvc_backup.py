@@ -346,15 +346,16 @@ class PVCBackupManager(BaseBackupManager):
         deployment_name: str,
         namespace: str,
         cluster: str,
-        all_pvcs: bool = False,
         backup_run_id: str | None = None,
     ) -> list[BackupResult]:
         """
         Backup PVCs for a project deployment with full metadata context.
 
-        This method extracts storage definitions from the project file and
-        backs up each PVC with proper metadata (project, deployment, component,
-        storage name, generation).
+        This method extracts persistent storage definitions from the project file
+        to determine which PVCs to backup. Unlike namespace-level backup endpoints
+        (which rely on the backup.rig.nl/enabled label), this method uses the
+        project file as the source of truth -- consistent with how database and
+        MinIO backups discover their targets.
 
         Args:
             project_name: Name of the project
@@ -362,7 +363,7 @@ class PVCBackupManager(BaseBackupManager):
             deployment_name: Name of the deployment
             namespace: Kubernetes namespace (with cluster prefix)
             cluster: Cluster name
-            all_pvcs: If True, backup all PVCs; if False, only labeled ones
+            backup_run_id: Optional backup run ID (generated if not provided)
 
         Returns:
             List of BackupResult for each PVC
@@ -382,25 +383,14 @@ class PVCBackupManager(BaseBackupManager):
                 backup_run_id = generate_backup_run_id()
             logger.info(f"Starting backup run {backup_run_id} for project {project_name}/{deployment_name}")
 
-            # Get PVCs to backup
-            if all_pvcs:
-                pvc_names = await self._get_all_pvcs(namespace)
-            else:
-                pvc_names = await self._get_backup_pvcs(namespace)
-
-            if not pvc_names:
-                logger.info(f"No PVCs found in namespace {namespace}")
-                return results
-
-            logger.info(f"Found {len(pvc_names)} PVC(s) to backup in {namespace} for project {project_name}")
-
             # Extract component references from deployment
             deployment_components = project_file_handler.extract_deployment_components(project_data, deployment_name)
 
             # Get base components for storage definitions
             base_components = {c.get("name"): c for c in project_data.get("components", [])}
 
-            # Build a map of PVC name -> context for quick lookup
+            # Build a map of PVC name -> context from the project file.
+            # This is the source of truth for which PVCs belong to this deployment.
             pvc_context_map: dict[str, dict[str, str | int | None]] = {}
             for dep_component in deployment_components:
                 # Deployment components use "reference" to point to base component
@@ -435,7 +425,7 @@ class PVCBackupManager(BaseBackupManager):
                     # Generate the expected PVC name
                     expected_pvc_name = generate_pvc_name(unique_name, storage_name, generation)
 
-                    logger.debug(
+                    logger.info(
                         f"PVC mapping: {expected_pvc_name} -> component={component_name}, "
                         f"storage={storage_name}, generation={generation}"
                     )
@@ -446,12 +436,22 @@ class PVCBackupManager(BaseBackupManager):
                         "generation": generation,
                     }
 
-            # Backup each PVC with context
-            for pvc_name in pvc_names:
+            if not pvc_context_map:
+                logger.warning(
+                    f"No persistent storage found in project file for deployment "
+                    f"{project_name}/{deployment_name}. No PVCs to backup."
+                )
+                return results
+
+            logger.info(
+                f"Found {len(pvc_context_map)} PVC(s) to backup from project file "
+                f"for {project_name}/{deployment_name}: {list(pvc_context_map.keys())}"
+            )
+
+            # Backup each PVC identified from the project file
+            for pvc_name, context in pvc_context_map.items():
                 await self.lock.update_progress(namespace, pvc_name)
 
-                # Look up context for this PVC
-                context = pvc_context_map.get(pvc_name, {})
                 ctx_component = context.get("component_name")
                 ctx_storage = context.get("storage_name")
                 ctx_gen = context.get("generation")

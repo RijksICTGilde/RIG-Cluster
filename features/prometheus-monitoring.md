@@ -42,7 +42,7 @@ Access the UI at `https://prometheus.sandbox.rijksapp.dev`.
 
 #### ODCN Production
 
-Prometheus is enabled in the ODCN cluster kustomization (`infrastructure/bootstrap/clusters/odcn/kustomization.yaml`). It uses a minimal static configuration that only scrapes Prometheus itself and the Operations Manager - no Kubernetes API access required.
+Prometheus is enabled in the ODCN cluster kustomization (`infrastructure/bootstrap/clusters/odcn/kustomization.yaml`). It uses Kubernetes service discovery via **Capsule Proxy** for dynamic pod discovery across tenant namespaces — no hardcoded namespace lists needed. See [Capsule Proxy Prometheus Discovery](capsule-proxy-prometheus-discovery.md) for details.
 
 To deploy, apply the infrastructure manifests. The Prometheus UI is available at:
 
@@ -232,8 +232,8 @@ infrastructure/bootstrap/infrastructure/prometheus/
 │       └── odcn/
 │           ├── kustomization.yaml     # namespace: rig-prd-operations
 │           ├── ingress.yaml           # HAProxy IP-whitelisted
-│           ├── configmap-patch.yaml   # Minimal static-only config
-│           ├── role.yaml              # RBAC (kept for future k8s discovery)
+│           ├── configmap-patch.yaml   # Capsule Proxy kubernetes_sd_configs
+│           ├── role.yaml              # RBAC for kubernetes_sd_configs
 │           └── rolebinding.yaml
 ```
 
@@ -241,13 +241,13 @@ infrastructure/bootstrap/infrastructure/prometheus/
 
 | Aspect | Local / Sandbox | ODCN Production |
 |--------|----------------|-----------------|
-| Scrape method | Kubernetes service discovery | Static targets only |
-| K8s API access | Yes (namespace-manager SA) | Not needed |
+| Scrape method | Kubernetes service discovery | Kubernetes service discovery via Capsule Proxy |
+| K8s API access | Yes (namespace-manager SA) | Yes, via Capsule Proxy (namespace-manager SA) |
 | Namespace | `rig-system` | `rig-prd-operations` |
 | kube-state-metrics | Active | Scaled to 0 replicas |
 | cAdvisor metrics | Yes | No |
 | Ingress | nginx ingress | HAProxy with IP whitelist |
-| Scrape targets | All annotated pods in multiple namespaces | Prometheus + Operations Manager |
+| Scrape targets | All annotated pods in multiple namespaces | All annotated pods in tenant namespaces |
 
 ## Operations Manager Metrics Endpoint
 

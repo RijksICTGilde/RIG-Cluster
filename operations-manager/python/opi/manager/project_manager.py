@@ -3553,27 +3553,32 @@ class ProjectManager:
                     await self._keycloak_manager.create_resources_for_deployment(project_data, deployment)
                     await self._redis_manager.create_resources_for_deployment(project_data, deployment)
 
-                    # Update clone-from status if any clones were performed for this deployment
-                    if current_deployment_name and self.has_clones_performed(current_deployment_name):
-                        # Get timestamp from the last clone operation
-                        clone_info = self._clones_performed.get(current_deployment_name, {})
+            # Generate application manifests (including PVC) BEFORE setting clone status.
+            # PVC clone relies on clone-from.status.completed being false to include dataSource.
+            await self._process_application_manifests(deployment_name)
+
+            # Now update clone-from status for all deployments that had clones performed
+            # (covers DB, MinIO, and PVC clones reported during manifest generation)
+            for deployment in deployments:
+                if deployment.get("cluster") == settings.CLUSTER_MANAGER:
+                    dep_name = deployment.get("name")
+                    if dep_name and self.has_clones_performed(dep_name):
+                        clone_info = self._clones_performed.get(dep_name, {})
                         timestamps: list[str] = [
                             ts for info in clone_info.values() if (ts := info.get("timestamp")) is not None
                         ]
                         timestamp = max(timestamps) if timestamps else datetime.now(UTC).isoformat()
 
                         self._project_file_handler.set_clone_status(
-                            project_data, current_deployment_name, completed=True, timestamp=timestamp
+                            project_data, dep_name, completed=True, timestamp=timestamp
                         )
                         logger.info(
-                            f"Updated clone-from status to completed for deployment {current_deployment_name} "
-                            f"(clones: {list(self._clones_performed.get(current_deployment_name, {}).keys())})"
+                            f"Updated clone-from status to completed for deployment {dep_name} "
+                            f"(clones: {list(self._clones_performed.get(dep_name, {}).keys())})"
                         )
 
             # Clear clones tracking after all deployments processed
             self.clear_clones_performed()
-
-            await self._process_application_manifests(deployment_name)
 
             # Save encrypted deployment configurations to project file
             try:
@@ -3886,6 +3891,12 @@ class ProjectManager:
             # This allows overriding the pull policy per deployment
             image_pull_policy = component.get("imagePullPolicy", "Always")
 
+            # Support local Kind cluster images: "local/imagename:tag" strips the prefix
+            # and sets imagePullPolicy to Never (image must be pre-loaded into Kind)
+            if image_url.startswith("local/"):
+                image_url = image_url[len("local/") :]
+                image_pull_policy = "Never"
+
             # Extract storage configuration from component
             storage_configs = self._project_file_handler.extract_component_storage(project_data, component_reference)
 
@@ -4051,6 +4062,7 @@ class ProjectManager:
             component_uses_postgresql = False
             component_uses_minio = False
             component_uses_sso = False
+            component_uses_redis = False
 
             if component_reference:
                 component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
@@ -4070,6 +4082,9 @@ class ProjectManager:
                 )
                 component_uses_minio = ServiceType.MINIO_STORAGE.value in all_services
                 component_uses_sso = ServiceType.KEYCLOAK.value in all_services
+                component_uses_redis = (
+                    ServiceType.REDIS.value in all_services or ServiceType.NAMESPACE_REDIS.value in all_services
+                )
 
             # Build envFrom secrets list based on services used and user env vars
             # This list determines which secrets are referenced in the deployment manifest
@@ -4091,6 +4106,11 @@ class ProjectManager:
                 keycloak_secret_name = KeycloakSecret.get_secret_name(deployment_name)
                 env_from_secrets.append(keycloak_secret_name)
                 logger.debug(f"Keycloak secret added to envFrom: {keycloak_secret_name}")
+
+            if component_uses_redis:
+                redis_secret_name = RedisSecret.get_secret_name(deployment_name)
+                env_from_secrets.append(redis_secret_name)
+                logger.debug(f"Redis secret added to envFrom: {redis_secret_name}")
 
             # Add component-level user secret if user env vars exist
             if user_env_vars:
@@ -4681,6 +4701,58 @@ class ProjectManager:
                         f"Component {component_name} uses MinIO but no object storage credentials found in deployment {deployment_name}"
                     )
 
+            # Create Redis secret if component uses Redis cache service
+            if component_uses_redis:
+                # Get Redis credentials from the private secrets map
+                redis_credentials = self._get_secret_from_map(deployment_name, "redis", RedisSecret)
+
+                if redis_credentials:
+                    logger.debug(f"Creating Redis secret for {component_name} with cache credentials")
+
+                    redis_secret = RedisSecret(
+                        host=redis_credentials.host,
+                        port=redis_credentials.port,
+                        username=redis_credentials.username,
+                        password=redis_credentials.password,
+                        key_prefix=redis_credentials.key_prefix,
+                    )
+
+                    # Get base Redis secret data
+                    redis_secret_data = redis_secret.to_k8s_secret_data()
+
+                    # Add resolved Redis aliases from all components
+                    redis_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("redis", {})
+                    if redis_aliases:
+                        logger.debug(f"Resolving {len(redis_aliases)} redis aliases for deployment {deployment_name}")
+                        resolved_aliases = self._resolve_aliases(redis_aliases, redis_secret_data)
+                        redis_secret_data.update(resolved_aliases)
+                        logger.info(f"Added {len(resolved_aliases)} resolved redis aliases to deployment secret")
+
+                    redis_secret_vars = {
+                        "name": RedisSecret.get_secret_name(deployment_name),
+                        "namespace": namespace,
+                        "secret_pairs": redis_secret_data,
+                    }
+
+                    redis_manifest_name = f"{RedisSecret.get_secret_name(deployment_name)}-secret"
+
+                    redis_secret_path = self._manifest_generator.create_manifest_file(
+                        template_path=secret_template_path,
+                        values=redis_secret_vars,
+                        output_dir=full_output_dir,
+                        output_filename=redis_manifest_name,
+                        use_sops=True,
+                    )
+
+                    sops_filename = f"{redis_manifest_name}.to-sops.yaml"
+                    created_files.append(sops_filename)
+                    logger.info(f"Redis secret will be SOPS encrypted: {sops_filename}")
+                    logger.info(f"Successfully created Redis secret manifest: {redis_secret_path}")
+                else:
+                    logger.warning(
+                        f"Component {component_name} uses Redis but no cache credentials found in deployment {deployment_name}"
+                    )
+
         # Clear rollback info on success
         self._pending_subdomain_rollback = None
         return created_files
@@ -4863,8 +4935,12 @@ class ProjectManager:
 
                         # Handle clone_from only if force_clone is true
                         if clone_from and force_clone:
-                            deployment["clone-from"] = clone_from
-                            logger.info(f"Setting clone-from to '{clone_from}' (force_clone=true)")
+                            deployment["clone-from"] = {
+                                "type": "deployment",
+                                "reference": clone_from,
+                                "mode": "once",
+                            }
+                            logger.info(f"Setting clone-from to deployment '{clone_from}' (force_clone=true)")
 
                         break
 
@@ -4921,8 +4997,26 @@ class ProjectManager:
                             }
                         )
 
-                        # If clone-from is specified, add clone-from flag
-                        new_deployment["clone-from"] = clone_from
+                        # TODO: We don't explicitly store the "domain type" (e.g. whether the
+                        # subdomain is derived from the deployment name). This heuristic preserves
+                        # the domain setup when the source used its deployment name as subdomain.
+                        # A proper fix would be to store the domain type explicitly so we can
+                        # reliably reconstruct the correct subdomain for cloned deployments.
+                        source_subdomain = source_deployment.get("subdomain")
+                        source_name = source_deployment.get("name")
+                        if source_subdomain and source_subdomain == source_name:
+                            new_deployment["subdomain"] = deployment_name
+                            logger.info(
+                                f"Source subdomain '{source_subdomain}' matches source deployment name, "
+                                f"setting cloned subdomain to '{deployment_name}'"
+                            )
+
+                        # Set clone-from in dict format for proper status tracking
+                        new_deployment["clone-from"] = {
+                            "type": "deployment",
+                            "reference": clone_from,
+                            "mode": "once",
+                        }
                     else:
                         raise ValueError(f"Source deployment '{clone_from}' not found in project '{project_name}'")
 

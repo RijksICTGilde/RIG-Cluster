@@ -3,11 +3,10 @@ kind: ConfigMap
 metadata:
   name: prometheus-config
 data:
-  # Minimal ODCN config: static targets only, no Kubernetes API access needed.
-  # When kubernetes_sd_configs is needed later, add KUBERNETES_SERVICE_HOST env var
-  # to the Prometheus deployment pointing to Capsule Proxy:
-  #   cluster-api.apps.prd1.gn2.quattro.rijksapps.nl
-  # (same as external-dns and operations-manager)
+  # ODCN config: uses Capsule Proxy (KUBERNETES_SERVICE_HOST) for tenant-scoped
+  # Kubernetes service discovery. No hardcoded namespace lists needed - Capsule Proxy
+  # returns only namespaces visible to the tenant.
+  # Node-level jobs (cAdvisor, kubelet) are not available through Capsule Proxy.
   prometheus.yml: |
     global:
       scrape_interval: 30s
@@ -19,8 +18,99 @@ data:
         static_configs:
           - targets: ['localhost:9090']
 
-      # Scrape Operations Manager (OPI) process + custom metrics
-      - job_name: 'operations-manager'
-        static_configs:
-          - targets: ['operations-manager:8000']
-        metrics_path: /metrics
+      # Scrape pods with prometheus.io/scrape annotation
+      # Namespace discovery is handled by Capsule Proxy (tenant-scoped)
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Only scrape pods with prometheus.io/scrape=true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          # Use custom path if prometheus.io/path is set
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          # Replace port if prometheus.io/port is set (combine pod IP with custom port)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+          # Map pod labels to Prometheus labels
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          # Add namespace and pod name as labels
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+      # Scrape CloudNativePG PostgreSQL metrics (database sizes, replication, etc.)
+      - job_name: 'cloudnative-pg'
+        scrape_interval: 2h
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Only scrape CNPG pods by label
+          - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+            action: keep
+            regex: rig-db
+          # Use metrics port 9187
+          - source_labels: [__address__]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:9187
+          # Add namespace and pod labels
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+            target_label: cluster
+
+      # Scrape MinIO metrics (bucket sizes, object counts, capacity)
+      - job_name: 'minio'
+        scrape_interval: 2h
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: minio
+          - source_labels: [__address__]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:9000
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+        metrics_path: /minio/v2/metrics/cluster
+
+      # Scrape Keycloak RIG custom metrics (user counts, login events per realm)
+      - job_name: 'keycloak-rig-metrics'
+        scrape_interval: 2h
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Only scrape Keycloak pods by label
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: keycloak
+          # Use main Keycloak port 8080
+          - source_labels: [__address__]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:8080
+          # Add namespace and pod labels
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+        metrics_path: /realms/master/rig-metrics

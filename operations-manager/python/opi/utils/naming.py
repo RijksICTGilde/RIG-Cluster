@@ -465,6 +465,43 @@ def generate_minio_username(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(username, 63)  # MinIO username limit
 
 
+def generate_redis_username(project_name: str, deployment_name: str) -> str:
+    """
+    Generate a consistent Redis ACL username.
+
+    Format: {deployment}-{project} (hyphen separated, matching domain convention)
+
+    Args:
+        project_name: Name of the project
+        deployment_name: Name of the deployment
+
+    Returns:
+        Redis ACL username string
+    """
+    project_clean = _sanitize_for_lowercase(project_name)
+    deployment_clean = _sanitize_for_lowercase(deployment_name)
+    username = f"{deployment_clean}-{project_clean}"
+    return _truncate_if_needed(username, 63)
+
+
+def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:
+    """
+    Generate a consistent Redis key prefix for ACL restrictions.
+
+    Format: {deployment}-{project}: (matching domain convention)
+
+    Args:
+        project_name: Name of the project
+        deployment_name: Name of the deployment
+
+    Returns:
+        Redis key prefix string (without trailing *)
+    """
+    project_clean = _sanitize_for_lowercase(project_name)
+    deployment_clean = _sanitize_for_lowercase(deployment_name)
+    return f"{deployment_clean}-{project_clean}:"
+
+
 def generate_bucket_name(project_name: str, deployment_name: str, generation: int | None = None) -> str:
     """
     Generate a consistent S3/MinIO bucket name with optional generation suffix.

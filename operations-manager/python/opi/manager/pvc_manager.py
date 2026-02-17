@@ -182,9 +182,12 @@ class PVCManager:
         for storage in persistent_storage:
             storage_name = storage["name"]
 
-            # Get generation for this storage from project data
-            generation = self.project_manager._project_file_handler.get_storage_generation(
-                project_data, deployment_name, component_name, storage_name
+            # Get generation for this storage from project data (default 0 = normal name, no suffix)
+            generation = (
+                self.project_manager._project_file_handler.get_storage_generation(
+                    project_data, deployment_name, component_name, storage_name
+                )
+                or 0
             )
 
             # Get backup setting for this storage (project-level or per-storage override)
@@ -223,8 +226,14 @@ class PVCManager:
             force_clone = force_clone_override or deployment.get("force-clone", False)
             should_skip_clone = False
 
-            # Check clone mode and status for dict format
-            if clone_from and isinstance(clone_from, dict):
+            if clone_from:
+                # clone-from must be a dict with type/reference/mode keys
+                if not isinstance(clone_from, dict):
+                    raise ValueError(
+                        f"clone-from for deployment '{deployment_name}' must be a dict with 'type', 'reference', "
+                        f"and 'mode' keys, got: {type(clone_from).__name__} = {clone_from!r}"
+                    )
+
                 clone_mode = clone_from.get("mode", "once")
                 clone_status = clone_from.get("status", {})
                 clone_completed = clone_status.get("completed", False) if isinstance(clone_status, dict) else False
@@ -246,25 +255,21 @@ class PVCManager:
                     logger.info(f"PVC clone mode 'always' for {deployment_name}/{component_name}/{storage_name}")
 
             if clone_from and not should_skip_clone:
-                # Handle both dict format (new) and string format (legacy)
-                if isinstance(clone_from, dict):
-                    clone_type = clone_from.get("type")
-                    if clone_type == "deployment":
-                        # Local deployment clone
-                        source_deployment = clone_from.get("reference")
-                    elif clone_type == "remote-source":
-                        # PVC cannot clone from remote source (Kubernetes dataSource only works locally)
-                        logger.warning(
-                            f"PVC clone-from type 'remote-source' is not supported for {deployment_name}/{component_name}/{storage_name}. "
-                            "Kubernetes PVC dataSource only supports local cloning. Skipping PVC clone."
-                        )
-                        source_deployment = None
-                    else:
-                        logger.warning(f"Unknown clone-from type '{clone_type}' for PVC, skipping clone")
-                        source_deployment = None
+                clone_type = clone_from.get("type")
+                source_deployment: str | None = None
+
+                if clone_type == "deployment":
+                    source_deployment = clone_from.get("reference")
+                elif clone_type == "remote-source":
+                    # PVC cannot clone from remote source (Kubernetes dataSource only works locally)
+                    logger.warning(
+                        f"PVC clone-from type 'remote-source' is not supported for {deployment_name}/{component_name}/{storage_name}. "
+                        "Kubernetes PVC dataSource only supports local cloning. Skipping PVC clone."
+                    )
                 else:
-                    # Legacy format: clone_from is a string (deployment name)
-                    source_deployment = clone_from
+                    raise ValueError(
+                        f"Unknown clone-from type '{clone_type}' for PVC in deployment '{deployment_name}'"
+                    )
 
                 if source_deployment:
                     # Look up the SOURCE deployment's PVC generation (not target's)
@@ -281,6 +286,21 @@ class PVCManager:
                     source_pvc_name = generate_pvc_name(source_unique_name, storage_name, source_generation)
                     pvc_variables["source_pvc_name"] = source_pvc_name
                     logger.info(f"PVC {pvc_variables['name']} will be cloned from {source_pvc_name}")
+
+                    # Record revision at component level (PVC tracking is per component, not deployment)
+                    self.project_manager._revision_manager.record_component_clone(
+                        project_data=project_data,
+                        deployment_name=deployment_name,
+                        component_name=component_name,
+                        service_type="persistent-storage",
+                        reference_name=storage_name,
+                        generation=generation,
+                        resource_name=pvc_variables["name"],
+                        source=f"deployment:{source_deployment}",
+                    )
+
+                    # Report clone to project_manager for status tracking
+                    self.project_manager.report_clone_performed(deployment_name, "persistent-storage", generation)
 
             # Create PVC manifest using centralized naming utility with generation
             manifest_type = generate_pvc_manifest_type(storage_name)

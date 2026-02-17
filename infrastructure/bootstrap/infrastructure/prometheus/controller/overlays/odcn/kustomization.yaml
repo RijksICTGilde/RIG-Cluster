@@ -6,7 +6,7 @@ namespace: rig-prd-operations
 resources:
   - ../../base
   - ingress.yaml
-  # Prometheus RBAC (namespace-scoped) - kept for future kubernetes_sd_configs
+  # Prometheus RBAC (namespace-scoped) for kubernetes_sd_configs
   - role.yaml
   - rolebinding.yaml
   # kube-state-metrics RBAC - disabled until we need full cluster metrics
@@ -14,12 +14,22 @@ resources:
   # - kube-state-metrics-rolebinding.yaml
 
 patches:
-  # Override configmap with minimal static-only config (no k8s API access needed)
+  # Override configmap with Capsule Proxy-based kubernetes_sd_configs
   - target:
       kind: ConfigMap
       name: prometheus-config
     path: configmap-patch.yaml
-  # Scale down kube-state-metrics (not needed for static scraping)
+  # Point Prometheus at Capsule Proxy for tenant-scoped Kubernetes API access
+  - target:
+      kind: Deployment
+      name: prometheus
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+        - name: KUBERNETES_SERVICE_HOST
+          value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl
+  # Scale down kube-state-metrics (not needed in tenant cluster)
   - target:
       kind: Deployment
       name: kube-state-metrics

@@ -10,14 +10,14 @@ SERVICE URLS AND CREDENTIALS
   Forgejo              https://forgejo.sandbox.rijksapp.dev             rig-admin    admin1234
   Keycloak             https://keycloak.sandbox.rijksapp.dev            admin        admin1234
   MinIO                https://minio.sandbox.rijksapp.dev               admin        admin1234
-  Operations Manager   https://operations-manager.sandbox.rijksapp.dev  (via Keycloak SSO)
+  ZAD                  https://zad.sandbox.rijksapp.dev                 admin        admin1234
 
 COMMON TASK COMMANDS
 
   Sync infrastructure changes to Forgejo:
     task sandbox:sync
 
-  Rebuild and deploy Operations Manager:
+  Rebuild and deploy ZAD:
     task sandbox:update-operations-manager
 
   Start hot-reload development with Skaffold:
@@ -34,7 +34,7 @@ USEFUL KUBECTL COMMANDS
   Check ArgoCD applications:
     kubectl get applications -n rig-system
 
-  View Operations Manager logs:
+  View ZAD logs:
     kubectl logs -n rig-system -l app=operations-manager -f
 
   View Forgejo logs:

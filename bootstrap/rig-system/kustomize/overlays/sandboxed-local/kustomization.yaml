@@ -22,12 +22,3 @@ resources:
 
 components:
 - ../../components/sops-plugin
-
-patches:
-- target:
-    kind: ArgoCD
-    name: argocd
-  patch: |-
-    - op: replace
-      path: /spec/repo/sidecarContainers/0/imagePullPolicy
-      value: Never

@@ -86,6 +86,8 @@ spec:
 
           echo "Bucket mirror completed successfully for {{ reference_name }}"
       env:
+        - name: MC_CONFIG_DIR
+          value: "/tmp/mc"
         - name: SOURCE_MINIO_ENDPOINT
           value: "{{ source_minio_endpoint }}"
         - name: SOURCE_BUCKET_NAME
