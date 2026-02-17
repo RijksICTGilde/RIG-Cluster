@@ -20,9 +20,6 @@ from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Set to hold references to background tasks so they are not garbage collected (RUF006)
-_background_tasks: set[Any] = set()
-
 
 class TaskStatus(str, Enum):
     """Task status enumeration."""

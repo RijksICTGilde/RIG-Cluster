@@ -16,9 +16,6 @@ from opi.manager.project_manager import ProjectManager
 
 logger = logging.getLogger(__name__)
 
-# Set to hold references to background tasks so they are not garbage collected (RUF006)
-_background_tasks: set[Any] = set()
-
 
 async def _monitor_argocd_and_deployment(
     task_id: str, project_name: str, task_progress_manager: TaskProgressManager, monitor_task: str
