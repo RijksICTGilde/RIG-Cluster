@@ -24,6 +24,9 @@ async def _continuous_monitoring(task_id: str, project_name: str) -> None:
     Continuously monitor namespace for updated events and logs.
 
     Runs in the background to keep updating the monitoring data every 30 seconds.
+    This is now consolidated with _monitor_project_progress in task_manager.py;
+    it only updates the current_step display text and defers heavy kubectl work
+    to the single monitoring loop.
     """
     try:
         logger.info(f"Starting continuous monitoring for project: {project_name}")
@@ -32,12 +35,12 @@ async def _continuous_monitoring(task_id: str, project_name: str) -> None:
 
         kubectl_connector = KubectlConnector()
 
-        # Run monitoring loop for up to 10 minutes (120 cycles of 5 seconds)
-        for cycle in range(120):
-            await asyncio.sleep(5)  # Wait 5 seconds between checks
+        # Run monitoring loop for up to 10 minutes (20 cycles of 30 seconds)
+        for cycle in range(20):
+            await asyncio.sleep(30)  # Wait 30 seconds between checks (was 5s)
 
             try:
-                logger.debug(f"Continuous monitoring cycle {cycle + 1}/120 for {project_name}")
+                logger.debug(f"Continuous monitoring cycle {cycle + 1}/20 for {project_name}")
 
                 # Check if project still exists in our tracking
                 if task_id not in _projects:

@@ -119,6 +119,7 @@ class GitConnector:
 
         self._repo_cloned = False
         self._fetched_in_session = False  # Track if we've fetched in this session
+        self._closed = False
         self._git_user_configured = False  # Track if git user has been configured
 
         # Initialize URL parsing immediately (synchronous)
@@ -1429,7 +1430,10 @@ class GitConnector:
             return None
 
     async def close(self) -> None:
-        """Clean up resources."""
+        """Clean up resources. Safe to call multiple times."""
+        if self._closed:
+            return
+        self._closed = True
         # TODO: rethink cleanup logic.. for now, we always remove the working directory on close
         # if self.should_cleanup and self.working_dir and os.path.exists(self.working_dir):
         if await self.has_changes():

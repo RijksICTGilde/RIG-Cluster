@@ -3,6 +3,7 @@ Simple task tracking for FastAPI BackgroundTasks.
 """
 
 # TODO: make the task manager actually add and finish tasks where they are created and done
+import asyncio
 import logging
 import time
 import uuid
@@ -64,6 +65,10 @@ class ProjectInfo:
 _projects: dict[str, ProjectInfo] = {}
 # Store TaskProgressManager instances per project
 _project_managers: dict[str, "TaskProgressManager"] = {}
+# Track active monitoring tasks to prevent duplicate monitoring loops per project
+_active_monitoring_tasks: dict[str, "asyncio.Task[None]"] = {}
+# Track active application monitoring tasks
+_active_app_monitoring_tasks: dict[str, "asyncio.Task[None]"] = {}
 
 
 class TaskProgressManager:
@@ -153,17 +158,9 @@ class TaskProgressManager:
             _projects[self.project_id].events = events
 
     def start_monitoring(self) -> None:
-        """Start background monitoring for logs and events."""
+        """Start background monitoring for logs and events. Deduplicates per project."""
         if self.project_id in _projects and _projects[self.project_id].namespace:
-            # Start the monitoring task
-            import asyncio
-
-            task = asyncio.create_task(_monitor_project_progress(self.project_id))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-            logger.info(
-                f"Started monitoring for project {self.project_id} in namespace {_projects[self.project_id].namespace}"
-            )
+            _start_monitoring_if_not_active(self.project_id)
         else:
             logger.warning(f"Cannot start monitoring for project {self.project_id}: namespace not set")
 
@@ -198,8 +195,49 @@ class TaskProgressManager:
         update_component_readiness(self.project_id, component_name, deployment_ready)
 
 
+def _start_monitoring_if_not_active(project_id: str) -> None:
+    """Start a monitoring task for a project only if one isn't already running."""
+    existing = _active_monitoring_tasks.get(project_id)
+    if existing and not existing.done():
+        logger.debug(f"Monitoring already active for project {project_id}, skipping duplicate")
+        return
+    task = asyncio.create_task(_monitor_project_progress(project_id))
+    _active_monitoring_tasks[project_id] = task
+    logger.info(f"Started monitoring for project {project_id}")
+
+
+def _start_app_monitoring_if_not_active(task_id: str, project_name: str, application_names: list[str]) -> None:
+    """Start application monitoring for a project only if one isn't already running."""
+    existing = _active_app_monitoring_tasks.get(task_id)
+    if existing and not existing.done():
+        logger.debug(f"Application monitoring already active for project {task_id}, skipping duplicate")
+        return
+    task = asyncio.create_task(_monitor_project_applications_continuously(task_id, project_name, application_names))
+    _active_app_monitoring_tasks[task_id] = task
+    logger.info(f"Started application monitoring for project {task_id}")
+
+
+def _cleanup_completed_projects() -> None:
+    """Remove projects that have been COMPLETED or FAILED for more than 30 minutes."""
+    cutoff = time.time() - 1800  # 30 minutes
+    to_remove = []
+    for project_id, project in _projects.items():
+        if project.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+            # Use created_at as a proxy; completed projects older than 30 min are stale
+            if project.created_at.timestamp() < cutoff:
+                to_remove.append(project_id)
+    for project_id in to_remove:
+        del _projects[project_id]
+        _project_managers.pop(project_id, None)
+        _active_monitoring_tasks.pop(project_id, None)
+        _active_app_monitoring_tasks.pop(project_id, None)
+    if to_remove:
+        logger.info(f"Cleaned up {len(to_remove)} completed/failed projects from tracking")
+
+
 def create_task(project_name: str) -> str:
     """Create a new project and return its ID."""
+    _cleanup_completed_projects()
     project_id = str(uuid.uuid4())
     # Create project info in the new system
     _projects[project_id] = ProjectInfo(
@@ -298,8 +336,6 @@ async def start_task_monitoring(task_id: str) -> None:
 
     This should be called after the namespace is created and deployments are starting.
     """
-    import asyncio
-
     if task_id not in _projects:
         logger.warning(f"Cannot start monitoring for task {task_id}: project not found")
         return
@@ -311,10 +347,8 @@ async def start_task_monitoring(task_id: str) -> None:
 
     logger.info(f"Starting monitoring for task {task_id} in namespace {project.namespace}")
 
-    # Start monitoring in the background using new system
-    task = asyncio.create_task(_monitor_project_progress(task_id))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    # Start monitoring in the background using new system (deduplicated)
+    _start_monitoring_if_not_active(task_id)
 
 
 async def _monitor_task_progress(task_id: str) -> None:
@@ -337,8 +371,6 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
         project_name: The name of the project being deployed
         progress_manager: The progress manager for updating subtasks
     """
-    import asyncio
-
     from opi.connectors import create_argo_connector
     from opi.connectors.kubectl import KubectlConnector
 
@@ -391,12 +423,8 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
                             # Set the correct namespace for monitoring
                             _projects[task_id].namespace = namespace
                             logger.info(f"Set monitoring namespace to: {namespace}")
-                            # Start background monitoring
-                            import asyncio
-
-                            task = asyncio.create_task(_monitor_project_progress(task_id))
-                            _background_tasks.add(task)
-                            task.add_done_callback(_background_tasks.discard)
+                            # Start background monitoring (deduplicated)
+                            _start_monitoring_if_not_active(task_id)
 
                 # Check if all found applications are synced and healthy
                 if project_apps_found:
@@ -456,12 +484,8 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
                         logger.info(f"All {len(project_apps_found)} ArgoCD applications are synced and healthy")
                         update_progress(task_id, 82, f"Alle {len(project_apps_found)} ArgoCD applicaties zijn gezond")
 
-                        # Start continuous monitoring for the newly created project applications
-                        task = asyncio.create_task(
-                            _monitor_project_applications_continuously(task_id, project_name, project_apps_found)
-                        )
-                        _background_tasks.add(task)
-                        task.add_done_callback(_background_tasks.discard)
+                        # Start continuous monitoring for the newly created project applications (deduplicated)
+                        _start_app_monitoring_if_not_active(task_id, project_name, project_apps_found)
                         break
 
         except Exception as e:
@@ -481,13 +505,12 @@ async def _monitor_project_progress(project_id: str) -> None:
     Background monitoring for a project to collect logs, events, and deployment status.
 
     This runs while the project is in progress and updates the project data with real-time info.
+    Only one instance runs per project (enforced by _start_monitoring_if_not_active).
     """
-    import asyncio
-
     from opi.connectors.kubectl import KubectlConnector
 
     kubectl = KubectlConnector()
-    monitoring_interval = 10  # seconds
+    monitoring_interval = 30  # seconds (reduced from 10s to limit subprocess spawning)
     max_monitoring_time = 900  # 15 minutes max
     start_time = time.time()
 
@@ -542,6 +565,9 @@ async def _monitor_project_progress(project_id: str) -> None:
 
     except Exception as e:
         logger.error(f"Error in monitoring project {project_id}: {e}")
+    finally:
+        # Clean up tracking entry so a new monitoring task can be started if needed
+        _active_monitoring_tasks.pop(project_id, None)
 
     logger.debug(f"Finished monitoring project {project_id}")
 
@@ -555,13 +581,13 @@ async def _monitor_project_applications_continuously(
     This provides ongoing feedback on deployment progress, including detailed ArgoCD status
     information and pod readiness status until the deployment is fully completed.
 
+    Only one instance runs per project (enforced by _start_app_monitoring_if_not_active).
+
     Args:
         task_id: The task ID for tracking
         project_name: The name of the project being deployed
         application_names: List of ArgoCD application names to monitor
     """
-    import asyncio
-
     from opi.connectors import create_argo_connector
     from opi.connectors.kubectl import KubectlConnector
 
@@ -570,7 +596,7 @@ async def _monitor_project_applications_continuously(
     argo_connector = create_argo_connector()
     kubectl = KubectlConnector()
 
-    monitoring_interval = 10  # Check every 10 seconds for detailed updates
+    monitoring_interval = 30  # Check every 30 seconds (reduced from 10s to limit subprocess spawning)
     max_monitoring_time = 1800  # 30 minutes max continuous monitoring
     start_time = time.time()
 
@@ -746,6 +772,9 @@ async def _monitor_project_applications_continuously(
             f"Continuous monitoring for project {project_name} ended after {elapsed_minutes:.1f} minutes without full completion"
         )
         update_progress(task_id, 84, f"Monitoring gestopt na {elapsed_minutes:.1f} min - controleer ArgoCD handmatig")
+
+    # Clean up tracking entry so a new app monitoring task can be started if needed
+    _active_app_monitoring_tasks.pop(task_id, None)
 
     logger.info(f"Finished continuous monitoring for project {project_name} applications")
 
@@ -946,8 +975,6 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
         await start_task_monitoring(task_id)
 
         # Wait a bit for initial deployment
-        import asyncio
-
         await asyncio.sleep(10)
 
         progress_manager.complete_task(subtask_verify)

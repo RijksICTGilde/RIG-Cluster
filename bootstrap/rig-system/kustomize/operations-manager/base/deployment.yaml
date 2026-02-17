@@ -64,7 +64,7 @@ spec:
             memory: 1Gi
           requests:
             cpu: "200m"
-            memory: 256Mi
+            memory: 512Mi
         volumeMounts:
         - name: kube-api-access
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -110,4 +110,5 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 500Mi
