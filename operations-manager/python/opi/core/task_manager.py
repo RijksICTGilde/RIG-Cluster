@@ -231,8 +231,13 @@ def _cleanup_completed_projects() -> None:
     for project_id in to_remove:
         del _projects[project_id]
         _project_managers.pop(project_id, None)
-        _active_monitoring_tasks.pop(project_id, None)
-        _active_app_monitoring_tasks.pop(project_id, None)
+        # Cancel any still-running monitoring tasks before removing references
+        monitoring_task = _active_monitoring_tasks.pop(project_id, None)
+        if monitoring_task and not monitoring_task.done():
+            monitoring_task.cancel()
+        app_monitoring_task = _active_app_monitoring_tasks.pop(project_id, None)
+        if app_monitoring_task and not app_monitoring_task.done():
+            app_monitoring_task.cancel()
     if to_remove:
         logger.info(f"Cleaned up {len(to_remove)} completed/failed projects from tracking")
 
