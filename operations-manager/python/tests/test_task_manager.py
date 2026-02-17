@@ -5,11 +5,10 @@ close() idempotency, and integration-level monitoring storm prevention.
 
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from opi.core.task_manager import (
     Task,
     TaskProgressManager,
@@ -217,7 +216,7 @@ class TestCleanupCompletedProjects:
         """Helper: create a project completed 1 hour ago."""
         task_id = create_task("old-project")
         _projects[task_id].status = TaskStatus.COMPLETED
-        _projects[task_id].completed_at = datetime.now() - timedelta(hours=1)
+        _projects[task_id].completed_at = datetime.now(tz=UTC) - timedelta(hours=1)
         return task_id
 
     def test_cleanup_removes_old_completed_projects(self):
@@ -228,14 +227,14 @@ class TestCleanupCompletedProjects:
     def test_cleanup_removes_old_failed_projects(self):
         task_id = create_task("failed-project")
         _projects[task_id].status = TaskStatus.FAILED
-        _projects[task_id].completed_at = datetime.now() - timedelta(hours=1)
+        _projects[task_id].completed_at = datetime.now(tz=UTC) - timedelta(hours=1)
         _cleanup_completed_projects()
         assert task_id not in _projects
 
     def test_cleanup_keeps_recent_completed_projects(self):
         task_id = create_task("recent-project")
         _projects[task_id].status = TaskStatus.COMPLETED
-        _projects[task_id].completed_at = datetime.now() - timedelta(minutes=1)
+        _projects[task_id].completed_at = datetime.now(tz=UTC) - timedelta(minutes=1)
         _cleanup_completed_projects()
         assert task_id in _projects
 
@@ -301,14 +300,14 @@ class TestCleanupCompletedProjects:
     def test_cleanup_removes_stuck_running_projects(self):
         task_id = create_task("stuck-project")
         _projects[task_id].status = TaskStatus.RUNNING
-        _projects[task_id].created_at = datetime.now() - timedelta(hours=3)
+        _projects[task_id].created_at = datetime.now(tz=UTC) - timedelta(hours=3)
         _cleanup_completed_projects()
         assert task_id not in _projects
 
     def test_cleanup_keeps_recent_running_projects(self):
         task_id = create_task("active-project")
         _projects[task_id].status = TaskStatus.RUNNING
-        _projects[task_id].created_at = datetime.now() - timedelta(minutes=30)
+        _projects[task_id].created_at = datetime.now(tz=UTC) - timedelta(minutes=30)
         _cleanup_completed_projects()
         assert task_id in _projects
 
@@ -318,8 +317,6 @@ class TestPeriodicCleanup:
 
     @pytest.mark.asyncio
     async def test_start_and_stop_periodic_cleanup(self):
-        from opi.core.task_manager import _cleanup_task
-
         start_periodic_cleanup()
         from opi.core import task_manager
 

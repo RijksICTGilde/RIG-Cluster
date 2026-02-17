@@ -5,7 +5,7 @@ Simple background task processor using the new TaskProgressManager.
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from opi.api.router import generate_self_service_project_yaml, validate_project_name
@@ -287,4 +287,4 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
         # Mark project as failed
         if task_id in _projects:
             _projects[task_id].status = TaskStatus.FAILED
-            _projects[task_id].completed_at = datetime.now()
+            _projects[task_id].completed_at = datetime.now(tz=UTC)
