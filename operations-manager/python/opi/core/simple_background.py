@@ -5,6 +5,7 @@ Simple background task processor using the new TaskProgressManager.
 import asyncio
 import logging
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 from opi.api.router import generate_self_service_project_yaml, validate_project_name
@@ -14,82 +15,6 @@ from opi.core.task_manager import TaskProgressManager, TaskStatus, _projects
 from opi.manager.project_manager import ProjectManager
 
 logger = logging.getLogger(__name__)
-
-# Set to hold references to background tasks so they are not garbage collected (RUF006)
-_background_tasks: set[Any] = set()
-
-
-async def _continuous_monitoring(task_id: str, project_name: str) -> None:
-    """
-    Continuously monitor namespace for updated events and logs.
-
-    Runs in the background to keep updating the monitoring data every 30 seconds.
-    """
-    try:
-        logger.info(f"Starting continuous monitoring for project: {project_name}")
-
-        from opi.connectors.kubectl import KubectlConnector
-
-        kubectl_connector = KubectlConnector()
-
-        # Run monitoring loop for up to 10 minutes (120 cycles of 5 seconds)
-        for cycle in range(120):
-            await asyncio.sleep(5)  # Wait 5 seconds between checks
-
-            try:
-                logger.debug(f"Continuous monitoring cycle {cycle + 1}/120 for {project_name}")
-
-                # Check if project still exists in our tracking
-                if task_id not in _projects:
-                    logger.info(f"Project {task_id} no longer tracked, stopping monitoring")
-                    break
-
-                # Get updated namespace events and logs
-                project = _projects[task_id]
-                if project.namespace:
-                    namespace_exists = await kubectl_connector.namespace_exists(project.namespace)
-
-                    if namespace_exists:
-                        # Get fresh events and logs
-                        events = await kubectl_connector.get_namespace_events(project.namespace)
-
-                        # Get logs from all deployments in the namespace
-                        logs = []
-                        deployment_statuses = await kubectl_connector.get_deployment_status(project.namespace)
-                        for deployment in deployment_statuses:
-                            deployment_name = deployment.get("name", "")
-                            if deployment_name:
-                                deployment_logs = await kubectl_connector.get_deployment_logs(
-                                    deployment_name, project.namespace, lines=50
-                                )
-                                if deployment_logs:
-                                    logs.extend([f"[{deployment_name}] {log}" for log in deployment_logs[-20:]])
-                    # Update project with latest monitoring data
-                    if events and len(events) > 0:
-                        _projects[task_id].events = events[-20:]  # Keep last 20 events
-                        logger.debug(f"Updated {len(events)} events for {project_name}")
-
-                    if logs and len(logs) > 0:
-                        _projects[task_id].logs = logs[-50:]  # Keep last 50 log lines
-                        logger.debug(f"Updated {len(logs)} log lines for {project_name}")
-
-                    # Update current step to show active monitoring
-                    current_time = time.strftime("%H:%M:%S")
-                    _projects[
-                        task_id
-                    ].current_step = f"Live monitoring actief voor {project_name} (laatste update: {current_time})"
-                else:
-                    # If no namespace is set yet, skip monitoring this cycle
-                    continue
-
-            except Exception as e:
-                logger.warning(f"Error in continuous monitoring cycle {cycle + 1}: {e}")
-                continue  # Continue with next cycle
-
-        logger.info(f"Continuous monitoring completed for project: {project_name}")
-
-    except Exception as e:
-        logger.error(f"Error in continuous monitoring for {project_name}: {e}")
 
 
 async def _monitor_argocd_and_deployment(
@@ -314,18 +239,14 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
                 # Don't mark project as completed - keep it as running for ongoing monitoring
                 # task_progress_manager.complete_project()  # Commented out to keep polling active
 
-                # Update project status to indicate deployment is complete but monitoring continues
+                # Update project status to indicate deployment is complete
+                # Monitoring is already handled by _monitor_project_progress in task_manager.py
                 if task_id in _projects:
                     _projects[
                         task_id
                     ].current_step = (
-                        f"🎉 Project {project_data.project_name} succesvol geïmplementeerd - Live monitoring actief"
+                        f"Project {project_data.project_name} succesvol geimplementeerd - monitoring actief"
                     )
-
-                # Start continuous monitoring in the background
-                task = asyncio.create_task(_continuous_monitoring(task_id, project_data.project_name))
-                _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard)
 
                 # Calculate final result
                 elapsed_time = time.time() - start_time
@@ -363,3 +284,4 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
         # Mark project as failed
         if task_id in _projects:
             _projects[task_id].status = TaskStatus.FAILED
+            _projects[task_id].completed_at = datetime.now(tz=UTC)

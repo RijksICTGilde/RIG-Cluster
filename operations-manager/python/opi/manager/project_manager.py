@@ -175,6 +175,8 @@ class ProjectManager:
         # Runtime force_clone override from API (used by PVC manager and other nested calls)
         self._force_clone_override: bool = False
 
+        self._closed = False
+
         # Service managers for handling service-specific operations
         # Import here to avoid circular dependencies
         # TODO: fix me, we don't want this
@@ -3446,6 +3448,10 @@ class ProjectManager:
         )
 
     async def close(self) -> None:
+        """Clean up resources. Safe to call multiple times."""
+        if self._closed:
+            return
+        self._closed = True
         await self.close_git_connector_for_project_files()
         await self.close_git_connector_for_argocd()
         await self.close_git_connectors_for_deployments()

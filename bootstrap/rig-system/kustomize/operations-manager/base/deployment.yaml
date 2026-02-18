@@ -110,4 +110,5 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 500Mi
