@@ -37,7 +37,7 @@ data:
     KEYCLOAK_MASTER_OIDC_CLIENT_ID=development-clusters
     KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
 
-    OWN_DOMAIN=operations-manager.sandbox.rijksapp.dev
+    OWN_DOMAIN=zad.sandbox.rijksapp.dev
 
     ALLOWED_EMAILS=admin@sandbox.rijksapp.dev
     ADMIN_EMAILS=admin@sandbox.rijksapp.dev

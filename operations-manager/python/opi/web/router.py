@@ -474,6 +474,8 @@ async def roos_project_form(request: Request):
         HTML response with the ROOS component-based form
     """
     try:
+        from opi.core.cluster_config import CLUSTER_CONFIG
+
         templates = get_templates()
         user = get_current_user(request)
         return templates.TemplateResponse(
@@ -481,7 +483,7 @@ async def roos_project_form(request: Request):
             {
                 "request": request,
                 "title": "Project Aanmaken - ROOS",
-                "clusters": ["local", "odcn-production"],
+                "clusters": list(CLUSTER_CONFIG.keys()),
                 "menu_items": get_menu_items(user),
             },
         )
@@ -714,6 +716,7 @@ async def project_details(request: Request, project_name: str):
         HTML response with detailed project information
     """
     try:
+        from opi.core.startup import ensure_projects_fresh
         from opi.services.project_service import get_project_service
         from opi.services.services import ServiceAdapter
 
@@ -725,6 +728,9 @@ async def project_details(request: Request, project_name: str):
 
         # TODO: this logic has to be centralized
         user_email = user.get("email", "").lower()
+
+        # Ensure project data is fresh (refreshes from Git if stale)
+        await ensure_projects_fresh()
 
         # Get project service to validate access
         project_service = get_project_service()
@@ -1259,6 +1265,9 @@ async def project_details(request: Request, project_name: str):
             backup_manager = BackupManager()
             backups_available = True
 
+            # Query snapshots once per (cluster, namespace) to avoid redundant Kopia calls
+            namespace_snapshots_cache: dict[tuple[str, str], list] = {}
+
             for deployment in project_details["deployments"]:
                 deployment_name = deployment.get("name")
                 base_namespace = deployment.get("namespace")
@@ -1272,8 +1281,18 @@ async def project_details(request: Request, project_name: str):
                 k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
 
                 try:
-                    snapshots = await backup_manager.list_snapshots(cluster, k8s_namespace, project_name=project_name)
-                    if snapshots:
+                    cache_key = (cluster, k8s_namespace)
+                    if cache_key not in namespace_snapshots_cache:
+                        namespace_snapshots_cache[cache_key] = await backup_manager.list_snapshots(
+                            cluster, k8s_namespace, project_name=project_name
+                        )
+
+                    all_snapshots = namespace_snapshots_cache[cache_key]
+
+                    # Filter snapshots by deployment name
+                    deployment_snapshots = [s for s in all_snapshots if s.deployment_name == deployment_name]
+
+                    if deployment_snapshots:
                         deployment_backups[deployment_name] = [
                             {
                                 "snapshot_id": s.snapshot_id,
@@ -1293,9 +1312,9 @@ async def project_details(request: Request, project_name: str):
                                 # Raw tags for debugging
                                 "tags": s.tags,
                             }
-                            for s in snapshots
+                            for s in deployment_snapshots
                         ]
-                        logger.debug(f"Found {len(snapshots)} backups for deployment {deployment_name}")
+                        logger.debug(f"Found {len(deployment_snapshots)} backups for deployment {deployment_name}")
                 except Exception as backup_err:
                     logger.warning(f"Failed to fetch backups for deployment {deployment_name}: {backup_err}")
 

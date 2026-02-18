@@ -616,7 +616,7 @@ async def backup_project_deployment(
     Trigger backup for resources in a specific project deployment.
 
     This endpoint backs up selected resource types:
-    - PVCs (persistent volume claims with backup label)
+    - PVCs (persistent volumes defined in the project file for this deployment)
     - Databases (if deployment uses postgresql-database or namespace-postgresql-database)
     - MinIO buckets (if deployment uses minio-storage)
 
@@ -709,7 +709,6 @@ async def backup_project_deployment(
                 deployment_name=deployment_name,
                 namespace=app_namespace,
                 cluster=current_cluster,
-                all_pvcs=False,  # Only backup labeled PVCs
                 backup_run_id=backup_run_id,
             )
             all_results.extend(app_results)

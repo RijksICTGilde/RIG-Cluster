@@ -9,11 +9,11 @@ spec:
       app.kubernetes.io/name: minio
 
   ingress:
-    # Allow S3 API access from operations manager namespace
+    # Allow S3 API access from all tenant namespaces (backup pods run in project namespaces)
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: rig-prd-operations
+              capsule.clastix.io/tenant: rig-prd
       ports:
         - protocol: TCP
           port: 9000

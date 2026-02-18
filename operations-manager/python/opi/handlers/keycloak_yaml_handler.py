@@ -399,18 +399,14 @@ class KeycloakYamlHandler:
         """
         logger.info(f"Processing {len(mappers)} mappers for {provider_alias}")
 
-        # Get existing mappers to avoid duplicates
+        # Get existing mappers for create-or-update logic
         existing_mappers = await self.keycloak.get_identity_provider_mappers(realm_name, provider_alias)
-        existing_mapper_names = {m.get("name") for m in existing_mappers}
+        existing_mapper_by_name = {m.get("name"): m for m in existing_mappers}
 
         for mapper_def in mappers:
             mapper_name = mapper_def.get("name")
             if not mapper_name:
                 logger.warning("Mapper missing 'name' field, skipping")
-                continue
-
-            if mapper_name in existing_mapper_names:
-                logger.debug(f"Mapper '{mapper_name}' already exists, skipping")
                 continue
 
             # Build mapper config for Keycloak API
@@ -421,8 +417,16 @@ class KeycloakYamlHandler:
                 "config": mapper_def.get("config", {}),
             }
 
-            logger.info(f"Creating mapper: {mapper_name}")
-            await self.keycloak.create_identity_provider_mapper(realm_name, provider_alias, mapper_config)
+            existing = existing_mapper_by_name.get(mapper_name)
+            if existing:
+                existing["identityProviderMapper"] = mapper_config["identityProviderMapper"]
+                existing["config"].update(mapper_config["config"])
+                mapper_id = existing.get("id")
+                logger.info(f"Updating existing mapper: {mapper_name}")
+                await self.keycloak.update_identity_provider_mapper(realm_name, provider_alias, mapper_id, existing)
+            else:
+                logger.info(f"Creating mapper: {mapper_name}")
+                await self.keycloak.create_identity_provider_mapper(realm_name, provider_alias, mapper_config)
 
     async def _process_authentication_flows(self, flows_section: Any, variables: dict[str, Any]) -> None:
         """Process authenticationFlows section.

@@ -352,7 +352,7 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
     argo_connector = create_argo_connector()
     kubectl = KubectlConnector()
 
-    max_wait_time = 300  # 5 minutes max for initial sync
+    max_wait_time = 600  # 10 minutes max for initial sync and healthy status
     check_interval = 5  # Check every 5 seconds
     elapsed_time = 0
 
@@ -429,7 +429,7 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
 
                             if sync_status != "Synced":
                                 all_synced = False
-                            if health_status not in ["Healthy", "Progressing"]:
+                            if health_status != "Healthy":
                                 all_healthy = False
 
                             logger.debug(

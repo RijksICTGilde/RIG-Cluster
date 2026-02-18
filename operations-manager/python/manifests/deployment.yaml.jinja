@@ -35,8 +35,8 @@ spec:
       {% endif %}
       # Pod-level security context (OpenShift compatible)
       securityContext:
-        {% if cluster == 'local' %}
-        # For local/Kind clusters, specify numeric UID since no SCC assignment
+        {% if cluster in ['local', 'sandboxed-local'] %}
+        # For Kind clusters, specify numeric UID since no SCC assignment
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
@@ -116,19 +116,19 @@ spec:
             tcpSocket:
               port: {{ application_port }}
             initialDelaySeconds: 5
-            periodSeconds: 10
-            failureThreshold: 30  # 5 + (30 × 10) = 305 seconds max startup time for ML model loading
+            periodSeconds: 5
+            failureThreshold: 36  # 5 + (36 × 5) = 185 seconds max startup time
           livenessProbe:
             tcpSocket:
               port: {{ application_port }}
-            initialDelaySeconds: 30
+            initialDelaySeconds: 5
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
             tcpSocket:
               port: {{ application_port }}
-            initialDelaySeconds: 10
-            periodSeconds: 20
+            initialDelaySeconds: 0
+            periodSeconds: 5
             failureThreshold: 3
       {% if storage_configs or (ca_config and ca_config.enabled) %}
       volumes:

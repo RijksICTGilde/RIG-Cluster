@@ -324,6 +324,30 @@
                                                 </div>
                                             </c-card>
 
+                                            {# Service: Redis #}
+                                            <c-card class="service-card" padding="md" background="color"
+                                                    backgroundColor="wit" :outline="true">
+                                                <div class="service-card-content">
+                                                    <div class="service-card-info">
+                                                        <div class="service-card-icon">
+                                                            <c-icon icon="zandloper" size="3xl" color="rood"
+                                                                    ariaLabel="Cache"/>
+                                                        </div>
+                                                        <c-heading type="h3" textContent="Redis Cache"/>
+                                                        <p class="rvo-text--sm">
+                                                            Shared Redis cache en message broker voor caching en Celery
+                                                            task queues.
+                                                        </p>
+                                                    </div>
+                                                    <div class="service-card-checkbox">
+                                                        <c-checkbox
+                                                            id="service-redis"
+                                                            name="services[]"
+                                                            value="redis"/>
+                                                    </div>
+                                                </div>
+                                            </c-card>
+
                                         </div>
                                     </c-layout-flow>
                                 </c-fieldset>
@@ -1247,7 +1271,8 @@ Available variables depend on selected services:
         'minio-storage': 'service-minio-template',
         'publish-on-web': 'service-web-publishing-template',
         'persistent-storage': 'service-pvc-template',
-        'temp-storage': 'service-temp-storage-template'
+        'temp-storage': 'service-temp-storage-template',
+        'redis': 'service-redis-template'
       };
 
       // Update component services based on selected main services
@@ -1480,6 +1505,23 @@ Available variables depend on selected services:
                         id="component-INDEX-service-temp"
                         name="components[INDEX][services][]"
                         value="temp-storage"/>
+                </c-layout-row>
+            </c-card>
+        </c-layout-column>
+    </template>
+
+    <template id="service-redis-template">
+        <c-layout-column>
+            <c-card outline="true" padding="sm" backgroundColor="wit">
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="zandloper" size="md" color="rood"/>
+                    <c-layout-column style="flex: 1;">
+                        <div style="font-weight: 600;">Redis Cache</div>
+                    </c-layout-column>
+                    <c-checkbox
+                        id="component-INDEX-service-redis"
+                        name="components[INDEX][services][]"
+                        value="redis"/>
                 </c-layout-row>
             </c-card>
         </c-layout-column>

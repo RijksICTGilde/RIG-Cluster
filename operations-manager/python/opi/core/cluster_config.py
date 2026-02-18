@@ -65,8 +65,9 @@ CLUSTER_CONFIG = {
             "ip_whitelist": "0.0.0.0/0,::/0",
         },
         "storage": {
-            "storage_class_name": "standard",
+            "storage_class_name": "csi-hostpath-sc",
             "access_modes": ["ReadWriteOnce"],
+            "volume_snapshot_class": "csi-hostpath-snapclass",
         },
         "keycloak": {
             "support_http": False,

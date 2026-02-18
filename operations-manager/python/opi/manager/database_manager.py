@@ -1,7 +1,6 @@
 """Database service manager for handling PostgreSQL resources."""
 
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -442,12 +441,15 @@ class DatabaseManager:
         # Use runtime override if True, otherwise fall back to deployment config
         force_clone = force_clone_override or deployment.get("force-clone", False)
 
-        # Handle clone mode and status checking for new dict format
-        clone_mode = "once"  # Default mode
-        clone_status_completed = False
-        is_dict_format = isinstance(clone_from, dict)
+        # clone-from must be a dict with type/reference/mode keys
+        if clone_from and not isinstance(clone_from, dict):
+            raise ValueError(
+                f"clone-from for deployment '{deployment_name}' must be a dict with 'type', 'reference', "
+                f"and 'mode' keys, got: {type(clone_from).__name__} = {clone_from!r}"
+            )
 
-        if clone_from and is_dict_format:
+        # Handle clone mode and status checking
+        if clone_from:
             clone_mode = clone_from.get("mode", "once")
             status = clone_from.get("status", {})
             clone_status_completed = status.get("completed", False) if isinstance(status, dict) else False
@@ -469,8 +471,9 @@ class DatabaseManager:
             elif clone_mode == "once" and clone_status_completed and force_clone:
                 logger.info(f"Clone mode 'once' for {deployment_name} but force_clone=True, proceeding with clone")
 
-        # Handle clone-from configuration - can be dict (new format) or string (legacy)
-        if clone_from and isinstance(clone_from, dict):
+        # Handle clone-from by type
+        clone_source_ref: str | None = None
+        if clone_from:
             clone_type = clone_from.get("type")
             if clone_type == "remote-source":
                 # Handle remote source cloning directly
@@ -488,7 +491,7 @@ class DatabaseManager:
                         f"No postgresql-database service in remote source '{remote_source_name}', "
                         "skipping database clone"
                     )
-                    return
+                    return None
 
                 chisel_config = remote_source.get("chisel")
 
@@ -527,19 +530,24 @@ class DatabaseManager:
                 # Return the resolved password so the caller uses the correct credentials
                 return result.get("resolved_password")
             elif clone_type == "deployment":
-                # Local deployment clone - extract reference
-                clone_from = clone_from.get("reference")
+                # Local deployment clone - extract reference name
+                clone_source_ref = clone_from.get("reference")
             else:
-                logger.warning(f"Unknown clone-from type: {clone_type}, skipping clone")
-                clone_from = None
-        # else: clone_from is a string (legacy format), use as-is
+                raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
 
-        if clone_from:
+        if clone_source_ref:
             # Handle local database cloning (type: deployment)
             # Source uses base name (None generation) - versioned sources would need explicit handling
-            source_database = generate_database_name(project_name, str(clone_from), None)
+            source_database = generate_database_name(project_name, clone_source_ref, None)
             source_schema = source_database  # Schema matches database name
             logger.info(f"Clone requested from {source_database} to {db_database} (force={force_clone})")
+
+            # Determine service type from project configuration
+            service_type = (
+                ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                if project_data and self._project_uses_namespace_postgresql(project_data)
+                else ServiceType.POSTGRESQL_DATABASE.value
+            )
 
             # STEP 1: Validate that source database and schema exist before cloning
             await self._validate_clone_source(source_database, source_schema)
@@ -550,6 +558,9 @@ class DatabaseManager:
                 owner=db_username,
             )
             target_db_exists = database_result["status"] == "exists"
+
+            # Track the final generation used for this clone
+            final_generation = generation
 
             if force_clone and target_db_exists:
                 # Generational approach: increment generation and create new versioned database
@@ -573,30 +584,7 @@ class DatabaseManager:
                         f"Failed to create versioned database {db_database}: {database_result.get('message', 'Unknown error')}"
                     )
                 logger.info(f"Created new versioned database: {db_database}")
-
-                # Update generation in project file
-                if project_data:
-                    # Determine service type from project configuration
-                    service_type = (
-                        ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                        if self._project_uses_namespace_postgresql(project_data)
-                        else ServiceType.POSTGRESQL_DATABASE.value
-                    )
-                    project_file_handler = self.project_manager._project_file_handler
-                    project_file_handler.set_deployment_service_generation(
-                        project_data, deployment_name, service_type, new_generation
-                    )
-                    logger.info(f"Updated database generation in project file: {new_generation}")
-
-                    # Record revision for the new generation
-                    self.project_manager._revision_manager.record_clone(
-                        project_data=project_data,
-                        deployment_name=deployment_name,
-                        service_type=service_type,
-                        generation=new_generation,
-                        resource_name=db_database,
-                        source=f"deployment:{clone_from}",
-                    )
+                final_generation = new_generation
             elif database_result["status"] == "created":
                 logger.info(f"Created database for cloning: {db_database}")
             else:
@@ -634,10 +622,20 @@ class DatabaseManager:
             logger.info(f"Successfully cloned database from {source_database} to {db_database}")
             logger.info(f"Schema cloned with target name '{db_schema}' - no additional rename needed")
 
+            # Record revision in project file (handles both generation and revision tracking)
+            if project_data:
+                initial_gen = final_generation if final_generation is not None else 1
+                self.project_manager._revision_manager.record_clone(
+                    project_data=project_data,
+                    deployment_name=deployment_name,
+                    service_type=service_type,
+                    generation=initial_gen,
+                    resource_name=db_database,
+                    source=f"deployment:{clone_source_ref}",
+                )
+
             # Report clone to project_manager for status tracking
-            self.project_manager.report_clone_performed(
-                deployment_name, ServiceType.POSTGRESQL_DATABASE.value, generation
-            )
+            self.project_manager.report_clone_performed(deployment_name, service_type, final_generation)
         else:
             # Normal flow: ensure database and schema exist
             database_result = await self.postgres_connector.create_database(
@@ -689,50 +687,6 @@ class DatabaseManager:
                 logger.info(f"Database schema already exists: {db_schema}")
 
         return None  # No password override needed, caller uses original db_password
-
-    async def _update_clone_status(
-        self,
-        project_data: dict[str, Any],
-        deployment_name: str,
-    ) -> None:
-        """
-        Update the clone status in the project data after a successful clone operation.
-
-        This sets status.completed=True and status.timestamp in the clone-from config.
-        The project_data dict is modified in place (shared reference with project_manager).
-        The actual save and git commit is handled by the calling process_project flow.
-
-        Args:
-            project_data: The project data dictionary (will be modified in place)
-            deployment_name: Name of the deployment to update status for
-        """
-        timestamp = datetime.now(UTC).isoformat()
-
-        # Update the status in project_data (in place - shared reference)
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") == deployment_name:
-                clone_from = deployment.get("clone-from")
-                if clone_from and isinstance(clone_from, dict):
-                    clone_from["status"] = {
-                        "completed": True,
-                        "timestamp": timestamp,
-                    }
-                    logger.info(f"Updated clone status for {deployment_name}: completed=True, timestamp={timestamp}")
-                break
-
-        # Save the project file to disk
-        # Note: git commit is handled by the calling process_project flow
-        try:
-            await self.project_manager.save_project_data()
-            logger.info(f"Saved project file with updated clone status for {deployment_name}")
-        except Exception as e:
-            # Log the error but don't fail the clone operation
-            # The clone was successful, status update is secondary
-            logger.warning(
-                f"Failed to save clone status update for {deployment_name}: {e}. "
-                "Clone was successful but status may not be persisted."
-            )
 
     async def _validate_clone_source(self, source_database: str, source_schema: str) -> None:
         """

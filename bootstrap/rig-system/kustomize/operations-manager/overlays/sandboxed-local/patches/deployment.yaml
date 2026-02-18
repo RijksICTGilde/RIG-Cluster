@@ -14,8 +14,8 @@ spec:
           type: RuntimeDefault
       containers:
       - name: operations-manager
-        image: operations-manager:latest
-        imagePullPolicy: Never
+        image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest
+        imagePullPolicy: Always
         env:
         - name: TMPDIR
           value: "/tmp"
@@ -45,11 +45,16 @@ spec:
               name: operations-manager-env-secrets
               key: KEYCLOAK_MASTER_OIDC_CLIENT_SECRET
               optional: true
-        - name: MINIO_ADMIN_PASSWORD
+        - name: MINIO_ADMIN_SECRET_KEY
           valueFrom:
             secretKeyRef:
               name: minio-admin-credentials
               key: MINIO_ROOT_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin-credentials
+              key: REDIS_PASSWORD
         volumeMounts:
         - name: kube-api-access
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount

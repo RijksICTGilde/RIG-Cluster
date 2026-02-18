@@ -1389,14 +1389,20 @@ class ProjectFileHandler:
         for deployment in deployments:
             if deployment.get("name") == deployment_name:
                 clone_from = deployment.get("clone-from")
-                if clone_from and isinstance(clone_from, dict):
-                    clone_from["status"] = {
-                        "completed": completed,
-                        "timestamp": timestamp,
-                    }
-                    logger.info(f"Set clone status for {deployment_name}: completed={completed}, timestamp={timestamp}")
-                else:
-                    logger.warning(f"Cannot set clone status for {deployment_name}: no clone-from configuration found")
+                if not clone_from:
+                    raise ValueError(
+                        f"Cannot set clone status for '{deployment_name}': no clone-from configuration found"
+                    )
+                if not isinstance(clone_from, dict):
+                    raise ValueError(
+                        f"Cannot set clone status for '{deployment_name}': clone-from must be a dict "
+                        f"with 'type', 'reference', and 'mode' keys, got: {type(clone_from).__name__} = {clone_from!r}"
+                    )
+                clone_from["status"] = {
+                    "completed": completed,
+                    "timestamp": timestamp,
+                }
+                logger.info(f"Set clone status for {deployment_name}: completed={completed}, timestamp={timestamp}")
                 break
 
         return project_data

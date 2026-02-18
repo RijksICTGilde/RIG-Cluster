@@ -275,7 +275,9 @@ class RedisSecret(BaseSecret):
 
     host: str
     port: int
+    username: str
     password: str
+    key_prefix: str
 
     SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-redis"
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.REDIS
@@ -286,8 +288,8 @@ class RedisSecret(BaseSecret):
 
     @property
     def url(self) -> str:
-        """Generate Redis connection URL."""
-        return f"redis://:{self.password}@{self.host}:{self.port}/0"
+        """Generate Redis connection URL with ACL username."""
+        return f"redis://{self.username}:{self.password}@{self.host}:{self.port}/0"
 
     def _get_additional_keys(self) -> dict[str, str]:
         """Add computed keys like REDIS_URL."""

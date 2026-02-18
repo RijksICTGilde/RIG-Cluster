@@ -77,8 +77,8 @@ spec:
       - name: cmp-server
         command:
           - /var/run/argocd/argocd-cmp-server
-        image: rig-cmp-argo-kustomize-sops:latest
-        imagePullPolicy: Never
+        image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest
+        imagePullPolicy: Always
         env:
           - name: ARGOCD_EXEC_TIMEOUT
             value: "180"

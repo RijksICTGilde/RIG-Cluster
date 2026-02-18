@@ -40,26 +40,26 @@ spec:
             TLS_FLAG="--disable-tls"
           fi
 
-          # Try to connect to existing repository, create if not exists
-          echo "Connecting to Kopia repository..."
-          if ! kopia repository connect s3 \
-            --bucket="${S3_BUCKET}" \
-            --prefix="${BACKUP_PREFIX}/" \
-            --endpoint="${S3_ENDPOINT}" \
-            --access-key="${S3_ACCESS_KEY}" \
-            --secret-access-key="${S3_SECRET_KEY}" \
-            --password="${KOPIA_PASSWORD}" \
-            ${TLS_FLAG} 2>/dev/null; then
+          # Connect to existing Kopia repository, or create one if needed
+          KOPIA_S3_ARGS="--bucket=${S3_BUCKET} --prefix=${BACKUP_PREFIX}/ --endpoint=${S3_ENDPOINT} --access-key=${S3_ACCESS_KEY} --secret-access-key=${S3_SECRET_KEY} --password=${KOPIA_PASSWORD} ${TLS_FLAG}"
 
-            echo "Repository does not exist, creating new repository..."
-            kopia repository create s3 \
-              --bucket="${S3_BUCKET}" \
-              --prefix="${BACKUP_PREFIX}/" \
-              --endpoint="${S3_ENDPOINT}" \
-              --access-key="${S3_ACCESS_KEY}" \
-              --secret-access-key="${S3_SECRET_KEY}" \
-              --password="${KOPIA_PASSWORD}" \
-              ${TLS_FLAG}
+          echo "Connecting to Kopia repository..."
+          if kopia repository connect s3 ${KOPIA_S3_ARGS} 2>/dev/null; then
+            echo "Connected to existing repository"
+          elif kopia repository create s3 ${KOPIA_S3_ARGS} 2>/dev/null; then
+            echo "Created new repository"
+          else
+            echo "WARNING: Normal create failed (stale data?), clearing prefix and reinitializing..."
+            if [ "${S3_DISABLE_TLS}" = "true" ]; then
+              MC_ENDPOINT="http://${S3_ENDPOINT}"
+            else
+              MC_ENDPOINT="https://${S3_ENDPOINT}"
+            fi
+            export MC_CONFIG_DIR=/tmp/mc
+            mc alias set backup-s3 "${MC_ENDPOINT}" "${S3_ACCESS_KEY}" "${S3_SECRET_KEY}" --api S3v4
+            mc rm --recursive --force backup-s3/${S3_BUCKET}/${BACKUP_PREFIX}/ 2>/dev/null || true
+            kopia repository create s3 ${KOPIA_S3_ARGS}
+            echo "Created new repository (after clearing stale data)"
           fi
 
           echo "Repository connected successfully"
@@ -140,7 +140,9 @@ spec:
           value: "{{ backup_prefix }}"
         - name: KOPIA_PASSWORD
           value: "{{ kopia_password }}"
-        # Use /tmp for Kopia cache (container filesystem is read-only)
+        # Use /tmp for Kopia paths (HOME is not writable on OpenShift)
+        - name: KOPIA_CONFIG_PATH
+          value: "/tmp/kopia-repository.config"
         - name: KOPIA_CACHE_DIRECTORY
           value: "/tmp/kopia-cache"
         - name: KOPIA_LOG_DIR

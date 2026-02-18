@@ -620,12 +620,12 @@ class DatabaseMigrator:
         if dry_run:
             logger.info("[DRY RUN] Would execute:")
             logger.info(f"  1. UPDATE identity_provider SET provider_alias = '{obsolete_alias}', "
-                       f"display_name = 'SSO Rijk (OBSOLETE)', enabled = false "
+                       f"provider_display_name = 'SSO Rijk (OBSOLETE)', enabled = false "
                        f"WHERE internal_id = '{old_idp['internal_id']}'")
             logger.info(f"  2. UPDATE identity_provider_mapper SET idp_alias = '{obsolete_alias}' "
                        f"WHERE idp_alias = '{old_alias}'")
             logger.info(f"  3. UPDATE identity_provider SET provider_alias = '{old_alias}', "
-                       f"display_name = 'SSO Rijk', enabled = true, authenticate_by_default = true "
+                       f"provider_display_name = 'SSO Rijk', enabled = true, authenticate_by_default = true "
                        f"WHERE internal_id = '{new_idp['internal_id']}'")
             logger.info(f"  4. UPDATE identity_provider_mapper SET idp_alias = '{old_alias}' "
                        f"WHERE idp_alias = '{new_alias}'")
@@ -636,7 +636,7 @@ class DatabaseMigrator:
                 logger.info(f"Step 1: Renaming '{old_alias}' to '{obsolete_alias}' and disabling...")
                 cur.execute(
                     """UPDATE identity_provider
-                       SET provider_alias = %s, display_name = 'SSO Rijk (OBSOLETE)', enabled = false
+                       SET provider_alias = %s, provider_display_name = 'SSO Rijk (OBSOLETE)', enabled = false
                        WHERE internal_id = %s""",
                     (obsolete_alias, old_idp["internal_id"]),
                 )
@@ -652,7 +652,7 @@ class DatabaseMigrator:
                 logger.info(f"Step 3: Renaming '{new_alias}' to '{old_alias}' and enabling as default...")
                 cur.execute(
                     """UPDATE identity_provider
-                       SET provider_alias = %s, display_name = 'SSO Rijk',
+                       SET provider_alias = %s, provider_display_name = 'SSO Rijk',
                            enabled = true, authenticate_by_default = true
                        WHERE internal_id = %s""",
                     (old_alias, new_idp["internal_id"]),

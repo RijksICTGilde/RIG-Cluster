@@ -24,6 +24,7 @@ __pycache__/
 # Generated secret overview files (contains plain text passwords)
 secrets-overview-*.txt
 secrets-overview-*.yaml
+/bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/operations-manager-env-secrets.yaml
 /output.yaml
 /operations-manager/python/.env.my-machine
 /keycloak-migration/custom-mapper/target/
@@ -31,3 +32,6 @@ secrets-overview-*.yaml
 /operations-manager/docs/interview.sh
 /operations-manager/docs/business-case-interview-prompt.md
 /operations-manager/docs/business-case-answers/
+/keycloak-migration/sso-migration/steps.md
+/keycloak-migration/sso-migration/backups/
+/keycloak-migration/sso-migration/verify_sso_migration.py

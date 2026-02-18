@@ -346,3 +346,182 @@ class TestRevisionManagerGetSupersededResources:
         superseded = revision_manager.get_superseded_resources(sample_project_data, "staging", "postgresql-database")
 
         assert superseded == []
+
+
+class TestRevisionManagerRecordComponentClone:
+    """Tests for record_component_clone method (component-level PVC tracking)."""
+
+    @pytest.fixture
+    def project_data_with_components(self) -> dict:
+        """Create project data with component-level persistent-storage."""
+        return {
+            "name": "test-project",
+            "deployments": [
+                {
+                    "name": "pr1",
+                    "cluster": "local",
+                    "components": [
+                        {
+                            "reference": "my-app",
+                            "image": "my-app:latest",
+                            "services": {
+                                "persistent-storage": [
+                                    {"reference": "data", "config": {"generation": 0}},
+                                ]
+                            },
+                        }
+                    ],
+                },
+                {
+                    "name": "pr2",
+                    "cluster": "local",
+                    "clone-from": {
+                        "type": "deployment",
+                        "reference": "pr1",
+                        "mode": "once",
+                    },
+                    "components": [
+                        {
+                            "reference": "my-app",
+                            "image": "my-app:latest",
+                        }
+                    ],
+                },
+            ],
+        }
+
+    def test_records_clone_at_component_level(
+        self, revision_manager: RevisionManager, project_data_with_components: dict
+    ) -> None:
+        """Should write revision info to component.services.persistent-storage[].config."""
+        result = revision_manager.record_component_clone(
+            project_data=project_data_with_components,
+            deployment_name="pr2",
+            component_name="my-app",
+            service_type="persistent-storage",
+            reference_name="data",
+            generation=1,
+            resource_name="test-project-pr2-my-app-data-v1",
+            source="deployment:pr1",
+        )
+
+        # Navigate to component-level config
+        pr2 = next(d for d in result["deployments"] if d["name"] == "pr2")
+        component = next(c for c in pr2["components"] if c["reference"] == "my-app")
+        storage_items = component["services"]["persistent-storage"]
+        data_item = next(i for i in storage_items if i["reference"] == "data")
+        config = data_item["config"]
+
+        assert config["generation"] == 1
+        assert len(config["revisions"]) == 1
+        assert config["revisions"][0]["generation"] == 1
+        assert config["revisions"][0]["resource"] == "test-project-pr2-my-app-data-v1"
+        assert config["revisions"][0]["status"] == "active"
+        assert config["revisions"][0]["actions"][0]["type"] == "clone"
+        assert config["revisions"][0]["actions"][0]["source"] == "deployment:pr1"
+
+    def test_creates_services_structure_if_missing(
+        self, revision_manager: RevisionManager, project_data_with_components: dict
+    ) -> None:
+        """Should create the services.persistent-storage structure if component has none."""
+        result = revision_manager.record_component_clone(
+            project_data=project_data_with_components,
+            deployment_name="pr2",
+            component_name="my-app",
+            service_type="persistent-storage",
+            reference_name="data",
+            generation=1,
+            resource_name="test-project-pr2-my-app-data-v1",
+            source="deployment:pr1",
+        )
+
+        pr2 = next(d for d in result["deployments"] if d["name"] == "pr2")
+        component = next(c for c in pr2["components"] if c["reference"] == "my-app")
+
+        # Services structure should have been created
+        assert "services" in component
+        assert "persistent-storage" in component["services"]
+        storage_items = component["services"]["persistent-storage"]
+        assert len(storage_items) == 1
+        assert storage_items[0]["reference"] == "data"
+
+    def test_returns_unchanged_for_unknown_deployment(
+        self, revision_manager: RevisionManager, project_data_with_components: dict
+    ) -> None:
+        """Should return project_data unchanged if deployment not found."""
+        result = revision_manager.record_component_clone(
+            project_data=project_data_with_components,
+            deployment_name="nonexistent",
+            component_name="my-app",
+            service_type="persistent-storage",
+            reference_name="data",
+            generation=1,
+            resource_name="pvc-name",
+            source="deployment:pr1",
+        )
+
+        assert result == project_data_with_components
+
+    def test_returns_unchanged_for_unknown_component(
+        self, revision_manager: RevisionManager, project_data_with_components: dict
+    ) -> None:
+        """Should return project_data unchanged if component not found."""
+        result = revision_manager.record_component_clone(
+            project_data=project_data_with_components,
+            deployment_name="pr2",
+            component_name="nonexistent-component",
+            service_type="persistent-storage",
+            reference_name="data",
+            generation=1,
+            resource_name="pvc-name",
+            source="deployment:pr1",
+        )
+
+        # pr2 should not have services created for wrong component
+        pr2 = next(d for d in result["deployments"] if d["name"] == "pr2")
+        component = next(c for c in pr2["components"] if c["reference"] == "my-app")
+        assert "services" not in component
+
+    def test_updates_existing_config(
+        self, revision_manager: RevisionManager, project_data_with_components: dict
+    ) -> None:
+        """Should update existing config in source deployment's component."""
+        result = revision_manager.record_component_clone(
+            project_data=project_data_with_components,
+            deployment_name="pr1",
+            component_name="my-app",
+            service_type="persistent-storage",
+            reference_name="data",
+            generation=2,
+            resource_name="test-project-pr1-my-app-data-v2",
+            source="deployment:external",
+        )
+
+        pr1 = next(d for d in result["deployments"] if d["name"] == "pr1")
+        component = next(c for c in pr1["components"] if c["reference"] == "my-app")
+        data_item = next(i for i in component["services"]["persistent-storage"] if i["reference"] == "data")
+        config = data_item["config"]
+
+        # Generation updated from 0 to 2
+        assert config["generation"] == 2
+        assert len(config["revisions"]) == 1
+        assert config["revisions"][0]["resource"] == "test-project-pr1-my-app-data-v2"
+
+    def test_not_written_to_deployment_level(
+        self, revision_manager: RevisionManager, project_data_with_components: dict
+    ) -> None:
+        """Should NOT create deployment-level services entry (that's for DB/MinIO)."""
+        result = revision_manager.record_component_clone(
+            project_data=project_data_with_components,
+            deployment_name="pr2",
+            component_name="my-app",
+            service_type="persistent-storage",
+            reference_name="data",
+            generation=1,
+            resource_name="pvc-name",
+            source="deployment:pr1",
+        )
+
+        pr2 = next(d for d in result["deployments"] if d["name"] == "pr2")
+        # Deployment-level services should NOT exist
+        assert "services" not in pr2

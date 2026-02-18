@@ -42,3 +42,5 @@ data:
 
     ALLOWED_EMAILS=anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
     GRAFANA_DATASOURCE_UID=mimir-prd
+    ENABLE_TRACEMALLOC=false
+    ARGOCD_MANAGER=rig-prd-operations

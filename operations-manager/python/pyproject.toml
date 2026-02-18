@@ -208,6 +208,7 @@ authorized_licenses = [
     "Apache-2.0 AND MIT",
     "Apache-2.0 OR BSD-3-Clause",
     "Apache-2.0 OR BSD-2-Clause",
+    "Apache-2.0 AND BSD-2-Clause",
     "Apache-2.0 AND CNRI-Python",
     "Apache License 2.0",
     "Artistic",

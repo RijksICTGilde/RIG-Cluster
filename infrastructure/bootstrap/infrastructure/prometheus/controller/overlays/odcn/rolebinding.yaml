@@ -9,5 +9,5 @@ roleRef:
   name: prometheus
 subjects:
   - kind: ServiceAccount
-    name: prometheus
+    name: namespace-manager
     namespace: rig-prd-operations

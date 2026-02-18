@@ -225,22 +225,26 @@ class TestRedisSecretProperties:
     """Tests for RedisSecret computed properties."""
 
     def test_url_format(self):
-        """url property returns redis://:password@host:port/0."""
+        """url property returns redis://username:password@host:port/0."""
         secret = RedisSecret(
             host="redis.example.com",
             port=6379,
+            username="main-myproject",
             password="redispass",
+            key_prefix="main-myproject:",
         )
-        assert secret.url == "redis://:redispass@redis.example.com:6379/0"
+        assert secret.url == "redis://main-myproject:redispass@redis.example.com:6379/0"
 
     def test_url_with_special_password(self):
         """url property includes special characters in password."""
         secret = RedisSecret(
             host="localhost",
             port=6380,
+            username="main-testproject",
             password="p@ss:w0rd",
+            key_prefix="main-testproject:",
         )
-        assert secret.url == "redis://:p@ss:w0rd@localhost:6380/0"
+        assert secret.url == "redis://main-testproject:p@ss:w0rd@localhost:6380/0"
 
 
 class TestUserSecret:

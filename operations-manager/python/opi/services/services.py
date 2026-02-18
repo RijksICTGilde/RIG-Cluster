@@ -222,12 +222,26 @@ class RedisVariables(Enum):
         secret_key="port",
         aliases=["APP_REDIS_PORT"],
     )
+    USERNAME = VariableDefinition(
+        name="REDIS_USERNAME",
+        description="Redis ACL username",
+        source="secret",
+        secret_key="username",
+        aliases=["APP_REDIS_USERNAME"],
+    )
     PASSWORD = VariableDefinition(
         name="REDIS_PASSWORD",
         description="Redis password",
         source="secret",
         secret_key="password",
         aliases=["APP_REDIS_PASSWORD"],
+    )
+    PREFIX = VariableDefinition(
+        name="REDIS_PREFIX",
+        description="Redis key/channel prefix for this project",
+        source="secret",
+        secret_key="key_prefix",
+        aliases=["APP_REDIS_PREFIX"],
     )
     URL = VariableDefinition(
         name="REDIS_URL",

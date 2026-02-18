@@ -126,11 +126,11 @@ class BackupLock:
     """
 
     LOCK_NAME = "backup-lock"
-    LOCK_NAMESPACE = "rig-system"
 
     def __init__(self, kubectl: KubectlConnector) -> None:
         self.kubectl = kubectl
         self._held = False
+        self.lock_namespace = settings.ARGOCD_MANAGER
 
     async def acquire(self, timeout_seconds: int = 3600) -> bool:
         """
@@ -144,7 +144,7 @@ class BackupLock:
         """
         try:
             # Try to get existing lock
-            args = ["get", "configmap", self.LOCK_NAME, "-n", self.LOCK_NAMESPACE, "-o", "json"]
+            args = ["get", "configmap", self.LOCK_NAME, "-n", self.lock_namespace, "-o", "json"]
             stdout, stderr, code = await self.kubectl.run_command(args)
 
             if code == 0:
@@ -191,7 +191,7 @@ class BackupLock:
 kind: ConfigMap
 metadata:
   name: {self.LOCK_NAME}
-  namespace: {self.LOCK_NAMESPACE}
+  namespace: {self.lock_namespace}
 data:
   locked_at: "{lock_content["locked_at"]}"
   locked_by: "{lock_content["locked_by"]}"
@@ -222,7 +222,7 @@ data:
             return True
 
         try:
-            args = ["delete", "configmap", self.LOCK_NAME, "-n", self.LOCK_NAMESPACE, "--ignore-not-found=true"]
+            args = ["delete", "configmap", self.LOCK_NAME, "-n", self.lock_namespace, "--ignore-not-found=true"]
             _, stderr, code = await self.kubectl.run_command(args)
 
             if code == 0:
@@ -243,7 +243,7 @@ data:
             return False
 
         try:
-            args = ["get", "pod", pod_name, "-n", self.LOCK_NAMESPACE, "-o", "name"]
+            args = ["get", "pod", pod_name, "-n", self.lock_namespace, "-o", "name"]
             _, _, code = await self.kubectl.run_command(args)
             return code == 0
         except Exception:
@@ -253,7 +253,7 @@ data:
     async def get_status(self) -> BackupStatus:
         """Get current lock status."""
         try:
-            args = ["get", "configmap", self.LOCK_NAME, "-n", self.LOCK_NAMESPACE, "-o", "json"]
+            args = ["get", "configmap", self.LOCK_NAME, "-n", self.lock_namespace, "-o", "json"]
             stdout, _, code = await self.kubectl.run_command(args)
 
             if code == 0:
@@ -283,7 +283,7 @@ data:
 kind: ConfigMap
 metadata:
   name: {self.LOCK_NAME}
-  namespace: {self.LOCK_NAMESPACE}
+  namespace: {self.lock_namespace}
 data:
   locked_at: "{utc_now().isoformat()}"
   locked_by: "{os.environ.get("HOSTNAME", "unknown")}"

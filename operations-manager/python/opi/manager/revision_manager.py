@@ -234,22 +234,32 @@ class RevisionManager:
             project_data, deployment_name, service_type, generation, resource_name, "initial", None
         )
 
-    def _add_revision_entry(
+    def _write_revision_to_config(
         self,
-        project_data: dict[str, Any],
-        deployment_name: str,
-        service_type: str,
+        config: dict[str, Any],
+        log_prefix: str,
         generation: int,
         resource_name: str,
         action: str,
         source: str | None,
-    ) -> dict[str, Any]:
-        """Add a new revision entry, marking old active as superseded."""
-        timestamp = datetime.now(UTC).isoformat()
+    ) -> None:
+        """Write revision data to a config dict.
 
-        config = self._ensure_service_entry(project_data, deployment_name, service_type)
-        if config is None:
-            return project_data
+        This is the shared logic for both deployment-level and component-level revision tracking.
+
+        Args:
+            config: The config dict to write to (must be mutable)
+            log_prefix: Prefix for log messages (e.g., "staging/postgresql-database")
+            generation: Generation number of the resource (0 = normal name, >0 = versioned)
+            resource_name: Actual resource name
+            action: Action type (e.g., "clone", "restore", "initial")
+            source: Source reference or None
+        """
+        # Never write None as generation - 0 is the default (normal name, no suffix)
+        if generation is None:
+            generation = 0
+
+        timestamp = datetime.now(UTC).isoformat()
 
         # Ensure revisions list exists
         if "revisions" not in config or not isinstance(config["revisions"], list):
@@ -262,9 +272,7 @@ class RevisionManager:
             if entry.get("status") == "active":
                 entry["status"] = "superseded"
                 entry["superseded_at"] = timestamp
-                logger.debug(
-                    f"Marked generation {entry.get('generation')} as superseded for {deployment_name}/{service_type}"
-                )
+                logger.debug(f"Marked generation {entry.get('generation')} as superseded for {log_prefix}")
 
         # Create and insert new active entry at beginning
         revisions.insert(
@@ -281,7 +289,128 @@ class RevisionManager:
         # Update generation in config
         config["generation"] = generation
 
-        logger.info(f"Added revision for {deployment_name}/{service_type}: gen={generation}, resource={resource_name}")
+        logger.info(f"Added revision for {log_prefix}: gen={generation}, resource={resource_name}")
+
+    def _add_revision_entry(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        service_type: str,
+        generation: int,
+        resource_name: str,
+        action: str,
+        source: str | None,
+    ) -> dict[str, Any]:
+        """Add a new revision entry at deployment level, marking old active as superseded."""
+        config = self._ensure_service_entry(project_data, deployment_name, service_type)
+        if config is None:
+            return project_data
+
+        self._write_revision_to_config(
+            config, f"{deployment_name}/{service_type}", generation, resource_name, action, source
+        )
+        return project_data
+
+    def _ensure_component_service_config(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        service_type: str,
+        reference_name: str,
+    ) -> dict[str, Any] | None:
+        """Ensure a config dict exists at component level and return it.
+
+        Path: deployments[name].components[reference==component_name]
+              .services.{service_type}[reference==reference_name].config
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            service_type: Service type (e.g., "persistent-storage")
+            reference_name: Reference name of the service item (e.g., storage name)
+
+        Returns:
+            Config dict, or None if deployment/component not found
+        """
+        for deployment in project_data.get("deployments", []):
+            if deployment.get("name") != deployment_name:
+                continue
+
+            for component in deployment.get("components", []):
+                if component.get("reference") != component_name:
+                    continue
+
+                # Ensure services dict exists
+                if "services" not in component:
+                    component["services"] = {}
+
+                # Ensure service_type list exists
+                if service_type not in component["services"]:
+                    component["services"][service_type] = []
+
+                service_items = component["services"][service_type]
+
+                if not isinstance(service_items, list):
+                    logger.warning(
+                        f"Expected list for {deployment_name}/{component_name}/{service_type}, "
+                        f"got {type(service_items).__name__}"
+                    )
+                    return None
+
+                # Find existing item
+                for item in service_items:
+                    if isinstance(item, dict) and item.get("reference") == reference_name:
+                        if "config" not in item:
+                            item["config"] = {}
+                        return item["config"]
+
+                # Create new item
+                new_item: dict[str, Any] = {"reference": reference_name, "config": {}}
+                service_items.append(new_item)
+                return new_item["config"]
+
+        logger.warning(f"Component '{component_name}' in deployment '{deployment_name}' not found in project data")
+        return None
+
+    def record_component_clone(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_name: str,
+        service_type: str,
+        reference_name: str,
+        generation: int,
+        resource_name: str,
+        source: str,
+    ) -> dict[str, Any]:
+        """Record a clone operation at component level (for PVC/persistent-storage).
+
+        Unlike record_clone (deployment level), this writes to:
+        deployments[name].components[ref].services.{service_type}[ref].config
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_name: Name of the component
+            service_type: Service type (e.g., "persistent-storage")
+            reference_name: Reference name (e.g., storage name like "data")
+            generation: Generation number of the new resource
+            resource_name: Actual resource name (e.g., PVC name)
+            source: Source reference (e.g., "deployment:production")
+
+        Returns:
+            Updated project_data dictionary
+        """
+        config = self._ensure_component_service_config(
+            project_data, deployment_name, component_name, service_type, reference_name
+        )
+        if config is None:
+            return project_data
+
+        log_prefix = f"{deployment_name}/{component_name}/{service_type}/{reference_name}"
+        self._write_revision_to_config(config, log_prefix, generation, resource_name, "clone", source)
         return project_data
 
     def add_action(
