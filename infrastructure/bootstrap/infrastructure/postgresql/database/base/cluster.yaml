@@ -25,6 +25,11 @@ spec:
     size: 1Gi
     storageClass: standard
 
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      max_connections: "200"
+
   # Resource limits
   resources:
     requests:
