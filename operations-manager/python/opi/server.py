@@ -47,9 +47,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     print_boot_banner()
 
     # Set up Prometheus metrics collectors
-    from opi.core.metrics import setup_metrics, setup_tracemalloc
+    from opi.core.metrics import setup_metrics, setup_tracemalloc, start_peak_memory_tracking
 
     setup_metrics()
+    start_peak_memory_tracking()
     if settings.ENABLE_TRACEMALLOC:
         setup_tracemalloc()
 
@@ -77,6 +78,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     start_periodic_cleanup()
 
     yield
+
+    # Stop peak memory tracking
+    from opi.core.metrics import stop_peak_memory_tracking
+
+    stop_peak_memory_tracking()
 
     # Stop periodic task cleanup
     stop_periodic_cleanup()
@@ -246,4 +252,7 @@ if __name__ == "__main__":
         )
     else:
         # Production mode: No reload, no debugging
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+        # Use asyncio event loop instead of uvloop to avoid zombie process accumulation
+        # when running as PID 1 in a container (uvloop's libuv-based child reaping is
+        # unreliable without a proper init process)
+        uvicorn.run(app, host="0.0.0.0", port=8000, loop="asyncio")

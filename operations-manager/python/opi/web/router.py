@@ -315,7 +315,9 @@ async def get_task_status(request: Request, task_id: str):
 
         task_hierarchy = []
         if task_manager:
-            logger.debug(f"Found TaskProgressManager for {task_id} with {len(task_manager.tasks)} tasks")
+            logger.debug(
+                f"Found TaskProgressManager for project {project.project_name} and task {task_id} with {len(task_manager.tasks)} tasks"
+            )
             # Build the proper task hierarchy from this project's tasks
             main_tasks = []
             subtasks_by_parent = {}

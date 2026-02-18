@@ -38,6 +38,8 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
         key_file.write(private_key)
         key_file.flush()
 
+        from opi.core.metrics import track_subprocess_memory
+
         process = await asyncio.create_subprocess_exec(
             "age",
             "-d",
@@ -47,7 +49,8 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate(input=encrypted_content.encode())
+        async with track_subprocess_memory("age"):
+            stdout, stderr = await process.communicate(input=encrypted_content.encode())
 
     if process.returncode != 0:
         error_msg = stderr.decode("utf-8").strip()
@@ -89,6 +92,8 @@ async def encrypt_age_content(plain_content: str, public_key: str | None) -> str
     if not plain_content:
         raise ValueError("Missing plain content for encryption")
 
+    from opi.core.metrics import track_subprocess_memory
+
     encrypt_process = await asyncio.create_subprocess_exec(
         "age",
         "--armor",
@@ -98,7 +103,8 @@ async def encrypt_age_content(plain_content: str, public_key: str | None) -> str
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await encrypt_process.communicate(input=plain_content.encode())
+    async with track_subprocess_memory("age"):
+        stdout, stderr = await encrypt_process.communicate(input=plain_content.encode())
 
     if encrypt_process.returncode != 0:
         logger.error(f"age encryption failed: {stderr.decode('utf-8', errors='replace')}")

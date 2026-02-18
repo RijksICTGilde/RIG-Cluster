@@ -359,12 +359,15 @@ class GitConnector:
             cmd_env["GIT_SSH_COMMAND"] = ssh_cmd
 
         # Create process
+        from opi.core.metrics import track_subprocess_memory
+
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env, cwd=working_dir
         )
 
-        # Wait for command to complete
-        stdout, stderr = await process.communicate()
+        # Wait for command to complete, tracking memory delta
+        async with track_subprocess_memory("git"):
+            stdout, stderr = await process.communicate()
         stdout_str = stdout.decode("utf-8").strip()
         stderr_str = stderr.decode("utf-8").strip()
 

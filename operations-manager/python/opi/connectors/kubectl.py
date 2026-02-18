@@ -164,6 +164,8 @@ class KubectlConnector:
         cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
         cmd_str = f"kubectl {cmd_args_str}"
 
+        from opi.core.metrics import track_subprocess_memory
+
         if stdin_input:
             # Use shell execution with EOF markers for stdin input to handle spaces/newlines properly
             shell_cmd = f"{cmd_str} <<'EOF'\n{stdin_input}\nEOF"
@@ -176,7 +178,8 @@ class KubectlConnector:
             )
 
             # Wait for command to complete
-            stdout, stderr = await process.communicate()
+            async with track_subprocess_memory("kubectl"):
+                stdout, stderr = await process.communicate()
         else:
             # Use regular exec for commands without stdin
             cmd = ["kubectl"]
@@ -190,7 +193,8 @@ class KubectlConnector:
             )
 
             # Wait for command to complete
-            stdout, stderr = await process.communicate()
+            async with track_subprocess_memory("kubectl"):
+                stdout, stderr = await process.communicate()
         stdout_str = stdout.decode("utf-8").strip()
         stderr_str = stderr.decode("utf-8").strip()
 

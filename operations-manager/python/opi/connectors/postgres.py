@@ -1352,11 +1352,14 @@ class PostgresConnector:
             logger.debug(f"Executing full schema pipeline: {shell_cmd}")
 
             # Execute the shell pipeline for complete schema clone
+            from opi.core.metrics import track_subprocess_memory
+
             clone_process = await asyncio.create_subprocess_shell(
                 shell_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
 
-            clone_out, clone_err = await clone_process.communicate()
+            async with track_subprocess_memory("postgres-clone"):
+                clone_out, clone_err = await clone_process.communicate()
 
             # Log only errors or important warnings
             if clone_err:

@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     gnupg2 \
     ca-certificates \
     age \
+    tini \
     postgresql-client
 
 # Install kubectl - cached unless kubectl version changes
@@ -122,5 +123,8 @@ USER appuser
 EXPOSE 8000
 EXPOSE 5678
 
-# Set the command to run the application (with conditional startup logic)
+# Use tini as PID 1 to properly reap zombie child processes
+ENTRYPOINT ["tini", "--"]
+
+# Set the command to run the application
 CMD ["python", "-m", "opi.server"]
