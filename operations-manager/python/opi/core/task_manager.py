@@ -3,11 +3,12 @@ Simple task tracking for FastAPI BackgroundTasks.
 """
 
 # TODO: make the task manager actually add and finish tasks where they are created and done
+import asyncio
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -18,9 +19,6 @@ from opi.core.config import settings
 # ProjectManager imported locally to avoid circular import
 
 logger = logging.getLogger(__name__)
-
-# Set to hold references to background tasks so they are not garbage collected (RUF006)
-_background_tasks: set[Any] = set()
 
 
 class TaskStatus(str, Enum):
@@ -58,12 +56,17 @@ class ProjectInfo:
     events: list[dict[str, str]] | None = None
     namespace: str | None = None
     web_addresses: dict[str, str] | None = None  # component_name -> web_address
+    completed_at: datetime | None = None  # when project reached terminal status
 
 
 # Simple in-memory storage for projects only
 _projects: dict[str, ProjectInfo] = {}
 # Store TaskProgressManager instances per project
 _project_managers: dict[str, "TaskProgressManager"] = {}
+# Track active monitoring tasks to prevent duplicate monitoring loops per project
+_active_monitoring_tasks: dict[str, "asyncio.Task[None]"] = {}
+# Track active application monitoring tasks
+_active_app_monitoring_tasks: dict[str, "asyncio.Task[None]"] = {}
 
 
 class TaskProgressManager:
@@ -128,11 +131,13 @@ class TaskProgressManager:
         """Mark the entire project as completed."""
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.COMPLETED
+            _projects[self.project_id].completed_at = datetime.now(tz=UTC)
 
     def fail_project(self, error: str) -> None:
         """Mark the entire project as failed."""
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.FAILED
+            _projects[self.project_id].completed_at = datetime.now(tz=UTC)
 
     def set_namespace(self, namespace: str) -> None:
         """Set namespace for monitoring and start monitoring."""
@@ -153,17 +158,9 @@ class TaskProgressManager:
             _projects[self.project_id].events = events
 
     def start_monitoring(self) -> None:
-        """Start background monitoring for logs and events."""
+        """Start background monitoring for logs and events. Deduplicates per project."""
         if self.project_id in _projects and _projects[self.project_id].namespace:
-            # Start the monitoring task
-            import asyncio
-
-            task = asyncio.create_task(_monitor_project_progress(self.project_id))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-            logger.info(
-                f"Started monitoring for project {self.project_id} in namespace {_projects[self.project_id].namespace}"
-            )
+            _start_monitoring_if_not_active(self.project_id)
         else:
             logger.warning(f"Cannot start monitoring for project {self.project_id}: namespace not set")
 
@@ -198,8 +195,89 @@ class TaskProgressManager:
         update_component_readiness(self.project_id, component_name, deployment_ready)
 
 
+def _start_monitoring_if_not_active(project_id: str) -> None:
+    """Start a monitoring task for a project only if one isn't already running."""
+    existing = _active_monitoring_tasks.get(project_id)
+    if existing and not existing.done():
+        logger.debug(f"Monitoring already active for project {project_id}, skipping duplicate")
+        return
+    task = asyncio.create_task(_monitor_project_progress(project_id))
+    _active_monitoring_tasks[project_id] = task
+    logger.info(f"Started monitoring for project {project_id}")
+
+
+def _start_app_monitoring_if_not_active(task_id: str, project_name: str, application_names: list[str]) -> None:
+    """Start application monitoring for a project only if one isn't already running."""
+    existing = _active_app_monitoring_tasks.get(task_id)
+    if existing and not existing.done():
+        logger.debug(f"Application monitoring already active for project {task_id}, skipping duplicate")
+        return
+    task = asyncio.create_task(_monitor_project_applications_continuously(task_id, project_name, application_names))
+    _active_app_monitoring_tasks[task_id] = task
+    logger.info(f"Started application monitoring for project {task_id}")
+
+
+def _cleanup_completed_projects() -> None:
+    """Remove projects that have been COMPLETED or FAILED for more than 30 minutes,
+    and RUNNING projects stuck for more than 2 hours (likely orphaned)."""
+    cutoff = datetime.now(tz=UTC) - timedelta(minutes=30)
+    stuck_cutoff = datetime.now(tz=UTC) - timedelta(hours=2)
+    to_remove = []
+    for project_id, project in _projects.items():
+        if project.status in [TaskStatus.COMPLETED, TaskStatus.FAILED] and project.completed_at:
+            if project.completed_at < cutoff:
+                to_remove.append(project_id)
+        elif project.status == TaskStatus.RUNNING and project.created_at < stuck_cutoff:
+            logger.warning(f"Cleaning up stuck RUNNING project {project_id} (created {project.created_at})")
+            to_remove.append(project_id)
+    for project_id in to_remove:
+        del _projects[project_id]
+        _project_managers.pop(project_id, None)
+        # Cancel any still-running monitoring tasks before removing references
+        monitoring_task = _active_monitoring_tasks.pop(project_id, None)
+        if monitoring_task and not monitoring_task.done():
+            monitoring_task.cancel()
+        app_monitoring_task = _active_app_monitoring_tasks.pop(project_id, None)
+        if app_monitoring_task and not app_monitoring_task.done():
+            app_monitoring_task.cancel()
+    if to_remove:
+        logger.info(f"Cleaned up {len(to_remove)} completed/failed projects from tracking")
+
+
+_cleanup_task: asyncio.Task[None] | None = None
+
+
+async def _periodic_cleanup_loop() -> None:
+    """Periodically clean up completed/failed projects. Runs every 5 minutes."""
+    while True:
+        await asyncio.sleep(300)  # 5 minutes
+        try:
+            _cleanup_completed_projects()
+        except Exception as e:
+            logger.error(f"Error in periodic cleanup: {e}")
+
+
+def start_periodic_cleanup() -> None:
+    """Start the periodic cleanup background task. Safe to call multiple times."""
+    global _cleanup_task
+    if _cleanup_task and not _cleanup_task.done():
+        return
+    _cleanup_task = asyncio.create_task(_periodic_cleanup_loop())
+    logger.info("Started periodic project cleanup task")
+
+
+def stop_periodic_cleanup() -> None:
+    """Stop the periodic cleanup background task."""
+    global _cleanup_task
+    if _cleanup_task and not _cleanup_task.done():
+        _cleanup_task.cancel()
+        logger.info("Stopped periodic project cleanup task")
+    _cleanup_task = None
+
+
 def create_task(project_name: str) -> str:
     """Create a new project and return its ID."""
+    _cleanup_completed_projects()
     project_id = str(uuid.uuid4())
     # Create project info in the new system
     _projects[project_id] = ProjectInfo(
@@ -228,6 +306,7 @@ def complete_task(task_id: str, result: dict[str, Any]) -> None:
     if task_id in _projects:
         _projects[task_id].status = TaskStatus.COMPLETED
         _projects[task_id].current_step = "Completed"
+        _projects[task_id].completed_at = datetime.now(tz=UTC)
         logger.info(f"Task {task_id} completed")
     else:
         logger.info(f"Task {task_id} completed (task not found)")
@@ -238,6 +317,7 @@ def fail_task(task_id: str, error: str) -> None:
     if task_id in _projects:
         _projects[task_id].status = TaskStatus.FAILED
         _projects[task_id].current_step = "Failed"
+        _projects[task_id].completed_at = datetime.now(tz=UTC)
         logger.error(f"Task {task_id} failed: {error}")
     else:
         logger.error(f"Task {task_id} failed: {error} (task not found)")
@@ -298,8 +378,6 @@ async def start_task_monitoring(task_id: str) -> None:
 
     This should be called after the namespace is created and deployments are starting.
     """
-    import asyncio
-
     if task_id not in _projects:
         logger.warning(f"Cannot start monitoring for task {task_id}: project not found")
         return
@@ -311,10 +389,8 @@ async def start_task_monitoring(task_id: str) -> None:
 
     logger.info(f"Starting monitoring for task {task_id} in namespace {project.namespace}")
 
-    # Start monitoring in the background using new system
-    task = asyncio.create_task(_monitor_project_progress(task_id))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    # Start monitoring in the background using new system (deduplicated)
+    _start_monitoring_if_not_active(task_id)
 
 
 async def _monitor_task_progress(task_id: str) -> None:
@@ -337,8 +413,6 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
         project_name: The name of the project being deployed
         progress_manager: The progress manager for updating subtasks
     """
-    import asyncio
-
     from opi.connectors import create_argo_connector
     from opi.connectors.kubectl import KubectlConnector
 
@@ -391,12 +465,8 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
                             # Set the correct namespace for monitoring
                             _projects[task_id].namespace = namespace
                             logger.info(f"Set monitoring namespace to: {namespace}")
-                            # Start background monitoring
-                            import asyncio
-
-                            task = asyncio.create_task(_monitor_project_progress(task_id))
-                            _background_tasks.add(task)
-                            task.add_done_callback(_background_tasks.discard)
+                            # Start background monitoring (deduplicated)
+                            _start_monitoring_if_not_active(task_id)
 
                 # Check if all found applications are synced and healthy
                 if project_apps_found:
@@ -456,12 +526,8 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
                         logger.info(f"All {len(project_apps_found)} ArgoCD applications are synced and healthy")
                         update_progress(task_id, 82, f"Alle {len(project_apps_found)} ArgoCD applicaties zijn gezond")
 
-                        # Start continuous monitoring for the newly created project applications
-                        task = asyncio.create_task(
-                            _monitor_project_applications_continuously(task_id, project_name, project_apps_found)
-                        )
-                        _background_tasks.add(task)
-                        task.add_done_callback(_background_tasks.discard)
+                        # Start continuous monitoring for the newly created project applications (deduplicated)
+                        _start_app_monitoring_if_not_active(task_id, project_name, project_apps_found)
                         break
 
         except Exception as e:
@@ -481,9 +547,8 @@ async def _monitor_project_progress(project_id: str) -> None:
     Background monitoring for a project to collect logs, events, and deployment status.
 
     This runs while the project is in progress and updates the project data with real-time info.
+    Only one instance runs per project (enforced by _start_monitoring_if_not_active).
     """
-    import asyncio
-
     from opi.connectors.kubectl import KubectlConnector
 
     kubectl = KubectlConnector()
@@ -542,6 +607,10 @@ async def _monitor_project_progress(project_id: str) -> None:
 
     except Exception as e:
         logger.error(f"Error in monitoring project {project_id}: {e}")
+    finally:
+        # Clean up tracking entry so a new monitoring task can be started if needed
+        _active_monitoring_tasks.pop(project_id, None)
+        logger.debug(f"Removed monitoring tracking entry for project {project_id}")
 
     logger.debug(f"Finished monitoring project {project_id}")
 
@@ -555,13 +624,13 @@ async def _monitor_project_applications_continuously(
     This provides ongoing feedback on deployment progress, including detailed ArgoCD status
     information and pod readiness status until the deployment is fully completed.
 
+    Only one instance runs per project (enforced by _start_app_monitoring_if_not_active).
+
     Args:
         task_id: The task ID for tracking
         project_name: The name of the project being deployed
         application_names: List of ArgoCD application names to monitor
     """
-    import asyncio
-
     from opi.connectors import create_argo_connector
     from opi.connectors.kubectl import KubectlConnector
 
@@ -570,7 +639,7 @@ async def _monitor_project_applications_continuously(
     argo_connector = create_argo_connector()
     kubectl = KubectlConnector()
 
-    monitoring_interval = 10  # Check every 10 seconds for detailed updates
+    monitoring_interval = 10  # seconds
     max_monitoring_time = 1800  # 30 minutes max continuous monitoring
     start_time = time.time()
 
@@ -578,174 +647,184 @@ async def _monitor_project_applications_continuously(
     deployment_complete = False
     last_status_update = ""
 
-    while (time.time() - start_time) < max_monitoring_time and not deployment_complete:
-        try:
-            if task_id not in _projects:
-                logger.info(f"Project {task_id} no longer exists, stopping application monitoring")
-                break
+    try:
+        while (time.time() - start_time) < max_monitoring_time and not deployment_complete:
+            try:
+                if task_id not in _projects:
+                    logger.info(f"Project {task_id} no longer exists, stopping application monitoring")
+                    break
 
-            project = _projects[task_id]
-            if project.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
-                logger.info(f"Project {task_id} finished, stopping application monitoring")
-                break
+                project = _projects[task_id]
+                if project.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                    logger.info(f"Project {task_id} finished, stopping application monitoring")
+                    break
 
-            # Collect detailed status for each application
-            app_statuses = []
-            all_healthy = True
-            all_synced = True
+                # Collect detailed status for each application
+                app_statuses = []
+                all_healthy = True
+                all_synced = True
 
-            for app_name in application_names:
-                try:
-                    app_info = await argo_connector.get_application_status(app_name)
-                    if app_info:
-                        sync_status = app_info.get("status", {}).get("sync", {}).get("status", "Unknown")
-                        health_status = app_info.get("status", {}).get("health", {}).get("status", "Unknown")
+                for app_name in application_names:
+                    try:
+                        app_info = await argo_connector.get_application_status(app_name)
+                        if app_info:
+                            sync_status = app_info.get("status", {}).get("sync", {}).get("status", "Unknown")
+                            health_status = app_info.get("status", {}).get("health", {}).get("status", "Unknown")
 
-                        # Get detailed ArgoCD status information
-                        sync_message = app_info.get("status", {}).get("sync", {}).get("message", "")
-                        health_message = app_info.get("status", {}).get("health", {}).get("message", "")
-                        operation_state = app_info.get("status", {}).get("operationState", {})
-                        operation_phase = operation_state.get("phase", "")
-                        operation_message = operation_state.get("message", "")
+                            # Get detailed ArgoCD status information
+                            sync_message = app_info.get("status", {}).get("sync", {}).get("message", "")
+                            health_message = app_info.get("status", {}).get("health", {}).get("message", "")
+                            operation_state = app_info.get("status", {}).get("operationState", {})
+                            operation_phase = operation_state.get("phase", "")
+                            operation_message = operation_state.get("message", "")
 
-                        # Get resource status
-                        resources = app_info.get("status", {}).get("resources", [])
-                        resource_summary = {
-                            "total": len(resources),
-                            "healthy": 0,
-                            "progressing": 0,
-                            "degraded": 0,
-                            "missing": 0,
-                        }
+                            # Get resource status
+                            resources = app_info.get("status", {}).get("resources", [])
+                            resource_summary = {
+                                "total": len(resources),
+                                "healthy": 0,
+                                "progressing": 0,
+                                "degraded": 0,
+                                "missing": 0,
+                            }
 
-                        for resource in resources:
-                            res_health = resource.get("health", {}).get("status", "Unknown")
-                            if res_health == "Healthy":
-                                resource_summary["healthy"] += 1
-                            elif res_health == "Progressing":
-                                resource_summary["progressing"] += 1
-                            elif res_health == "Degraded":
-                                resource_summary["degraded"] += 1
-                            else:
-                                resource_summary["missing"] += 1
+                            for resource in resources:
+                                res_health = resource.get("health", {}).get("status", "Unknown")
+                                if res_health == "Healthy":
+                                    resource_summary["healthy"] += 1
+                                elif res_health == "Progressing":
+                                    resource_summary["progressing"] += 1
+                                elif res_health == "Degraded":
+                                    resource_summary["degraded"] += 1
+                                else:
+                                    resource_summary["missing"] += 1
 
+                            app_statuses.append(
+                                {
+                                    "name": app_name,
+                                    "sync": sync_status,
+                                    "health": health_status,
+                                    "sync_message": sync_message[:100] + "..."
+                                    if len(sync_message) > 100
+                                    else sync_message,
+                                    "health_message": health_message[:100] + "..."
+                                    if len(health_message) > 100
+                                    else health_message,
+                                    "operation_phase": operation_phase,
+                                    "operation_message": operation_message[:100] + "..."
+                                    if len(operation_message) > 100
+                                    else operation_message,
+                                    "resources": resource_summary,
+                                }
+                            )
+
+                            if sync_status != "Synced":
+                                all_synced = False
+                            if health_status not in ["Healthy"]:
+                                all_healthy = False
+
+                    except Exception as e:
+                        logger.warning(f"Error getting status for application {app_name}: {e}")
                         app_statuses.append(
                             {
                                 "name": app_name,
-                                "sync": sync_status,
-                                "health": health_status,
-                                "sync_message": sync_message[:100] + "..." if len(sync_message) > 100 else sync_message,
-                                "health_message": health_message[:100] + "..."
-                                if len(health_message) > 100
-                                else health_message,
-                                "operation_phase": operation_phase,
-                                "operation_message": operation_message[:100] + "..."
-                                if len(operation_message) > 100
-                                else operation_message,
-                                "resources": resource_summary,
+                                "sync": "Error",
+                                "health": "Error",
+                                "sync_message": str(e),
+                                "health_message": "",
+                                "operation_phase": "",
+                                "operation_message": "",
+                                "resources": {"total": 0, "healthy": 0, "progressing": 0, "degraded": 0, "missing": 0},
                             }
                         )
+                        all_healthy = False
+                        all_synced = False
 
-                        if sync_status != "Synced":
-                            all_synced = False
-                        if health_status not in ["Healthy"]:
-                            all_healthy = False
+                # Generate detailed status update
+                if app_statuses:
+                    status_parts = []
 
-                except Exception as e:
-                    logger.warning(f"Error getting status for application {app_name}: {e}")
-                    app_statuses.append(
-                        {
-                            "name": app_name,
-                            "sync": "Error",
-                            "health": "Error",
-                            "sync_message": str(e),
-                            "health_message": "",
-                            "operation_phase": "",
-                            "operation_message": "",
-                            "resources": {"total": 0, "healthy": 0, "progressing": 0, "degraded": 0, "missing": 0},
-                        }
-                    )
-                    all_healthy = False
-                    all_synced = False
+                    for app_status in app_statuses:
+                        app_short_name = app_status["name"].replace(f"{project_name}-", "")
 
-            # Generate detailed status update
-            if app_statuses:
-                status_parts = []
+                        # Get status values
+                        sync_status = app_status["sync"]
+                        health_status = app_status["health"]
 
-                for app_status in app_statuses:
-                    app_short_name = app_status["name"].replace(f"{project_name}-", "")
+                        # Add resource summary if available
+                        resources = app_status["resources"]
+                        if resources["total"] > 0:
+                            resource_text = f"({resources['healthy']}/{resources['total']} gezond"
+                            if resources["progressing"] > 0:
+                                resource_text += f", {resources['progressing']} bezig"
+                            if resources["degraded"] > 0:
+                                resource_text += f", {resources['degraded']} probleem"
+                            resource_text += ")"
+                        else:
+                            resource_text = ""
 
-                    # Get status values
-                    sync_status = app_status["sync"]
-                    health_status = app_status["health"]
+                        # Include operation phase if available
+                        operation_text = ""
+                        if app_status["operation_phase"]:
+                            operation_text = f" [{app_status['operation_phase']}]"
 
-                    # Add resource summary if available
-                    resources = app_status["resources"]
-                    if resources["total"] > 0:
-                        resource_text = f"({resources['healthy']}/{resources['total']} gezond"
-                        if resources["progressing"] > 0:
-                            resource_text += f", {resources['progressing']} bezig"
-                        if resources["degraded"] > 0:
-                            resource_text += f", {resources['degraded']} probleem"
-                        resource_text += ")"
-                    else:
-                        resource_text = ""
+                        # Include ArgoCD messages if meaningful
+                        message_text = ""
+                        if app_status["health_message"] and "successfully" not in app_status["health_message"].lower():
+                            message_text = f" - {app_status['health_message']}"
+                        elif app_status["sync_message"] and "successfully" not in app_status["sync_message"].lower():
+                            message_text = f" - {app_status['sync_message']}"
+                        elif app_status["operation_message"]:
+                            message_text = f" - {app_status['operation_message']}"
 
-                    # Include operation phase if available
-                    operation_text = ""
-                    if app_status["operation_phase"]:
-                        operation_text = f" [{app_status['operation_phase']}]"
+                        status_part = f"{app_short_name}: sync={sync_status} health={health_status}{resource_text}{operation_text}{message_text}"
+                        status_parts.append(status_part)
 
-                    # Include ArgoCD messages if meaningful
-                    message_text = ""
-                    if app_status["health_message"] and "successfully" not in app_status["health_message"].lower():
-                        message_text = f" - {app_status['health_message']}"
-                    elif app_status["sync_message"] and "successfully" not in app_status["sync_message"].lower():
-                        message_text = f" - {app_status['sync_message']}"
-                    elif app_status["operation_message"]:
-                        message_text = f" - {app_status['operation_message']}"
+                    # Create progress update
+                    current_status = " | ".join(status_parts)
 
-                    status_part = f"{app_short_name}: sync={sync_status} health={health_status}{resource_text}{operation_text}{message_text}"
-                    status_parts.append(status_part)
+                    # Only update if status changed significantly
+                    if current_status != last_status_update:
+                        if all_synced and all_healthy:
+                            update_progress(task_id, 85, f"Deployment voltooid: {current_status}")
+                            deployment_complete = True
+                        else:
+                            # Calculate progress based on sync and health status
+                            total_checks = len(app_statuses) * 2  # sync + health for each app
+                            completed_checks = sum(1 for app in app_statuses if app["sync"] == "Synced") + sum(
+                                1 for app in app_statuses if app["health"] == "Healthy"
+                            )
+                            progress_percent = min(82 + int((completed_checks / total_checks) * 8), 90)  # 82-90% range
 
-                # Create progress update
-                current_status = " | ".join(status_parts)
+                            update_progress(task_id, progress_percent, f"Deployment voortgang: {current_status}")
 
-                # Only update if status changed significantly
-                if current_status != last_status_update:
-                    if all_synced and all_healthy:
-                        update_progress(task_id, 85, f"Deployment voltooid: {current_status}")
-                        deployment_complete = True
-                    else:
-                        # Calculate progress based on sync and health status
-                        total_checks = len(app_statuses) * 2  # sync + health for each app
-                        completed_checks = sum(1 for app in app_statuses if app["sync"] == "Synced") + sum(
-                            1 for app in app_statuses if app["health"] == "Healthy"
-                        )
-                        progress_percent = min(82 + int((completed_checks / total_checks) * 8), 90)  # 82-90% range
+                        last_status_update = current_status
 
-                        update_progress(task_id, progress_percent, f"Deployment voortgang: {current_status}")
+                # Check if deployment is complete
+                if all_synced and all_healthy:
+                    deployment_complete = True
+                    logger.info(f"All applications for project {project_name} are fully deployed and healthy")
+                    break
 
-                    last_status_update = current_status
+            except Exception as e:
+                logger.warning(f"Error during continuous application monitoring for project {project_name}: {e}")
 
-            # Check if deployment is complete
-            if all_synced and all_healthy:
-                deployment_complete = True
-                logger.info(f"All applications for project {project_name} are fully deployed and healthy")
-                break
+            # Wait before next check
+            await asyncio.sleep(monitoring_interval)
 
-        except Exception as e:
-            logger.warning(f"Error during continuous application monitoring for project {project_name}: {e}")
+        if not deployment_complete:
+            elapsed_minutes = (time.time() - start_time) / 60
+            logger.warning(
+                f"Continuous monitoring for project {project_name} ended after {elapsed_minutes:.1f} minutes without full completion"
+            )
+            update_progress(
+                task_id, 84, f"Monitoring gestopt na {elapsed_minutes:.1f} min - controleer ArgoCD handmatig"
+            )
 
-        # Wait before next check
-        await asyncio.sleep(monitoring_interval)
-
-    if not deployment_complete:
-        elapsed_minutes = (time.time() - start_time) / 60
-        logger.warning(
-            f"Continuous monitoring for project {project_name} ended after {elapsed_minutes:.1f} minutes without full completion"
-        )
-        update_progress(task_id, 84, f"Monitoring gestopt na {elapsed_minutes:.1f} min - controleer ArgoCD handmatig")
+    finally:
+        # Clean up tracking entry so a new app monitoring task can be started if needed
+        _active_app_monitoring_tasks.pop(task_id, None)
+        logger.debug(f"Removed app monitoring tracking entry for project {task_id}")
 
     logger.info(f"Finished continuous monitoring for project {project_name} applications")
 
@@ -946,8 +1025,6 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
         await start_task_monitoring(task_id)
 
         # Wait a bit for initial deployment
-        import asyncio
-
         await asyncio.sleep(10)
 
         progress_manager.complete_task(subtask_verify)

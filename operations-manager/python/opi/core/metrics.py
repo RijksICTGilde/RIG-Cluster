@@ -127,20 +127,21 @@ class OPICollector(Collector):
         yield db_active
         yield db_size
 
-        # --- Background tasks ---
+        # --- Background monitoring tasks ---
         bg_tasks = GaugeMetricFamily(
             "opi_background_tasks_active",
-            "Number of active asyncio background tasks",
+            "Number of active asyncio background monitoring tasks",
         )
         try:
-            from opi.core.simple_background import (
-                _background_tasks as sb_tasks,
-            )
             from opi.core.task_manager import (
-                _background_tasks as tm_tasks,
+                _active_app_monitoring_tasks,
+                _active_monitoring_tasks,
             )
 
-            bg_tasks.add_metric([], len(tm_tasks) + len(sb_tasks))
+            active_count = sum(1 for t in _active_monitoring_tasks.values() if not t.done()) + sum(
+                1 for t in _active_app_monitoring_tasks.values() if not t.done()
+            )
+            bg_tasks.add_metric([], active_count)
         except Exception:
             logger.debug("Failed to collect background task metrics", exc_info=True)
         yield bg_tasks
