@@ -62,6 +62,10 @@ MAX_CLIENT_MESSAGE_SIZE = 1024  # 1KB max for client messages (actions like paus
 # Heartbeat interval
 HEARTBEAT_INTERVAL_SECONDS = 30
 
+# Bounded buffer sizes - caps memory usage from subprocess pipes
+LOG_BUFFER_SIZE = 200  # Max log lines held in memory (sliding window)
+STDERR_BUFFER_SIZE = 50  # Max stderr lines held in memory
+
 
 def _validate_origin(websocket: WebSocket) -> bool:
     """
@@ -413,6 +417,12 @@ async def stream_logs(
         paused = False
         running = True
 
+        # Bounded queues act as sliding windows - drain tasks fill them,
+        # reader tasks consume them. This prevents unbounded memory growth
+        # from subprocess pipes when log volume exceeds WebSocket throughput.
+        log_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=LOG_BUFFER_SIZE)
+        stderr_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=STDERR_BUFFER_SIZE)
+
         # Use a lock to coordinate process access between tasks
         process_lock = asyncio.Lock()
 
@@ -429,12 +439,14 @@ async def stream_logs(
 
         await send_message(websocket, "status", status="streaming", message="Log streaming started")
 
-        async def read_logs() -> None:
-            """Read logs from kubectl process and send to client."""
-            nonlocal sequence, running
+        async def drain_stdout() -> None:
+            """Drain subprocess stdout into bounded queue, dropping oldest when full.
 
+            This runs as fast as the subprocess produces output, ensuring the
+            OS pipe buffer never grows large. The queue acts as a sliding window
+            keeping only the most recent LOG_BUFFER_SIZE lines.
+            """
             while running:
-                # Get current process reference under lock, but release before I/O
                 async with process_lock:
                     current_process = process
                     current_stdout = current_process.stdout if current_process else None
@@ -443,18 +455,61 @@ async def stream_logs(
                     await asyncio.sleep(0.1)
                     continue
 
-                # Perform blocking I/O outside the lock
                 try:
                     line = await asyncio.wait_for(current_stdout.readline(), timeout=0.5)
                 except TimeoutError:
                     continue
-                except Exception as e:
-                    logger.debug(f"Error reading log line: {e}")
+                except Exception:
                     await asyncio.sleep(0.1)
                     continue
 
                 if not line:
                     await asyncio.sleep(0.5)
+                    continue
+
+                # Sliding window: drop oldest line when queue is full
+                if log_queue.full():
+                    with contextlib.suppress(asyncio.QueueEmpty):
+                        log_queue.get_nowait()
+                with contextlib.suppress(asyncio.QueueFull):
+                    log_queue.put_nowait(line)
+
+        async def drain_stderr() -> None:
+            """Drain subprocess stderr into bounded queue, dropping oldest when full."""
+            while running:
+                async with process_lock:
+                    current_process = process
+                    current_stderr = current_process.stderr if current_process else None
+
+                if current_stderr is None:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                try:
+                    line = await asyncio.wait_for(current_stderr.readline(), timeout=0.5)
+                except TimeoutError:
+                    continue
+                except Exception:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                if not line:
+                    continue
+
+                if stderr_queue.full():
+                    with contextlib.suppress(asyncio.QueueEmpty):
+                        stderr_queue.get_nowait()
+                with contextlib.suppress(asyncio.QueueFull):
+                    stderr_queue.put_nowait(line)
+
+        async def read_logs() -> None:
+            """Read logs from bounded queue and send to client."""
+            nonlocal sequence, running
+
+            while running:
+                try:
+                    line = await asyncio.wait_for(log_queue.get(), timeout=0.5)
+                except TimeoutError:
                     continue
 
                 if paused:
@@ -496,56 +551,42 @@ async def stream_logs(
         stderr_rate_limiter = RateLimiter(rate=MAX_MESSAGES_PER_SECOND, burst=20)
 
         async def read_stderr() -> None:
-            """Read and log stderr from kubectl process to prevent buffer deadlock."""
+            """Read stderr from bounded queue and forward warnings."""
             nonlocal running
 
             while running:
-                # Get current process reference under lock, but release before I/O
-                async with process_lock:
-                    current_process = process
-                    current_stderr = current_process.stderr if current_process else None
-
-                if current_stderr is None:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                # Perform blocking I/O outside the lock
                 try:
-                    line = await asyncio.wait_for(current_stderr.readline(), timeout=0.5)
+                    line = await asyncio.wait_for(stderr_queue.get(), timeout=0.5)
                 except TimeoutError:
                     continue
-                except Exception:
-                    await asyncio.sleep(0.1)
+
+                # Apply rate limiting to stderr as well
+                allowed, dropped = stderr_rate_limiter.acquire()
+                if not allowed:
                     continue
 
-                if line:
-                    # Apply rate limiting to stderr as well
-                    allowed, dropped = stderr_rate_limiter.acquire()
-                    if not allowed:
-                        continue
+                stderr_text = line.decode("utf-8", errors="replace").rstrip()
+                sanitized_text = _sanitize_log_line(stderr_text)
+                logger.warning(f"kubectl stderr: {sanitized_text}")
 
-                    stderr_text = line.decode("utf-8", errors="replace").rstrip()
-                    sanitized_text = _sanitize_log_line(stderr_text)
-                    logger.warning(f"kubectl stderr: {sanitized_text}")
-
-                    # Notify if stderr messages were dropped
-                    if dropped > 0:
-                        await send_message(
-                            websocket,
-                            "warning",
-                            message=f"Rate limited: {dropped} stderr lines skipped",
-                        )
-
+                # Notify if stderr messages were dropped
+                if dropped > 0:
                     await send_message(
                         websocket,
-                        "log",
-                        deployment=deployment,
-                        component=current_component,
-                        line=f"[STDERR] {sanitized_text}",
-                        timestamp=datetime.now(UTC).isoformat(),
-                        sequence=0,
-                        level="error",
+                        "warning",
+                        message=f"Rate limited: {dropped} stderr lines skipped",
                     )
+
+                await send_message(
+                    websocket,
+                    "log",
+                    deployment=deployment,
+                    component=current_component,
+                    line=f"[STDERR] {sanitized_text}",
+                    timestamp=datetime.now(UTC).isoformat(),
+                    sequence=0,
+                    level="error",
+                )
 
         async def handle_client_messages() -> None:
             """Handle incoming messages from client."""
@@ -622,6 +663,18 @@ async def stream_logs(
                                     with contextlib.suppress(OSError, asyncio.TimeoutError):
                                         await asyncio.wait_for(process.wait(), timeout=2.0)
 
+                                # Clear queues so old component logs don't bleed through
+                                while not log_queue.empty():
+                                    try:
+                                        log_queue.get_nowait()
+                                    except asyncio.QueueEmpty:
+                                        break
+                                while not stderr_queue.empty():
+                                    try:
+                                        stderr_queue.get_nowait()
+                                    except asyncio.QueueEmpty:
+                                        break
+
                                 current_component = new_component
                                 current_k8s_name = generate_unique_name(deployment, current_component)
                                 sequence = 0
@@ -679,15 +732,20 @@ async def stream_logs(
                         running = False
                         break
 
-        # Run all tasks concurrently
+        # Run all tasks concurrently - drain tasks keep pipe buffers small,
+        # reader tasks consume from bounded queues
+        stdout_drain_task = asyncio.create_task(drain_stdout())
+        stderr_drain_task = asyncio.create_task(drain_stderr())
         log_task = asyncio.create_task(read_logs())
         stderr_task = asyncio.create_task(read_stderr())
         client_task = asyncio.create_task(handle_client_messages())
         heartbeat_task = asyncio.create_task(heartbeat())
 
+        all_tasks = [stdout_drain_task, stderr_drain_task, log_task, stderr_task, client_task, heartbeat_task]
+
         try:
             _done, pending = await asyncio.wait(
-                [log_task, stderr_task, client_task, heartbeat_task],
+                all_tasks,
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -701,10 +759,8 @@ async def stream_logs(
 
         except asyncio.CancelledError:
             running = False
-            log_task.cancel()
-            stderr_task.cancel()
-            client_task.cancel()
-            heartbeat_task.cancel()
+            for task in all_tasks:
+                task.cancel()
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for {user_email}: {project_name}/{deployment}/{component}")

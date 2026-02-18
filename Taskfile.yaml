@@ -73,6 +73,9 @@ tasks:
   requirements-check:
     desc: "Check whether the user has all the required tools installed locally."
     preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: |
+          🚨 Docker daemon is not running! Start Docker Desktop or the Docker service before running setup.
       - sh: command -v kind
         msg: |
           🚨 kind is not installed! Use 'asdf' or 'brew' to install it.
@@ -1173,11 +1176,12 @@ tasks:
     desc: "Build and publish the rig-backup image to GitHub Container Registry"
     deps: [requirements-check]
     cmds:
-      - task: _build-and-publish-image
+      - task: docker-build-and-push
         vars:
-          DOCKERFILE_PATH: operations-manager/backup-image/Dockerfile
+          BUILD_CONTEXT: operations-manager/backup-image
+          DOCKERFILE_PATH: Dockerfile
           IMAGE_NAME: rig-backup
-          REGISTRY_IMAGE: ghcr.io/minbzk/base-images/rig-backup
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images/
           PLATFORMS: linux/amd64,linux/arm64
           CACHE_IMAGE: ghcr.io/minbzk/base-images/rig-backup:cache
           BUILDER_NAME: rig-backup-builder
@@ -1763,7 +1767,6 @@ tasks:
       # Collect all user input upfront
       - task: sandbox:decrypt-wildcard-cert
       - task: sandbox:ask-sso
-      - task: sandbox:ask-build-mode
       - |
         echo ""
         echo "All questions answered. Starting unattended setup..."
@@ -1788,27 +1791,10 @@ tasks:
       - task: sandbox:deploy-forgejo-direct
       - task: sandbox:wait-forgejo
       - task: sandbox:init-forgejo
-      # Configure images based on earlier build mode choice
-      - task: sandbox:configure-local-images
       # Phase 3: Sync infrastructure (including generated secrets) to Forgejo
       - task: sandbox:sync
-      # Phase 4: Build images (dev mode only), bootstrap ArgoCD + Operations Manager
+      # Phase 4: Bootstrap ArgoCD + Operations Manager (images pulled from GHCR)
       - task: prepare-argocd-operator
-      - |
-        MODE=$(cat .sandbox-mode 2>/dev/null || echo "demo")
-        if [ "$MODE" = "dev" ]; then
-          echo "Building CMP image..."
-          docker buildx build --no-cache --progress=plain --load -t rig-cmp-argo-kustomize-sops:latest -f images/cmp-kustomize-sops/Dockerfile .
-          kind load docker-image rig-cmp-argo-kustomize-sops:latest --name {{.KIND_CLUSTER_NAME}}
-          echo "CMP image built and loaded"
-
-          echo "Building Operations Manager image..."
-          docker buildx build --target application --cache-from operations-manager:latest --load -t operations-manager -f operations-manager/Dockerfile .
-          kind load docker-image operations-manager --name {{.KIND_CLUSTER_NAME}}
-          echo "Operations Manager image built and loaded"
-        else
-          echo "Using pre-built images from GitHub Container Registry (pulled by Kubernetes)"
-        fi
       - task: bootstrap-argo-system
         vars:
           KEY_FILE: security/sandbox-key.txt
@@ -1947,7 +1933,8 @@ tasks:
           echo "If you don't have this key, ask the ZAD developers."
           echo ""
           echo "Paste the AGE private key (starts with AGE-SECRET-KEY-...):"
-          read -r AGE_SECRET_KEY
+          read -rs AGE_SECRET_KEY
+          echo ""
           if [[ ! "$AGE_SECRET_KEY" =~ ^AGE-SECRET-KEY- ]]; then
             echo "Invalid key format. Expected a key starting with AGE-SECRET-KEY-"
             exit 1
@@ -2173,7 +2160,8 @@ tasks:
         echo "the production Keycloak (keycloak.rijksapp.nl > rig-platform realm > Clients):"
         echo ""
         printf "Client secret: "
-        read -r CLIENT_SECRET
+        read -rs CLIENT_SECRET
+        echo ""
 
         if [ -z "$CLIENT_SECRET" ]; then
           echo "no" > .sandbox-sso
@@ -2579,16 +2567,7 @@ tasks:
         rm -f operations-manager/python/.env.sandboxed-local.secrets
 
         # Clean up sandbox state files
-        rm -f .sandbox-mode
         rm -f .sandbox-sso
-
-        # Restore overlay files if patched for dev mode
-        git checkout -- \
-          bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml \
-          bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml \
-          bootstrap/rig-system/kustomize/overlays/sandboxed-local/kustomization.yaml \
-          bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml \
-          2>/dev/null || true
 
         echo "Cluster rig-sandbox deleted and sandbox artifacts cleaned up"
     silent: true

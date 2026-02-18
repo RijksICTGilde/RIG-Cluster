@@ -822,7 +822,14 @@ class KeycloakConnector:
                 logger.info(f"Created new identity provider {provider_alias} in realm {realm_name}")
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
-                    logger.info(f"Identity provider {provider_alias} already exists in realm {realm_name}")
+                    logger.info(
+                        f"Identity provider {provider_alias} already exists in realm {realm_name}, updating config"
+                    )
+                    current_provider = self.admin.get_idp(idp_alias=provider_alias)
+                    current_provider["displayName"] = provider_data["displayName"]
+                    current_provider["config"].update(provider_data["config"])
+                    self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
+                    logger.info(f"Updated identity provider {provider_alias} in realm {realm_name}")
                 else:
                     raise
 
@@ -943,7 +950,15 @@ class KeycloakConnector:
                 logger.info(f"Created new SAML identity provider {provider_alias} in realm {realm_name}")
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
-                    logger.info(f"SAML identity provider {provider_alias} already exists in realm {realm_name}")
+                    logger.info(
+                        f"SAML identity provider {provider_alias} already exists in realm {realm_name}, updating config"
+                    )
+                    current_provider = self.admin.get_idp(idp_alias=provider_alias)
+                    current_provider["displayName"] = provider_data["displayName"]
+                    current_provider["enabled"] = provider_data["enabled"]
+                    current_provider["config"].update(provider_data["config"])
+                    self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
+                    logger.info(f"Updated SAML identity provider {provider_alias} in realm {realm_name}")
                 else:
                     raise
 

@@ -102,7 +102,7 @@ This copies the `infrastructure/` subtree to Forgejo's `zad-argo-infrastructure`
 | Forgejo | https://forgejo.sandbox.rijksapp.dev | rig-admin / admin1234 |
 | Keycloak | https://keycloak.sandbox.rijksapp.dev | admin / admin1234 |
 | MinIO | https://minio.sandbox.rijksapp.dev | admin / admin1234 |
-| Operations Manager | https://operations-manager.sandbox.rijksapp.dev | - |
+| Operations Manager | https://zad.sandbox.rijksapp.dev | - |
 
 ### Destroying the Cluster
 

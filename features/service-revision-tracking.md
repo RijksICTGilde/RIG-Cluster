@@ -4,6 +4,8 @@
 
 Service revision tracking maintains an audit trail of versioned resources (databases and MinIO buckets) in the project file. When the generational versioning system creates new resource versions during clone or restore operations, revision entries are automatically recorded with timestamps, actions, and source information.
 
+The system also tracks **clone-from status** at the deployment level. After all services finish cloning, the `clone-from` block is updated with `status.completed: true` and a timestamp. This prevents re-cloning on subsequent project syncs when `mode: once` is configured.
+
 This feature enables:
 - **Lifecycle management**: Track what resources exist and their status (active/superseded)
 - **Audit trail**: Know when resources were created and why
@@ -12,16 +14,52 @@ This feature enables:
 
 ## Architecture
 
-The feature is implemented through a dedicated `RevisionManager` class that centralizes all revision-related operations:
+The feature is implemented through a dedicated `RevisionManager` class that centralizes all revision-related operations, coordinated by `ProjectManager` for clone-from status tracking:
 
 ```
-opi/manager/revision_manager.py  <- Manages revision tracking
-opi/manager/database_manager.py  <- Calls RevisionManager on clone
-opi/manager/minio_manager.py     <- Calls RevisionManager on clone
-opi/manager/project_manager.py   <- Exposes RevisionManager via _revision_manager
+opi/manager/revision_manager.py        <- Manages revision tracking (generation + revisions)
+opi/manager/database_manager.py        <- Calls record_clone() + report_clone_performed()
+opi/manager/minio_manager.py           <- Calls record_clone() + report_clone_performed()
+opi/manager/pvc_manager.py             <- Calls report_clone_performed() (component-level generation)
+opi/manager/project_manager.py         <- Coordinates clone status: set_clone_status after all services
+opi/handlers/project_file_handler.py   <- Reads/writes clone-from status and service generation
 ```
 
 ## How it works
+
+### Clone-From Lifecycle
+
+The `clone-from` field on a deployment tracks the full clone lifecycle:
+
+1. **Upsert creates clone-from**: The API writes clone-from as a dict with `type`, `reference`, and `mode` keys
+2. **Services execute clone**: Each service manager (database, minio, PVC) reads clone-from and performs the clone
+3. **Services record tracking**: Each service calls `record_clone()` (writes generation + revision) and `report_clone_performed()` (notifies ProjectManager)
+4. **ProjectManager updates status**: After all services complete, `set_clone_status(completed=True)` is called
+5. **Reprocessing skips clone**: On next sync, services check `status.completed` and skip if `mode=once`
+
+```yaml
+# Before clone (written by upsert API)
+clone-from:
+  type: deployment       # or "remote-source"
+  reference: production  # source deployment or remote-source name
+  mode: once             # "once" (default) or "always"
+
+# After clone completes (updated by ProjectManager)
+clone-from:
+  type: deployment
+  reference: production
+  mode: once
+  status:
+    completed: true
+    timestamp: '2026-02-03T12:11:43.661019+00:00'
+```
+
+### Clone-From Modes
+
+| Mode | Behavior |
+|------|----------|
+| `once` | Clone only on first run. Skip if `status.completed: true` (unless `force-clone: true`) |
+| `always` | Clone on every sync. Implies `force-clone: true` |
 
 ### Automatic Revision Recording
 
@@ -242,18 +280,31 @@ revisions:
 | File | Description |
 |------|-------------|
 | `opi/manager/revision_manager.py` | RevisionManager class with all revision operations |
-| `opi/manager/database_manager.py` | Calls `record_clone()` on database clone operations |
-| `opi/manager/minio_manager.py` | Calls `record_clone()` on MinIO clone operations |
-| `opi/manager/project_manager.py` | Instantiates and exposes `_revision_manager` |
+| `opi/manager/database_manager.py` | Calls `record_clone()` and `report_clone_performed()` on database clone |
+| `opi/manager/minio_manager.py` | Calls `record_clone()` and `report_clone_performed()` on MinIO clone |
+| `opi/manager/pvc_manager.py` | Calls `report_clone_performed()` on PVC clone (component-level generation) |
+| `opi/manager/project_manager.py` | Coordinates clone status tracking via `set_clone_status` |
+| `opi/handlers/project_file_handler.py` | Reads/writes clone-from status and service generation |
+| `tests/test_clone_tracking.py` | Tests for the full clone tracking contract |
 | `tests/test_revision_manager.py` | Unit tests for RevisionManager |
 
 ### Integration Points
 
-The RevisionManager is called automatically when:
-- Database clone with `force-clone: true` creates a new generation
-- Database clone creates initial database
-- MinIO clone with `force-clone: true` creates a new generation
-- MinIO clone creates initial bucket
+**Revision recording** (`record_clone` / `record_restore`) is called when:
+- Database clone from deployment (fresh or force_clone)
+- Database clone from remote source (fresh or force_clone)
+- MinIO clone from deployment (fresh or force_clone)
+- MinIO clone from remote source (fresh or force_clone)
+- Backup restore creates new generation
+
+**Clone status tracking** (`report_clone_performed`) is called by all services:
+- Database: `report_clone_performed(deployment, "postgresql-database", generation)`
+- MinIO: `report_clone_performed(deployment, "minio-storage", generation)`
+- PVC: `report_clone_performed(deployment, "persistent-storage", generation)`
+
+### Service-Specific Notes
+
+**PVC (persistent-storage)**: PVC generation tracking is at the **component level** (`components[].services.persistent-storage[].config.generation`), not the deployment level. This is because PVC is per-component per-storage-name. PVC still calls `report_clone_performed` for clone-from status tracking, but does not call `record_clone` for deployment-level revisions.
 
 ## Future Enhancements
 

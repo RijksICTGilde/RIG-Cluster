@@ -125,6 +125,11 @@ public class UnrestrictedXPathAttributeMapper extends AbstractIdentityProviderMa
     }
 
     @Override
+    public boolean supportsSyncMode(IdentityProviderSyncMode syncMode) {
+        return true;
+    }
+
+    @Override
     public void preprocessFederatedIdentity(KeycloakSession session, RealmModel realm,
                                            IdentityProviderMapperModel mapperModel,
                                            BrokeredIdentityContext context) {

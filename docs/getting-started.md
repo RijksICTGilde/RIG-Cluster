@@ -14,7 +14,7 @@ A single Kind cluster running:
 | Forgejo (Git) | https://forgejo.sandbox.rijksapp.dev | rig-admin / admin1234 |
 | Keycloak (SSO) | https://keycloak.sandbox.rijksapp.dev | admin / admin1234 |
 | MinIO (S3) | https://minio.sandbox.rijksapp.dev | admin / admin1234 |
-| Operations Manager | https://operations-manager.sandbox.rijksapp.dev | - |
+| Operations Manager | https://zad.sandbox.rijksapp.dev | - |
 
 All services use real TLS certificates (`*.sandbox.rijksapp.dev`) and run entirely on your machine.
 

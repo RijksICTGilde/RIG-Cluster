@@ -10,7 +10,7 @@ build:
   local:
     useBuildkit: true
   artifacts:
-  - image: operations-manager
+  - image: ghcr.io/minbzk/base-images/operations-manager/operations-manager
     context: .
     docker:
       dockerfile: operations-manager/Dockerfile
@@ -59,7 +59,7 @@ deploy:
     - --enable-exec
     - --load-restrictor=LoadRestrictionsNone
     paths:
-    - bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local
+    - bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local-dev
 
 portForward:
 - resourceType: service

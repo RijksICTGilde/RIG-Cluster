@@ -174,43 +174,39 @@ class MinioManager:
         # Use runtime override if True, otherwise fall back to deployment config
         force_clone = force_clone_override or deployment.get("force-clone", False)
 
-        # Check if clone should be skipped (completed "once" mode clone)
-        should_skip_clone = False
-        if clone_from and isinstance(clone_from, dict):
-            clone_mode = clone_from.get("mode")
+        if clone_from:
+            # clone-from must be a dict with type/reference/mode keys
+            if not isinstance(clone_from, dict):
+                raise ValueError(
+                    f"clone-from for deployment '{deployment_name}' must be a dict with 'type', 'reference', "
+                    f"and 'mode' keys, got: {type(clone_from).__name__} = {clone_from!r}"
+                )
+
+            # Check if clone should be skipped (completed "once" mode clone)
+            clone_mode = clone_from.get("mode", "once")
             clone_status = clone_from.get("status", {})
             clone_completed = clone_status.get("completed", False) if isinstance(clone_status, dict) else False
+
             if clone_mode == "once" and clone_completed and not force_clone:
                 logger.info(
                     f"Skipping clone for {deployment_name}: mode is 'once' and already completed. "
                     "Proceeding with normal resource creation."
                 )
-                should_skip_clone = True
-
-        if clone_from and not should_skip_clone:
-            # Handle clone-from configuration - can be dict (new format) or string (legacy)
-            if isinstance(clone_from, dict):
+            else:
                 clone_type = clone_from.get("type")
                 if clone_type == "remote-source":
-                    # Handle remote source cloning directly
                     remote_source_name = clone_from.get("reference")
                     await self._handle_remote_source_clone(
                         project_name, deployment_name, remote_source_name, project_data, force_clone
                     )
                     return
                 elif clone_type == "deployment":
-                    # Local deployment clone - extract reference
                     source_deployment = clone_from.get("reference")
                     logger.info(f"Deployment {deployment_name} has clone-from deployment: {source_deployment}")
                     await self.clone_minio_from_deployment(project_data, deployment, source_deployment)
                     return
                 else:
-                    logger.warning(f"Unknown clone-from type: {clone_type}, proceeding with normal resource creation")
-            else:
-                # Legacy format: clone_from is a string (deployment name)
-                logger.info(f"Deployment {deployment_name} has clone-from: {clone_from}, using clone instead of create")
-                await self.clone_minio_from_deployment(project_data, deployment, clone_from)
-                return
+                    raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
 
         logger.info(f"Processing MinIO resources for project: {project_name}, deployment: {deployment_name}")
 
