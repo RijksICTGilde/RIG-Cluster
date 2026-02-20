@@ -116,4 +116,4 @@ async def get_service_metrics(request: Request, service_id: str):
 
     except Exception as e:
         logger.error(f"Failed to fetch metrics for service {service_id}: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch metrics"})
