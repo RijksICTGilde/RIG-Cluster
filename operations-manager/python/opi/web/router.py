@@ -24,6 +24,7 @@ from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
 
 from ..utils.age import decrypt_age_content
+from .metrics_explorer_router import metrics_explorer_router
 from .router_self_service import check_subdomain_availability_web, self_service_portal
 from .services_router import services_router
 
@@ -31,8 +32,9 @@ logger = logging.getLogger(__name__)
 
 web_router = APIRouter()
 
-# Include the services router
+# Include sub-routers
 web_router.include_router(services_router)
+web_router.include_router(metrics_explorer_router)
 
 
 @web_router.get("/")
@@ -902,7 +904,7 @@ async def project_details(request: Request, project_name: str):
         # Add ingress URLs for components that have publish-on-web service
         from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
         from opi.handlers.project_file_handler import ProjectFileHandler
-        from opi.utils.naming import generate_ingress_map, generate_public_url
+        from opi.utils.naming import HostnameFormat, generate_public_url, get_component_ingress_map
 
         project_file_handler = ProjectFileHandler()
 
@@ -915,6 +917,9 @@ async def project_details(request: Request, project_name: str):
                 try:
                     ingress_postfix = get_ingress_postfix(cluster)
                     use_https = get_ingress_tls_enabled(cluster)
+                    subdomain = deployment.get("subdomain")
+                    base_domain = deployment.get("base-domain")
+                    hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
 
                     for component in deployment.get("components", []):
                         component_name = component.get("reference")
@@ -925,13 +930,17 @@ async def project_details(request: Request, project_name: str):
                             )
 
                             if has_publish_on_web:
-                                # Generate ingress map exactly like project_manager does
-                                subdomain = deployment.get("subdomain")
-                                ingress_map = generate_ingress_map(
-                                    component_name, deployment["name"], project_name, ingress_postfix, subdomain
+                                ingress_map = get_component_ingress_map(
+                                    component_name=component_name,
+                                    deployment_name=deployment["name"],
+                                    project_name=project_name,
+                                    ingress_postfix=ingress_postfix,
+                                    subdomain=subdomain,
+                                    base_domain=base_domain,
+                                    hostname_format=hostname_format,
                                 )
 
-                                # Create links for all ingress hostnames (default + subdomain if exists)
+                                # Create links for all ingress hostnames
                                 for ingress_name, hostname in ingress_map.items():
                                     public_url = generate_public_url(hostname, use_https)
                                     deployment["ingress_links"].append(
@@ -966,14 +975,21 @@ async def project_details(request: Request, project_name: str):
                             try:
                                 ingress_postfix = get_ingress_postfix(cluster)
                                 use_https = get_ingress_tls_enabled(cluster)
-
-                                # Generate ingress map exactly like project_manager does
                                 subdomain = deployment.get("subdomain")
-                                ingress_map = generate_ingress_map(
-                                    component_name, deployment["name"], project_name, ingress_postfix, subdomain
+                                base_domain = deployment.get("base-domain")
+                                hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+
+                                ingress_map = get_component_ingress_map(
+                                    component_name=component_name,
+                                    deployment_name=deployment["name"],
+                                    project_name=project_name,
+                                    ingress_postfix=ingress_postfix,
+                                    subdomain=subdomain,
+                                    base_domain=base_domain,
+                                    hostname_format=hostname_format,
                                 )
 
-                                # Create links for all ingress hostnames (default + subdomain if exists)
+                                # Create links for all ingress hostnames
                                 for ingress_name, hostname in ingress_map.items():
                                     public_url = generate_public_url(hostname, use_https)
                                     component["ingress_links"].append(
@@ -1306,7 +1322,7 @@ async def project_details(request: Request, project_name: str):
 
         # Generate ingress URLs for components with inbound ports
         from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
-        from opi.utils.naming import generate_ingress_map, generate_public_url
+        from opi.utils.naming import HostnameFormat, generate_public_url, get_component_ingress_map
 
         # Add ingress information to deployments
         for deployment in project_details["deployments"]:
@@ -1316,6 +1332,9 @@ async def project_details(request: Request, project_name: str):
                     ingress_postfix = get_ingress_postfix(cluster)
                     use_https = get_ingress_tls_enabled(cluster)
                     deployment["ingress_links"] = []
+                    subdomain = deployment.get("subdomain")
+                    base_domain = deployment.get("base-domain")
+                    hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
 
                     # Generate ingress links for each component in this deployment
                     for component in deployment.get("components", []):
@@ -1328,12 +1347,14 @@ async def project_details(request: Request, project_name: str):
 
                             # Only create ingress links for components with inbound ports
                             if component_def and component_def.get("ports", {}).get("inbound"):
-                                ingress_map = generate_ingress_map(
-                                    component_name,
-                                    deployment["name"],
-                                    project_name,
-                                    ingress_postfix,
-                                    deployment.get("subdomain"),
+                                ingress_map = get_component_ingress_map(
+                                    component_name=component_name,
+                                    deployment_name=deployment["name"],
+                                    project_name=project_name,
+                                    ingress_postfix=ingress_postfix,
+                                    subdomain=subdomain,
+                                    base_domain=base_domain,
+                                    hostname_format=hostname_format,
                                 )
 
                                 for ingress_name, hostname in ingress_map.items():
@@ -1366,13 +1387,18 @@ async def project_details(request: Request, project_name: str):
                         try:
                             ingress_postfix = get_ingress_postfix(cluster)
                             use_https = get_ingress_tls_enabled(cluster)
+                            subdomain = deployment.get("subdomain")
+                            base_domain = deployment.get("base-domain")
+                            hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
 
-                            ingress_map = generate_ingress_map(
-                                component["name"],
-                                deployment["name"],
-                                project_name,
-                                ingress_postfix,
-                                deployment.get("subdomain"),
+                            ingress_map = get_component_ingress_map(
+                                component_name=component["name"],
+                                deployment_name=deployment["name"],
+                                project_name=project_name,
+                                ingress_postfix=ingress_postfix,
+                                subdomain=subdomain,
+                                base_domain=base_domain,
+                                hostname_format=hostname_format,
                             )
 
                             for ingress_name, hostname in ingress_map.items():

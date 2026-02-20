@@ -58,13 +58,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     logger.info(f"Starting {PROJECT_NAME} version {VERSION}")
     # logger.info(f"Settings: {mask.secrets(get_settings().model_dump())}")
 
-    # Run startup tasks (namespace creation, SOPS secrets, etc.)
-    try:
-        await run_startup_tasks(app)
-        logger.info("Startup tasks completed")
-    except Exception as e:
-        logger.error(f"Error in startup tasks: {e}")
-        # Continue startup even if some tasks fail
+    # Run startup tasks (non-fatal: failed services retry in background)
+    await run_startup_tasks(app)
 
     # Start Git monitoring service
     if settings.ENABLE_GIT_MONITOR:
@@ -165,10 +160,12 @@ def create_app() -> FastAPI:
 
     # Add middleware in the correct order (reverse order of execution)
     # ProxyHeadersMiddleware must be last (runs first) to set correct scheme from X-Forwarded-Proto
+    from opi.middleware.maintenance import MaintenanceMiddleware
     from opi.utils.csrf import CSRFMiddleware
 
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
+    app.add_middleware(MaintenanceMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
 
@@ -213,11 +210,26 @@ def create_app() -> FastAPI:
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
         logger.info(f"Regular static files mounted at /static from {static_dir}")
 
-    # Health endpoint for Kubernetes probes
+    # Liveness probe - always OK (keeps the pod alive)
     @app.get("/health", include_in_schema=False, response_class=JSONResponse)
-    async def health_check():
-        """Simple health check endpoint for Kubernetes readiness/liveness probes."""
+    @app.get("/healthz", include_in_schema=False, response_class=JSONResponse)
+    async def liveness_check():
+        """Liveness probe for Kubernetes - always returns OK."""
         return {"status": "ok"}
+
+    # Readiness probe - only OK when all services are up
+    @app.get("/readyz", include_in_schema=False, response_class=JSONResponse)
+    async def readiness_check():
+        """Readiness probe for Kubernetes - returns OK only when all services are ready."""
+        from opi.core.readiness import get_readiness_state
+
+        readiness = get_readiness_state()
+        if readiness.is_ready:
+            return {"status": "ok"}
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "services": readiness.summary()},
+        )
 
     return app
 

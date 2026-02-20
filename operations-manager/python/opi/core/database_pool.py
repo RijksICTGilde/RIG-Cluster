@@ -42,8 +42,9 @@ class DatabasePool:
         password: str,
         database: str = "postgres",
         port: int = 5432,
-        min_size: int = 5,
-        max_size: int = 20,
+        min_size: int = 0,
+        max_size: int = 10,
+        max_inactive_connection_lifetime: float = 300.0,
     ) -> None:
         """Initialize the database pool configuration.
 
@@ -63,6 +64,7 @@ class DatabasePool:
         self.port = port
         self.min_size = min_size
         self.max_size = max_size
+        self.max_inactive_connection_lifetime = max_inactive_connection_lifetime
         self.pool: asyncpg.Pool | None = None
         self._initialized = False
         # Connection tracking for leak detection
@@ -84,6 +86,7 @@ class DatabasePool:
                 port=self.port,
                 min_size=self.min_size,
                 max_size=self.max_size,
+                max_inactive_connection_lifetime=self.max_inactive_connection_lifetime,
             )
             self._initialized = True
             logger.info(f"Database pool initialized (min={self.min_size}, max={self.max_size}) for {self.host}")

@@ -285,6 +285,9 @@ class Settings(BaseSettings):
 
     # Prometheus configuration (used when METRICS_BACKEND="prometheus")
     PROMETHEUS_URL: str = "http://prometheus.rig-system:9090"
+    # External Prometheus URL for browser access (iframe in metrics explorer)
+    # Falls back to PROMETHEUS_URL if not set
+    PROMETHEUS_EXTERNAL_URL: str | None = None
 
     # Grafana configuration (used when METRICS_BACKEND="grafana")
     GRAFANA_URL: str = "http://grafana-service.rig-system.svc.cluster.local:3000"

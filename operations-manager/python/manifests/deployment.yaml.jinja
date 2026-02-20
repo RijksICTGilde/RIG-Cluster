@@ -64,6 +64,10 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
           {% if env_vars or (ca_config and ca_config.enabled and ca_config.env_vars) %}
           env:
           {% if env_vars %}

@@ -137,6 +137,64 @@ class TestRenderRealTemplates:
         assert doc["spec"]["tls"] is not None
         assert "hsts" in result.lower()
 
+    def test_ingress_template_with_rewrite_root(self):
+        """Rewrite to / should add HAProxy and NGINX rewrite annotations."""
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "path": "/kader",
+                "rewrite": "/",
+                "enable_tls": False,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        annotations = doc["metadata"]["annotations"]
+        # HAProxy rewrite
+        assert annotations["haproxy.router.openshift.io/rewrite-target"] == "/"
+        # NGINX rewrite rule in configuration-snippet
+        snippet = annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
+        assert 'rewrite "^/kader' in snippet
+        assert "break;" in snippet
+        # Path should remain unchanged
+        assert doc["spec"]["rules"][0]["http"]["paths"][0]["path"] == "/kader"
+        assert doc["spec"]["rules"][0]["http"]["paths"][0]["pathType"] == "Prefix"
+
+    def test_ingress_template_with_rewrite_nonroot(self):
+        """Rewrite to a non-root path should use that as the rewrite base."""
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "path": "/old-prefix",
+                "rewrite": "/new-prefix",
+                "enable_tls": False,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        annotations = doc["metadata"]["annotations"]
+        assert annotations["haproxy.router.openshift.io/rewrite-target"] == "/new-prefix"
+        snippet = annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
+        assert 'rewrite "^/old-prefix' in snippet
+        assert "/new-prefix/$1" in snippet
+
+    def test_ingress_template_without_rewrite(self):
+        """When rewrite is not set, no rewrite annotations should appear."""
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "enable_tls": False,
+            },
+        )
+        assert "rewrite-target" not in result
+        assert "rewrite " not in result.split("configuration-snippet")[1].split("more_set_headers")[0]
+
     def test_ingress_template_without_tls(self):
         result = render_template(
             "ingress.yaml.jinja",

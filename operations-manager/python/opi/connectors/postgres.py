@@ -410,7 +410,7 @@ class PostgresConnector:
             quoted_username = self._quote_identifier(validated_username)
             # DDL statements like CREATE USER don't support parameters, so we need to escape the password as a literal
             escaped_password = validated_password.replace("'", "''")  # Escape single quotes
-            create_sql = f"CREATE USER {quoted_username} WITH PASSWORD '{escaped_password}'"
+            create_sql = f"CREATE USER {quoted_username} WITH PASSWORD '{escaped_password}' CONNECTION LIMIT 20"
             await conn.execute(create_sql)
 
             # Grant privileges if specified
@@ -841,6 +841,40 @@ class PostgresConnector:
             logger.exception(f"Failed to create schema {schema_name} in database {database}")
             raise PostgresExecutionError(f"Schema creation failed: {e}") from e
 
+    async def set_role_search_path(self, username: str, database: str, schema: str) -> None:
+        """Set the default search_path for a role scoped to a specific database.
+
+        This ensures applications that don't explicitly set a search_path
+        (e.g. via connection options) still resolve to the correct schema.
+
+        Executes: ALTER ROLE <user> IN DATABASE <db> SET search_path TO <schema>
+
+        Args:
+            username: Role name to configure
+            database: Database to scope the setting to
+            schema: Schema to set as default search_path
+
+        Raises:
+            PostgresExecutionError: If the ALTER ROLE fails
+            PostgresValidationError: If input validation fails
+        """
+        validated_username = self._validate_identifier(username, "username")
+        validated_database = self._validate_identifier(database, "database")
+        validated_schema = self._validate_identifier(schema, "schema")
+
+        quoted_username = self._quote_identifier(validated_username)
+        quoted_database = self._quote_identifier(validated_database)
+        quoted_schema = self._quote_identifier(validated_schema)
+
+        conn = await self._get_or_create_connection(validated_database)
+        await conn.execute(
+            f"ALTER ROLE {quoted_username} IN DATABASE {quoted_database} SET search_path TO {quoted_schema}"
+        )
+        logger.info(
+            f"Set default search_path for role {validated_username} "
+            f"in database {validated_database} to {validated_schema}"
+        )
+
     async def delete_schema(self, schema_name: str, database: str, cascade: bool = False) -> dict[str, Any]:
         """Delete a database schema using the bound admin credentials.
 
@@ -990,6 +1024,141 @@ class PostgresConnector:
             )
             raise PostgresExecutionError(f"Permission granting failed: {e}") from e
 
+    async def _get_schema_extensions(
+        self,
+        database: str,
+        schema: str,
+        *,
+        host: str | None = None,
+        port: int = 5432,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> list[str]:
+        """Query extensions installed in a specific schema of a database.
+
+        When host/username/password are provided, creates a temporary connection
+        to the specified server (for external sources). Otherwise uses the bound
+        server connection.
+
+        Args:
+            database: Database name to query
+            schema: Schema name to check for extensions
+            host: Optional external host (defaults to bound server)
+            port: Database port (default 5432)
+            username: Optional external username (defaults to bound admin)
+            password: Optional external password (defaults to bound admin)
+
+        Returns:
+            List of extension names installed in the schema
+        """
+        query = (
+            "SELECT e.extname FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE n.nspname = $1"
+        )
+
+        if host is not None:
+            # External source: create temporary connection
+            conn = await asyncpg.connect(
+                host=host,
+                port=port,
+                user=username or self._admin_username,
+                password=password or self._admin_password,
+                database=database,
+            )
+            try:
+                rows = await conn.fetch(query, schema)
+            finally:
+                await conn.close()
+        else:
+            conn = await self._get_or_create_connection(database)
+            rows = await conn.fetch(query, schema)
+
+        return [row["extname"] for row in rows]
+
+    async def _precreate_extensions_for_clone(
+        self,
+        source_database: str,
+        source_schema: str,
+        target_database: str,
+        target_schema: str,
+        *,
+        source_host: str | None = None,
+        source_port: int = 5432,
+        source_username: str | None = None,
+        source_password: str | None = None,
+    ) -> list[str]:
+        """Pre-create extensions in the target schema before pg_dump clone.
+
+        pg_dump -n does not include CREATE EXTENSION statements. If the source schema
+        has extensions installed, the dumped DDL will reference extension functions
+        (e.g. uuid_generate_v4()) that don't exist in the target, causing the restore
+        to fail. This method queries the source for extensions and installs them in
+        the target schema before the pg_dump pipeline runs.
+
+        For same-server clones, leave source_host as None (uses bound server).
+        For external-source clones, provide explicit source connection parameters.
+
+        The target is always on the bound server (self._host).
+
+        Args:
+            source_database: Source database to query for extensions
+            source_schema: Source schema containing the extensions
+            target_database: Target database where extensions should be installed
+            target_schema: Target schema name for the extensions (may differ from source)
+            source_host: Optional external source host (defaults to bound server)
+            source_port: Source database port (default 5432)
+            source_username: Optional external source username
+            source_password: Optional external source password
+
+        Returns:
+            List of extension names that were pre-created
+        """
+        extensions = await self._get_schema_extensions(
+            source_database,
+            source_schema,
+            host=source_host,
+            port=source_port,
+            username=source_username,
+            password=source_password,
+        )
+        if not extensions:
+            logger.debug(f"No extensions found in {source_database}.{source_schema}")
+            return []
+
+        logger.info(
+            f"Found {len(extensions)} extension(s) in {source_database}.{source_schema}: "
+            f"{', '.join(extensions)}. Pre-creating in {target_database}.{target_schema}"
+        )
+
+        conn = await self._get_or_create_connection(target_database)
+        quoted_schema = self._quote_identifier(target_schema)
+
+        # Check if schema already exists — if it does, something is wrong (e.g. leftover
+        # from a previous failed clone). This is the same safety check as in
+        # _execute_pgdump_clone, but we must do it here before we create the schema.
+        schema_exists = await conn.fetchval(
+            "SELECT 1 FROM information_schema.schemata WHERE schema_name = $1",
+            target_schema,
+        )
+        if schema_exists:
+            raise PostgresExecutionError(
+                f"Target schema '{target_schema}' already exists in database '{target_database}'. "
+                f"This may be a leftover from a previous failed clone. "
+                f"Drop the schema manually or delete the database to proceed: "
+                f"DROP SCHEMA IF EXISTS {target_schema} CASCADE;"
+            )
+
+        await conn.execute(f"CREATE SCHEMA {quoted_schema}")
+
+        for ext_name in extensions:
+            # Extension names can contain hyphens (e.g. uuid-ossp) so we cannot use
+            # _validate_identifier which rejects non-alphanumeric characters.
+            # Quoting the name handles special characters safely.
+            quoted_ext = self._quote_identifier(ext_name)
+            await conn.execute(f"CREATE EXTENSION IF NOT EXISTS {quoted_ext} SCHEMA {quoted_schema}")
+            logger.info(f"Pre-created extension {ext_name} in {target_database}.{target_schema}")
+
+        return extensions
+
     async def clone_schema(
         self,
         source_database: str,
@@ -1047,6 +1216,16 @@ class PostgresConnector:
             else:
                 logger.info(f"Target database '{validated_target_db}' already exists")
 
+            # Pre-create extensions from source schema in target before pg_dump
+            # pg_dump -n does not include CREATE EXTENSION, so extension functions
+            # (e.g. uuid_generate_v4()) would be missing in the target
+            precreated_extensions = await self._precreate_extensions_for_clone(
+                source_database=validated_source_db,
+                source_schema=validated_source_schema,
+                target_database=validated_target_db,
+                target_schema=validated_source_schema,
+            )
+
             # Clone within same server - use bound credentials for both source and target
             await self._execute_pgdump_clone(
                 source_host=self._host,
@@ -1063,6 +1242,7 @@ class PostgresConnector:
                 target_schema=validated_target_schema,
                 target_owner=validated_target_owner,
                 target_owner_password=target_owner_password,
+                schema_precreated=len(precreated_extensions) > 0,
             )
 
             logger.info(
@@ -1177,6 +1357,20 @@ class PostgresConnector:
             else:
                 logger.info(f"Target database '{validated_target_db}' already exists")
 
+            # Pre-create extensions from source schema in target before pg_dump
+            # pg_dump -n does not include CREATE EXTENSION, so extension functions
+            # (e.g. uuid_generate_v4()) would be missing in the target
+            precreated_extensions = await self._precreate_extensions_for_clone(
+                source_database=validated_source_db,
+                source_schema=validated_source_schema,
+                target_database=validated_target_db,
+                target_schema=validated_source_schema,
+                source_host=source_host,
+                source_port=source_port,
+                source_username=source_username,
+                source_password=source_password,
+            )
+
             # Execute cross-cluster clone using shared implementation
             # Source = external server, Target = bound server (self._host)
             await self._execute_pgdump_clone(
@@ -1195,6 +1389,7 @@ class PostgresConnector:
                 target_owner=validated_target_owner,
                 target_owner_password=target_owner_password,
                 force_clone=force_clone,
+                schema_precreated=len(precreated_extensions) > 0,
             )
 
             logger.info(
@@ -1241,6 +1436,7 @@ class PostgresConnector:
         target_owner: str,
         target_owner_password: str,
         force_clone: bool = False,
+        schema_precreated: bool = False,
     ) -> None:
         """Execute pg_dump clone from source to target with explicit connection parameters.
 
@@ -1263,6 +1459,8 @@ class PostgresConnector:
             target_owner: Owner for the cloned schema
             target_owner_password: Password for target owner
             force_clone: If True, allows dropping existing target schema (default: False)
+            schema_precreated: If True, source schema was pre-created in target for extensions
+                and the source schema existence check is skipped (default: False)
 
         Raises:
             Exception: If clone operation fails
@@ -1287,32 +1485,52 @@ class PostgresConnector:
                 }
             )
 
-            # Step 1: Check if source schema exists in target database
-            check_source_schema_cmd = f"psql -d {target_database} -t -c \"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';\""
-            check_process = await asyncio.create_subprocess_shell(
-                check_source_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            check_out, check_err = await check_process.communicate()
-            source_schema_exists_in_target = bool(check_out and check_out.decode().strip())
+            # Step 1: Check if source schema exists in target database (safety check)
+            # When schema_precreated=True, the schema was already verified and created by
+            # _precreate_extensions_for_clone() — skip the check to avoid duplication.
+            if schema_precreated:
+                logger.info(
+                    f"Source schema '{source_schema}' was pre-created in target database "
+                    f"'{target_database}' for extensions — skipping existence check"
+                )
 
-            # Step 2: Handle source schema in target database (safety check)
-            if source_schema_exists_in_target:
-                if source_schema == "public":
-                    # Safe to drop 'public' schema - it's auto-created and we're about to recreate it
-                    logger.info("Source schema 'public' exists in target database, dropping it (safe to recreate)")
-                    drop_public_cmd = ["psql", "-d", target_database, "-c", "DROP SCHEMA IF EXISTS public CASCADE;"]
-                    drop_public_process = await asyncio.create_subprocess_exec(
-                        *drop_public_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                    )
-                    await drop_public_process.communicate()
-                else:
-                    # NOT safe to drop non-public schema - requires manual intervention
-                    raise Exception(
-                        f"Source schema '{source_schema}' already exists in target database '{target_database}'. "
-                        f"Manual intervention required to prevent accidental data loss. "
-                        f"Please manually drop the schema if you want to proceed: "
-                        f"DROP SCHEMA IF EXISTS {source_schema} CASCADE;"
-                    )
+                # The schema was created by admin via _precreate_extensions_for_clone().
+                # Transfer ownership to target_owner so the pg_dump pipeline (which runs
+                # as target_owner) has permission to create objects in the schema.
+                grant_cmd = f"psql -d {target_database} -c 'ALTER SCHEMA {source_schema} OWNER TO {target_owner};'"
+                grant_process = await asyncio.create_subprocess_shell(
+                    grant_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                _, grant_err = await grant_process.communicate()
+                if grant_process.returncode != 0:
+                    raise Exception(f"Failed to transfer schema ownership to {target_owner}: {grant_err.decode()}")
+                logger.info(f"Transferred ownership of pre-created schema '{source_schema}' to {target_owner}")
+            else:
+                check_source_schema_cmd = f"psql -d {target_database} -t -c \"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';\""
+                check_process = await asyncio.create_subprocess_shell(
+                    check_source_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                check_out, _ = await check_process.communicate()
+                source_schema_exists_in_target = bool(check_out and check_out.decode().strip())
+
+                if source_schema_exists_in_target:
+                    if source_schema == "public":
+                        # Safe to drop 'public' schema - it's auto-created and we're about to recreate it
+                        logger.info("Source schema 'public' exists in target database, dropping it (safe to recreate)")
+                        drop_public_cmd = ["psql", "-d", target_database, "-c", "DROP SCHEMA IF EXISTS public CASCADE;"]
+                        drop_public_process = await asyncio.create_subprocess_exec(
+                            *drop_public_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                        )
+                        await drop_public_process.communicate()
+                    else:
+                        # Schema exists but was NOT pre-created — likely a leftover from a
+                        # previous failed clone. This is a legitimate safety concern.
+                        raise Exception(
+                            f"Source schema '{source_schema}' already exists in target database '{target_database}'. "
+                            f"Manual intervention required to prevent accidental data loss. "
+                            f"Please manually drop the schema if you want to proceed: "
+                            f"DROP SCHEMA IF EXISTS {source_schema} CASCADE;"
+                        )
 
             # Step 3: Drop target schema if it exists, schemas are different, AND force_clone is True
             if source_schema != target_schema:
@@ -1342,9 +1560,14 @@ class PostgresConnector:
             logger.info("Streaming complete schema using pg_dump pipeline")
 
             # Build the shell command for cross-host cloning
+            # The sed filter converts CREATE SCHEMA to IF NOT EXISTS because extensions
+            # are pre-created in the target schema before pg_dump runs (pg_dump -n does
+            # not include CREATE EXTENSION statements). Without this, the duplicate
+            # CREATE SCHEMA would fail with ON_ERROR_STOP=1.
             shell_cmd = (
                 f"PGHOST={source_host} PGPORT={source_port} PGUSER={source_username} PGPASSWORD={source_password} "
                 f"pg_dump -d {source_database} -n {source_schema} --no-owner --no-privileges | "
+                f"sed 's/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g' | "
                 f"PGHOST={target_host} PGPORT={target_port} PGUSER={target_owner} PGPASSWORD={target_owner_password} "
                 f"psql -d {target_database} -v ON_ERROR_STOP=1"
             )
@@ -1392,7 +1615,7 @@ class PostgresConnector:
             check_process = await asyncio.create_subprocess_shell(
                 check_target_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            check_out, check_err = await check_process.communicate()
+            check_out, _ = await check_process.communicate()
 
             if not (check_out and check_out.decode().strip()):
                 # Target schema doesn't exist - this is an error
@@ -1403,7 +1626,7 @@ class PostgresConnector:
                 list_process = await asyncio.create_subprocess_shell(
                     list_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
-                list_out, list_err = await list_process.communicate()
+                list_out, _ = await list_process.communicate()
                 if list_out:
                     existing_schemas = list_out.decode().strip()
                     logger.error(f"Schemas that DO exist in target database: {existing_schemas}")
@@ -1421,7 +1644,7 @@ class PostgresConnector:
                             rename_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                         )
 
-                        rename_out, rename_err = await rename_process.communicate()
+                        _, rename_err = await rename_process.communicate()
 
                         if rename_process.returncode != 0:
                             raise Exception(f"Failed to rename schema: {rename_err.decode()}")
@@ -1445,7 +1668,7 @@ class PostgresConnector:
             owner_process = await asyncio.create_subprocess_shell(
                 ownership_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            owner_out, owner_err = await owner_process.communicate()
+            _, owner_err = await owner_process.communicate()
 
             if owner_process.returncode != 0:
                 logger.warning(f"Failed to set schema ownership: {owner_err.decode()}")
