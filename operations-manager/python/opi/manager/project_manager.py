@@ -4076,6 +4076,7 @@ class ProjectManager:
             component_uses_minio = False
             component_uses_sso = False
             component_uses_redis = False
+            component_uses_authorization_wall = False
 
             if component_reference:
                 component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
@@ -4098,6 +4099,7 @@ class ProjectManager:
                 component_uses_redis = (
                     ServiceType.REDIS.value in all_services or ServiceType.NAMESPACE_REDIS.value in all_services
                 )
+                component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
 
             # Build envFrom secrets list based on services used and user env vars
             # This list determines which secrets are referenced in the deployment manifest
@@ -4209,6 +4211,52 @@ class ProjectManager:
             # config_handler.add_custom_config(component_name, "image", image_url)
             # config_handler.add_custom_config(component_name, "port", application_port)
             # config_handler.add_custom_config(component_name, "unique_name", unique_name)
+
+            # Add authorization-wall sidecar if enabled
+            if component_uses_authorization_wall:
+                keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
+                if keycloak_secret:
+                    variables["authorization_wall"] = {
+                        "issuer_url": keycloak_secret.discovery_url.replace("/.well-known/openid-configuration", ""),
+                        "client_id": keycloak_secret.client_id,
+                        "keycloak_secret_name": KeycloakSecret.get_secret_name(deployment_name),
+                        "cookie_secret_name": f"{unique_name}-oauth2-cookie",
+                    }
+                    variables["sidecars"] = ["authorization-wall"]
+                    variables["service_port"] = 4180
+                    logger.info(f"Authorization wall enabled for component '{component_name}'")
+                else:
+                    logger.warning(
+                        f"Component '{component_name}' uses authorization-wall but no keycloak service configured"
+                    )
+
+            # Create authorization-wall cookie secret if needed
+            if component_uses_authorization_wall and "authorization_wall" in variables:
+                import secrets as secrets_module
+
+                cookie_secret_value = secrets_module.token_urlsafe(32)
+                cookie_secret_name = variables["authorization_wall"]["cookie_secret_name"]
+                secret_template_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
+                )
+                cookie_secret_vars = {
+                    "name": cookie_secret_name,
+                    "namespace": namespace,
+                    "secret_pairs": {"cookie-secret": cookie_secret_value},
+                }
+                # Determine output dir for the cookie secret manifest
+                if target_dir:
+                    cookie_output_dir = os.path.join(working_dir, target_dir)
+                else:
+                    cookie_output_dir = os.path.join(working_dir, project_name, deployment_name)
+                self._manifest_generator.create_manifest_file(
+                    template_path=secret_template_path,
+                    values=cookie_secret_vars,
+                    output_dir=cookie_output_dir,
+                    output_filename=f"{cookie_secret_name}-secret",
+                    use_sops=True,
+                )
+                logger.info(f"Created authorization-wall cookie secret: {cookie_secret_name}")
 
             # Create each manifest type in the git repository
             manifests = ["deployment.yaml.jinja", "service.yaml.jinja", "allow-all-network-policy.yaml.jinja"]

@@ -26,38 +26,44 @@ MONITORED_SERVICES: list[dict[str, str]] = [
     {
         "id": "cloudnative-pg",
         "name": "PostgreSQL (rig-db)",
-        "description": "CloudNativePG database metrics",
+        "description": "CloudNativePG database metrics (scrape: 2h)",
         "match": '{job="cloudnative-pg"}',
+        "range": "7d",
     },
     {
         "id": "minio",
         "name": "MinIO",
-        "description": "Object storage metrics",
+        "description": "Object storage metrics (scrape: 2h)",
         "match": '{job="minio"}',
+        "range": "7d",
     },
     {
         "id": "keycloak",
         "name": "Keycloak",
-        "description": "Identity provider metrics",
+        "description": "Identity provider metrics (scrape: 2h)",
         "match": '{job="keycloak-rig-metrics"}',
+        "range": "7d",
     },
     {
         "id": "operations-manager",
         "name": "Operations Manager",
         "description": "OPI internal metrics",
         "match": '{job="operations-manager"}',
+        "range": "1h",
     },
     {
         "id": "kubernetes-pods",
         "name": "Kubernetes Pods (all)",
         "description": "All pod metrics scraped via annotations",
         "match": '{job="kubernetes-pods"}',
+        "range": "1h",
     },
     {
         "id": "prometheus",
         "name": "Prometheus",
         "description": "Prometheus server internal metrics",
         "match": '{job="prometheus"}',
+        "range": "1h",
     },
 ]
 

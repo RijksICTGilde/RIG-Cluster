@@ -12,7 +12,7 @@ spec:
     component: application
   ports:
     - port: {{ service_port | default(80) }}
-      targetPort: {{ application_port }}
+      targetPort: {{ service_port | default(application_port) }}
       protocol: TCP
       name: http
   type: ClusterIP

@@ -266,6 +266,84 @@ class TestRenderRealTemplates:
         )
         assert "cert: |" in result
 
+    def test_deployment_template_with_authorization_wall_sidecar(self):
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "web",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/static-site:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "hostname": "app.example.com",
+                "sidecars": ["authorization-wall"],
+                "authorization_wall": {
+                    "issuer_url": "https://keycloak.example.com/realms/test",
+                    "client_id": "my-client",
+                    "keycloak_secret_name": "web-keycloak",
+                    "cookie_secret_name": "web-oauth2-cookie",
+                },
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        containers = doc["spec"]["template"]["spec"]["containers"]
+        assert len(containers) == 2
+        app_container = containers[0]
+        sidecar = containers[1]
+        assert app_container["name"] == "app"
+        assert sidecar["name"] == "authorization-wall"
+        assert sidecar["image"] == "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
+        assert sidecar["ports"][0]["containerPort"] == 4180
+        # Verify OIDC args
+        args = sidecar["args"]
+        assert "--provider=oidc" in args
+        assert "--oidc-issuer-url=https://keycloak.example.com/realms/test" in args
+        assert "--client-id=my-client" in args
+        assert "--upstream=http://localhost:8080" in args
+
+    def test_deployment_template_without_sidecars(self):
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        containers = doc["spec"]["template"]["spec"]["containers"]
+        assert len(containers) == 1
+        assert containers[0]["name"] == "app"
+
+    def test_service_template_with_authorization_wall_port(self):
+        result = render_template(
+            "service.yaml.jinja",
+            {
+                "name": "web",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "application_port": 8080,
+                "service_port": 4180,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        port = doc["spec"]["ports"][0]
+        assert port["port"] == 4180
+        assert port["targetPort"] == 4180
+
 
 class TestCollectManifestFiles:
     """File categorization: .sops.yaml and .to-sops.yaml go to sops list, rest to regular."""

@@ -134,6 +134,11 @@ spec:
             initialDelaySeconds: 0
             periodSeconds: 5
             failureThreshold: 3
+{% if sidecars is defined and sidecars %}
+{% for sidecar in sidecars %}
+{% include 'sidecar-' + sidecar + '.yaml.jinja' %}
+{% endfor %}
+{% endif %}
       {% if storage_configs or (ca_config and ca_config.enabled) %}
       volumes:
       {% if storage_configs %}
