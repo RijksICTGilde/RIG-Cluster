@@ -4082,7 +4082,7 @@ class ProjectManager:
                 component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
                 component_services = [match.value for match in component_query.find(project_data)]
                 # Flatten the services list (in case it's nested)
-                all_services = []
+                all_services: list[str] = []
                 for services in component_services:
                     if isinstance(services, list):
                         all_services.extend(services)
@@ -4216,11 +4216,24 @@ class ProjectManager:
             if component_uses_authorization_wall:
                 keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
                 if keycloak_secret:
+                    # Extract optional config (banner) from project-level services
+                    banner_text = None
+                    project_services = project_data.get("services", [])
+                    for service_item in project_services:
+                        if isinstance(service_item, dict) and ServiceType.AUTHORIZATION_WALL.value in service_item:
+                            auth_wall_data = service_item[ServiceType.AUTHORIZATION_WALL.value]
+                            if isinstance(auth_wall_data, dict):
+                                auth_wall_config = auth_wall_data.get("config", {})
+                                if isinstance(auth_wall_config, dict):
+                                    banner_text = auth_wall_config.get("banner")
+                            break
+
                     variables["authorization_wall"] = {
                         "issuer_url": keycloak_secret.discovery_url.replace("/.well-known/openid-configuration", ""),
                         "client_id": keycloak_secret.client_id,
                         "keycloak_secret_name": KeycloakSecret.get_secret_name(deployment_name),
                         "cookie_secret_name": f"{unique_name}-oauth2-cookie",
+                        "banner": banner_text,
                     }
                     variables["sidecars"] = ["authorization-wall"]
                     variables["service_port"] = 4180

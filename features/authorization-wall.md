@@ -26,13 +26,15 @@ The project must have `keycloak` configured in its services (the authorization w
 
 ### Project YAML
 
-Add `authorization-wall` to the component's `uses-services` list:
+1. Add `authorization-wall` to the project-level `services:` section
+2. Add `authorization-wall` to the component's `uses-services` list
 
 ```yaml
 services:
   - keycloak:
       config:
         template: sso-support
+  - authorization-wall
 
 components:
   - name: my-static-site
@@ -42,6 +44,19 @@ components:
       - publish-on-web
       - authorization-wall
 ```
+
+### Banner (optional sign-in page)
+
+By default, the authorization wall redirects directly to Keycloak without showing an intermediate page. To show a sign-in page with a custom message before the Keycloak redirect, add a `banner` in the project-level `services:` config:
+
+```yaml
+services:
+  - authorization-wall:
+      config:
+        banner: "Welcome to our application. Please log in with your SSO account."
+```
+
+When a banner is set, users see oauth2-proxy's built-in sign-in page with the banner text and a "Sign in" button. Without a banner, users are redirected to Keycloak automatically.
 
 ### What gets generated
 

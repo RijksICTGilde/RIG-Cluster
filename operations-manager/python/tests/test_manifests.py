@@ -305,6 +305,42 @@ class TestRenderRealTemplates:
         assert "--oidc-issuer-url=https://keycloak.example.com/realms/test" in args
         assert "--client-id=my-client" in args
         assert "--upstream=http://localhost:8080" in args
+        # Without banner, skip-provider-button should be true (auto-redirect)
+        assert "--skip-provider-button=true" in args
+        assert not any(arg.startswith("--banner=") for arg in args)
+
+    def test_deployment_template_with_authorization_wall_banner(self):
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "web",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/static-site:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "hostname": "app.example.com",
+                "sidecars": ["authorization-wall"],
+                "authorization_wall": {
+                    "issuer_url": "https://keycloak.example.com/realms/test",
+                    "client_id": "my-client",
+                    "keycloak_secret_name": "web-keycloak",
+                    "cookie_secret_name": "web-oauth2-cookie",
+                    "banner": "Welcome to our application. Please log in.",
+                },
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        containers = doc["spec"]["template"]["spec"]["containers"]
+        sidecar = containers[1]
+        args = sidecar["args"]
+        # With banner, skip-provider-button should be false (show sign-in page)
+        assert "--skip-provider-button=false" in args
+        assert "--banner=Welcome to our application. Please log in." in args
 
     def test_deployment_template_without_sidecars(self):
         result = render_template(

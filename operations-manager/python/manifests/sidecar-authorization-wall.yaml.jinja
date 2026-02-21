@@ -9,7 +9,12 @@
             - --redirect-url=https://{{ hostname }}/oauth2/callback
             - --email-domain=*
             - --cookie-secure=true
+{% if authorization_wall.banner %}
+            - --skip-provider-button=false
+            - --banner={{ authorization_wall.banner }}
+{% else %}
             - --skip-provider-button=true
+{% endif %}
             - --insecure-oidc-allow-unverified-email=true
             - --scope=openid profile email
           env:
