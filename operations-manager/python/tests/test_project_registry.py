@@ -1,0 +1,144 @@
+"""Tests for project editable registry definitions and layout."""
+
+from __future__ import annotations
+
+from opi.forms.editables.project_registry import (
+    AGE_PRIVATE_KEY,
+    AGE_PUBLIC_KEY,
+    API_KEY,
+    CLUSTERS,
+    COMPONENTS_SEQUENCE,
+    DEPLOYMENTS_SEQUENCE,
+    DESCRIPTION,
+    DISPLAY_NAME,
+    NAME,
+    SERVICES,
+    USERS_SEQUENCE,
+    get_all_project_editables,
+    get_project_form_layout,
+)
+from opi.forms.layout import ButtonGroup, Fieldset, Sequence
+
+
+class TestEditableDefinitions:
+    def test_get_all_project_editables_returns_expected_count(self):
+        editables = get_all_project_editables()
+        assert len(editables) == 11
+
+    def test_all_editables_have_yaml_path(self):
+        for editable in get_all_project_editables():
+            assert editable.yaml_path, f"Editable {editable.label} missing yaml_path"
+
+    def test_all_editables_have_widget(self):
+        for editable in get_all_project_editables():
+            assert editable.widget, f"Editable {editable.label} missing widget"
+
+    def test_all_editables_have_label(self):
+        for editable in get_all_project_editables():
+            assert editable.label, f"Editable at {editable.yaml_path} missing label"
+
+    def test_name_editable_is_readonly_on_edit(self):
+        assert NAME.readonly_on_edit is True
+        assert NAME.required is True
+        assert NAME.validator is not None
+
+    def test_display_name_editable(self):
+        assert DISPLAY_NAME.required is True
+        assert DISPLAY_NAME.validator is not None
+
+    def test_description_editable(self):
+        assert DESCRIPTION.widget == "textarea"
+        assert DESCRIPTION.required is False
+
+    def test_clusters_has_options_provider(self):
+        assert CLUSTERS.options_provider == "ClusterOptionsProvider"
+        assert CLUSTERS.required is True
+
+    def test_services_has_converter(self):
+        assert SERVICES.converter is not None
+        assert SERVICES.options_provider == "ServiceOptionsProvider"
+
+
+class TestSequenceEditables:
+    def test_users_sequence_has_children(self):
+        assert USERS_SEQUENCE.widget == "sequence"
+        assert USERS_SEQUENCE.children is not None
+        assert len(USERS_SEQUENCE.children) == 2
+        assert USERS_SEQUENCE.min_items == 1
+
+    def test_users_children_paths(self):
+        children = USERS_SEQUENCE.children or []
+        paths = [c.yaml_path for c in children]
+        assert "users[*]/email" in paths
+        assert "users[*]/role" in paths
+
+    def test_components_sequence_has_children(self):
+        assert COMPONENTS_SEQUENCE.widget == "sequence"
+        assert COMPONENTS_SEQUENCE.children is not None
+        assert len(COMPONENTS_SEQUENCE.children) == 8
+        assert COMPONENTS_SEQUENCE.min_items == 1
+
+    def test_deployments_sequence_has_children(self):
+        assert DEPLOYMENTS_SEQUENCE.widget == "sequence"
+        assert DEPLOYMENTS_SEQUENCE.children is not None
+        assert len(DEPLOYMENTS_SEQUENCE.children) == 5
+
+    def test_deployments_has_nested_components_sequence(self):
+        children = DEPLOYMENTS_SEQUENCE.children or []
+        nested_seq = [c for c in children if c.widget == "sequence"]
+        assert len(nested_seq) == 1
+        assert nested_seq[0].yaml_path == "deployments[*]/components"
+        assert nested_seq[0].children is not None
+        assert len(nested_seq[0].children) == 3
+
+
+class TestReadonlyEditables:
+    def test_age_public_key_is_readonly(self):
+        assert AGE_PUBLIC_KEY.readonly is True
+        assert AGE_PUBLIC_KEY.widget == "display_card"
+        assert AGE_PUBLIC_KEY.converter is not None
+
+    def test_age_private_key_is_readonly(self):
+        assert AGE_PRIVATE_KEY.readonly is True
+        assert AGE_PRIVATE_KEY.converter is not None
+
+    def test_api_key_is_readonly(self):
+        assert API_KEY.readonly is True
+        assert API_KEY.converter is not None
+
+
+class TestFormLayout:
+    def test_layout_returns_list(self):
+        layout = get_project_form_layout()
+        assert isinstance(layout, list)
+        assert len(layout) > 0
+
+    def test_layout_has_fieldsets(self):
+        layout = get_project_form_layout()
+        fieldsets = [e for e in layout if isinstance(e, Fieldset)]
+        assert len(fieldsets) == 6
+        legends = [f.legend for f in fieldsets]
+        assert "Projectgegevens" in legends
+        assert "Projectleden" in legends
+        assert "Services" in legends
+        assert "Componenten" in legends
+        assert "Deployments" in legends
+        assert "Configuratie" in legends
+
+    def test_layout_has_button_group(self):
+        layout = get_project_form_layout()
+        buttons = [e for e in layout if isinstance(e, ButtonGroup)]
+        assert len(buttons) == 1
+
+    def test_layout_sequences_reference_valid_fields(self):
+        layout = get_project_form_layout()
+        editables = get_all_project_editables()
+        editable_paths = {e.yaml_path for e in editables}
+
+        for element in layout:
+            if isinstance(element, Fieldset):
+                for child in element.children:
+                    if isinstance(child, Sequence):
+                        assert child.field_name in editable_paths, (
+                            f"Sequence references unknown field: {child.field_name}"
+                        )
