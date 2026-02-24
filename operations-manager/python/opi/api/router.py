@@ -765,6 +765,24 @@ class SelfServiceComponent(BaseModel):
     root: bool = False  # Whether this component receives the root path in nice-url mode
 
 
+class AddComponentRequest(BaseModel):
+    """Request to add a new component definition to an existing project."""
+
+    name: str = Field(..., max_length=63, description="Component name (must be K8s-compliant)")
+    image: str = Field(..., max_length=512, description="Container image URL")
+    port: int | None = Field(None, ge=1, le=65535, description="Inbound port (omit for background workers)")
+    path: str = Field("/", max_length=256, description="Ingress path (only relevant with publish-on-web service)")
+    services: list[str] | None = Field(
+        None, description="Component uses-services list (e.g. ['postgresql-database']). NOT inherited from project."
+    )
+    cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'")
+    memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'")
+    env_vars: str | None = Field(None, max_length=65536, description="User env vars in KEY=value format (will be encrypted)")
+    deployment_names: list[str] = Field(
+        ..., min_length=1, description="Deployments to add this component to (must already exist)"
+    )
+
+
 class SelfServiceProjectRequest(BaseModel):
     # Project Details (from form fields)
     project_name: str = Field(..., max_length=63)  # Generated technical name (short, compliant)
@@ -929,6 +947,124 @@ async def upsert_deployment(
     except Exception as e:
         logger.error(f"Error upserting deployment: {e!s}")
         raise HTTPException(status_code=500, detail=f"Error upserting deployment: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+@api_router.post(
+    "/projects/{project_name}/components",
+    responses={
+        201: {"description": "Component added successfully"},
+    },
+)
+@validate_api_token
+async def add_component(
+    request: Request, project_name: str, component_data: AddComponentRequest = Body(...)
+) -> JSONResponse:
+    """
+    Add a new component definition to an existing project.
+
+    The component is added to the project's components array and referenced in
+    the specified deployments. Each component declares its own uses-services list,
+    which determines what secrets/env vars it receives.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example:
+    ```bash
+    curl -X POST "http://localhost:9595/api/projects/my-project/components" \\
+      -H "Content-Type: application/json" \\
+      -H "X-API-Key: your-api-key" \\
+      -d '{
+        "name": "worker",
+        "type": "deployment",
+        "image": "ghcr.io/myorg/worker:latest",
+        "services": ["postgresql-database"],
+        "deployment_names": ["main"]
+      }'
+    ```
+    """
+    project_manager = None
+    try:
+        logger.info(f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}")
+
+        # Validate component name
+        sanitized_name = sanitize_kubernetes_name(component_data.name)
+        if sanitized_name != component_data.name.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+            )
+
+        # Create project manager instance
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+
+        # Add the component
+        result = await project_manager.add_component(
+            name=component_data.name,
+            image=component_data.image,
+            deployment_names=component_data.deployment_names,
+            port=component_data.port,
+            path=component_data.path,
+            services=component_data.services,
+            cpu_limit=component_data.cpu_limit,
+            memory_limit=component_data.memory_limit,
+            env_vars=component_data.env_vars,
+        )
+
+        if result["success"]:
+            # Process the project to create K8s resources for affected deployments
+            processing_success = True
+            for dep_name in result.get("deployments_updated", []):
+                dep_result = await project_manager.process_project_from_git(
+                    f"projects/{project_name}.yaml",
+                    deployment_name=dep_name,
+                )
+                if not dep_result:
+                    processing_success = False
+
+            # Collect URLs from deployment results
+            urls: dict[str, dict[str, Any]] = {}
+            for dep_name in result.get("deployments_updated", []):
+                deployment_results = project_manager.get_deployment_results(dep_name)
+                for name, dep_result in deployment_results.items():
+                    urls[name] = {
+                        "cluster": dep_result.cluster,
+                        "urls": dep_result.urls,
+                    }
+
+            content: dict[str, Any] = {
+                "status": "success",
+                "message": f"Component '{component_data.name}' added successfully",
+                "component": result["component"],
+                "deployments_updated": result.get("deployments_updated", []),
+                "urls": urls,
+                "processing": {"status": "completed" if processing_success else "failed"},
+            }
+            if result.get("warnings"):
+                content["warnings"] = result["warnings"]
+            return JSONResponse(content=content, status_code=201)
+        else:
+            error_status_codes = {
+                "duplicate_component": 409,
+                "invalid_deployments": 400,
+                "internal_error": 500,
+            }
+            status_code = error_status_codes.get(result.get("error_type"), 400)
+
+            content = {
+                "status": "failed",
+                "message": f"Failed to add component '{component_data.name}'",
+                "error": result["error"],
+                "error_type": result["error_type"],
+            }
+            return JSONResponse(content=content, status_code=status_code)
+
+    except Exception as e:
+        logger.error(f"Error adding component: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Error adding component: {e!s}")
     finally:
         if project_manager:
             await project_manager.close()

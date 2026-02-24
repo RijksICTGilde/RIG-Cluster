@@ -5092,6 +5092,138 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "created": False, "error": error_msg, "error_type": "internal_error"}
 
+    async def add_component(
+        self,
+        name: str,
+        image: str,
+        deployment_names: list[str],
+        port: int | None = None,
+        path: str = "/",
+        services: list[str] | None = None,
+        cpu_limit: str | None = None,
+        memory_limit: str | None = None,
+        env_vars: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add a new component definition to the project and reference it in specified deployments.
+
+        Args:
+            name: Component name (must be K8s-compliant and unique within the project)
+            image: Container image URL
+            deployment_names: Deployments to add this component to (must already exist)
+            port: Inbound port (None for background workers that don't serve HTTP)
+            path: Ingress path (only relevant if publish-on-web is in services)
+            services: Component's uses-services list (e.g. ["postgresql-database"])
+            cpu_limit: CPU limit (e.g. "500m")
+            memory_limit: Memory limit (e.g. "512Mi")
+            env_vars: User environment variables in KEY=value format (will be AGE-encrypted)
+
+        Returns:
+            Result dict with success status, component config, and deployments updated
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            # Validate component name is unique
+            existing_components = project_data.get("components", [])
+            for comp in existing_components:
+                if comp.get("name") == name:
+                    return {
+                        "success": False,
+                        "error": f"Component '{name}' already exists in project '{project_name}'",
+                        "error_type": "duplicate_component",
+                    }
+
+            # Validate all deployment_names exist
+            existing_deployments = project_data.get("deployments", [])
+            existing_deployment_names = {d.get("name") for d in existing_deployments}
+            invalid_deployments = [d for d in deployment_names if d not in existing_deployment_names]
+            if invalid_deployments:
+                return {
+                    "success": False,
+                    "error": f"Deployments not found: {invalid_deployments}",
+                    "error_type": "invalid_deployments",
+                }
+
+            # Normalize image
+            normalized_image, was_normalized = normalize_container_image(image)
+            warnings: list[str] = []
+            if was_normalized:
+                warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
+
+            # Build component definition
+            component_services = services or []
+            component_config: dict[str, Any] = {
+                "name": name,
+                "type": "deployment",
+                "ports": {
+                    "inbound": [port] if port else [],
+                    "outbound": [80, 443],
+                },
+                "path": path,
+                "uses-services": component_services,
+                "uses-components": [],
+            }
+
+            # Add resource limits if specified
+            if cpu_limit or memory_limit:
+                component_config["resources"] = {}
+                if cpu_limit:
+                    component_config["resources"]["cpu"] = cpu_limit
+                if memory_limit:
+                    component_config["resources"]["memory"] = memory_limit
+
+            # Encrypt and add user env vars if provided
+            if env_vars:
+                public_key = get_project_public_key(project_data)
+                if public_key:
+                    encrypted_env_vars = await encrypt_age_content(env_vars, public_key)
+                    component_config["user-env-vars"] = LiteralScalarString(encrypted_env_vars)
+                else:
+                    warnings.append("Could not encrypt env_vars: no AGE public key found in project config")
+
+            # Add component to project
+            if "components" not in project_data:
+                project_data["components"] = []
+            project_data["components"].append(component_config)
+
+            # Add component reference to specified deployments
+            deployments_updated = []
+            for deployment in existing_deployments:
+                dep_name = deployment.get("name")
+                if dep_name in deployment_names:
+                    existing_refs = {c.get("reference") for c in deployment.get("components", [])}
+                    if name not in existing_refs:
+                        deployment.setdefault("components", []).append(
+                            {"reference": name, "image": normalized_image}
+                        )
+                        deployments_updated.append(dep_name)
+
+            # Save and commit
+            await self.save_project_data()
+
+            git_connector = await self.get_git_connector_for_project_files()
+            commit_message = f"Add component '{name}' to project '{project_name}'"
+            if deployments_updated:
+                commit_message += f" (deployments: {', '.join(deployments_updated)})"
+            await git_connector.commit_and_push(commit_message)
+
+            logger.info(f"Successfully added component '{name}' to project '{project_name}'")
+            result: dict[str, Any] = {
+                "success": True,
+                "component": component_config,
+                "deployments_updated": deployments_updated,
+            }
+            if warnings:
+                result["warnings"] = warnings
+            return result
+
+        except Exception as e:
+            error_msg = f"Error adding component '{name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": error_msg, "error_type": "internal_error"}
+
     async def update_image_and_regenerate(
         self,
         deployment_name: str,

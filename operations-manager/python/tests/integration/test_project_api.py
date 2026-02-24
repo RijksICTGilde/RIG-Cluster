@@ -64,6 +64,7 @@ def create_mock_project_manager(
     process_result: bool = True,
     update_result: dict[str, Any] | None = None,
     delete_result: dict[str, Any] | None = None,
+    add_component_result: dict[str, Any] | None = None,
 ) -> MagicMock:
     """Create a mock ProjectManager with configurable behavior."""
     mock_instance = MagicMock()
@@ -111,6 +112,19 @@ def create_mock_project_manager(
 
     mock_instance.delete_project = mock_delete
     mock_instance.delete_deployment = mock_delete
+
+    # Add component result
+    if add_component_result is None:
+        add_component_result = {
+            "success": True,
+            "component": {"name": "worker"},
+            "deployments_updated": ["main"],
+        }
+
+    async def mock_add_component(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return add_component_result
+
+    mock_instance.add_component = mock_add_component
 
     # Close method
     async def mock_close() -> None:
@@ -724,3 +738,234 @@ class TestProjectApiInputValidation:
                     },
                 )
                 assert response.status_code in (200, 201), f"Failed for image: {image}"
+
+
+@pytest.mark.integration
+class TestAddComponentEndpoint:
+    """Tests for the add component endpoint."""
+
+    def test_add_component_success(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test successfully adding a component to a project."""
+        component_config = {
+            "name": "worker",
+            "type": "deployment",
+            "ports": {"inbound": [], "outbound": [80, 443]},
+            "path": "/",
+            "uses-services": ["postgresql-database"],
+            "uses-components": [],
+        }
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": True,
+                "component": component_config,
+                "deployments_updated": ["main"],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "worker",
+                    "image": "ghcr.io/org/worker:latest",
+                    "services": ["postgresql-database"],
+                    "deployment_names": ["main"],
+                },
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["component"]["name"] == "worker"
+        assert data["deployments_updated"] == ["main"]
+
+    def test_add_component_without_services(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a component with no services."""
+        component_config = {
+            "name": "worker",
+            "type": "deployment",
+            "ports": {"inbound": [], "outbound": [80, 443]},
+            "path": "/",
+            "uses-services": [],
+            "uses-components": [],
+        }
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": True,
+                "component": component_config,
+                "deployments_updated": ["main"],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "worker",
+                    "image": "ghcr.io/org/worker:latest",
+                    "deployment_names": ["main"],
+                },
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["component"]["uses-services"] == []
+
+    def test_add_component_duplicate_name(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a component with a name that already exists."""
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": False,
+                "error": "Component 'worker' already exists in project 'test-project'",
+                "error_type": "duplicate_component",
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "worker",
+                    "image": "ghcr.io/org/worker:latest",
+                    "deployment_names": ["main"],
+                },
+            )
+
+        assert response.status_code == 409
+        data = response.json()
+        assert data["status"] == "failed"
+        assert data["error_type"] == "duplicate_component"
+
+    def test_add_component_invalid_deployment(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a component to a deployment that doesn't exist."""
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": False,
+                "error": "Deployments not found: ['nonexistent']",
+                "error_type": "invalid_deployments",
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "worker",
+                    "image": "ghcr.io/org/worker:latest",
+                    "deployment_names": ["nonexistent"],
+                },
+            )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] == "failed"
+        assert data["error_type"] == "invalid_deployments"
+
+    def test_add_component_missing_required_fields(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test validation rejects requests missing required fields."""
+        # Missing name
+        response = test_client.post(
+            "/api/projects/test-project/components",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "image": "nginx:latest",
+                "deployment_names": ["main"],
+            },
+        )
+        assert response.status_code == 422
+
+        # Missing image
+        response = test_client.post(
+            "/api/projects/test-project/components",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "name": "worker",
+                "deployment_names": ["main"],
+            },
+        )
+        assert response.status_code == 422
+
+        # Missing deployment_names
+        response = test_client.post(
+            "/api/projects/test-project/components",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "name": "worker",
+                "image": "nginx:latest",
+            },
+        )
+        assert response.status_code == 422
+
+    def test_add_component_empty_deployment_names(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test validation rejects empty deployment_names list."""
+        response = test_client.post(
+            "/api/projects/test-project/components",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "name": "worker",
+                "image": "nginx:latest",
+                "deployment_names": [],
+            },
+        )
+        assert response.status_code == 422
+
+    def test_add_component_no_api_key(
+        self,
+        test_client: TestClient,
+    ) -> None:
+        """Test that adding a component without API key returns 401."""
+        response = test_client.post(
+            "/api/projects/test-project/components",
+            json={
+                "name": "worker",
+                "image": "nginx:latest",
+                "deployment_names": ["main"],
+            },
+        )
+        assert response.status_code == 401
+
+    def test_add_component_invalid_api_key(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test that adding a component with wrong API key returns 401."""
+        response = test_client.post(
+            "/api/projects/test-project/components",
+            headers={"X-API-Key": "wrong-api-key"},
+            json={
+                "name": "worker",
+                "image": "nginx:latest",
+                "deployment_names": ["main"],
+            },
+        )
+        assert response.status_code == 401
