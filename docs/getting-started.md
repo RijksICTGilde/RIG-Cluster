@@ -130,6 +130,9 @@ Open https://argo.sandbox.rijksapp.dev in your browser (admin / admin1234) to se
 For hot-reload development (automatically syncs code changes to the running pod):
 
 ```bash
+# Create .env.local if it doesn't exist (required by the Docker build)
+touch operations-manager/python/.env.local
+
 task sandbox:skaffold-dev
 ```
 
