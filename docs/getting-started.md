@@ -24,7 +24,7 @@ All services use real TLS certificates (`*.sandbox.rijksapp.dev`) and run entire
 
 ```bash
 # macOS (using Homebrew)
-brew install go-task kind kubectl kustomize sops age ksops pwgen jq rsync skaffold
+brew install go-task kind kubectl kustomize sops age ksops pwgen jq yq rsync skaffold
 
 # Verify installations
 task requirements-check
@@ -43,6 +43,7 @@ task requirements-check
 | ksops | Kustomize plugin for decrypting SOPS-encrypted resources |
 | pwgen | Generates random passwords during secret generation |
 | jq | JSON processing (used in setup scripts) |
+| yq | YAML processing (used in secret generation) |
 | rsync | File synchronization (used to sync to in-cluster Forgejo) |
 | skaffold | Hot-reload development for the Operations Manager |
 
