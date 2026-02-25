@@ -83,6 +83,7 @@ from opi.utils.naming import (
     get_component_ingress_map,
 )
 from opi.utils.project_utils import (
+    ComponentValidationError,
     build_component_config,
     normalize_container_image,
     validate_component_paths,
@@ -5187,7 +5188,7 @@ class ProjectManager:
                 # Validate path uniqueness (including the new component)
                 try:
                     validate_component_paths([*existing_paths, path], domain_mode)
-                except ValueError as e:
+                except ComponentValidationError as e:
                     return {
                         "success": False,
                         "error": str(e),
@@ -5197,7 +5198,7 @@ class ProjectManager:
                 # Validate root component constraints (including the new component)
                 try:
                     validate_root_component([*existing_root_info, (name, root, port)], domain_mode)
-                except ValueError as e:
+                except ComponentValidationError as e:
                     return {
                         "success": False,
                         "error": str(e),
@@ -5226,7 +5227,7 @@ class ProjectManager:
                     root=root,
                     public_key=public_key,
                 )
-            except ValueError as e:
+            except ComponentValidationError as e:
                 return {
                     "success": False,
                     "error": str(e),

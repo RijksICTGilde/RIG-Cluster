@@ -4,6 +4,7 @@ import logging
 
 import pytest
 from opi.utils.project_utils import (
+    ComponentValidationError,
     normalize_container_image,
     parse_aliases,
     validate_component_paths,
@@ -68,11 +69,11 @@ class TestValidateComponentPaths:
         validate_component_paths(["/", "/api", "/admin"], "deployment-name")
 
     def test_duplicate_paths_shared_domain_raises(self):
-        with pytest.raises(ValueError, match="Duplicate paths found"):
+        with pytest.raises(ComponentValidationError, match="Duplicate paths found"):
             validate_component_paths(["/", "/api", "/"], "deployment-name")
 
     def test_duplicate_paths_custom_mode_raises(self):
-        with pytest.raises(ValueError, match="Duplicate paths found"):
+        with pytest.raises(ComponentValidationError, match="Duplicate paths found"):
             validate_component_paths(["/api", "/api"], "custom")
 
     def test_duplicate_paths_component_specific_mode_allowed(self):
@@ -101,28 +102,28 @@ class TestValidateRootComponent:
         )
 
     def test_multiple_roots_raises(self):
-        with pytest.raises(ValueError, match="only one component can be marked as root"):
+        with pytest.raises(ComponentValidationError, match="only one component can be marked as root"):
             validate_root_component(
                 [("frontend", True, 8080), ("backend", True, 3000)],
                 "nice-url",
             )
 
     def test_root_without_port_raises(self):
-        with pytest.raises(ValueError, match="no port specified"):
+        with pytest.raises(ComponentValidationError, match="no port specified"):
             validate_root_component(
                 [("worker", True, None)],
                 "nice-url",
             )
 
     def test_root_in_non_nice_url_mode_raises(self):
-        with pytest.raises(ValueError, match="only valid in nice-url domain mode"):
+        with pytest.raises(ComponentValidationError, match="only valid in nice-url domain mode"):
             validate_root_component(
                 [("frontend", True, 8080)],
                 "deployment-name",
             )
 
     def test_root_in_component_specific_mode_raises(self):
-        with pytest.raises(ValueError, match="only valid in nice-url domain mode"):
+        with pytest.raises(ComponentValidationError, match="only valid in nice-url domain mode"):
             validate_root_component(
                 [("frontend", True, 8080)],
                 "component-specific",
@@ -140,7 +141,7 @@ class TestParseAliases:
         assert result == {"DATABASE_URL": "$HOST:$PORT/$DB_NAME", "S3": "$OBJECT_STORE_URL"}
 
     def test_invalid_yaml_raises(self):
-        with pytest.raises(ValueError, match="Invalid aliases format"):
+        with pytest.raises(ComponentValidationError, match="Invalid aliases format"):
             parse_aliases("key: [unclosed bracket")
 
     def test_empty_yaml_returns_empty_dict(self):

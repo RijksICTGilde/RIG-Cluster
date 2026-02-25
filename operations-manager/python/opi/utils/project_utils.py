@@ -22,6 +22,10 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 logger = logging.getLogger(__name__)
 
 
+class ComponentValidationError(ValueError):
+    """Raised when component configuration validation fails."""
+
+
 def validate_component_paths(component_paths: list[str], domain_mode: str) -> None:
     """
     Validate path uniqueness for shared-domain modes.
@@ -47,7 +51,7 @@ def validate_component_paths(component_paths: list[str], domain_mode: str) -> No
         seen_paths.add(path)
 
     if duplicate_paths:
-        raise ValueError(
+        raise ComponentValidationError(
             f"When using shared domains (domain mode: {domain_mode}), all component paths must be unique. "
             f"Duplicate paths found: {', '.join(duplicate_paths)}. "
             f"Please assign different paths to each component (e.g., /, /api, /admin)."
@@ -74,21 +78,21 @@ def validate_root_component(components_with_root: list[tuple[str, bool, int | No
 
     if domain_mode != "nice-url":
         root_names = [name for name, _ in root_components]
-        raise ValueError(
+        raise ComponentValidationError(
             f"Root component flag is only valid in nice-url domain mode, "
             f"but domain mode is '{domain_mode}'. Components marked as root: {', '.join(root_names)}"
         )
 
     if len(root_components) > 1:
         root_names = [name for name, _ in root_components]
-        raise ValueError(
+        raise ComponentValidationError(
             f"In nice-url mode, only one component can be marked as root. "
             f"Found {len(root_components)} root components: {', '.join(root_names)}"
         )
 
     root_name, root_port = root_components[0]
     if root_port is None:
-        raise ValueError(
+        raise ComponentValidationError(
             f"Component '{root_name}' is marked as root but has no port specified. "
             f"Root component must have a port for web publishing."
         )
@@ -117,7 +121,7 @@ def parse_aliases(aliases_str: str) -> dict[str, Any]:
             return aliases_dict
         return {}
     except Exception as e:
-        raise ValueError(f"Invalid aliases format: {e!s}") from e
+        raise ComponentValidationError(f"Invalid aliases format: {e!s}") from e
 
 
 async def build_component_config(
