@@ -1169,6 +1169,38 @@ class TestAddComponentEndpoint:
         assert data["error_type"] == "validation_error"
         assert "Unknown service" in data["error"]
 
+    def test_add_component_service_not_on_project(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test that requesting a service not defined on the project returns 400."""
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": False,
+                "error": "Services not defined on project: ['postgresql-database']. Available services: ['keycloak', 'persistent-storage']",
+                "error_type": "invalid_services",
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "worker",
+                    "image": "nginx:latest",
+                    "deployment_names": ["main"],
+                    "services": ["postgresql-database"],
+                },
+            )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] == "failed"
+        assert data["error_type"] == "invalid_services"
+        assert "not defined on project" in data["error"]
+
 
 @pytest.mark.integration
 class TestAddComponentToDeploymentEndpoint:

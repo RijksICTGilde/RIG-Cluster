@@ -5205,6 +5205,19 @@ class ProjectManager:
                         "error_type": "validation_error",
                     }
 
+            # Validate requested services against project-level services
+            if services:
+                project_service_names = set(
+                    ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
+                )
+                invalid_services = [s for s in services if s not in project_service_names]
+                if invalid_services:
+                    return {
+                        "success": False,
+                        "error": f"Services not defined on project: {invalid_services}. Available services: {sorted(project_service_names) if project_service_names else 'none'}",
+                        "error_type": "invalid_services",
+                    }
+
             # Normalize image
             normalized_image, was_normalized = normalize_container_image(image)
             warnings: list[str] = []
