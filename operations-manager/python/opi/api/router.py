@@ -375,12 +375,12 @@ class BasicProjectCreateRequest(BaseModel):
 
 
 class ComponentReference(BaseModel):
-    reference: str = Field(..., description="Component reference name", example="frontend")
-    image: str = Field(..., description="Image URL for this component", example="nginx:1.21")
+    reference: str = Field(..., max_length=63, description="Component reference name", example="frontend")
+    image: str = Field(..., max_length=512, description="Image URL for this component", example="nginx:1.21")
 
 
 class UpsertDeploymentRequest(BaseModel):
-    deploymentName: str = Field(..., description="Name of the deployment", example="production")
+    deploymentName: str = Field(..., max_length=63, description="Name of the deployment", example="production")
     components: list[ComponentReference] = Field(..., description="List of components for this deployment")
     cloneFrom: str | None = Field(
         None, description="Deployment name to clone data from (only on create, or if forceClone is true)"
