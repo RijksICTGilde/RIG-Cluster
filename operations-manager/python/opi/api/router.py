@@ -1064,7 +1064,7 @@ async def add_component(
 
     except Exception as e:
         logger.error(f"Error adding component: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error adding component: {e!s}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
     finally:
         if project_manager:
             await project_manager.close()

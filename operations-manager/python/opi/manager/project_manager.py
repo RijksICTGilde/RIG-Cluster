@@ -5222,7 +5222,7 @@ class ProjectManager:
         except Exception as e:
             error_msg = f"Error adding component '{name}': {e}"
             logger.exception(error_msg)
-            return {"success": False, "error": error_msg, "error_type": "internal_error"}
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
     async def update_image_and_regenerate(
         self,
