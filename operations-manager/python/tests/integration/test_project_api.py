@@ -969,3 +969,157 @@ class TestAddComponentEndpoint:
             },
         )
         assert response.status_code == 401
+
+    def test_add_component_with_type(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a component with a custom type."""
+        component_config = {
+            "name": "frontend",
+            "type": "frontend",
+            "ports": {"inbound": [8080], "outbound": [80, 443]},
+            "path": "/",
+            "uses-services": [],
+            "uses-components": [],
+        }
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": True,
+                "component": component_config,
+                "deployments_updated": ["main"],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "frontend",
+                    "type": "frontend",
+                    "image": "nginx:latest",
+                    "port": 8080,
+                    "deployment_names": ["main"],
+                },
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["component"]["type"] == "frontend"
+
+    def test_add_component_with_aliases(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a component with aliases."""
+        component_config = {
+            "name": "backend",
+            "type": "backend",
+            "ports": {"inbound": [3000], "outbound": [80, 443]},
+            "path": "/api",
+            "uses-services": ["postgresql-database"],
+            "uses-components": [],
+            "aliases": {"DATABASE_URL": "$DATABASE_SERVER_HOST:$DATABASE_SERVER_PORT/$DATABASE_DB"},
+        }
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": True,
+                "component": component_config,
+                "deployments_updated": ["main"],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "backend",
+                    "type": "backend",
+                    "image": "ghcr.io/org/backend:latest",
+                    "port": 3000,
+                    "path": "/api",
+                    "services": ["postgresql-database"],
+                    "aliases": "DATABASE_URL: $DATABASE_SERVER_HOST:$DATABASE_SERVER_PORT/$DATABASE_DB",
+                    "deployment_names": ["main"],
+                },
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert "aliases" in data["component"]
+        assert "DATABASE_URL" in data["component"]["aliases"]
+
+    def test_add_component_with_root(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a root component."""
+        component_config = {
+            "name": "frontend",
+            "type": "frontend",
+            "ports": {"inbound": [8080], "outbound": [80, 443]},
+            "path": "/",
+            "uses-services": [],
+            "uses-components": [],
+            "root": True,
+        }
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": True,
+                "component": component_config,
+                "deployments_updated": ["main"],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "frontend",
+                    "type": "frontend",
+                    "image": "nginx:latest",
+                    "port": 8080,
+                    "root": True,
+                    "deployment_names": ["main"],
+                },
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["component"]["root"] is True
+
+    def test_add_component_validation_error(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test that validation errors from add_component are returned correctly."""
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": False,
+                "error": "When using shared domains (domain mode: deployment-name), all component paths must be unique.",
+                "error_type": "validation_error",
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "api",
+                    "image": "nginx:latest",
+                    "path": "/",
+                    "deployment_names": ["main"],
+                },
+            )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["error_type"] == "validation_error"

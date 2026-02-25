@@ -82,7 +82,12 @@ from opi.utils.naming import (
     generate_unique_name,
     get_component_ingress_map,
 )
-from opi.utils.project_utils import normalize_container_image
+from opi.utils.project_utils import (
+    build_component_config,
+    normalize_container_image,
+    validate_component_paths,
+    validate_root_component,
+)
 from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
@@ -5097,12 +5102,15 @@ class ProjectManager:
         name: str,
         image: str,
         deployment_names: list[str],
+        component_type: str = "single",
         port: int | None = None,
         path: str = "/",
         services: list[str] | None = None,
         cpu_limit: str | None = None,
         memory_limit: str | None = None,
         env_vars: str | None = None,
+        aliases: str | None = None,
+        root: bool = False,
     ) -> dict[str, Any]:
         """
         Add a new component definition to the project and reference it in specified deployments.
@@ -5111,12 +5119,15 @@ class ProjectManager:
             name: Component name (must be K8s-compliant and unique within the project)
             image: Container image URL
             deployment_names: Deployments to add this component to (must already exist)
+            component_type: Component type (e.g. "single", "frontend", "backend")
             port: Inbound port (None for background workers that don't serve HTTP)
             path: Ingress path (only relevant if publish-on-web is in services)
             services: Component's uses-services list (e.g. ["postgresql-database"])
             cpu_limit: CPU limit (e.g. "500m")
             memory_limit: Memory limit (e.g. "512Mi")
             env_vars: User environment variables in KEY=value format (will be AGE-encrypted)
+            aliases: YAML string of alias definitions (e.g. "DATABASE_URL: $HOST:$PORT/$DB_NAME")
+            root: Whether this is the root component (nice-url mode)
 
         Returns:
             Result dict with success status, component config, and deployments updated
@@ -5146,42 +5157,81 @@ class ProjectManager:
                     "error_type": "invalid_deployments",
                 }
 
+            # Validate path uniqueness and root component constraints per target deployment
+            for deployment in existing_deployments:
+                dep_name = deployment.get("name")
+                if dep_name not in deployment_names:
+                    continue
+                domain_mode = deployment.get("domain-mode", "component-specific")
+
+                # Collect existing component paths in this deployment
+                existing_paths = []
+                existing_root_info = []
+                for comp_ref in deployment.get("components", []):
+                    comp_ref_name = comp_ref.get("reference")
+                    if comp_ref_name:
+                        for comp_def in existing_components:
+                            if comp_def.get("name") == comp_ref_name:
+                                existing_paths.append(comp_def.get("path", "/"))
+                                existing_root_info.append(
+                                    (
+                                        comp_ref_name,
+                                        comp_ref.get("root", False),
+                                        comp_def.get("ports", {}).get("inbound", [None])[0]
+                                        if comp_def.get("ports", {}).get("inbound")
+                                        else None,
+                                    )
+                                )
+                                break
+
+                # Validate path uniqueness (including the new component)
+                try:
+                    validate_component_paths([*existing_paths, path], domain_mode)
+                except ValueError as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "error_type": "validation_error",
+                    }
+
+                # Validate root component constraints (including the new component)
+                try:
+                    validate_root_component([*existing_root_info, (name, root, port)], domain_mode)
+                except ValueError as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "error_type": "validation_error",
+                    }
+
             # Normalize image
             normalized_image, was_normalized = normalize_container_image(image)
             warnings: list[str] = []
             if was_normalized:
                 warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
 
-            # Build component definition
-            component_services = services or []
-            component_config: dict[str, Any] = {
-                "name": name,
-                "type": "deployment",
-                "ports": {
-                    "inbound": [port] if port else [],
-                    "outbound": [80, 443],
-                },
-                "path": path,
-                "uses-services": component_services,
-                "uses-components": [],
-            }
-
-            # Add resource limits if specified
-            if cpu_limit or memory_limit:
-                component_config["resources"] = {}
-                if cpu_limit:
-                    component_config["resources"]["cpu"] = cpu_limit
-                if memory_limit:
-                    component_config["resources"]["memory"] = memory_limit
-
-            # Encrypt and add user env vars if provided
-            if env_vars:
-                public_key = get_project_public_key(project_data)
-                if public_key:
-                    encrypted_env_vars = await encrypt_age_content(env_vars, public_key)
-                    component_config["user-env-vars"] = LiteralScalarString(encrypted_env_vars)
-                else:
-                    warnings.append("Could not encrypt env_vars: no AGE public key found in project config")
+            # Build component config using shared function
+            public_key = get_project_public_key(project_data)
+            try:
+                component_config = await build_component_config(
+                    name=name,
+                    component_type=component_type,
+                    port=port,
+                    path=path,
+                    services=services or [],
+                    cpu_limit=cpu_limit,
+                    memory_limit=memory_limit,
+                    env_vars=env_vars,
+                    aliases=aliases,
+                    root=root,
+                    public_key=public_key,
+                )
+            except ValueError as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "error_type": "validation_error",
+                }
 
             # Add component to project
             if "components" not in project_data:
@@ -5195,9 +5245,10 @@ class ProjectManager:
                 if dep_name in deployment_names:
                     existing_refs = {c.get("reference") for c in deployment.get("components", [])}
                     if name not in existing_refs:
-                        deployment.setdefault("components", []).append(
-                            {"reference": name, "image": normalized_image}
-                        )
+                        ref: dict[str, Any] = {"reference": name, "image": normalized_image}
+                        if root:
+                            ref["root"] = True
+                        deployment.setdefault("components", []).append(ref)
                         deployments_updated.append(dep_name)
 
             # Save and commit

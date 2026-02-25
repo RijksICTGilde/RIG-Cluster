@@ -19,6 +19,7 @@ from opi.core.templates import get_templates
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.project_names import generate_project_name
+from opi.utils.project_utils import validate_component_paths, validate_root_component
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
 
@@ -193,42 +194,21 @@ async def process_self_service_form(request: Request, background_tasks: Backgrou
             component_index += 1
 
         # Validate paths when using shared domains
-        if domain_mode in ["deployment-name", "custom"] and components:
-            component_paths = [comp.path for comp in components]
-            # Check for duplicate paths
-            seen_paths = set()
-            duplicate_paths = []
-            for path in component_paths:
-                if path in seen_paths:
-                    duplicate_paths.append(path)
-                seen_paths.add(path)
-
-            if duplicate_paths:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"When using shared domains (domain mode: {domain_mode}), all component paths must be unique. "
-                    f"Duplicate paths found: {', '.join(duplicate_paths)}. "
-                    f"Please assign different paths to each component (e.g., /, /api, /admin).",
-                )
+        if components:
+            try:
+                validate_component_paths([comp.path for comp in components], domain_mode)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
         # Validate root component for nice-url mode
-        if domain_mode == "nice-url" and components:
-            root_components = [i for i, comp in enumerate(components) if comp.root]
-            if len(root_components) > 1:
-                raise HTTPException(
-                    status_code=400,
-                    detail="In nice-url mode, only one component can be marked as root. "
-                    "Please select only one component to receive the root path.",
+        if components:
+            try:
+                validate_root_component(
+                    [(f"component-{i + 1}", comp.root, comp.port) for i, comp in enumerate(components)],
+                    domain_mode,
                 )
-            # Validate that root component has a port (needed for publish-on-web)
-            if root_components:
-                root_idx = root_components[0]
-                root_comp = components[root_idx]
-                if root_comp.port is None:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Component marked as root must have a port specified for web publishing.",
-                    )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
         # Create the request object
         project_data = SelfServiceProjectRequest(

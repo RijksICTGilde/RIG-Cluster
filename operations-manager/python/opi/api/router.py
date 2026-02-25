@@ -769,6 +769,7 @@ class AddComponentRequest(BaseModel):
     """Request to add a new component definition to an existing project."""
 
     name: str = Field(..., max_length=63, description="Component name (must be K8s-compliant)")
+    type: str = Field("single", max_length=32, description="Component type (e.g. 'single', 'frontend', 'backend')")
     image: str = Field(..., max_length=512, description="Container image URL")
     port: int | None = Field(None, ge=1, le=65535, description="Inbound port (omit for background workers)")
     path: str = Field("/", max_length=256, description="Ingress path (only relevant with publish-on-web service)")
@@ -777,7 +778,15 @@ class AddComponentRequest(BaseModel):
     )
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'")
-    env_vars: str | None = Field(None, max_length=65536, description="User env vars in KEY=value format (will be encrypted)")
+    env_vars: str | None = Field(
+        None, max_length=65536, description="User env vars in KEY=value format (will be encrypted)"
+    )
+    aliases: str | None = Field(
+        None,
+        max_length=4096,
+        description="YAML string of alias definitions (e.g. 'DATABASE_URL: $HOST:$PORT/$DB_NAME')",
+    )
+    root: bool = Field(False, description="Mark as root component for nice-url mode (receives bare subdomain traffic)")
     deployment_names: list[str] = Field(
         ..., min_length=1, description="Deployments to add this component to (must already exist)"
     )
@@ -988,7 +997,9 @@ async def add_component(
     """
     project_manager = None
     try:
-        logger.info(f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}")
+        logger.info(
+            f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}"
+        )
 
         # Validate component name
         sanitized_name = sanitize_kubernetes_name(component_data.name)
@@ -1004,6 +1015,7 @@ async def add_component(
         # Add the component
         result = await project_manager.add_component(
             name=component_data.name,
+            component_type=component_data.type,
             image=component_data.image,
             deployment_names=component_data.deployment_names,
             port=component_data.port,
@@ -1012,6 +1024,8 @@ async def add_component(
             cpu_limit=component_data.cpu_limit,
             memory_limit=component_data.memory_limit,
             env_vars=component_data.env_vars,
+            aliases=component_data.aliases,
+            root=component_data.root,
         )
 
         if result["success"]:
