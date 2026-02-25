@@ -967,6 +967,8 @@ async def upsert_deployment(
             }
             return JSONResponse(content=content, status_code=status_code)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error upserting deployment: {e!s}")
         raise HTTPException(status_code=500, detail=f"Error upserting deployment: {e!s}")
@@ -1097,6 +1099,8 @@ async def add_component(
             }
             return JSONResponse(content=content, status_code=status_code)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error adding component: {e!s}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
@@ -1151,6 +1155,14 @@ async def add_component_to_deployment(
             raise HTTPException(
                 status_code=400,
                 detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+
+        # Validate component name
+        sanitized_name = sanitize_kubernetes_name(component_data.component_name)
+        if sanitized_name != component_data.component_name.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
             )
 
         # Create project manager instance
@@ -1208,6 +1220,8 @@ async def add_component_to_deployment(
             }
             return JSONResponse(content=content, status_code=status_code)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error adding component to deployment: {e!s}")
         raise HTTPException(status_code=500, detail="An internal error occurred")

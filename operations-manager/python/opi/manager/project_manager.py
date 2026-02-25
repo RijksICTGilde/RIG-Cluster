@@ -5227,7 +5227,7 @@ class ProjectManager:
                     root=root,
                     public_key=public_key,
                 )
-            except ComponentValidationError as e:
+            except (ComponentValidationError, ValueError) as e:
                 return {
                     "success": False,
                     "error": str(e),

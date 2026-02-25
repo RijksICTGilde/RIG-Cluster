@@ -1137,6 +1137,38 @@ class TestAddComponentEndpoint:
         data = response.json()
         assert data["error_type"] == "validation_error"
 
+    def test_add_component_invalid_service(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test that an unknown service string returns 400 instead of 500."""
+        mock_pm = create_mock_project_manager(
+            add_component_result={
+                "success": False,
+                "error": "Unknown service: nonexistent-service",
+                "error_type": "validation_error",
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/components",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={
+                    "name": "worker",
+                    "image": "nginx:latest",
+                    "deployment_names": ["main"],
+                    "services": ["nonexistent-service"],
+                },
+            )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] == "failed"
+        assert data["error_type"] == "validation_error"
+        assert "Unknown service" in data["error"]
+
 
 @pytest.mark.integration
 class TestAddComponentToDeploymentEndpoint:
@@ -1341,3 +1373,22 @@ class TestAddComponentToDeploymentEndpoint:
             },
         )
         assert response.status_code == 401
+
+    def test_add_component_to_deployment_invalid_name(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test that a component name with underscores returns 400 instead of 500."""
+        response = test_client.post(
+            "/api/projects/test-project/deployments/main/components",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={
+                "component_name": "my_component",
+                "image": "nginx:latest",
+            },
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert "Invalid component name" in data["detail"]
+        assert "my-component" in data["detail"]
