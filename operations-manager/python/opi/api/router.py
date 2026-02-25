@@ -876,6 +876,13 @@ async def upsert_deployment(
     try:
         logger.info(f"Upserting deployment '{deployment_data.deploymentName}' to project: {project_name}")
 
+        # Validate project name format
+        if not validate_project_name(project_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+
         # Validate deployment name using naming utilities
         sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
         if sanitized_name != deployment_data.deploymentName.lower():
@@ -1000,6 +1007,13 @@ async def add_component(
         logger.info(
             f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}"
         )
+
+        # Validate project name format
+        if not validate_project_name(project_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
 
         # Validate component name
         sanitized_name = sanitize_kubernetes_name(component_data.name)
