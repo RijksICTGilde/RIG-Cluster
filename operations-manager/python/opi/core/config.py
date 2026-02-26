@@ -228,6 +228,14 @@ class Settings(BaseSettings):
     # Temporary directory configuration
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
 
+    # Container registry configuration (for image upload proxy)
+    REGISTRY_URL: str = ""  # Target registry (e.g., rcr.rijksapps.nl)
+    REGISTRY_ORG: str = ""  # Organization prefix (e.g., rig)
+    REGISTRY_USERNAME: str = ""  # Robot account name
+    REGISTRY_PASSWORD: str = ""  # Robot token (supports age:/base64+age:/plain: prefixes)
+    REGISTRY_VERIFY_TLS: bool = True
+    IMAGE_UPLOAD_MAX_SIZE_MB: int = 5120  # Safety cap (5 GB)
+
     # Keycloak configuration
     KEYCLOAK_URL: str = "https://keycloak.kind"
     KEYCLOAK_ADMIN_USERNAME: str = "admin"

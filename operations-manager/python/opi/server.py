@@ -14,6 +14,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from opi.api.auth_routes import auth_router
 from opi.api.backup_router import backup_router
+from opi.api.image_router import image_router
 from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
@@ -175,6 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(api_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(backup_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(restore_router, include_in_schema=True)  # Include in OpenAPI docs
+    app.include_router(image_router, include_in_schema=True)  # Image upload proxy
     app.include_router(metrics_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_websocket_router, include_in_schema=False)  # WebSocket for log streaming

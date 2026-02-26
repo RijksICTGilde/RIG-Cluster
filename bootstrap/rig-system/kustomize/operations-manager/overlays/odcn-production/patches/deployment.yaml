@@ -26,3 +26,6 @@ spec:
       - name: config-volume
         configMap:
           name: operations-manager-config
+      - name: tmp
+        emptyDir:
+          sizeLimit: 8Gi
