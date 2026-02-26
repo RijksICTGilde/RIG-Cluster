@@ -39,6 +39,19 @@ class EditableEnforcer(Protocol):
         ...
 
 
+@runtime_checkable
+class EditableGenerator(Protocol):
+    """Generates computed values at submit time.
+
+    Editables with a generator are not rendered in forms — their values
+    are computed from the merged YAML data during final submission.
+    """
+
+    def generate(self, yaml_data: dict[str, Any]) -> Any:
+        """Compute a value from the current project data."""
+        ...
+
+
 @dataclass
 class ProjectEditable:
     """
@@ -57,9 +70,11 @@ class ProjectEditable:
     converter: EditableConverter | None = None
     validator: EditableValidator | None = None
     enforcer: EditableEnforcer | None = None
+    generator: EditableGenerator | None = None
     readonly: bool = False
     readonly_on_edit: bool = False
     required: bool = False
+    default: Any = None
     children: list[ProjectEditable] | None = None
     depends_on: str | None = None
     show_when: dict[str, Any] | None = None
@@ -68,3 +83,8 @@ class ProjectEditable:
     htmx_swap: str | None = None
     min_items: int = 0
     max_items: int | None = None
+    help_text: str | None = None
+    help_template: str | None = None
+    examples: list[str] | None = None
+    attributes: dict[str, str] | None = None
+    locked_by_service: str | None = None

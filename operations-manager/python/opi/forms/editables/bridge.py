@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from opi.forms.editables.path import get_value, resolve_path
+from opi.forms.editables.path import resolve_path
+from opi.forms.editables.service_path import smart_get_value
 from opi.forms.field import FormField
 from opi.forms.providers import get_provider
 
@@ -16,6 +17,7 @@ def editable_to_form_field(
     errors: dict[str, list[str]] | None = None,
     index: int | None = None,
     edit_mode: bool = False,
+    provider_context: dict[str, Any] | None = None,
 ) -> FormField:
     """
     Convert a ProjectEditable + YAML data into a FormField for rendering.
@@ -35,8 +37,10 @@ def editable_to_form_field(
     # 1. Resolve the path
     concrete_path = resolve_path(editable.yaml_path, index)
 
-    # 2. Extract value from YAML
-    raw_value = get_value(yaml_data, concrete_path)
+    # 2. Extract value from YAML (fall back to default)
+    raw_value = smart_get_value(yaml_data, concrete_path)
+    if raw_value is None and editable.default is not None:
+        raw_value = editable.default
 
     # 3. Apply converter for display
     display_value = raw_value
@@ -44,7 +48,7 @@ def editable_to_form_field(
         display_value = editable.converter.view(raw_value)
 
     # 4. Resolve options
-    options = resolve_options_for_editable(editable)
+    options = resolve_options_for_editable(editable, context=provider_context)
 
     # 5. Build HTMX attrs dict
     htmx_attrs: dict[str, str] = {}
@@ -58,7 +62,14 @@ def editable_to_form_field(
     # 6. Determine readonly
     readonly = editable.readonly or (editable.readonly_on_edit and edit_mode)
 
-    # 7. Build FormField
+    # 7. Check locked_by_service: force value + readonly when the service is active
+    description = editable.description
+    if editable.locked_by_service and _is_service_active(editable.locked_by_service, yaml_data):
+        display_value = True
+        readonly = True
+        description = f"Vereist door: {_service_display_name(editable.locked_by_service)}"
+
+    # 8. Build FormField
     return FormField(
         name=concrete_path,
         path=concrete_path,
@@ -66,7 +77,7 @@ def editable_to_form_field(
         widget_type=editable.widget,
         label=editable.label,
         required=editable.required,
-        description=editable.description,
+        description=description,
         placeholder=editable.placeholder,
         value=display_value,
         options=options or None,
@@ -76,6 +87,11 @@ def editable_to_form_field(
         min_items=editable.min_items,
         max_items=editable.max_items,
         htmx_attrs=htmx_attrs,
+        attributes=editable.attributes or {},
+        default=editable.default,
+        help_text=editable.help_text,
+        help_template=editable.help_template,
+        examples=editable.examples,
     )
 
 
@@ -100,7 +116,7 @@ def should_render_editable(
         return True
 
     # Get the dependency value
-    dep_value = get_value(yaml_data, editable.depends_on)
+    dep_value = smart_get_value(yaml_data, editable.depends_on)
 
     if editable.show_when is None:
         return bool(dep_value)
@@ -112,6 +128,12 @@ def should_render_editable(
                 return False
             names = _extract_names_from_list(dep_value)
             if expected not in names:
+                return False
+        elif key == "contains_any":
+            if not isinstance(dep_value, list) or not isinstance(expected, list):
+                return False
+            names = _extract_names_from_list(dep_value)
+            if not any(e in names for e in expected):
                 return False
         else:
             if isinstance(expected, list):
@@ -141,12 +163,35 @@ def resolve_options_for_editable(
     if not editable.options_provider:
         return []
 
-    kwargs = context or {}
+    kwargs = _filter_provider_kwargs(editable.options_provider, context or {})
     try:
         provider = get_provider(editable.options_provider, **kwargs)
         return provider.get_options()
     except KeyError:
         return []
+
+
+def _filter_provider_kwargs(
+    provider_name: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Filter context kwargs to only those accepted by the provider's __init__.
+
+    This prevents TypeError when the context contains keys meant for other
+    providers (e.g. ``component_names`` passed to ``FilteredServiceOptionsProvider``
+    which only accepts ``project_services``).
+    """
+    import inspect
+
+    from opi.forms.providers import PROVIDER_REGISTRY
+
+    provider_cls = PROVIDER_REGISTRY.get(provider_name)
+    if not provider_cls or not context:
+        return {}
+
+    sig = inspect.signature(provider_cls.__init__)
+    valid_params = set(sig.parameters.keys()) - {"self"}
+    return {k: v for k, v in context.items() if k in valid_params}
 
 
 def _extract_names_from_list(items: list) -> list[str]:  # type: ignore[type-arg]
@@ -158,3 +203,24 @@ def _extract_names_from_list(items: list) -> list[str]:  # type: ignore[type-arg
         elif isinstance(item, dict):
             names.extend(item.keys())
     return names
+
+
+def _is_service_active(service_name: str, yaml_data: dict[str, Any]) -> bool:
+    """Check if a service is in the selected services list."""
+    services = yaml_data.get("services", [])
+    if not isinstance(services, list):
+        return False
+    return service_name in _extract_names_from_list(services)
+
+
+# Display names for services used in locked_by_service hints
+_SERVICE_DISPLAY_NAMES: dict[str, str] = {
+    "authorization-wall": "Authorization Wall",
+    "keycloak": "Keycloak",
+    "publish-on-web": "Publiceren op het web",
+}
+
+
+def _service_display_name(service_name: str) -> str:
+    """Get a human-readable display name for a service."""
+    return _SERVICE_DISPLAY_NAMES.get(service_name, service_name)

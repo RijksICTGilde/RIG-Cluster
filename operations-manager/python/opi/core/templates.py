@@ -2,14 +2,19 @@
 Template system configuration for Operations Manager.
 
 This module sets up Jinja2 templates with ROOS components for the operations-manager UI.
+Includes Babel i18n integration for multi-language support.
 """
 
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import markupsafe
 from fastapi.templating import Jinja2Templates
 from jinja_roos_components import setup_components
+from starlette.requests import Request
+
+from opi.core.i18n import get_current_translation, get_requested_language
 
 # Dutch month names
 DUTCH_MONTHS = [
@@ -131,6 +136,27 @@ templates.env.globals["roos_assets_base_url"] = "/static/roos/dist/"
 templates.env.filters["service_name"] = get_service_name
 templates.env.filters["dutch_date"] = format_dutch_date
 
+# Register process_components filter for runtime-generated HTML that contains
+# component tags (e.g. form_html from render_from_editables). The extension's
+# preprocess only runs at template compile time, so runtime strings need this filter.
+from jinja_roos_components.extension import ComponentExtension
+
+_component_ext = templates.env.extensions.get("jinja_roos_components.extension.ComponentExtension")
+if not isinstance(_component_ext, ComponentExtension):
+    raise RuntimeError("ComponentExtension not registered — setup_components must run first")
+
+
+def _process_components(html: str) -> markupsafe.Markup:
+    preprocessed = _component_ext.preprocess(html, name="process_components_filter", filename=None)
+    rendered = templates.env.from_string(preprocessed).render()
+    return markupsafe.Markup(rendered)
+
+
+templates.env.filters["process_components"] = _process_components
+
+# Enable i18n extension for {% trans %} blocks in templates
+templates.env.add_extension("jinja2.ext.i18n")
+
 
 def setup_templates() -> Jinja2Templates:
     """
@@ -152,3 +178,17 @@ def get_templates() -> Jinja2Templates:
         Jinja2Templates instance with ROOS components
     """
     return templates
+
+
+def install_translations_for_request(request: Request) -> str:
+    """Install Babel translations into the Jinja2 environment for the current request.
+
+    Call this before rendering templates that use {% trans %} blocks.
+
+    Returns:
+        The resolved language code (e.g., "nl" or "en").
+    """
+    lang = get_requested_language(request)
+    translation = get_current_translation(request)
+    templates.env.install_gettext_translations(translation, newstyle=True)  # type: ignore[attr-defined]
+    return lang

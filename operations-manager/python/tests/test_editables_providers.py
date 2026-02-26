@@ -2,13 +2,25 @@
 
 from opi.forms.providers import (
     BaseDomainOptionsProvider,
+    ClusterBaseDomainOptionsProvider,
     ComponentReferenceOptionsProvider,
+    DomainModeOptionsProvider,
     FilteredServiceOptionsProvider,
     KeycloakTemplateOptionsProvider,
     PullPolicyOptionsProvider,
     RepositoryOptionsProvider,
     StorageSizeOptionsProvider,
+    StorageTypeOptionsProvider,
 )
+
+
+class TestStorageTypeOptionsProvider:
+    def test_returns_options(self):
+        options = StorageTypeOptionsProvider().get_options()
+        assert len(options) == 2
+        values = [o["value"] for o in options]
+        assert "persistent" in values
+        assert "ephemeral" in values
 
 
 class TestStorageSizeOptionsProvider:
@@ -21,8 +33,8 @@ class TestStorageSizeOptionsProvider:
     def test_includes_common_sizes(self):
         options = StorageSizeOptionsProvider().get_options()
         values = [o["value"] for o in options]
+        assert "250Mi" in values
         assert "1Gi" in values
-        assert "10Gi" in values
 
 
 class TestKeycloakTemplateOptionsProvider:
@@ -32,9 +44,11 @@ class TestKeycloakTemplateOptionsProvider:
         assert len(options) == 2
         assert all("value" in o and "label" in o for o in options)
 
-    def test_includes_descriptions(self):
+    def test_includes_expected_template_values(self):
         options = KeycloakTemplateOptionsProvider().get_options()
-        assert all("description" in o for o in options)
+        values = [o["value"] for o in options]
+        assert "sso-support" in values
+        assert "sso-only" in values
 
 
 class TestPullPolicyOptionsProvider:
@@ -96,12 +110,48 @@ class TestRepositoryOptionsProvider:
         assert provider.get_options() == []
 
 
+class TestDomainModeOptionsProvider:
+    def test_returns_four_options(self):
+        options = DomainModeOptionsProvider().get_options()
+        assert len(options) == 4
+
+    def test_includes_nice_url(self):
+        options = DomainModeOptionsProvider().get_options()
+        values = [o["value"] for o in options]
+        assert "nice-url" in values
+        assert "component-specific" in values
+        assert "deployment-name" in values
+        assert "custom" in values
+
+
+class TestClusterBaseDomainOptionsProvider:
+    def test_returns_options_without_cluster(self):
+        provider = ClusterBaseDomainOptionsProvider()
+        options = provider.get_options()
+        # Should aggregate domains from all clusters
+        assert isinstance(options, list)
+
+    def test_returns_options_with_unknown_cluster(self):
+        provider = ClusterBaseDomainOptionsProvider(cluster="nonexistent")
+        options = provider.get_options()
+        # Falls back to all domains
+        assert isinstance(options, list)
+
+    def test_options_have_value_and_label(self):
+        provider = ClusterBaseDomainOptionsProvider()
+        options = provider.get_options()
+        for opt in options:
+            assert "value" in opt
+            assert "label" in opt
+
+
 class TestProviderRegistry:
     def test_new_providers_registered(self):
-        """All 7 new providers are in the registry."""
+        """All providers are in the registry."""
         from opi.forms.providers import PROVIDER_REGISTRY
 
         new_names = [
+            "StorageTypeOptionsProvider",
             "StorageSizeOptionsProvider",
             "KeycloakTemplateOptionsProvider",
             "PullPolicyOptionsProvider",
@@ -109,6 +159,7 @@ class TestProviderRegistry:
             "FilteredServiceOptionsProvider",
             "ComponentReferenceOptionsProvider",
             "RepositoryOptionsProvider",
+            "ClusterBaseDomainOptionsProvider",
         ]
         for name in new_names:
             assert name in PROVIDER_REGISTRY
@@ -118,3 +169,39 @@ class TestProviderRegistry:
 
         provider = get_provider("StorageSizeOptionsProvider")
         assert len(provider.get_options()) > 0
+
+
+class TestResolveOptionsWithMixedContext:
+    """Verify that resolve_options_for_editable filters context kwargs correctly."""
+
+    def test_filtered_provider_receives_project_services_despite_extra_keys(self):
+        """FilteredServiceOptionsProvider must receive project_services even when
+        the context contains keys meant for other providers (e.g. component_names).
+        This was a bug: the extra keys caused a TypeError, and the fallback
+        re-instantiated the provider without any kwargs at all."""
+        from opi.forms.editables.bridge import resolve_options_for_editable
+        from opi.forms.editables.fields.components import COMPONENT_USES_SERVICES
+
+        context = {
+            "project_services": ["publish-on-web", "keycloak"],
+            "component_names": ["frontend"],
+        }
+        options = resolve_options_for_editable(COMPONENT_USES_SERVICES, context=context)
+        values = [o["value"] for o in options]
+        assert "publish-on-web" in values
+        assert "keycloak" in values
+
+    def test_provider_without_context_params_still_works(self):
+        """Providers that accept no kwargs should still work when context is passed."""
+        from opi.forms.editables.bridge import resolve_options_for_editable
+        from opi.forms.editables.editable import ProjectEditable
+
+        editable = ProjectEditable(
+            yaml_path="test",
+            widget="select",
+            label="Test",
+            options_provider="CpuRequestOptionsProvider",
+        )
+        context = {"project_services": ["keycloak"], "component_names": ["api"]}
+        options = resolve_options_for_editable(editable, context=context)
+        assert len(options) > 0

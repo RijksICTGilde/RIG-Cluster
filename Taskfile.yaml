@@ -763,6 +763,7 @@ tasks:
     desc: "Generate SOPS-encrypted secret from cluster-specific env file for operations-manager"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER}}.secrets'
       OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
@@ -771,6 +772,7 @@ tasks:
       - |
         echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
         echo "Using cluster-specific secrets file: {{.ENV_FILE}}"
+        echo "Using key file: {{.KEY_FILE}}"
 
         # Check if cluster-specific env file exists
         if [ ! -f "{{.ENV_FILE}}" ]; then
@@ -788,8 +790,8 @@ tasks:
         fi
 
         # Check if SOPS key file exists
-        if [ ! -f "security/key.txt" ]; then
-          echo "❌ SOPS key file not found: security/key.txt"
+        if [ ! -f "{{.KEY_FILE}}" ]; then
+          echo "❌ SOPS key file not found: {{.KEY_FILE}}"
           exit 1
         fi
 
@@ -831,7 +833,7 @@ tasks:
 
         # Encrypt with SOPS using the AGE key
         echo "Encrypting secret with SOPS..."
-        AGE_PUBLIC_KEY="$(sed -n '2p' security/key.txt | sed 's/# public key: //')"
+        AGE_PUBLIC_KEY="$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')"
         sops --encrypt --output-type yaml --age "$AGE_PUBLIC_KEY" --in-place "$SECRET_FILE"
 
         echo "✅ SOPS-encrypted secret generated: $SECRET_FILE"
@@ -843,6 +845,7 @@ tasks:
     desc: "Build and deploy the operations-manager to the current cluster"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
       - |
@@ -860,7 +863,7 @@ tasks:
         kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
       - |
         echo "Updating operations-manager deployment..."
-        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
         kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
@@ -889,11 +892,12 @@ tasks:
     desc: "Deploy the operations-manager to the current cluster"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
       - |
         echo "Updating operations-manager deployment..."
-        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
         kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
@@ -1217,14 +1221,16 @@ tasks:
         # Create output directory
         mkdir -p "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
 
-        # Initialize overview file
-        OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
-        if [ -f "$OVERVIEW_FILE" ]; then
-          echo "❌ Overview file already exists: $OVERVIEW_FILE"
-          echo "   This file may contain passwords you haven't saved yet."
-          echo "   Please copy any needed passwords and delete this file before running again."
-          exit 1
+        # Check if SOPS-encrypted secrets already exist in the output directory
+        EXISTING_SOPS=$(find "{{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}" -name "*.sops.yaml" 2>/dev/null | head -1)
+        if [ -n "$EXISTING_SOPS" ]; then
+          echo "SOPS-encrypted secrets already exist in {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}"
+          echo "To regenerate, delete the *.sops.yaml files in that directory first"
+          exit 0
         fi
+
+        # Initialize overview file (overwrite if it exists from a previous incomplete run)
+        OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
 
         echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}" > "$OVERVIEW_FILE"
         echo "# Generated on $(date)" >> "$OVERVIEW_FILE"
@@ -2095,10 +2101,15 @@ tasks:
           exit 1
         fi
 
+        SECRET_FILE="{{.OUTPUT_DIR}}/{{.SECRET_NAME}}.yaml"
+        if [ -f "$SECRET_FILE" ]; then
+          echo "SOPS-encrypted env secrets already exist: $SECRET_FILE"
+          echo "To regenerate, delete the file first"
+          exit 0
+        fi
+
         echo "Generating SOPS-encrypted env secrets for sandbox..."
         mkdir -p "{{.OUTPUT_DIR}}"
-
-        SECRET_FILE="{{.OUTPUT_DIR}}/{{.SECRET_NAME}}.yaml"
 
         cat > "$SECRET_FILE" << 'EOF'
         apiVersion: v1
@@ -2133,6 +2144,18 @@ tasks:
     desc: "Ask whether to configure SSO (saves answer for later)"
     cmds:
       - |
+        # Reuse existing answer if available
+        if [ -f ".sandbox-sso" ]; then
+          SSO_VALUE=$(cat .sandbox-sso)
+          if [ "$SSO_VALUE" = "no" ] || [ -z "$SSO_VALUE" ]; then
+            echo "SSO configuration: skipped (previously declined)"
+          else
+            echo "SSO configuration: already configured (client secret on file)"
+          fi
+          echo "To reconfigure, delete .sandbox-sso and re-run"
+          exit 0
+        fi
+
         echo ""
         echo "========================================="
         echo "SSO Configuration (Optional)"

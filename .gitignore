@@ -35,3 +35,7 @@ secrets-overview-*.yaml
 /keycloak-migration/sso-migration/steps.md
 /keycloak-migration/sso-migration/backups/
 /keycloak-migration/sso-migration/verify_sso_migration.py
+/bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-repo-secret-infrastructure-secret.yaml.sops.yaml
+/bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-repo-users-applications-secret.yaml.sops.yaml
+/bootstrap/rig-system/kustomize/overlays/sandboxed-local/decrypt-sops.yaml
+/bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-admin-secret.yaml.sops.yaml

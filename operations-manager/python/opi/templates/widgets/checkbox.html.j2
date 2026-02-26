@@ -1,0 +1,18 @@
+{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, bool_attr, htmx_attrs, extra_attrs %}
+<div class="rvo-form-group">
+    <c-checkbox
+        id="{{ field.path|e }}"
+        name="{{ field.path|e }}"
+        label="{{ field.label|e }}"
+        {{ bool_attr("checked", field.value) }}
+        {{ bool_attr("disabled", field.readonly) }}
+        {{ htmx_attrs(field) }}
+        {{ extra_attrs(field) }}
+    />
+    {% if field.readonly and field.value %}
+    <input type="hidden" name="{{ field.path|e }}" value="true" />
+    {% endif %}
+    {{ helper_text(field) }}
+    {{ render_examples(field) }}
+    {{ render_errors(field.errors) }}
+</div>

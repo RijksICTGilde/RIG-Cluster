@@ -285,3 +285,109 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
         if task_id in _projects:
             _projects[task_id].status = TaskStatus.FAILED
             _projects[task_id].completed_at = datetime.now(tz=UTC)
+
+
+async def process_project_yaml_background(task_id: str, project_name: str, yaml_content: str) -> None:
+    """Background task that creates a project from pre-built YAML content.
+
+    Unlike ``process_project_background`` which takes a
+    ``SelfServiceProjectRequest`` and generates YAML, this function
+    receives the final YAML string directly (produced by the wizard
+    with editables and generators).
+
+    The remaining pipeline is identical: git commit, ProjectManager
+    deployment, ArgoCD monitoring, and progress tracking.
+    """
+    try:
+        logger.info(f"Background task {task_id} starting for project: {project_name} (from wizard YAML)")
+        start_time = time.time()
+
+        task_progress_manager = TaskProgressManager(task_id, project_name)
+
+        # Step 1: Validation
+        validate_task = task_progress_manager.add_task("Project validatie")
+        if not validate_project_name(project_name):
+            error_msg = f"Invalid project name format: {project_name}"
+            task_progress_manager.fail_task(validate_task, error_msg)
+            task_progress_manager.fail_project(error_msg)
+            return
+        task_progress_manager.complete_task(validate_task)
+
+        # Step 2: YAML already generated — skip generation step
+        yaml_task = task_progress_manager.add_task("YAML configuratie controleren")
+        logger.debug(f"Task {task_id}: Using pre-built YAML content ({len(yaml_content)} chars)")
+        task_progress_manager.complete_task(yaml_task)
+
+        # Step 3: Git operations
+        git_task = task_progress_manager.add_task("Git repository operaties")
+        try:
+            git_connector_for_project_files = GitConnector(
+                repo_url=settings.GIT_PROJECTS_SERVER_URL,
+                username=settings.GIT_PROJECTS_SERVER_USERNAME,
+                password=settings.GIT_PROJECTS_SERVER_PASSWORD,
+                branch=settings.GIT_PROJECTS_SERVER_BRANCH,
+                repo_path=settings.GIT_PROJECTS_SERVER_REPO_PATH,
+            )
+
+            project_file_path = f"projects/{project_name}.yaml"
+            commit_message = f"Create project {project_name}"
+            await git_connector_for_project_files.create_or_update_file(
+                project_file_path, yaml_content, do_commit_and_push=True, commit_message=commit_message
+            )
+            logger.info(f"Task {task_id}: Project file created and pushed at {project_file_path}")
+            task_progress_manager.complete_task(git_task)
+        except Exception as e:
+            error_msg = f"Failed Git operations: {e}"
+            task_progress_manager.fail_task(git_task, error_msg)
+            task_progress_manager.fail_project(error_msg)
+            return
+
+        # Step 4: Project deployment
+        deploy_task = task_progress_manager.add_task("Project deployment")
+        try:
+            project_manager = ProjectManager(git_connector_for_project_files=git_connector_for_project_files)
+            try:
+                processing_result = await project_manager.process_project_from_git(
+                    project_file_path, task_progress_manager
+                )
+                logger.info(f"Task {task_id}: Project processing completed, result: {processing_result}")
+            finally:
+                await project_manager.close()
+
+            if processing_result:
+                monitor_task = task_progress_manager.add_subtask(deploy_task, "ArgoCD & deployment monitoring")
+                await _monitor_argocd_and_deployment(task_id, project_name, task_progress_manager, monitor_task)
+
+                task_progress_manager.complete_task(deploy_task)
+
+                if task_id in _projects:
+                    _projects[
+                        task_id
+                    ].current_step = f"Project {project_name} succesvol geimplementeerd - monitoring actief"
+
+                elapsed_time = time.time() - start_time
+                logger.info(
+                    f"Background task {task_id} completed successfully: {project_name} (took {elapsed_time:.2f}s)"
+                )
+            else:
+                error_msg = "Project processing failed"
+                task_progress_manager.fail_task(deploy_task, error_msg)
+                task_progress_manager.fail_project(error_msg)
+
+        except Exception as e:
+            error_msg = f"Failed deployment: {e}"
+            task_progress_manager.fail_task(deploy_task, error_msg)
+            task_progress_manager.fail_project(error_msg)
+            return
+
+    except Exception as e:
+        import traceback
+
+        error_traceback = traceback.format_exc()
+        error_msg = f"Error processing project: {e!s}"
+        logger.error(f"Background task {task_id} failed: {error_msg}")
+        logger.debug(f"Background task {task_id} full traceback:\n{error_traceback}")
+
+        if task_id in _projects:
+            _projects[task_id].status = TaskStatus.FAILED
+            _projects[task_id].completed_at = datetime.now(tz=UTC)

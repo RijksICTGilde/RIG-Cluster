@@ -77,7 +77,7 @@ CLUSTER_CONFIG = {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
         "nice_url": {
-            "supported_domains": ["sandbox.rijksapp.dev"],
+            "supported_domains": ["sandbox.rijksapp.dev", "rijksapp.nl", "rijksapp.dev"],
         },
     },
     "odcn-production": {
@@ -108,7 +108,7 @@ CLUSTER_CONFIG = {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
         "nice_url": {
-            "supported_domains": ["rijks.app", "rijksapps.nl"],  # Domains that support nice URL pattern
+            "supported_domains": ["rijks.app", "rijksapps.nl", "rijksapp.nl", "rijksapp.dev"],  # Domains that support nice URL pattern
         },
     },
 }

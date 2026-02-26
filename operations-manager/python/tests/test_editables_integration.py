@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 from opi.forms.editables import (
-    EditablePart,
     FlowMode,
     FormFlow,
+    FormSection,
     ProjectEditable,
     editable_to_form_field,
     get_value,
@@ -24,7 +24,7 @@ from opi.forms.editables.converters import (
     TruncateConverter,
 )
 from opi.forms.editables.enforcers import AdminRequiredEnforcer
-from opi.forms.editables.validators import RequiredValidator, SlugValidator
+from opi.forms.editables.validators import RealmRoleValidator, RequiredValidator, SlugValidator
 from opi.forms.widgets.roos import ROOSWidgetAdapter
 
 
@@ -171,6 +171,80 @@ class TestValidationIntegration:
         assert len(validator.validate(None)) > 0
 
 
+class TestRealmRoleValidator:
+    """Test RealmRoleValidator."""
+
+    def test_valid_role_names(self):
+        validator = RealmRoleValidator()
+        assert validator.validate("allowed-user") == []
+        assert validator.validate("admin") == []
+        assert validator.validate("ROLE_NAME") == []
+        assert validator.validate("role_123") == []
+
+    def test_empty_value_passes(self):
+        validator = RealmRoleValidator()
+        assert validator.validate("") == []
+        assert validator.validate(None) == []
+
+    def test_invalid_characters(self):
+        validator = RealmRoleValidator()
+        errors = validator.validate("role with spaces")
+        assert len(errors) == 1
+        assert "letters" in errors[0]
+
+    def test_too_long(self):
+        validator = RealmRoleValidator()
+        errors = validator.validate("a" * 256)
+        assert len(errors) == 1
+        assert "255" in errors[0]
+
+
+class TestClearHiddenDependsOn:
+    """Test that clear_hidden_depends_on removes values for hidden dependent fields."""
+
+    def test_clears_when_dependency_off(self):
+        from opi.forms.editables.processor import EditableFormProcessor
+
+        editables = [
+            ProjectEditable(
+                yaml_path="toggle",
+                widget="checkbox",
+                label="Toggle",
+            ),
+            ProjectEditable(
+                yaml_path="dependent-field",
+                widget="text",
+                label="Dependent",
+                depends_on="toggle",
+            ),
+        ]
+        yaml_data = {"toggle": False, "dependent-field": "should-be-cleared"}
+        processor = EditableFormProcessor()
+        processor.clear_hidden_depends_on(editables, yaml_data)
+        assert yaml_data["dependent-field"] is None
+
+    def test_keeps_when_dependency_on(self):
+        from opi.forms.editables.processor import EditableFormProcessor
+
+        editables = [
+            ProjectEditable(
+                yaml_path="toggle",
+                widget="checkbox",
+                label="Toggle",
+            ),
+            ProjectEditable(
+                yaml_path="dependent-field",
+                widget="text",
+                label="Dependent",
+                depends_on="toggle",
+            ),
+        ]
+        yaml_data = {"toggle": True, "dependent-field": "keep-this"}
+        processor = EditableFormProcessor()
+        processor.clear_hidden_depends_on(editables, yaml_data)
+        assert yaml_data["dependent-field"] == "keep-this"
+
+
 class TestEnforcerIntegration:
     """Test enforcers work with real data."""
 
@@ -188,12 +262,12 @@ class TestEnforcerIntegration:
             enforcer.enforce(users_no_admin, {})
 
 
-class TestEditablePartComposition:
-    """Test EditablePart grouping."""
+class TestFormSectionComposition:
+    """Test FormSection grouping."""
 
-    def test_identity_part(self):
-        part = EditablePart(
-            part_id="identity",
+    def test_identity_section(self):
+        section = FormSection(
+            section_id="identity",
             title="Uw project",
             icon="huis",
             editables=[
@@ -202,17 +276,14 @@ class TestEditablePartComposition:
                 ProjectEditable(yaml_path="description", widget="textarea", label="project.description"),
                 ProjectEditable(yaml_path="clusters", widget="checkbox-group", label="project.clusters", required=True),
             ],
-            in_create_wizard=True,
-            wizard_step=1,
         )
-        assert part.part_id == "identity"
-        assert len(part.editables) == 4
-        assert part.wizard_step == 1
+        assert section.section_id == "identity"
+        assert len(section.editables) == 4
 
-    def test_render_all_part_editables(self):
-        """All editables in a part can be converted to FormFields."""
-        part = EditablePart(
-            part_id="identity",
+    def test_render_all_section_editables(self):
+        """All editables in a section can be converted to FormFields."""
+        section = FormSection(
+            section_id="identity",
             title="Project",
             editables=[
                 ProjectEditable(yaml_path="name", widget="text", label="Naam"),
@@ -220,29 +291,29 @@ class TestEditablePartComposition:
             ],
         )
         yaml_data = {"name": "test", "description": "A test project"}
-        for editable in part.editables:
+        for editable in section.editables:
             field = editable_to_form_field(editable, yaml_data)
             assert field.name == editable.yaml_path
             assert field.widget_type == editable.widget
 
 
 class TestFormFlowComposition:
-    """Test FormFlow composing parts."""
+    """Test FormFlow composing sections."""
 
     def test_create_wizard_flow(self):
         flow = FormFlow(
             flow_id="create-project",
             title="Project Aanmaken",
             mode=FlowMode.WIZARD,
-            parts=[
-                EditablePart(part_id="identity", title="Uw project"),
-                EditablePart(part_id="services", title="Services"),
-                EditablePart(part_id="users", title="Team"),
-                EditablePart(part_id="components", title="Componenten"),
+            sections=[
+                FormSection(section_id="identity", title="Uw project"),
+                FormSection(section_id="services", title="Services"),
+                FormSection(section_id="users", title="Team"),
+                FormSection(section_id="components", title="Componenten"),
             ],
             show_review=True,
         )
-        assert len(flow.parts) == 4
+        assert len(flow.sections) == 4
         assert flow.mode == FlowMode.WIZARD
 
     def test_edit_tabs_flow(self):
@@ -250,15 +321,15 @@ class TestFormFlowComposition:
             flow_id="edit-project",
             title="Project Bewerken",
             mode=FlowMode.TABS,
-            parts=[
-                EditablePart(part_id="identity", title="Algemeen"),
-                EditablePart(part_id="users", title="Team"),
+            sections=[
+                FormSection(section_id="identity", title="Algemeen"),
+                FormSection(section_id="users", title="Team"),
             ],
-            htmx_base_url="/projects/test/parts",
-            save_per_part=True,
+            htmx_base_url="/projects/test/sections",
+            save_per_section=True,
         )
         assert flow.mode == FlowMode.TABS
-        assert flow.htmx_base_url == "/projects/test/parts"
+        assert flow.htmx_base_url == "/projects/test/sections"
 
 
 class TestPathUtilitiesIntegration:

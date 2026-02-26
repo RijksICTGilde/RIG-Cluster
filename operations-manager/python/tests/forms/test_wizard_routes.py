@@ -1,0 +1,326 @@
+"""Tests for wizard HTMX routes."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from opi.forms.editables.section import FormSection
+from opi.forms.layout import Fieldset
+from opi.forms.wizard.state import WizardState
+from opi.web.router_wizard import (
+    _build_section_summary,
+    _flatten_yaml_for_validation,
+    _get_section_from_flow,
+    _render_step_html,
+    _section_has_errors,
+)
+
+
+class TestGetSectionFromFlow:
+    def test_finds_existing_section(self):
+        section = _get_section_from_flow("create-project", "identity")
+        assert section.section_id == "identity"
+
+    def test_raises_404_for_unknown_section(self):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            _get_section_from_flow("create-project", "nonexistent")
+        assert exc_info.value.status_code == 404
+
+    def test_raises_for_unknown_flow(self):
+        with pytest.raises(KeyError, match="Unknown flow"):
+            _get_section_from_flow("nonexistent-flow", "identity")
+
+
+class TestRenderStepHtml:
+    def test_renders_section_with_layout(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        editable = ProjectEditable(
+            yaml_path="name",
+            widget="text",
+            label="Naam",
+        )
+        section = FormSection(
+            section_id="test",
+            title="Test",
+            editables=[editable],
+            layout=Fieldset(legend="Test", children=["name"]),
+        )
+        html = _render_step_html(section, yaml_data={"name": "my-project"})
+        assert html  # Non-empty HTML
+        assert "my-project" in html or "name" in html
+
+    def test_returns_empty_for_no_layout(self):
+        section = FormSection(
+            section_id="test",
+            title="Test",
+            layout=None,
+        )
+        assert _render_step_html(section, yaml_data={}) == ""
+
+
+class TestBuildSectionSummary:
+    def test_summary_with_simple_fields(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        section = FormSection(
+            section_id="test",
+            title="Test",
+            editables=[
+                ProjectEditable(yaml_path="name", widget="text", label="Naam"),
+                ProjectEditable(yaml_path="description", widget="textarea", label="Omschrijving"),
+            ],
+        )
+        yaml_data = {"name": "test-project", "description": "A test"}
+        html = _build_section_summary(section, yaml_data)
+        assert "<dl>" in html
+        assert "Naam" in html
+        assert "test-project" in html
+        assert "Omschrijving" in html
+
+    def test_summary_with_none_value(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        section = FormSection(
+            section_id="test",
+            title="Test",
+            editables=[
+                ProjectEditable(yaml_path="missing", widget="text", label="Missing"),
+            ],
+        )
+        html = _build_section_summary(section, {})
+        assert "Geen gegevens ingevuld" in html
+
+    def test_summary_with_list_value(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        section = FormSection(
+            section_id="test",
+            title="Test",
+            editables=[
+                ProjectEditable(yaml_path="clusters", widget="checkbox_group", label="Clusters"),
+            ],
+        )
+        html = _build_section_summary(section, {"clusters": ["local", "production"]})
+        assert "local, production" in html
+
+    def test_summary_with_bool_value(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        section = FormSection(
+            section_id="test",
+            title="Test",
+            editables=[
+                ProjectEditable(yaml_path="enabled", widget="checkbox", label="Actief"),
+            ],
+        )
+        html = _build_section_summary(section, {"enabled": True})
+        assert "Ja" in html
+
+    def test_summary_renders_sequences(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        child = ProjectEditable(yaml_path="items[*]/name", widget="text", label="Naam")
+        section = FormSection(
+            section_id="test",
+            title="Test",
+            editables=[
+                ProjectEditable(
+                    yaml_path="items",
+                    widget="sequence",
+                    label="Items",
+                    children=[child],
+                ),
+            ],
+        )
+        html = _build_section_summary(section, {"items": [{"name": "a"}]})
+        assert "Items" in html
+        assert "(1)" in html  # item count
+        assert "a" in html  # item name used as label
+
+    def test_custom_summary_fn(self):
+        section = FormSection(
+            section_id="test",
+            title="Test",
+            summary_fn=lambda data: f"<p>Custom: {data.get('name', 'n/a')}</p>",
+        )
+        html = _build_section_summary(section, {"name": "proj"})
+        assert "Custom: proj" in html
+
+
+class TestFlattenYamlForValidation:
+    """Test flattening structured YAML into flat form-style keys."""
+
+    def test_flattens_simple_fields(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        editables = [
+            ProjectEditable(yaml_path="name", widget="text", label="Naam"),
+            ProjectEditable(yaml_path="description", widget="textarea", label="Omschrijving"),
+        ]
+        yaml_data = {"name": "test-proj", "description": "A test"}
+        flat = _flatten_yaml_for_validation(editables, yaml_data)
+        assert flat == {"name": "test-proj", "description": "A test"}
+
+    def test_flattens_sequence_children(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        child = ProjectEditable(yaml_path="users[*]/email", widget="text", label="Email", required=True)
+        seq = ProjectEditable(yaml_path="users", widget="sequence", label="Team", children=[child])
+        yaml_data = {"users": [{"email": "a@b.com"}, {"email": "c@d.com"}]}
+        flat = _flatten_yaml_for_validation([seq], yaml_data)
+        assert flat["users[0]/email"] == "a@b.com"
+        assert flat["users[1]/email"] == "c@d.com"
+
+    def test_skips_hidden_editables(self):
+        from opi.forms.editables.editable import ProjectEditable
+
+        visible = ProjectEditable(yaml_path="name", widget="text", label="Naam")
+        hidden = ProjectEditable(
+            yaml_path="subdomain",
+            widget="text",
+            label="Subdomein",
+            depends_on="mode",
+            show_when={"value": "custom"},
+        )
+        yaml_data = {"name": "test", "mode": "default", "subdomain": "old"}
+        flat = _flatten_yaml_for_validation([visible, hidden], yaml_data)
+        assert "name" in flat
+        assert "subdomain" not in flat
+
+
+class TestSectionHasErrors:
+    """Test matching error paths to section editable paths."""
+
+    def test_matches_simple_path(self):
+        assert _section_has_errors({"name", "description"}, {"name": ["Required"]})
+
+    def test_no_match(self):
+        assert not _section_has_errors({"name"}, {"email": ["Required"]})
+
+    def test_matches_wildcard_to_concrete(self):
+        paths = {"users[*]/email", "users[*]/role"}
+        errors = {"users[0]/email": ["Required"]}
+        assert _section_has_errors(paths, errors)
+
+    def test_matches_multiple_indices(self):
+        paths = {"items[*]/name"}
+        errors = {"items[2]/name": ["Required"]}
+        assert _section_has_errors(paths, errors)
+
+
+class TestRenderStepHtmlWithRealSections:
+    """Test rendering with the actual wizard section definitions."""
+
+    def test_identity_section_renders_all_fields(self):
+        from opi.forms.editables.wizard_sections import IDENTITY_SECTION
+
+        html = _render_step_html(IDENTITY_SECTION, yaml_data={})
+        assert html, "Identity section should produce non-empty HTML"
+        # Should contain ROOS component tags (pre-processing)
+        assert "display-name" in html
+        assert "description" in html
+        assert "clusters" in html
+
+    def test_identity_section_renders_with_data(self):
+        from opi.forms.editables.wizard_sections import IDENTITY_SECTION
+
+        data = {
+            "name": "test-proj",
+            "display-name": "Test Project",
+            "description": "A description",
+            "clusters": ["local"],
+        }
+        html = _render_step_html(IDENTITY_SECTION, yaml_data=data)
+        assert "Test Project" in html
+        assert "A description" in html
+
+    def test_services_section_renders(self):
+        from opi.forms.editables.wizard_sections import SERVICES_SECTION
+
+        html = _render_step_html(SERVICES_SECTION, yaml_data={})
+        assert html, "Services section should produce non-empty HTML"
+
+    def test_team_section_renders(self):
+        from opi.forms.editables.wizard_sections import TEAM_SECTION
+
+        html = _render_step_html(TEAM_SECTION, yaml_data={})
+        assert html, "Team section should produce non-empty HTML"
+
+    def test_components_section_renders(self):
+        from opi.forms.editables.wizard_sections import COMPONENTS_SECTION
+
+        html = _render_step_html(COMPONENTS_SECTION, yaml_data={})
+        assert html, "Components section should produce non-empty HTML"
+
+
+class TestTemplateProcessComponents:
+    """Verify templates use process_components filter for form HTML."""
+
+    TEMPLATES_DIR = Path(__file__).parent.parent.parent / "opi" / "templates" / "wizard"
+
+    def test_wizard_step_uses_process_components(self):
+        content = (self.TEMPLATES_DIR / "wizard_step.html.j2").read_text()
+        assert "process_components" in content, (
+            "wizard_step.html.j2 must use the process_components filter, not | safe, for step_html rendering"
+        )
+        assert "step_html | safe" not in content, "wizard_step.html.j2 should NOT use | safe for step_html"
+
+    def test_wizard_step_oob_swap_is_conditional(self):
+        """OOB swap for step indicator should be conditional to avoid duplication."""
+        content = (self.TEMPLATES_DIR / "wizard_step.html.j2").read_text()
+        assert "if not embedded" in content, (
+            "OOB swap should be conditional on 'embedded' to avoid duplicate step indicators on initial page load"
+        )
+
+    def test_wizard_page_includes_step_with_embedded(self):
+        """Full page should include step template with embedded=True."""
+        content = (self.TEMPLATES_DIR / "wizard_page.html.j2").read_text()
+        assert "embedded=True" in content, (
+            "wizard_page.html.j2 should set embedded=True when including wizard_step.html.j2 to suppress OOB swap"
+        )
+
+
+class TestWizardStateIntegration:
+    """Integration tests for wizard state with real flows."""
+
+    def test_create_flow_has_identity_first(self):
+        from opi.forms.editables.flows import CREATE_FLOW
+
+        assert CREATE_FLOW.sections[0].section_id == "identity"
+
+    def test_wizard_state_with_create_flow(self):
+        from opi.forms.editables.flows import CREATE_FLOW
+        from opi.forms.wizard.resolver import (
+            resolve_active_sections,
+        )
+
+        state = WizardState(
+            flow_id="create-project",
+            current_step="identity",
+            active_sections=[s.section_id for s in CREATE_FLOW.sections],
+        )
+        # With no services selected, conditional sections should be hidden
+        active = resolve_active_sections(CREATE_FLOW, state.step_data)
+        active_ids = [s.section_id for s in active]
+        assert "identity" in active_ids
+        assert "services" in active_ids
+        assert "keycloak-config" not in active_ids
+
+    def test_wizard_state_with_services_selected(self):
+        from opi.forms.editables.flows import CREATE_FLOW
+        from opi.forms.wizard.resolver import resolve_active_sections
+
+        state = WizardState(
+            flow_id="create-project",
+            current_step="services",
+            step_data={"services": {"services": ["keycloak"]}},
+            active_sections=[s.section_id for s in CREATE_FLOW.sections],
+        )
+        active = resolve_active_sections(CREATE_FLOW, state.step_data)
+        active_ids = [s.section_id for s in active]
+        assert "keycloak-config" in active_ids
+        assert "postgresql-config" not in active_ids

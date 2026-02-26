@@ -64,7 +64,7 @@ class TestRenderDisplayCard:
         field = self._make_field(value="test")
         html = ROOSWidgetAdapter().render_display_card(field)
         assert 'icon="sleutel"' in html
-        assert 'color="blauw"' in html
+        assert 'color="hemelblauw"' in html
 
     def test_label_rendered(self) -> None:
         field = self._make_field(label="API Sleutel", value="test")
@@ -109,3 +109,45 @@ class TestRenderFieldDispatch:
         )
         html = ROOSWidgetAdapter().render_field(field)
         assert "<c-card" in html
+
+
+class TestRenderKeyValueEditor:
+    def _make_field(self, **kwargs: object) -> FormField:
+        defaults: dict[str, object] = {
+            "name": "test",
+            "path": "test/aliases",
+            "schema_type": str,
+            "widget_type": "key_value_editor",
+            "label": "Aliassen",
+            "attributes": {"kv_format": "env"},
+        }
+        defaults.update(kwargs)
+        return FormField(**defaults)  # type: ignore[arg-type]
+
+    def test_renders_editor_html(self) -> None:
+        field = self._make_field(value="KEY=value")
+        html = ROOSWidgetAdapter().render_key_value_editor(field)
+        assert "kv-editor" in html
+        assert "kv-toggle" in html
+
+    def test_renders_env_toggle_active(self) -> None:
+        field = self._make_field(value="")
+        html = ROOSWidgetAdapter().render_key_value_editor(field)
+        assert "kvToggleFormat" in html
+        assert ">ENV</button>" in html
+        assert ">YAML</button>" in html
+
+    def test_renders_textarea_with_value(self) -> None:
+        field = self._make_field(value="API_KEY=secret")
+        html = ROOSWidgetAdapter().render_key_value_editor(field)
+        assert "API_KEY=secret" in html
+
+    def test_dispatches_via_render_field(self) -> None:
+        field = self._make_field(value="X=1")
+        html = ROOSWidgetAdapter().render_field(field)
+        assert "kv-editor" in html
+
+    def test_yaml_format_active(self) -> None:
+        field = self._make_field(value="KEY: value", attributes={"kv_format": "yaml"})
+        html = ROOSWidgetAdapter().render_key_value_editor(field)
+        assert 'data-format="yaml"' in html

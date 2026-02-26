@@ -11,7 +11,6 @@ from opi.forms.editables.project_registry import (
     DEPLOYMENTS_SEQUENCE,
     DESCRIPTION,
     DISPLAY_NAME,
-    NAME,
     SERVICES,
     USERS_SEQUENCE,
     get_all_project_editables,
@@ -23,7 +22,7 @@ from opi.forms.layout import ButtonGroup, Fieldset, Sequence
 class TestEditableDefinitions:
     def test_get_all_project_editables_returns_expected_count(self):
         editables = get_all_project_editables()
-        assert len(editables) == 11
+        assert len(editables) == 10
 
     def test_all_editables_have_yaml_path(self):
         for editable in get_all_project_editables():
@@ -37,22 +36,20 @@ class TestEditableDefinitions:
         for editable in get_all_project_editables():
             assert editable.label, f"Editable at {editable.yaml_path} missing label"
 
-    def test_name_editable_is_readonly_on_edit(self):
-        assert NAME.readonly_on_edit is True
-        assert NAME.required is True
-        assert NAME.validator is not None
-
     def test_display_name_editable(self):
         assert DISPLAY_NAME.required is True
         assert DISPLAY_NAME.validator is not None
 
     def test_description_editable(self):
         assert DESCRIPTION.widget == "textarea"
-        assert DESCRIPTION.required is False
+        assert DESCRIPTION.required is True
 
-    def test_clusters_has_options_provider(self):
+    def test_clusters_is_select_with_converter(self):
+        assert CLUSTERS.widget == "select"
         assert CLUSTERS.options_provider == "ClusterOptionsProvider"
         assert CLUSTERS.required is True
+        assert CLUSTERS.converter is not None
+        assert CLUSTERS.default is not None
 
     def test_services_has_converter(self):
         assert SERVICES.converter is not None
@@ -75,13 +72,13 @@ class TestSequenceEditables:
     def test_components_sequence_has_children(self):
         assert COMPONENTS_SEQUENCE.widget == "sequence"
         assert COMPONENTS_SEQUENCE.children is not None
-        assert len(COMPONENTS_SEQUENCE.children) == 8
+        assert len(COMPONENTS_SEQUENCE.children) == 14
         assert COMPONENTS_SEQUENCE.min_items == 1
 
     def test_deployments_sequence_has_children(self):
         assert DEPLOYMENTS_SEQUENCE.widget == "sequence"
         assert DEPLOYMENTS_SEQUENCE.children is not None
-        assert len(DEPLOYMENTS_SEQUENCE.children) == 5
+        assert len(DEPLOYMENTS_SEQUENCE.children) == 8
 
     def test_deployments_has_nested_components_sequence(self):
         children = DEPLOYMENTS_SEQUENCE.children or []
