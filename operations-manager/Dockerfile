@@ -53,6 +53,11 @@ RUN KOPIA_ARCH=$(echo "${TARGETARCH}" | sed 's/amd64/x64/') \
     && chmod +x /usr/local/bin/kopia \
     && rm -rf "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}"
 
+# Install Skopeo - for pushing container images to remote registries
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends skopeo
+
 # Install Chisel - used for establishing HTTP tunnels to remote services
 RUN CHISEL_VERSION=$(curl -s https://api.github.com/repos/jpillora/chisel/releases/latest | grep -Po '"tag_name": "v?\K[^"]*') \
     && curl -LO "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" \

@@ -44,3 +44,9 @@ data:
     GRAFANA_DATASOURCE_UID=mimir-prd
     ENABLE_TRACEMALLOC=false
     ARGOCD_MANAGER=rig-prd-operations
+
+    # Container registry (image upload proxy)
+    REGISTRY_URL=rcr.rijksapps.nl
+    REGISTRY_ORG=rig
+    REGISTRY_USERNAME=rig+zad
+    IMAGE_UPLOAD_MAX_SIZE_MB=5120
