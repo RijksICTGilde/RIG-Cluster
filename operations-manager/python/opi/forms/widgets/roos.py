@@ -27,6 +27,18 @@ if TYPE_CHECKING:
     from opi.forms.presets.loader import Preset
 
 
+def _attr_escape(value: object) -> str:
+    """Escape a value for use inside a double-quoted HTML attribute.
+
+    Unlike Jinja2's built-in ``|e`` filter, this does NOT escape single
+    quotes.  ROOS web components read attribute values as plain strings,
+    so ``&#39;`` would appear literally in the UI.  Since attributes are
+    always double-quoted in our templates, escaping ``'`` is unnecessary.
+    """
+    s = str(value)
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 def _get_widget_env() -> Environment:
     """Get a plain Jinja2 environment for widget templates.
 
@@ -41,10 +53,12 @@ def _get_widget_env() -> Environment:
 
     from opi.core.templates import TEMPLATES_DIR
 
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader(str(TEMPLATES_DIR)),
         autoescape=False,
     )
+    env.filters["attr_escape"] = _attr_escape
+    return env
 
 
 class ROOSWidgetAdapter(WidgetAdapter):
@@ -100,7 +114,7 @@ class ROOSWidgetAdapter(WidgetAdapter):
             for o in (field.options or [])
         ]
         raw_value: object = field.value
-        if not raw_value and field.default == "__all__":
+        if (not raw_value or raw_value == "__all__") and field.default == "__all__":
             selected = [o["value"] for o in options]
         else:
             selected = [str(v) for v in (raw_value if isinstance(raw_value, list) else [])]  # type: ignore[union-attr]

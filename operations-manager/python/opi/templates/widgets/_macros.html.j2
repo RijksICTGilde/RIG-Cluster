@@ -8,7 +8,7 @@
 
 {% macro bool_attr(name, value) %}{% if value %}:{{ name }}="true"{% endif %}{% endmacro %}
 
-{% macro optional_attr(name, value) %}{% if value is not none and value != '' %}{{ name }}="{{ value|e }}"{% endif %}{% endmacro %}
+{% macro optional_attr(name, value) %}{% if value is not none and value != '' %}{{ name }}="{{ value|attr_escape }}"{% endif %}{% endmacro %}
 
 {% macro htmx_attrs(field) %}{% if field.htmx_attrs %}{% for k, v in field.htmx_attrs.items() %}{{ k|e }}="{{ v|e }}" {% endfor %}{% endif %}{% endmacro %}
 

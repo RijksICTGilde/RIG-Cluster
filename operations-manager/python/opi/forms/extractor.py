@@ -151,10 +151,7 @@ def extract_single_field(
 
         if isinstance(inner_type, type) and issubclass(inner_type, BaseModel):
             # Extract children for the nested model
-            if isinstance(value, dict):
-                nested_data = value
-            else:
-                nested_data = {}
+            nested_data = value if isinstance(value, dict) else {}
             form_field.children = extract_fields_from_model(
                 model=inner_type,
                 data=nested_data,

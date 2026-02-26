@@ -1,30 +1,32 @@
 """
 End-to-end integration tests for the editables package.
 
-Tests the full pipeline: ProjectEditable -> editable_to_form_field() -> FormField -> ROOSWidgetAdapter.
+Tests the full pipeline: EditableVisualizer -> editable_to_form_field() -> FormField -> ROOSWidgetAdapter.
 """
 
 from __future__ import annotations
 
 import pytest
 from opi.forms.editables import (
-    FlowMode,
-    FormFlow,
-    FormSection,
-    ProjectEditable,
-    editable_to_form_field,
     get_value,
     resolve_path,
     set_value,
-    should_render_editable,
 )
 from opi.forms.editables.converters import (
     EncryptedDisplayConverter,
     IntegerListConverter,
     TruncateConverter,
 )
+from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.enforcers import AdminRequiredEnforcer
 from opi.forms.editables.validators import RealmRoleValidator, RequiredValidator, SlugValidator
+from opi.forms.visualizers.bridge import (
+    editable_to_form_field,
+    should_render_editable,
+)
+from opi.forms.visualizers.flows import FlowMode, FormFlow
+from opi.forms.visualizers.sections import FormSection
+from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.widgets.roos import ROOSWidgetAdapter
 
 
@@ -32,7 +34,11 @@ class TestFullRenderPipeline:
     """Test editable -> FormField -> HTML rendering."""
 
     def test_simple_text_field(self):
-        editable = ProjectEditable(yaml_path="name", widget="text", label="Naam")
+        editable = EditableVisualizer(
+            editable=Editable(yaml_path="name"),
+            widget=WidgetType.TEXT,
+            label="Naam",
+        )
         yaml_data = {"name": "test-project"}
         field = editable_to_form_field(editable, yaml_data)
         adapter = ROOSWidgetAdapter()
@@ -41,12 +47,14 @@ class TestFullRenderPipeline:
         assert "test-project" in html
 
     def test_display_card_encrypted_field(self):
-        editable = ProjectEditable(
-            yaml_path="config/api-key",
-            widget="display-card",
+        editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="config/api-key",
+                converter=EncryptedDisplayConverter(),
+            ),
+            widget=WidgetType.DISPLAY_CARD,
             label="API Key",
             readonly=True,
-            converter=EncryptedDisplayConverter(),
         )
         yaml_data = {"config": {"api-key": "-----BEGIN AGE ENCRYPTED FILE-----\ndata..."}}
         field = editable_to_form_field(editable, yaml_data)
@@ -58,12 +66,14 @@ class TestFullRenderPipeline:
         assert "BEGIN AGE" not in html
 
     def test_truncated_display_card(self):
-        editable = ProjectEditable(
-            yaml_path="config/age-public-key",
-            widget="display-card",
+        editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="config/age-public-key",
+                converter=TruncateConverter(20),
+            ),
+            widget=WidgetType.DISPLAY_CARD,
             label="Public Key",
             readonly=True,
-            converter=TruncateConverter(20),
         )
         yaml_data = {"config": {"age-public-key": "age1ufgl52y9y2aumys23l3e6zplekaw4j3ndk2yrwgfteq44fgd0qaq6zcrz5"}}
         field = editable_to_form_field(editable, yaml_data)
@@ -71,11 +81,13 @@ class TestFullRenderPipeline:
         assert len(field.value) < 30
 
     def test_select_with_options_provider(self):
-        editable = ProjectEditable(
-            yaml_path="components[0]/type",
-            widget="select",
+        editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="components[0]/type",
+                values_provider="ComponentTypeOptionsProvider",
+            ),
+            widget=WidgetType.SELECT,
             label="Type",
-            options_provider="ComponentTypeOptionsProvider",
         )
         yaml_data = {"components": [{"type": "single"}]}
         field = editable_to_form_field(editable, yaml_data)
@@ -84,9 +96,9 @@ class TestFullRenderPipeline:
         assert len(field.options) > 0
 
     def test_sequence_item_with_index(self):
-        editable = ProjectEditable(
-            yaml_path="users[*]/email",
-            widget="text",
+        editable = EditableVisualizer(
+            editable=Editable(yaml_path="users[*]/email"),
+            widget=WidgetType.TEXT,
             label="Email",
         )
         yaml_data = {"users": [{"email": "a@b.c"}, {"email": "d@e.f"}]}
@@ -105,12 +117,14 @@ class TestConditionalVisibility:
 
     def test_publish_on_web_depends_on_services(self):
         """Component publish-on-web only shown if service is enabled."""
-        editable = ProjectEditable(
-            yaml_path="components[*]/publish-on-web",
-            widget="checkbox",
+        editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="components[*]/publish-on-web",
+                depends_on="services",
+                show_when={"contains": "publish-on-web"},
+            ),
+            widget=WidgetType.CHECKBOX,
             label="Publiceren op web",
-            depends_on="services",
-            show_when={"contains": "publish-on-web"},
         )
         yaml_with = {"services": ["publish-on-web", "keycloak"]}
         yaml_without = {"services": ["keycloak"]}
@@ -121,24 +135,28 @@ class TestConditionalVisibility:
         assert should_render_editable(editable, yaml_empty) is False
 
     def test_sso_depends_on_keycloak(self):
-        editable = ProjectEditable(
-            yaml_path="components[*]/sso-rijk",
-            widget="checkbox",
+        editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="components[*]/sso-rijk",
+                depends_on="services",
+                show_when={"contains": "keycloak"},
+            ),
+            widget=WidgetType.CHECKBOX,
             label="SSO Rijk",
-            depends_on="services",
-            show_when={"contains": "keycloak"},
         )
         assert should_render_editable(editable, {"services": ["keycloak"]}) is True
         assert should_render_editable(editable, {"services": ["redis"]}) is False
 
     def test_mixed_service_list_format(self):
         """Services can be mixed str/dict (YAML format)."""
-        editable = ProjectEditable(
-            yaml_path="x",
-            widget="checkbox",
+        editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="x",
+                depends_on="services",
+                show_when={"contains": "keycloak"},
+            ),
+            widget=WidgetType.CHECKBOX,
             label="X",
-            depends_on="services",
-            show_when={"contains": "keycloak"},
         )
         services = ["publish-on-web", {"keycloak": {"config": {"template": "sso"}}}]
         assert should_render_editable(editable, {"services": services}) is True
@@ -206,16 +224,18 @@ class TestClearHiddenDependsOn:
         from opi.forms.editables.processor import EditableFormProcessor
 
         editables = [
-            ProjectEditable(
-                yaml_path="toggle",
-                widget="checkbox",
+            EditableVisualizer(
+                editable=Editable(yaml_path="toggle"),
+                widget=WidgetType.CHECKBOX,
                 label="Toggle",
             ),
-            ProjectEditable(
-                yaml_path="dependent-field",
-                widget="text",
+            EditableVisualizer(
+                editable=Editable(
+                    yaml_path="dependent-field",
+                    depends_on="toggle",
+                ),
+                widget=WidgetType.TEXT,
                 label="Dependent",
-                depends_on="toggle",
             ),
         ]
         yaml_data = {"toggle": False, "dependent-field": "should-be-cleared"}
@@ -227,16 +247,18 @@ class TestClearHiddenDependsOn:
         from opi.forms.editables.processor import EditableFormProcessor
 
         editables = [
-            ProjectEditable(
-                yaml_path="toggle",
-                widget="checkbox",
+            EditableVisualizer(
+                editable=Editable(yaml_path="toggle"),
+                widget=WidgetType.CHECKBOX,
                 label="Toggle",
             ),
-            ProjectEditable(
-                yaml_path="dependent-field",
-                widget="text",
+            EditableVisualizer(
+                editable=Editable(
+                    yaml_path="dependent-field",
+                    depends_on="toggle",
+                ),
+                widget=WidgetType.TEXT,
                 label="Dependent",
-                depends_on="toggle",
             ),
         ]
         yaml_data = {"toggle": True, "dependent-field": "keep-this"}
@@ -271,10 +293,26 @@ class TestFormSectionComposition:
             title="Uw project",
             icon="huis",
             editables=[
-                ProjectEditable(yaml_path="name", widget="text", label="project.name", required=True),
-                ProjectEditable(yaml_path="display-name", widget="text", label="project.display_name", required=True),
-                ProjectEditable(yaml_path="description", widget="textarea", label="project.description"),
-                ProjectEditable(yaml_path="clusters", widget="checkbox-group", label="project.clusters", required=True),
+                EditableVisualizer(
+                    editable=Editable(yaml_path="name", required=True),
+                    widget=WidgetType.TEXT,
+                    label="project.name",
+                ),
+                EditableVisualizer(
+                    editable=Editable(yaml_path="display-name", required=True),
+                    widget=WidgetType.TEXT,
+                    label="project.display_name",
+                ),
+                EditableVisualizer(
+                    editable=Editable(yaml_path="description"),
+                    widget=WidgetType.TEXTAREA,
+                    label="project.description",
+                ),
+                EditableVisualizer(
+                    editable=Editable(yaml_path="clusters", required=True),
+                    widget=WidgetType.CHECKBOX_GROUP,
+                    label="project.clusters",
+                ),
             ],
         )
         assert section.section_id == "identity"
@@ -286,15 +324,23 @@ class TestFormSectionComposition:
             section_id="identity",
             title="Project",
             editables=[
-                ProjectEditable(yaml_path="name", widget="text", label="Naam"),
-                ProjectEditable(yaml_path="description", widget="textarea", label="Omschrijving"),
+                EditableVisualizer(
+                    editable=Editable(yaml_path="name"),
+                    widget=WidgetType.TEXT,
+                    label="Naam",
+                ),
+                EditableVisualizer(
+                    editable=Editable(yaml_path="description"),
+                    widget=WidgetType.TEXTAREA,
+                    label="Omschrijving",
+                ),
             ],
         )
         yaml_data = {"name": "test", "description": "A test project"}
         for editable in section.editables:
             field = editable_to_form_field(editable, yaml_data)
-            assert field.name == editable.yaml_path
-            assert field.widget_type == editable.widget
+            assert field.name == editable.editable.yaml_path
+            assert field.widget_type == str(editable.widget)
 
 
 class TestFormFlowComposition:

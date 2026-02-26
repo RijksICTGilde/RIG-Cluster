@@ -1,41 +1,47 @@
 """Tests for the core editables dataclasses and protocols."""
 
 from opi.forms.editables.editable import (
+    Editable,
     EditableConverter,
     EditableEnforcer,
     EditableValidator,
-    ProjectEditable,
+    WidgetType,
 )
-from opi.forms.editables.flow import FlowMode, FormFlow
-from opi.forms.editables.section import FormSection
 from opi.forms.layout import LayoutElement
+from opi.forms.visualizers.flows import FlowMode, FormFlow
+from opi.forms.visualizers.sections import FormSection
+from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
-class TestProjectEditable:
+class TestEditableVisualizer:
     def test_minimal_instantiation(self):
-        """Only required fields: yaml_path, widget, label."""
-        editable = ProjectEditable(yaml_path="name", widget="text", label="Naam")
-        assert editable.yaml_path == "name"
-        assert editable.widget == "text"
-        assert editable.label == "Naam"
-        assert editable.readonly is False
-        assert editable.required is False
-        assert editable.children is None
-        assert editable.description is None
-        assert editable.placeholder is None
-        assert editable.options_provider is None
-        assert editable.converter is None
-        assert editable.validator is None
-        assert editable.enforcer is None
-        assert editable.readonly_on_edit is False
-        assert editable.depends_on is None
-        assert editable.show_when is None
-        assert editable.htmx_trigger is None
-        assert editable.htmx_target is None
-        assert editable.htmx_swap is None
-        assert editable.min_items == 0
-        assert editable.max_items is None
-        assert editable.attributes is None
+        """Only required fields: Editable(yaml_path) + widget + label."""
+        vis = EditableVisualizer(
+            editable=Editable(yaml_path="name"),
+            widget=WidgetType.TEXT,
+            label="Naam",
+        )
+        assert vis.editable.yaml_path == "name"
+        assert str(vis.widget) == "text"
+        assert vis.label == "Naam"
+        assert vis.readonly is False
+        assert vis.editable.required is False
+        assert vis.children is None
+        assert vis.description is None
+        assert vis.placeholder is None
+        assert vis.editable.values_provider is None
+        assert vis.editable.converter is None
+        assert vis.editable.validator is None
+        assert vis.editable.enforcer is None
+        assert vis.readonly_on_edit is False
+        assert vis.editable.depends_on is None
+        assert vis.editable.show_when is None
+        assert vis.htmx_trigger is None
+        assert vis.htmx_target is None
+        assert vis.htmx_swap is None
+        assert vis.editable.min_items == 0
+        assert vis.editable.max_items is None
+        assert vis.attributes is None
 
     def test_all_fields_populated(self):
         """All optional fields set."""
@@ -58,78 +64,88 @@ class TestProjectEditable:
             def enforce(self, value, context):
                 return value
 
-        editable = ProjectEditable(
-            yaml_path="components[*]/name",
-            widget="text",
+        vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="components[*]/name",
+                values_provider="ComponentTypeOptionsProvider",
+                converter=StubConverter(),
+                validator=StubValidator(),
+                enforcer=StubEnforcer(),
+                required=True,
+                depends_on="components[*]/type",
+                show_when={"type": ["single", "frontend"]},
+                min_items=1,
+                max_items=10,
+            ),
+            widget=WidgetType.TEXT,
             label="component.name",
             description="component.name.description",
             placeholder="component-1",
-            options_provider="ComponentTypeOptionsProvider",
-            converter=StubConverter(),
-            validator=StubValidator(),
-            enforcer=StubEnforcer(),
             readonly=True,
             readonly_on_edit=True,
-            required=True,
             children=[],
-            depends_on="components[*]/type",
-            show_when={"type": ["single", "frontend"]},
             htmx_trigger="change",
             htmx_target="#target",
             htmx_swap="innerHTML",
-            min_items=1,
-            max_items=10,
         )
-        assert editable.yaml_path == "components[*]/name"
-        assert editable.description == "component.name.description"
-        assert editable.placeholder == "component-1"
-        assert editable.options_provider == "ComponentTypeOptionsProvider"
-        assert editable.converter is not None
-        assert editable.validator is not None
-        assert editable.enforcer is not None
-        assert editable.readonly is True
-        assert editable.readonly_on_edit is True
-        assert editable.required is True
-        assert editable.children == []
-        assert editable.depends_on == "components[*]/type"
-        assert editable.show_when == {"type": ["single", "frontend"]}
-        assert editable.htmx_trigger == "change"
-        assert editable.htmx_target == "#target"
-        assert editable.htmx_swap == "innerHTML"
-        assert editable.min_items == 1
-        assert editable.max_items == 10
+        assert vis.editable.yaml_path == "components[*]/name"
+        assert vis.description == "component.name.description"
+        assert vis.placeholder == "component-1"
+        assert vis.editable.values_provider == "ComponentTypeOptionsProvider"
+        assert vis.editable.converter is not None
+        assert vis.editable.validator is not None
+        assert vis.editable.enforcer is not None
+        assert vis.readonly is True
+        assert vis.readonly_on_edit is True
+        assert vis.editable.required is True
+        assert vis.children == []
+        assert vis.editable.depends_on == "components[*]/type"
+        assert vis.editable.show_when == {"type": ["single", "frontend"]}
+        assert vis.htmx_trigger == "change"
+        assert vis.htmx_target == "#target"
+        assert vis.htmx_swap == "innerHTML"
+        assert vis.editable.min_items == 1
+        assert vis.editable.max_items == 10
 
     def test_children_list(self):
-        """Children can hold nested ProjectEditables."""
-        child = ProjectEditable(yaml_path="users[*]/email", widget="text", label="Email")
-        parent = ProjectEditable(
-            yaml_path="users",
-            widget="sequence",
+        """Children can hold nested EditableVisualizers."""
+        child = EditableVisualizer(
+            editable=Editable(yaml_path="users[*]/email"),
+            widget=WidgetType.TEXT,
+            label="Email",
+        )
+        parent = EditableVisualizer(
+            editable=Editable(yaml_path="users"),
+            widget=WidgetType.SEQUENCE,
             label="Gebruikers",
             children=[child],
         )
         assert parent.children is not None
         assert len(parent.children) == 1
-        assert parent.children[0].yaml_path == "users[*]/email"
+        assert parent.children[0].editable.yaml_path == "users[*]/email"
 
     def test_nested_children(self):
         """Children can be nested multiple levels deep."""
-        grandchild = ProjectEditable(yaml_path="components[*]/storage[*]/name", widget="text", label="Naam")
-        child = ProjectEditable(
-            yaml_path="components[*]/storage",
-            widget="sequence",
+        grandchild = EditableVisualizer(
+            editable=Editable(yaml_path="components[*]/storage[*]/name"),
+            widget=WidgetType.TEXT,
+            label="Naam",
+        )
+        child = EditableVisualizer(
+            editable=Editable(yaml_path="components[*]/storage"),
+            widget=WidgetType.SEQUENCE,
             label="Opslag",
             children=[grandchild],
         )
-        parent = ProjectEditable(
-            yaml_path="components",
-            widget="sequence",
+        parent = EditableVisualizer(
+            editable=Editable(yaml_path="components"),
+            widget=WidgetType.SEQUENCE,
             label="Componenten",
             children=[child],
         )
         assert parent.children is not None
         assert parent.children[0].children is not None
-        assert parent.children[0].children[0].yaml_path == "components[*]/storage[*]/name"
+        assert parent.children[0].children[0].editable.yaml_path == "components[*]/storage[*]/name"
 
 
 class TestFormSection:
@@ -149,16 +165,24 @@ class TestFormSection:
 
     def test_with_editables(self):
         """Section with populated editables list."""
-        name = ProjectEditable(yaml_path="name", widget="text", label="Naam")
-        desc = ProjectEditable(yaml_path="description", widget="textarea", label="Beschrijving")
+        name = EditableVisualizer(
+            editable=Editable(yaml_path="name"),
+            widget=WidgetType.TEXT,
+            label="Naam",
+        )
+        desc = EditableVisualizer(
+            editable=Editable(yaml_path="description"),
+            widget=WidgetType.TEXTAREA,
+            label="Beschrijving",
+        )
         section = FormSection(
             section_id="identity",
             title="Project",
             editables=[name, desc],
         )
         assert len(section.editables) == 2
-        assert section.editables[0].yaml_path == "name"
-        assert section.editables[1].yaml_path == "description"
+        assert section.editables[0].editable.yaml_path == "name"
+        assert section.editables[1].editable.yaml_path == "description"
 
     def test_with_layout(self):
         """Section with a layout element."""

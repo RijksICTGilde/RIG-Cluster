@@ -6,11 +6,13 @@ wizard data and produces the ordered list of active sections.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from opi.forms.editables.flow import FormFlow
-from opi.forms.editables.section import FormSection
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from opi.forms.visualizers.flows import FormFlow
+    from opi.forms.visualizers.sections import FormSection
 
 
 def resolve_active_sections(

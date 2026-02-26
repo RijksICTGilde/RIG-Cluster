@@ -1,3 +1,5 @@
+"""Bridge: converts EditableVisualizer into FormField for rendering."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -5,103 +7,116 @@ from typing import TYPE_CHECKING, Any
 from opi.forms.editables.path import resolve_path
 from opi.forms.editables.service_path import smart_get_value
 from opi.forms.field import FormField
-from opi.forms.providers import get_provider
+from opi.forms.visualizers.providers import get_provider
 
 if TYPE_CHECKING:
-    from opi.forms.editables.editable import ProjectEditable
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
 def editable_to_form_field(
-    editable: ProjectEditable,
+    editable: EditableVisualizer,
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
     index: int | None = None,
     edit_mode: bool = False,
     provider_context: dict[str, Any] | None = None,
 ) -> FormField:
+    """Convert an EditableVisualizer + YAML data into a FormField.
+
+    Bridges the visualizer layer into the existing FormField -> WidgetAdapter pipeline.
     """
-    Convert a ProjectEditable + YAML data into a FormField for rendering.
+    ed = editable.editable
+    yaml_path = ed.yaml_path
+    converter = ed.converter
+    default = ed.default
+    required = ed.required
+    min_items = ed.min_items
+    max_items = ed.max_items
+    options_provider_name = ed.values_provider
 
-    This bridges the editable system into the existing FormField -> WidgetAdapter pipeline.
+    widget = str(editable.widget)
+    label = editable.label
+    description = editable.description
+    placeholder = editable.placeholder
+    readonly_flag = editable.readonly
+    readonly_on_edit_flag = editable.readonly_on_edit
+    locked_by_service = editable.locked_by_service
+    htmx_trigger = editable.htmx_trigger
+    htmx_target = editable.htmx_target
+    htmx_swap = editable.htmx_swap
+    attributes = editable.attributes
+    help_text = editable.help_text
+    help_template = editable.help_template
+    examples = editable.examples
 
-    Args:
-        editable: The field definition.
-        yaml_data: Full project YAML dict.
-        errors: Validation errors keyed by resolved path.
-        index: Sequence index for [*] paths.
-        edit_mode: Whether we're editing an existing project.
+    # --- Shared logic ---
 
-    Returns:
-        A FormField ready for rendering.
-    """
     # 1. Resolve the path
-    concrete_path = resolve_path(editable.yaml_path, index)
+    concrete_path = resolve_path(yaml_path, index)
 
     # 2. Extract value from YAML (fall back to default)
     raw_value = smart_get_value(yaml_data, concrete_path)
-    if raw_value is None and editable.default is not None:
-        raw_value = editable.default
+    if raw_value is None and default is not None:
+        raw_value = default
 
     # 3. Apply converter for display
     display_value = raw_value
-    if editable.converter:
-        display_value = editable.converter.view(raw_value)
+    if converter:
+        display_value = converter.view(raw_value)
 
     # 4. Resolve options
-    options = resolve_options_for_editable(editable, context=provider_context)
+    options = _resolve_options(options_provider_name, provider_context)
 
     # 5. Build HTMX attrs dict
     htmx_attrs: dict[str, str] = {}
-    if editable.htmx_trigger:
-        htmx_attrs["hx-trigger"] = editable.htmx_trigger
-    if editable.htmx_target:
-        htmx_attrs["hx-target"] = editable.htmx_target
-    if editable.htmx_swap:
-        htmx_attrs["hx-swap"] = editable.htmx_swap
+    if htmx_trigger:
+        htmx_attrs["hx-trigger"] = htmx_trigger
+    if htmx_target:
+        htmx_attrs["hx-target"] = htmx_target
+    if htmx_swap:
+        htmx_attrs["hx-swap"] = htmx_swap
 
     # 6. Determine readonly
-    readonly = editable.readonly or (editable.readonly_on_edit and edit_mode)
+    readonly = readonly_flag or (readonly_on_edit_flag and edit_mode)
 
     # 7. Check locked_by_service: force value + readonly when the service is active
-    description = editable.description
-    if editable.locked_by_service and _is_service_active(editable.locked_by_service, yaml_data):
+    if locked_by_service and _is_service_active(locked_by_service, yaml_data):
         display_value = True
         readonly = True
-        description = f"Vereist door: {_service_display_name(editable.locked_by_service)}"
+        description = f"Vereist door: {_service_display_name(locked_by_service)}"
 
     # 8. Build FormField
     return FormField(
         name=concrete_path,
         path=concrete_path,
         schema_type=str,
-        widget_type=editable.widget,
-        label=editable.label,
-        required=editable.required,
+        widget_type=widget,
+        label=label,
+        required=required,
         description=description,
-        placeholder=editable.placeholder,
+        placeholder=placeholder,
         value=display_value,
         options=options or None,
         errors=(errors or {}).get(concrete_path, []),
         readonly=readonly,
-        readonly_on_edit=editable.readonly_on_edit,
-        min_items=editable.min_items,
-        max_items=editable.max_items,
+        readonly_on_edit=readonly_on_edit_flag,
+        min_items=min_items,
+        max_items=max_items,
         htmx_attrs=htmx_attrs,
-        attributes=editable.attributes or {},
-        default=editable.default,
-        help_text=editable.help_text,
-        help_template=editable.help_template,
-        examples=editable.examples,
+        attributes=attributes or {},
+        default=default,
+        help_text=help_text,
+        help_template=help_template,
+        examples=examples,
     )
 
 
 def should_render_editable(
-    editable: ProjectEditable,
+    editable: EditableVisualizer,
     yaml_data: dict[str, Any],
     index: int | None = None,
 ) -> bool:
-    """
-    Check if an editable should be rendered based on its dependencies.
+    """Check if an editable should be rendered based on its dependencies.
 
     Implements 3 dependency patterns:
 
@@ -109,20 +124,23 @@ def should_render_editable(
     2. depends_on set, no show_when -> render if dependency value is truthy
     3. depends_on + show_when -> evaluate conditions:
        - {"contains": "value"} -> dep_value is list and "value" in dep_value
+       - {"contains_any": [...]} -> dep_value is list and any match
        - {"field": ["val1", "val2"]} -> dep_value in ["val1", "val2"]
        - {"field": "value"} -> dep_value == "value"
     """
-    if not editable.depends_on:
+    ed = editable.editable
+    depends_on = ed.depends_on
+    show_when = ed.show_when
+
+    if not depends_on:
         return True
 
-    # Get the dependency value
-    dep_value = smart_get_value(yaml_data, editable.depends_on)
+    dep_value = smart_get_value(yaml_data, depends_on)
 
-    if editable.show_when is None:
+    if show_when is None:
         return bool(dep_value)
 
-    # Evaluate show_when conditions
-    for key, expected in editable.show_when.items():
+    for key, expected in show_when.items():
         if key == "contains":
             if not isinstance(dep_value, list):
                 return False
@@ -139,33 +157,37 @@ def should_render_editable(
             if isinstance(expected, list):
                 if dep_value not in expected:
                     return False
-            else:
-                if dep_value != expected:
-                    return False
+            elif dep_value != expected:
+                return False
 
     return True
 
 
 def resolve_options_for_editable(
-    editable: ProjectEditable,
+    editable: EditableVisualizer,
     context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    Resolve dynamic options using the PROVIDER_REGISTRY.
+    """Resolve dynamic options using the PROVIDER_REGISTRY."""
+    provider_name = editable.editable.values_provider
+    return _resolve_options(provider_name, context)
 
-    Args:
-        editable: The editable whose options to resolve.
-        context: Optional kwargs to pass to the provider constructor.
 
-    Returns:
-        List of option dicts, or empty list if no provider.
-    """
-    if not editable.options_provider:
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_options(
+    provider_name: str | None,
+    context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Resolve options by provider name."""
+    if not provider_name:
         return []
 
-    kwargs = _filter_provider_kwargs(editable.options_provider, context or {})
+    kwargs = _filter_provider_kwargs(provider_name, context or {})
     try:
-        provider = get_provider(editable.options_provider, **kwargs)
+        provider = get_provider(provider_name, **kwargs)
         return provider.get_options()
     except KeyError:
         return []
@@ -175,15 +197,10 @@ def _filter_provider_kwargs(
     provider_name: str,
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Filter context kwargs to only those accepted by the provider's __init__.
-
-    This prevents TypeError when the context contains keys meant for other
-    providers (e.g. ``component_names`` passed to ``FilteredServiceOptionsProvider``
-    which only accepts ``project_services``).
-    """
+    """Filter context kwargs to only those accepted by the provider's __init__."""
     import inspect
 
-    from opi.forms.providers import PROVIDER_REGISTRY
+    from opi.forms.visualizers.providers import PROVIDER_REGISTRY
 
     provider_cls = PROVIDER_REGISTRY.get(provider_name)
     if not provider_cls or not context:

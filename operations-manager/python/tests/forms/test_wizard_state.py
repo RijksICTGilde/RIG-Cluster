@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from opi.forms.editables.flow import FlowMode, FormFlow
-from opi.forms.editables.section import FormSection
+from opi.forms.visualizers.flows import FlowMode, FormFlow
+from opi.forms.visualizers.sections import FormSection
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,

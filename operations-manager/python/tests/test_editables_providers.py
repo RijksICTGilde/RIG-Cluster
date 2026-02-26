@@ -1,6 +1,6 @@
 """Tests for the new options providers added in Sub-part C."""
 
-from opi.forms.providers import (
+from opi.forms.visualizers.providers import (
     BaseDomainOptionsProvider,
     ClusterBaseDomainOptionsProvider,
     ComponentReferenceOptionsProvider,
@@ -148,7 +148,7 @@ class TestClusterBaseDomainOptionsProvider:
 class TestProviderRegistry:
     def test_new_providers_registered(self):
         """All providers are in the registry."""
-        from opi.forms.providers import PROVIDER_REGISTRY
+        from opi.forms.visualizers.providers import PROVIDER_REGISTRY
 
         new_names = [
             "StorageTypeOptionsProvider",
@@ -165,7 +165,7 @@ class TestProviderRegistry:
             assert name in PROVIDER_REGISTRY
 
     def test_get_provider_works_for_new_providers(self):
-        from opi.forms.providers import get_provider
+        from opi.forms.visualizers.providers import get_provider
 
         provider = get_provider("StorageSizeOptionsProvider")
         assert len(provider.get_options()) > 0
@@ -179,8 +179,8 @@ class TestResolveOptionsWithMixedContext:
         the context contains keys meant for other providers (e.g. component_names).
         This was a bug: the extra keys caused a TypeError, and the fallback
         re-instantiated the provider without any kwargs at all."""
-        from opi.forms.editables.bridge import resolve_options_for_editable
-        from opi.forms.editables.fields.components import COMPONENT_USES_SERVICES
+        from opi.forms.visualizers.bridge import resolve_options_for_editable
+        from opi.forms.visualizers.fields.components import COMPONENT_USES_SERVICES
 
         context = {
             "project_services": ["publish-on-web", "keycloak"],
@@ -193,14 +193,14 @@ class TestResolveOptionsWithMixedContext:
 
     def test_provider_without_context_params_still_works(self):
         """Providers that accept no kwargs should still work when context is passed."""
-        from opi.forms.editables.bridge import resolve_options_for_editable
-        from opi.forms.editables.editable import ProjectEditable
+        from opi.forms.editables.editable import Editable, WidgetType
+        from opi.forms.visualizers.bridge import resolve_options_for_editable
+        from opi.forms.visualizers.visualizer import EditableVisualizer
 
-        editable = ProjectEditable(
-            yaml_path="test",
-            widget="select",
+        editable = EditableVisualizer(
+            editable=Editable(yaml_path="test", values_provider="CpuRequestOptionsProvider"),
+            widget=WidgetType.SELECT,
             label="Test",
-            options_provider="CpuRequestOptionsProvider",
         )
         context = {"project_services": ["keycloak"], "component_names": ["api"]}
         options = resolve_options_for_editable(editable, context=context)

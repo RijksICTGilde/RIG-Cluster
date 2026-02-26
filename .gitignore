@@ -39,3 +39,4 @@ secrets-overview-*.yaml
 /bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-repo-users-applications-secret.yaml.sops.yaml
 /bootstrap/rig-system/kustomize/overlays/sandboxed-local/decrypt-sops.yaml
 /bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-admin-secret.yaml.sops.yaml
+/.claude/worktrees/

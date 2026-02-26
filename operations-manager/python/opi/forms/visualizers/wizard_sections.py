@@ -9,18 +9,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.forms.editables.fields.components import COMPONENTS_SEQUENCE
-from opi.forms.editables.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
-from opi.forms.editables.fields.deployments import DEPLOYMENTS_SEQUENCE
-from opi.forms.editables.fields.domains import (
+from opi.forms.layout import Fieldset, Sequence, TemplatePartial
+from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
+from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
+from opi.forms.visualizers.fields.deployments import DEPLOYMENTS_SEQUENCE
+from opi.forms.visualizers.fields.domains import (
     DOMAIN_BASE_DOMAIN,
     DOMAIN_MODE,
     DOMAIN_ROOT_COMPONENT,
     DOMAIN_SUBDOMAIN,
     WIZARD_DEPLOYMENT_NAME,
 )
-from opi.forms.editables.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
-from opi.forms.editables.fields.services import (
+from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
+from opi.forms.visualizers.fields.services import (
     AUTH_WALL_BANNER,
     KEYCLOAK_ADDITIONAL_CLIENTS,
     KEYCLOAK_REDIRECT_URIS,
@@ -32,9 +33,8 @@ from opi.forms.editables.fields.services import (
     POSTGRESQL_STORAGE,
     SERVICES,
 )
-from opi.forms.editables.fields.team import USERS_SEQUENCE
-from opi.forms.editables.section import FormSection
-from opi.forms.layout import Fieldset, Sequence, TemplatePartial
+from opi.forms.visualizers.fields.team import USERS_SEQUENCE
+from opi.forms.visualizers.sections import FormSection
 
 
 def _extract_services(data: dict[str, Any]) -> list[str]:
@@ -115,7 +115,7 @@ COMPONENTS_SECTION = FormSection(
                 Fieldset(
                     legend="Resources",
                     description="CPU en geheugen limieten voor dit component. Gebruik de standaardwaarden als je niet zeker weet wat je nodig hebt. Dit kan later aangepast worden."
-                                "Deze waardes zijn een richtlijn, de waardes zullen aangepast worden aan het daadwerkelijke gebruik.",
+                    "Deze waardes zijn een richtlijn, de waardes zullen aangepast worden aan het daadwerkelijke gebruik.",
                     children=[
                         "resources/cpu/request",
                         "resources/cpu/limit",

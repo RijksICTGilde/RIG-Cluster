@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from opi.forms.editables.editable import EditableEnforcer, ProjectEditable
+    from opi.forms.editables.editable import EditableEnforcer
     from opi.forms.layout import LayoutElement
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
 @dataclass
@@ -23,7 +24,7 @@ class FormSection:
     title: str
     icon: str | None = None
     description: str | None = None
-    editables: list[ProjectEditable] = field(default_factory=list)
+    editables: list[EditableVisualizer] = field(default_factory=list)
     layout: LayoutElement | list[LayoutElement | str] | None = None
     visible: bool | Callable[[dict[str, Any]], bool] = True
     is_readonly: bool = False

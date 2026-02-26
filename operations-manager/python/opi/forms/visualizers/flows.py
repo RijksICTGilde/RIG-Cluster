@@ -1,4 +1,7 @@
-"""Predefined FormFlow instances for project wizard forms.
+"""Flow definitions for project wizard forms.
+
+Merges the FlowMode/FormFlow dataclasses (from editables/flow.py) and
+predefined flow instances (from editables/flows.py) into one module.
 
 Step order is determined by the sections list — the first section
 in the list is step 1, the second is step 2, etc. Conditional
@@ -8,9 +11,12 @@ only shown when their visibility condition is met.
 
 from __future__ import annotations
 
-from opi.forms.editables.fields.config_generated import GENERATED_EDITABLES
-from opi.forms.editables.flow import FlowMode, FormFlow
-from opi.forms.editables.wizard_sections import (
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING
+
+from opi.forms.editables.fields.config_generated import GENERATED_EDITABLES_PURE
+from opi.forms.visualizers.wizard_sections import (
     AUTH_WALL_CONFIG_SECTION,
     COMPONENTS_SECTION,
     CONFIG_DISPLAY_SECTION,
@@ -23,6 +29,31 @@ from opi.forms.editables.wizard_sections import (
     TEAM_SECTION,
     WIZARD_DEPLOYMENT_SECTION,
 )
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
+
+
+class FlowMode(Enum):
+    WIZARD = "wizard"
+    TABS = "tabs"
+
+
+@dataclass
+class FormFlow:
+    """Composes FormSections into a wizard or tabbed interface."""
+
+    flow_id: str
+    title: str
+    mode: FlowMode
+    sections: list[FormSection] = field(default_factory=list)
+    show_review: bool = True
+    htmx_base_url: str = ""
+    save_per_section: bool = True
+    generated_editables: list[Editable] = field(default_factory=list)
+    """Editables with generators — computed at submit time, not rendered in forms."""
+
 
 CREATE_FLOW = FormFlow(
     flow_id="create-project",
@@ -41,7 +72,7 @@ CREATE_FLOW = FormFlow(
     ],
     show_review=True,
     htmx_base_url="/forms/wizard",
-    generated_editables=GENERATED_EDITABLES,
+    generated_editables=GENERATED_EDITABLES_PURE,
 )
 
 EDIT_FLOW = FormFlow(

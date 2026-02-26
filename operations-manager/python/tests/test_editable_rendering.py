@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from opi.forms.editables.editable import ProjectEditable
-from opi.forms.editables.project_registry import get_all_project_editables, get_project_form_layout
+from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
+from opi.forms.visualizers.project_registry import get_all_project_editables, get_project_form_layout
+from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.widgets.roos import ROOSWidgetAdapter
 
 SAMPLE_YAML = {
@@ -302,7 +303,7 @@ SAMPLE_YAML_WITH_KEYCLOAK = {
 class TestKeycloakConfigRendering:
     def test_keycloak_section_renders_all_fields(self):
         """All keycloak editables render with service config data."""
-        from opi.forms.editables.wizard_sections import KEYCLOAK_CONFIG_SECTION
+        from opi.forms.visualizers.wizard_sections import KEYCLOAK_CONFIG_SECTION
 
         renderer = _create_renderer()
         assert KEYCLOAK_CONFIG_SECTION.layout is not None
@@ -317,7 +318,7 @@ class TestKeycloakConfigRendering:
 
     def test_redirect_uris_sequence_has_items(self):
         """Redirect URIs render as a sequence with items."""
-        from opi.forms.editables.wizard_sections import KEYCLOAK_CONFIG_SECTION
+        from opi.forms.visualizers.wizard_sections import KEYCLOAK_CONFIG_SECTION
 
         renderer = _create_renderer()
         fields = renderer._build_fields_from_editables(
@@ -331,7 +332,7 @@ class TestKeycloakConfigRendering:
 
     def test_restrict_access_subfields_visible_when_enabled(self):
         """Realm role and error message are visible when restrict-access is enabled."""
-        from opi.forms.editables.wizard_sections import KEYCLOAK_CONFIG_SECTION
+        from opi.forms.visualizers.wizard_sections import KEYCLOAK_CONFIG_SECTION
 
         renderer = _create_renderer()
         fields = renderer._build_fields_from_editables(
@@ -345,7 +346,7 @@ class TestKeycloakConfigRendering:
         """Realm role and error message are hidden when restrict-access is disabled."""
         import copy
 
-        from opi.forms.editables.wizard_sections import KEYCLOAK_CONFIG_SECTION
+        from opi.forms.visualizers.wizard_sections import KEYCLOAK_CONFIG_SECTION
 
         data = copy.deepcopy(SAMPLE_YAML_WITH_KEYCLOAK)
         data["services"][1]["keycloak"]["config"]["restrict-access"]["enabled"] = False
@@ -360,7 +361,7 @@ class TestKeycloakConfigRendering:
 
     def test_additional_clients_sequence(self):
         """Additional clients render as a sequence."""
-        from opi.forms.editables.wizard_sections import KEYCLOAK_CONFIG_SECTION
+        from opi.forms.visualizers.wizard_sections import KEYCLOAK_CONFIG_SECTION
 
         renderer = _create_renderer()
         fields = renderer._build_fields_from_editables(
@@ -389,7 +390,7 @@ SAMPLE_YAML_WITH_DOMAIN = {
 
 class TestDomainSectionRendering:
     def test_domain_section_renders_fields(self):
-        from opi.forms.editables.wizard_sections import DOMAIN_SECTION
+        from opi.forms.visualizers.wizard_sections import DOMAIN_SECTION
 
         renderer = _create_renderer()
         assert DOMAIN_SECTION.layout is not None
@@ -401,7 +402,7 @@ class TestDomainSectionRendering:
         assert "Domeinmodus" in html
 
     def test_domain_section_has_four_editables(self):
-        from opi.forms.editables.wizard_sections import DOMAIN_SECTION
+        from opi.forms.visualizers.wizard_sections import DOMAIN_SECTION
 
         assert len(DOMAIN_SECTION.editables) == 4
 
@@ -410,12 +411,14 @@ class TestConditionalVisibility:
     def test_hidden_editable_not_in_fields(self):
         """An editable with depends_on that isn't satisfied should be skipped."""
         renderer = _create_renderer()
-        editable = ProjectEditable(
-            yaml_path="conditional-field",
-            widget="text",
+        editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="conditional-field",
+                depends_on="services",
+                show_when={"contains": "nonexistent-service"},
+            ),
+            widget=WidgetType.TEXT,
             label="Conditional",
-            depends_on="services",
-            show_when={"contains": "nonexistent-service"},
         )
         fields = renderer._build_fields_from_editables(
             editables=[editable],
@@ -426,12 +429,14 @@ class TestConditionalVisibility:
     def test_visible_editable_in_fields(self):
         """An editable whose dependency is satisfied should be included."""
         renderer = _create_renderer()
-        editable = ProjectEditable(
-            yaml_path="conditional-field",
-            widget="text",
+        editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="conditional-field",
+                depends_on="services",
+                show_when={"contains": "keycloak"},
+            ),
+            widget=WidgetType.TEXT,
             label="Conditional",
-            depends_on="services",
-            show_when={"contains": "keycloak"},
         )
         fields = renderer._build_fields_from_editables(
             editables=[editable],
