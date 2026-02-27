@@ -1,15 +1,17 @@
 import logging
 import logging.handlers
 from pathlib import Path
+from typing import ClassVar
 
 
 class HealthEndpointFilter(logging.Filter):
-    """Filter to exclude health endpoint requests from uvicorn access logs."""
+    """Filter to exclude health and infrastructure endpoint requests from uvicorn access logs."""
+
+    EXCLUDED_PATHS: ClassVar[list[str]] = ["/health", "/readyz", "/metrics"]
 
     def filter(self, record: logging.LogRecord) -> bool:
-        # Exclude /health requests from access logs
         message = record.getMessage()
-        return '"GET /health' not in message and '"HEAD /health' not in message
+        return not any(f'"GET {path}' in message or f'"HEAD {path}' in message for path in self.EXCLUDED_PATHS)
 
 
 def setup_logging(log_to_file: bool = False, log_file_path: str = "log.txt") -> None:

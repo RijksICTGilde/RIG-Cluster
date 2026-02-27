@@ -477,6 +477,90 @@ class TestRefreshProjectEndpoint:
 
 
 @pytest.mark.integration
+class TestRefreshDeploymentEndpoint:
+    """Tests for the refresh deployment endpoint."""
+
+    def test_refresh_deployment_success(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        """Test successfully refreshing a single deployment."""
+        mock_pm = create_mock_project_manager()
+
+        with (
+            patch("opi.api.router.create_project_manager", return_value=mock_pm),
+            patch("opi.api.router.validate_project_name", return_value=True),
+        ):
+            response = test_client.get(
+                "/api/projects/test-project/deployments/staging/:refresh",
+                headers={"X-API-Key": "test-api-key-12345"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert "staging" in data["message"]
+        assert data["project"]["name"] == "test-project"
+
+    def test_refresh_deployment_with_force_clone(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        """Test refreshing deployment with force clone parameter."""
+        mock_pm = create_mock_project_manager()
+
+        with (
+            patch("opi.api.router.create_project_manager", return_value=mock_pm),
+            patch("opi.api.router.validate_project_name", return_value=True),
+        ):
+            response = test_client.get(
+                "/api/projects/test-project/deployments/staging/:refresh?force_clone=true",
+                headers={"X-API-Key": "test-api-key-12345"},
+            )
+
+        assert response.status_code == 200
+
+    def test_refresh_deployment_processing_fails(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        """Test refresh deployment when processing fails."""
+        mock_pm = create_mock_project_manager(process_result=False)
+
+        with (
+            patch("opi.api.router.create_project_manager", return_value=mock_pm),
+            patch("opi.api.router.validate_project_name", return_value=True),
+        ):
+            response = test_client.get(
+                "/api/projects/test-project/deployments/staging/:refresh",
+                headers={"X-API-Key": "test-api-key-12345"},
+            )
+
+        assert response.status_code == 500
+        data = response.json()
+        assert data["status"] == "failed"
+        assert "staging" in data["message"]
+
+    def test_refresh_deployment_project_not_found(
+        self,
+        test_client: TestClient,
+    ) -> None:
+        """Test refresh deployment when project does not exist."""
+        response = test_client.get(
+            "/api/projects/nonexistent/deployments/staging/:refresh",
+            headers={"X-API-Key": "test-api-key-12345"},
+        )
+
+        assert response.status_code == 401
+
+
+@pytest.mark.integration
 class TestDeleteProjectEndpoint:
     """Tests for the delete project endpoint."""
 

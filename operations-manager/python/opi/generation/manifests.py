@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from jinja2 import BaseLoader, Environment
+from jinja2 import Environment, FileSystemLoader
 from ruamel.yaml import YAML
 
 from opi.core.cluster_config import get_namespace_prefix
@@ -48,7 +48,10 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
 
     # Create Jinja2 environment with whitespace control
     # Note: autoescape=False is intentional for YAML template generation
-    env = Environment(loader=BaseLoader(), trim_blocks=True, lstrip_blocks=True, autoescape=False)
+    # Use FileSystemLoader to support {% include %} for sidecar templates
+    env = Environment(
+        loader=FileSystemLoader(settings.MANIFESTS_PATH), trim_blocks=True, lstrip_blocks=True, autoescape=False
+    )
     template = env.from_string(template_content)
 
     # Render the template with variables
@@ -90,7 +93,8 @@ class ManifestGenerator:
             # Create Jinja2 environment with whitespace control
             # trim_blocks removes newlines after block tags
             # lstrip_blocks removes leading whitespace from line start to block tag
-            env = Environment(loader=BaseLoader(), trim_blocks=True, lstrip_blocks=True)
+            # Use FileSystemLoader to support {% include %} for sidecar templates
+            env = Environment(loader=FileSystemLoader(settings.MANIFESTS_PATH), trim_blocks=True, lstrip_blocks=True)
             template = env.from_string(manifest_content)
 
             # Render the template with variables

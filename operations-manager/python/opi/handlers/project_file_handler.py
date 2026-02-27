@@ -472,19 +472,16 @@ class ProjectFileHandler:
         Returns:
             List of path configs: [{"match": "/api", "rewrite": None}, ...]
 
-        Raises:
-            NotImplementedError: If rewrite is specified (not yet implemented)
-
         Examples:
             # Simple string format
             path: "/"
             -> [{"match": "/", "rewrite": None}]
 
-            # List format
+            # List format with rewrite
             path:
-              - match: "/api"
-              - match: "/v1"
-            -> [{"match": "/api", "rewrite": None}, {"match": "/v1", "rewrite": None}]
+              - match: "/kader"
+                rewrite: "/"
+            -> [{"match": "/kader", "rewrite": "/"}]
         """
         json_path = f"$.components[?(@.name='{component_name}')].path"
         path_config = self.extract_value_by_path(project_data, json_path, "/")
@@ -499,12 +496,7 @@ class ProjectFileHandler:
                 if isinstance(p, dict):
                     rewrite = p.get("rewrite")
                     match_value = p.get("match", "/")
-                    if rewrite is not None:
-                        raise NotImplementedError(
-                            f"Path rewrite is not yet implemented. "
-                            f"Found rewrite='{rewrite}' for match='{match_value}' in component '{component_name}'"
-                        )
-                    result.append({"match": match_value, "rewrite": None})
+                    result.append({"match": match_value, "rewrite": rewrite})
                 else:
                     result.append({"match": str(p), "rewrite": None})
             logger.info(f"Found {len(result)} path(s) for component '{component_name}'")

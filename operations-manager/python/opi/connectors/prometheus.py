@@ -42,62 +42,38 @@ class PrometheusConnector:
         return cls._instance
 
     def __init__(self) -> None:
-        """Initialize the Prometheus connector."""
+        """Initialize the Prometheus connector.
+
+        Creates the HTTP client but does not test the connection — PrometheusConnect
+        is a stateless HTTP client so there is no persistent connection to verify.
+        Each query is an independent HTTP request that succeeds or raises on its own.
+        """
         if self._initialized:
             return
 
         self._initialized = True
         self._prometheus_url = getattr(settings, "PROMETHEUS_URL", "http://prometheus.rig-system:9090")
-        logger.debug(f"Initializing PrometheusConnector with URL: {self._prometheus_url}")
+        logger.info(f"Initializing PrometheusConnector with URL: {self._prometheus_url}")
 
         self.prom = PrometheusConnect(url=self._prometheus_url, disable_ssl=True)
-        self._test_connection()
+        PrometheusConnector.is_connected = True
 
-        logger.debug("PrometheusConnector initialized")
-
-    def _test_connection(self) -> bool:
-        """
-        Test the connection to Prometheus.
-
-        Returns:
-            True if connection is successful, False otherwise.
-        """
-        try:
-            result: list[dict[str, Any]] = self.prom.custom_query("prometheus_build_info")
-            if result:
-                PrometheusConnector.is_connected = True
-                logger.info("Prometheus connection successful")
-                return True
-            else:
-                PrometheusConnector.is_connected = False
-                logger.warning("Prometheus connection test returned empty result")
-                return False
-        except Exception as e:
-            PrometheusConnector.is_connected = False
-            logger.warning(f"Prometheus connection failed: {e}")
-            return False
+    @property
+    def prometheus_url(self) -> str:
+        """Return the configured Prometheus URL."""
+        return self._prometheus_url
 
     def reconnect(self) -> bool:
+        """Kept for backward compatibility with startup code. Always returns True.
+
+        There is no persistent connection — PrometheusConnect is a stateless HTTP
+        client. Queries will succeed or fail on their own.
         """
-        Attempt to reconnect to Prometheus.
-
-        This method can be called to retry the connection if the initial
-        connection failed (e.g., Prometheus wasn't ready at startup).
-
-        Returns:
-            True if reconnection is successful, False otherwise.
-        """
-        if PrometheusConnector.is_connected:
-            logger.debug("Prometheus already connected, skipping reconnect")
-            return True
-
-        logger.info(f"Attempting to reconnect to Prometheus at {self._prometheus_url}")
-        return self._test_connection()
+        PrometheusConnector.is_connected = True
+        return True
 
     def _ensure_connected(self) -> None:
-        """Ensure Prometheus is connected, raise error if not."""
-        if not PrometheusConnector.is_connected:
-            raise PrometheusConnectionError("Prometheus is not connected")
+        """Kept for backward compatibility. No-op — there is no connection to check."""
 
     def get_cpu_usage_by_namespace(self, namespace: str | None = None) -> list[dict[str, Any]]:
         """
@@ -327,6 +303,45 @@ class PrometheusConnector:
         except Exception as e:
             logger.error(f"Failed to execute custom query: {e}")
             raise PrometheusQueryError(f"Failed to execute custom query: {e}") from e
+
+    def discover_metric_names(self, match_selector: str) -> list[str]:
+        """
+        Discover available metric names matching a label selector.
+
+        Uses the Prometheus ``/api/v1/series`` endpoint which searches the TSDB
+        index directly.  This is essential for jobs with long scrape intervals
+        (e.g. 2 hours) where PromQL instant queries would return empty results
+        due to the default 5-minute staleness window.
+
+        Args:
+            match_selector: A Prometheus label matcher, e.g. '{job="minio"}'.
+
+        Returns:
+            Sorted list of metric names.
+        """
+        import requests
+
+        url = f"{self._prometheus_url.rstrip('/')}/api/v1/series"
+        logger.debug(f"Discovering metric names via series API: match[]={match_selector}")
+
+        try:
+            response = requests.get(url, params={"match[]": match_selector}, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") != "success":
+                raise PrometheusQueryError(f"Series API returned status: {data.get('status')}")
+
+            names: set[str] = set()
+            for series in data.get("data", []):
+                name = series.get("__name__")
+                if name:
+                    names.add(name)
+
+            return sorted(names)
+        except requests.RequestException as e:
+            logger.error(f"Failed to discover metric names for {match_selector}: {e}")
+            raise PrometheusQueryError(f"Failed to discover metric names: {e}") from e
 
     def query_range(self, query: str, start_time: str, end_time: str, step: str) -> list[dict[str, Any]]:
         """

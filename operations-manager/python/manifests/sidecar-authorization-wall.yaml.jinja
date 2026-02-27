@@ -1,0 +1,61 @@
+        - name: authorization-wall
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+          args:
+            - --provider=oidc
+            - --oidc-issuer-url={{ authorization_wall.issuer_url }}
+            - --client-id={{ authorization_wall.client_id }}
+            - --upstream=http://localhost:{{ application_port }}
+            - --http-address=0.0.0.0:4180
+            - --redirect-url=https://{{ hostname }}/oauth2/callback
+            - --email-domain=*
+            - --cookie-secure=true
+{% if authorization_wall.banner %}
+            - --skip-provider-button=false
+            - --banner={{ authorization_wall.banner }}
+{% else %}
+            - --skip-provider-button=true
+{% endif %}
+            - --insecure-oidc-allow-unverified-email=true
+            - --scope=openid profile email
+          env:
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ authorization_wall.keycloak_secret_name }}
+                  key: OIDC_CLIENT_SECRET
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ authorization_wall.cookie_secret_name }}
+                  key: cookie-secret
+          ports:
+            - containerPort: 4180
+              name: oauth2-proxy
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            initialDelaySeconds: 3
+            periodSeconds: 30

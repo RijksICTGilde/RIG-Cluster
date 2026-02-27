@@ -9,6 +9,10 @@ spec:
   primaryUpdateStrategy: unsupervised
   enableSuperuserAccess: true
 
+  # Shutdown timeouts: wait 30s for clients to disconnect, then force-kill
+  smartShutdownTimeout: 30
+  stopDelay: 60
+
   # Add Prometheus scrape annotations to all CNPG pods
   inheritedMetadata:
     annotations:
@@ -28,7 +32,8 @@ spec:
   # PostgreSQL configuration
   postgresql:
     parameters:
-      max_connections: "200"
+      max_connections: "250"
+      reserved_connections: "10"
 
   # Resource limits
   resources:
@@ -55,6 +60,9 @@ spec:
         ensure: present
         login: true
         createdb: true
+        connectionLimit: 20
+        inRoles:
+          - pg_use_reserved_connections
         passwordSecret:
           name: keycloak-db-credentials  # This must exist
 
@@ -62,6 +70,9 @@ spec:
         ensure: present
         login: true
         createdb: true
+        connectionLimit: 10
+        inRoles:
+          - pg_use_reserved_connections
         passwordSecret:
           name: forgejo-db-credentials  # This must exist
 

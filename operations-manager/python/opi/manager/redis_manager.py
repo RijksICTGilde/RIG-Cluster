@@ -23,6 +23,12 @@ class RedisManager:
     RedisManager handles provisioning per-project Redis ACL users for deployments
     that use the Redis service. Each project/deployment gets a dedicated Redis user
     with a unique password, restricted to keys prefixed with {deployment}-{project}:.
+
+    The key prefix restriction can be disabled via service config for applications
+    that don't support key prefixing (e.g., Grist):
+        - redis:
+            config:
+              acl-key-prefix: false
     """
 
     def __init__(self, project_manager: "ProjectManager") -> None:
@@ -87,13 +93,28 @@ class RedisManager:
 
             # Generate per-project Redis username and key prefix
             redis_username = generate_redis_username(project_name, deployment_name)
-            key_prefix = generate_redis_key_prefix(project_name, deployment_name)
+            redis_config = self._get_redis_service_config(project_data)
+            use_key_prefix = redis_config.get("acl-key-prefix", True) if redis_config else True
+            key_prefix = generate_redis_key_prefix(project_name, deployment_name) if use_key_prefix else ""
+
+            if not use_key_prefix:
+                logger.info(
+                    f"ACL key prefix disabled for {project_name}/{deployment_name}, user will have access to all keys"
+                )
 
             # Check for existing Redis credentials in Kubernetes
             existing_redis_secret = await self._get_existing_redis_credentials_from_k8s(deployment_name, deployment)
 
             if existing_redis_secret:
                 logger.info(f"Found existing Redis secret in Kubernetes for {project_name}/{deployment_name}")
+
+                # Check if key prefix config has changed (ACL needs to be updated)
+                acl_needs_update = existing_redis_secret.key_prefix != key_prefix
+                if acl_needs_update:
+                    logger.info(
+                        f"ACL key prefix changed for {project_name}/{deployment_name} "
+                        f"(was: '{existing_redis_secret.key_prefix}', now: '{key_prefix}'), updating ACL"
+                    )
 
                 # Verify existing credentials still work
                 existing_valid = await self._test_redis_connection(
@@ -102,9 +123,26 @@ class RedisManager:
                     existing_redis_secret.password,
                     username=redis_username,
                 )
-                if existing_valid:
+                if existing_valid and not acl_needs_update:
                     logger.info(f"Existing Redis credentials are valid for {project_name}/{deployment_name}")
                     redis_secret = existing_redis_secret
+                elif existing_valid and acl_needs_update:
+                    # Credentials work but ACL permissions need updating, reuse password
+                    await self._create_acl_user(
+                        redis_host,
+                        redis_port,
+                        admin_password,
+                        redis_username,
+                        existing_redis_secret.password,
+                        key_prefix,
+                    )
+                    redis_secret = RedisSecret(
+                        host=redis_host,
+                        port=redis_port,
+                        username=redis_username,
+                        password=existing_redis_secret.password,
+                        key_prefix=key_prefix,
+                    )
                 else:
                     logger.warning(
                         f"Existing Redis credentials invalid for {project_name}/{deployment_name}, recreating ACL user"
@@ -270,6 +308,38 @@ class RedisManager:
 
         return False
 
+    @staticmethod
+    def _get_redis_service_config(project_data: dict[str, Any]) -> dict[str, Any] | None:
+        """
+        Extract redis service configuration from the project services block.
+
+        Supports both simple and configured service formats:
+        - Simple: "- redis" -> returns None
+        - Configured: "- redis:\\n    config:\\n      acl-key-prefix: false" -> returns config dict
+
+        Args:
+            project_data: The project configuration data
+
+        Returns:
+            Config dict or None if service not configured or no config block
+        """
+        services = project_data.get("services", [])
+
+        for service in services:
+            if isinstance(service, str):
+                if service in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
+                    return None
+            elif isinstance(service, dict):
+                service_name = next(iter(service.keys())) if service else None
+                if service_name in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
+                    config = service.get(service_name, {}).get("config")
+                    if config:
+                        logger.debug(f"Found redis config: {config}")
+                        return config
+                    return None
+
+        return None
+
     async def _get_existing_redis_credentials_from_k8s(
         self, deployment_name: str, deployment: dict[str, Any]
     ) -> RedisSecret | None:
@@ -388,13 +458,16 @@ class RedisManager:
 
         Uses: ACL SETUSER <username> on ><password> resetpass ~<prefix>* +@all
 
+        When key_prefix is empty, the user gets access to all keys and channels
+        (~* &*). This is needed for applications that don't support key prefixing.
+
         Args:
             host: Redis server hostname
             port: Redis server port
             admin_password: Admin password for authentication
             username: ACL username to create
             user_password: Password for the new user
-            key_prefix: Key prefix restriction (e.g., "main-myproject:")
+            key_prefix: Key prefix restriction (e.g., "main-myproject:"), or empty for all keys
         """
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5.0)
@@ -409,9 +482,16 @@ class RedisManager:
                 # - on: enable the user
                 # - resetpass: clear any existing passwords
                 # - ><password>: set the new password
-                # - ~<prefix>*: restrict to keys matching prefix
-                # - &<prefix>*: restrict pub/sub channels to same prefix
+                # - ~<prefix>* or ~*: restrict to keys matching prefix (or all keys)
+                # - &<prefix>* or &*: restrict pub/sub channels to same prefix (or all channels)
                 # - +@all: allow all commands
+                if key_prefix:
+                    key_pattern = f"~{key_prefix}*"
+                    channel_pattern = f"&{key_prefix}*"
+                else:
+                    key_pattern = "~*"
+                    channel_pattern = "&*"
+
                 response = await RedisManager._send_redis_command(
                     reader,
                     writer,
@@ -421,14 +501,15 @@ class RedisManager:
                     "on",
                     "resetpass",
                     f">{user_password}",
-                    f"~{key_prefix}*",
-                    f"&{key_prefix}*",
+                    key_pattern,
+                    channel_pattern,
                     "+@all",
                 )
                 if not response.startswith("+OK"):
                     raise RuntimeError(f"Redis ACL SETUSER failed for {username}: {response}")
 
-                logger.info(f"Created/updated Redis ACL user: {username} (keys+channels: {key_prefix}*)")
+                scope = f"{key_prefix}*" if key_prefix else "* (all keys)"
+                logger.info(f"Created/updated Redis ACL user: {username} (keys+channels: {scope})")
             finally:
                 writer.close()
                 await writer.wait_closed()

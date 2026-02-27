@@ -9,9 +9,12 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from opi.core.readiness import ReadinessState
 from fastapi import FastAPI
 from keycloak.exceptions import KeycloakError
 from tenacity import (
@@ -562,205 +565,239 @@ async def check_minio_availability() -> bool:
         return False
 
 
+async def _setup_database(readiness: "ReadinessState") -> bool:
+    """Initialize database pools. Returns True on success."""
+    try:
+        from opi.core.database_pools import is_database_available
+
+        if is_database_available():
+            readiness.database.mark_ready()
+            return True
+
+        await initialize_database_pools()
+
+        # Create subdomain registry table
+        try:
+            await create_subdomain_registry_table()
+        except Exception as e:
+            logger.warning(f"Failed to create subdomain registry table: {e}")
+
+        readiness.database.mark_ready()
+        return True
+    except Exception as e:
+        readiness.database.mark_failed(str(e))
+        return False
+
+
+async def _setup_projects(readiness: "ReadinessState", app: FastAPI, skip_checks: bool) -> bool:
+    """Load project files from Git. Returns True on success."""
+    try:
+        # Initialize the API key service for project API key registration
+        initialize_project_service()
+
+        user_service = get_user_service()
+
+        default_allowed_emails = [
+            "robbert.uittenbroek@rijksoverheid.nl",
+        ]
+        if default_allowed_emails:
+            user_service.add_allowed_emails(default_allowed_emails)
+
+        if settings.ALLOWED_EMAILS:
+            env_emails = [email.strip() for email in settings.ALLOWED_EMAILS.split(",") if email.strip()]
+            if env_emails:
+                user_service.add_allowed_emails(env_emails)
+
+        project_service = get_project_service()
+        default_admin_emails = [
+            "robbert.uittenbroek@rijksoverheid.nl",
+        ]
+        project_service.add_admin_emails(default_admin_emails)
+
+        if settings.ADMIN_EMAILS:
+            env_admin_emails = [email.strip() for email in settings.ADMIN_EMAILS.split(",") if email.strip()]
+            if env_admin_emails:
+                project_service.add_admin_emails(env_admin_emails)
+
+        shared_git_connector = None
+        try:
+            shared_git_connector = await create_git_connector_for_project_files("startup project files")
+            projects_repo_root_dir = await shared_git_connector.get_working_dir()
+            project_files = await get_project_files(projects_repo_root_dir)
+
+            for project_file in project_files:
+                project_manager = ProjectManager(
+                    project_file_relative_path=project_file,
+                    git_connector_for_project_files=shared_git_connector,
+                )
+                try:
+                    project_file_base_name = os.path.basename(project_file)
+                    logger.info(f"Processing project file: {project_file_base_name}")
+
+                    if not skip_checks:
+                        await project_manager.check_and_create_namespaces()
+                        await project_manager.check_and_create_sops_secrets_in_namespaces()
+
+                    api_key = await project_manager.get_api_key()
+                    project_name = await project_manager.get_name()
+                    project_data = await project_manager.get_contents()
+
+                    project_service.register(
+                        project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
+                    )
+
+                    project_users = project_data.get("users", [])
+                    if project_users:
+                        project_user_emails = [u.get("email") for u in project_users if u.get("email")]
+                        if project_user_emails:
+                            user_service.add_allowed_emails(project_user_emails)
+                except Exception as e:
+                    logger.error(f"Error processing project file {project_file}: {e}")
+                finally:
+                    await project_manager.close()
+
+            all_allowed_emails = user_service.get_allowed_emails()
+            if all_allowed_emails:
+                logger.info(f"Allowed user emails ({len(all_allowed_emails)}): {', '.join(sorted(all_allowed_emails))}")
+
+        finally:
+            if shared_git_connector:
+                await shared_git_connector.close()
+
+        readiness.projects.mark_ready()
+        return True
+    except Exception as e:
+        readiness.projects.mark_failed(str(e))
+        return False
+
+
+async def _setup_keycloak(readiness: "ReadinessState", skip_checks: bool) -> bool:
+    """Set up Keycloak realm and SSO. Returns True on success."""
+    if skip_checks:
+        readiness.keycloak.mark_ready()
+        return True
+
+    try:
+        logger.info("Waiting for Keycloak to become available")
+        await wait_for_keycloak_availability()
+
+        logger.info("Setting up Keycloak (realm, SSO, scopes, and operations client)")
+        keycloak_success = await setup_keycloak()
+        if not keycloak_success:
+            readiness.keycloak.mark_failed("Keycloak setup returned failure")
+            return False
+
+        logger.info("Ensuring operations manager has valid Keycloak credentials")
+        credentials_success = await keycloak_client_exists_and_works()
+        if not credentials_success:
+            readiness.keycloak.mark_failed("Failed to ensure Keycloak credentials")
+            return False
+
+        readiness.keycloak.mark_ready()
+        return True
+    except Exception as e:
+        readiness.keycloak.mark_failed(str(e))
+        return False
+
+
+async def _setup_oauth(readiness: "ReadinessState", app: FastAPI) -> bool:
+    """Register OAuth client. Returns True on success."""
+    try:
+        await register_oauth_client_after_keycloak_setup(app)
+        readiness.oauth.mark_ready()
+        return True
+    except Exception as e:
+        readiness.oauth.mark_failed(str(e))
+        return False
+
+
+STARTUP_RETRY_INTERVAL = 60
+
+
+async def _startup_retry_loop(app: FastAPI, skip_checks: bool) -> None:
+    """Background loop that retries failed startup phases every 60 seconds."""
+    from opi.core.readiness import get_readiness_state
+
+    readiness = get_readiness_state()
+
+    while not readiness.is_ready:
+        unavailable = [s.display_name for s in readiness.get_unavailable_services()]
+        logger.info(
+            f"Startup retry: waiting {STARTUP_RETRY_INTERVAL}s before retrying "
+            f"unavailable services: {', '.join(unavailable)}"
+        )
+        await asyncio.sleep(STARTUP_RETRY_INTERVAL)
+
+        if not readiness.database.ready:
+            await _setup_database(readiness)
+
+        if not readiness.projects.ready and readiness.database.ready:
+            await _setup_projects(readiness, app, skip_checks)
+
+        if not readiness.keycloak.ready:
+            await _setup_keycloak(readiness, skip_checks)
+
+        if not readiness.oauth.ready and readiness.keycloak.ready:
+            await _setup_oauth(readiness, app)
+
+    logger.info("All services are now ready - startup retry loop complete")
+
+
 async def run_startup_tasks(app: FastAPI) -> bool:
     """
     Run all startup tasks for the application.
 
-    Returns:
-        True if all startup tasks completed successfully, False otherwise
-    """
-    from opi.core.config import settings
+    Services that fail will be retried in a background loop every 60 seconds.
+    The application starts immediately and serves a status page until all
+    critical services are available.
 
+    Returns:
+        True if all startup tasks completed successfully on first attempt
+    """
+    from opi.core.readiness import get_readiness_state
+
+    readiness = get_readiness_state()
     skip_checks = settings.SKIP_STARTUP_CHECKS
+
     if skip_checks:
         logger.warning("SKIP_STARTUP_CHECKS=True - skipping namespace/Keycloak/MinIO checks for fast startup")
 
     logger.info("Running startup tasks...")
 
-    # Initialize database connection pools (CRITICAL - app cannot function without this)
-    try:
-        await initialize_database_pools()
-        logger.info("Database pools initialized successfully")
-    except Exception as e:
-        logger.critical(
-            f"CRITICAL STARTUP FAILURE: Cannot initialize database pools. "
-            f"Application requires database connectivity to function. Error: {e}"
-        )
-        raise RuntimeError(f"Database pool initialization failed: {e}") from e
-
-    # Create subdomain registry table if it doesn't exist
-    try:
-        await create_subdomain_registry_table()
-        logger.info("Subdomain registry table ensured")
-    except Exception as e:
-        logger.error(f"Failed to create subdomain registry table: {e}")
-        # Non-critical - nice URLs won't work but app can continue
-
-    # Initialize metrics connector (non-critical - metrics will be unavailable if it fails)
-    # If not connected, start a background task to retry
+    # Initialize metrics connector (non-critical)
     logger.info("Initializing metrics connector")
     metrics_connector = get_metrics_connector()
     if not metrics_connector.is_connected:
         logger.warning("Metrics connector not available at startup, starting background reconnection task")
-        # Store reference to prevent garbage collection of the background task
         app.state.metrics_reconnect_task = asyncio.create_task(start_prometheus_reconnection_task())
-    else:
-        logger.info("Metrics connector connected successfully")
 
-    # Initialize the API key service for project API key registration
-    initialize_project_service()
+    # Phase 1: Database
+    await _setup_database(readiness)
 
-    # Initialize user service with allowed emails
-    user_service = get_user_service()
+    # Phase 2: Project files (requires database)
+    if readiness.database.ready:
+        await _setup_projects(readiness, app, skip_checks)
 
-    # Add default allowed emails for testing/development
-    # TODO: In production, these should be loaded from configuration or environment variables
-    default_allowed_emails = [
-        "robbert.uittenbroek@rijksoverheid.nl",
-    ]
+    # Phase 3: MinIO check (non-critical, no retry)
+    if not skip_checks:
+        await check_minio_availability()
 
-    if default_allowed_emails:
-        user_service.add_allowed_emails(default_allowed_emails)
-        logger.info(f"Added {len(default_allowed_emails)} default allowed emails to user service")
+    # Phase 4: Keycloak
+    await _setup_keycloak(readiness, skip_checks)
 
-    # If ALLOWED_EMAILS setting is configured, add those too
-    if settings.ALLOWED_EMAILS:
-        env_emails = [email.strip() for email in settings.ALLOWED_EMAILS.split(",") if email.strip()]
-        if env_emails:
-            user_service.add_allowed_emails(env_emails)
-            logger.info(f"Added {len(env_emails)} allowed emails from ALLOWED_EMAILS setting")
+    # Phase 5: OAuth (requires Keycloak)
+    if readiness.keycloak.ready:
+        await _setup_oauth(readiness, app)
 
-    # Initialize admin emails (can view all projects)
-    project_service = get_project_service()
-    default_admin_emails = [
-        "robbert.uittenbroek@rijksoverheid.nl",
-    ]
-    project_service.add_admin_emails(default_admin_emails)
+    if readiness.is_ready:
+        logger.info("All startup tasks completed successfully")
+        return True
 
-    if settings.ADMIN_EMAILS:
-        env_admin_emails = [email.strip() for email in settings.ADMIN_EMAILS.split(",") if email.strip()]
-        if env_admin_emails:
-            project_service.add_admin_emails(env_admin_emails)
-            logger.info(f"Added {len(env_admin_emails)} admin emails from ADMIN_EMAILS setting")
-
-    # Get the list of project files to process
-    # Create a shared git connector that will be reused across all ProjectManagers
-    shared_git_connector = None
-    try:
-        shared_git_connector = await create_git_connector_for_project_files("startup project files")
-        projects_repo_root_dir = await shared_git_connector.get_working_dir()
-        project_files = await get_project_files(projects_repo_root_dir)
-    except Exception as e:
-        logger.error(f"Failed to get project files list: {e}")
-        if shared_git_connector:
-            await shared_git_connector.close()
-        raise
-
-    try:
-        all_successful = True
-        for project_file in project_files:
-            # Each ProjectManager shares the git connector for project files
-            # The connector ownership tracking ensures it won't be closed by individual managers
-            project_manager = ProjectManager(
-                project_file_relative_path=project_file,
-                git_connector_for_project_files=shared_git_connector,
-            )
-            try:
-                project_file_base_name = os.path.basename(project_file)
-                logger.info(f"Processing project file: {project_file_base_name}")
-
-                # Skip namespace/SOPS checks when SKIP_STARTUP_CHECKS is enabled
-                if not skip_checks:
-                    await project_manager.check_and_create_namespaces()
-                    await project_manager.check_and_create_sops_secrets_in_namespaces()
-                else:
-                    logger.debug(f"Skipping namespace/SOPS checks for {project_file_base_name}")
-
-                # Load and register API key for this project (always needed)
-                api_key = await project_manager.get_api_key()
-                project_name = await project_manager.get_name()
-                project_service = get_project_service()
-
-                # Load project data to get users
-                project_data = await project_manager.get_contents()
-
-                # Register project with users and full project data
-                project_service.register(
-                    project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
-                )
-
-                # Add project users to allowed emails list
-                project_users = project_data.get("users", [])
-                if project_users:
-                    project_user_emails = [u.get("email") for u in project_users if u.get("email")]
-                    if project_user_emails:
-                        user_service.add_allowed_emails(project_user_emails)
-            except Exception as e:
-                logger.error(f"Error processing project file {project_file}: {e}")
-                all_successful = False
-            finally:
-                # Close all resources including database connections
-                await project_manager.close()
-
-        # Log all allowed emails for visibility (after all project users have been added)
-        all_allowed_emails = user_service.get_allowed_emails()
-        if all_allowed_emails:
-            logger.info(f"Allowed user emails ({len(all_allowed_emails)}): {', '.join(sorted(all_allowed_emails))}")
-
-        # Skip external resource creation when SKIP_STARTUP_CHECKS is enabled
-        if not skip_checks:
-            logger.info("Checking MinIO CLI availability")
-            minio_success = await check_minio_availability()
-            if minio_success:
-                logger.info("MinIO CLI check completed successfully")
-            else:
-                logger.error("MinIO CLI check failed")
-                all_successful = False
-
-            logger.info("Waiting for Keycloak to become available")
-            await wait_for_keycloak_availability()
-
-            logger.info("Setting up Keycloak (realm, SSO, scopes, and operations client)")
-            keycloak_success = await setup_keycloak()
-            if not keycloak_success:
-                raise RuntimeError("Keycloak setup failed - cannot proceed without authentication")
-
-            logger.info("Complete Keycloak setup completed successfully")
-        else:
-            logger.warning("Skipped external resource creation (SKIP_STARTUP_CHECKS=True)")
-
-        # Ensure operations manager has valid Keycloak credentials
-        # This runs after setup_keycloak() which creates the realm and initial client
-        logger.info("Ensuring operations manager has valid Keycloak credentials")
-        credentials_success = await keycloak_client_exists_and_works()
-        if credentials_success:
-            logger.info("Operations manager Keycloak credentials ensured successfully")
-        else:
-            logger.error("Failed to ensure operations manager Keycloak credentials")
-            all_successful = False
-
-        # Register OAuth client using credentials from Keycloak setup
-        if app:
-            logger.info("Registering OAuth client")
-            await register_oauth_client_after_keycloak_setup(app)
-            logger.info("OAuth client registration completed successfully")
-        else:
-            raise RuntimeError("No app instance provided - cannot register OAuth client")
-
-        # API keys are now loaded inline during project file processing above
-        logger.info("Project API keys loaded during project processing")
-
-        if all_successful:
-            logger.info("All startup tasks completed successfully")
-        else:
-            logger.warning("Some startup tasks failed, but application will continue")
-
-        return all_successful
-    except Exception as e:
-        logger.error(f"Startup failed with error: {e}")
-        raise
-    finally:
-        # Close the shared git connector now that all project managers are done
-        if shared_git_connector:
-            await shared_git_connector.close()
-            logger.debug("Shared git connector for project files closed")
+    # Start background retry loop for failed services
+    unavailable = [s.display_name for s in readiness.get_unavailable_services()]
+    logger.warning(
+        f"Some services are unavailable: {', '.join(unavailable)}. "
+        f"Starting background retry loop (every {STARTUP_RETRY_INTERVAL}s)."
+    )
+    app.state.startup_retry_task = asyncio.create_task(_startup_retry_loop(app, skip_checks))
+    return False

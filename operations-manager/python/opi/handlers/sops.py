@@ -415,11 +415,14 @@ class SopsHandler:
         try:
             self.logger.debug(f"Running command: {' '.join(cmd)}")
 
+            from opi.core.metrics import track_subprocess_memory
+
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
             )
 
-            stdout, stderr = await process.communicate()
+            async with track_subprocess_memory("sops"):
+                stdout, stderr = await process.communicate()
 
             # Create a result object similar to subprocess.CompletedProcess
             class AsyncResult:

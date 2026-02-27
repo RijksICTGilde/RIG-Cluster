@@ -137,6 +137,64 @@ class TestRenderRealTemplates:
         assert doc["spec"]["tls"] is not None
         assert "hsts" in result.lower()
 
+    def test_ingress_template_with_rewrite_root(self):
+        """Rewrite to / should add HAProxy and NGINX rewrite annotations."""
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "path": "/kader",
+                "rewrite": "/",
+                "enable_tls": False,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        annotations = doc["metadata"]["annotations"]
+        # HAProxy rewrite
+        assert annotations["haproxy.router.openshift.io/rewrite-target"] == "/"
+        # NGINX rewrite rule in configuration-snippet
+        snippet = annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
+        assert 'rewrite "^/kader' in snippet
+        assert "break;" in snippet
+        # Path should remain unchanged
+        assert doc["spec"]["rules"][0]["http"]["paths"][0]["path"] == "/kader"
+        assert doc["spec"]["rules"][0]["http"]["paths"][0]["pathType"] == "Prefix"
+
+    def test_ingress_template_with_rewrite_nonroot(self):
+        """Rewrite to a non-root path should use that as the rewrite base."""
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "path": "/old-prefix",
+                "rewrite": "/new-prefix",
+                "enable_tls": False,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        annotations = doc["metadata"]["annotations"]
+        assert annotations["haproxy.router.openshift.io/rewrite-target"] == "/new-prefix"
+        snippet = annotations["nginx.ingress.kubernetes.io/configuration-snippet"]
+        assert 'rewrite "^/old-prefix' in snippet
+        assert "/new-prefix/$1" in snippet
+
+    def test_ingress_template_without_rewrite(self):
+        """When rewrite is not set, no rewrite annotations should appear."""
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "enable_tls": False,
+            },
+        )
+        assert "rewrite-target" not in result
+        assert "rewrite " not in result.split("configuration-snippet")[1].split("more_set_headers")[0]
+
     def test_ingress_template_without_tls(self):
         result = render_template(
             "ingress.yaml.jinja",
@@ -207,6 +265,120 @@ class TestRenderRealTemplates:
             },
         )
         assert "cert: |" in result
+
+    def test_deployment_template_with_authorization_wall_sidecar(self):
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "web",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/static-site:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "hostname": "app.example.com",
+                "sidecars": ["authorization-wall"],
+                "authorization_wall": {
+                    "issuer_url": "https://keycloak.example.com/realms/test",
+                    "client_id": "my-client",
+                    "keycloak_secret_name": "web-keycloak",
+                    "cookie_secret_name": "web-oauth2-cookie",
+                },
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        containers = doc["spec"]["template"]["spec"]["containers"]
+        assert len(containers) == 2
+        app_container = containers[0]
+        sidecar = containers[1]
+        assert app_container["name"] == "app"
+        assert sidecar["name"] == "authorization-wall"
+        assert sidecar["image"] == "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
+        assert sidecar["ports"][0]["containerPort"] == 4180
+        # Verify OIDC args
+        args = sidecar["args"]
+        assert "--provider=oidc" in args
+        assert "--oidc-issuer-url=https://keycloak.example.com/realms/test" in args
+        assert "--client-id=my-client" in args
+        assert "--upstream=http://localhost:8080" in args
+        # Without banner, skip-provider-button should be true (auto-redirect)
+        assert "--skip-provider-button=true" in args
+        assert not any(arg.startswith("--banner=") for arg in args)
+
+    def test_deployment_template_with_authorization_wall_banner(self):
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "web",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/static-site:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "hostname": "app.example.com",
+                "sidecars": ["authorization-wall"],
+                "authorization_wall": {
+                    "issuer_url": "https://keycloak.example.com/realms/test",
+                    "client_id": "my-client",
+                    "keycloak_secret_name": "web-keycloak",
+                    "cookie_secret_name": "web-oauth2-cookie",
+                    "banner": "Welcome to our application. Please log in.",
+                },
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        containers = doc["spec"]["template"]["spec"]["containers"]
+        sidecar = containers[1]
+        args = sidecar["args"]
+        # With banner, skip-provider-button should be false (show sign-in page)
+        assert "--skip-provider-button=false" in args
+        assert "--banner=Welcome to our application. Please log in." in args
+
+    def test_deployment_template_without_sidecars(self):
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        containers = doc["spec"]["template"]["spec"]["containers"]
+        assert len(containers) == 1
+        assert containers[0]["name"] == "app"
+
+    def test_service_template_with_authorization_wall_port(self):
+        result = render_template(
+            "service.yaml.jinja",
+            {
+                "name": "web",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "application_port": 8080,
+                "service_port": 4180,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        port = doc["spec"]["ports"][0]
+        assert port["port"] == 4180
+        assert port["targetPort"] == 4180
 
 
 class TestCollectManifestFiles:

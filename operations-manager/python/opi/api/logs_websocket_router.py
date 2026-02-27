@@ -440,30 +440,32 @@ async def stream_logs(
         await send_message(websocket, "status", status="streaming", message="Log streaming started")
 
         async def drain_stdout() -> None:
-            """Drain subprocess stdout into bounded queue, dropping oldest when full.
-
-            This runs as fast as the subprocess produces output, ensuring the
-            OS pipe buffer never grows large. The queue acts as a sliding window
-            keeping only the most recent LOG_BUFFER_SIZE lines.
-            """
+            """Drain subprocess stdout into bounded queue, dropping oldest when full."""
+            nonlocal running
             while running:
                 async with process_lock:
                     current_process = process
                     current_stdout = current_process.stdout if current_process else None
 
                 if current_stdout is None:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(1.0)
                     continue
 
                 try:
-                    line = await asyncio.wait_for(current_stdout.readline(), timeout=0.5)
+                    line = await asyncio.wait_for(current_stdout.readline(), timeout=2.0)
                 except TimeoutError:
                     continue
                 except Exception:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(1.0)
                     continue
 
                 if not line:
+                    # Check if subprocess has died (EOF on pipe)
+                    async with process_lock:
+                        if process and process.returncode is not None:
+                            logger.warning(f"kubectl log stream process exited with code {process.returncode}")
+                            running = False
+                            break
                     await asyncio.sleep(0.5)
                     continue
 
@@ -482,18 +484,24 @@ async def stream_logs(
                     current_stderr = current_process.stderr if current_process else None
 
                 if current_stderr is None:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(1.0)
                     continue
 
                 try:
-                    line = await asyncio.wait_for(current_stderr.readline(), timeout=0.5)
+                    line = await asyncio.wait_for(current_stderr.readline(), timeout=2.0)
                 except TimeoutError:
                     continue
                 except Exception:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(1.0)
                     continue
 
                 if not line:
+                    # EOF on stderr pipe - check if subprocess has died
+                    async with process_lock:
+                        if process and process.returncode is not None:
+                            logger.info(f"drain_stderr: subprocess exited with code {process.returncode}")
+                            break
+                    await asyncio.sleep(1.0)
                     continue
 
                 if stderr_queue.full():
@@ -657,11 +665,21 @@ async def stream_logs(
                                 continue
 
                             # Stop current process and start new one
+                            logger.info("switch: acquiring process_lock")
                             async with process_lock:
+                                logger.info("switch: lock acquired")
                                 if process:
+                                    logger.info(f"switch: terminating PID {process.pid}")
                                     process.terminate()
-                                    with contextlib.suppress(OSError, asyncio.TimeoutError):
+                                    try:
                                         await asyncio.wait_for(process.wait(), timeout=2.0)
+                                        logger.info("switch: process terminated cleanly")
+                                    except (OSError, TimeoutError):
+                                        logger.warning(f"switch: terminate timeout, killing PID {process.pid}")
+                                        with contextlib.suppress(OSError):
+                                            process.kill()
+                                            await asyncio.wait_for(process.wait(), timeout=5.0)
+                                        logger.info("switch: process killed")
 
                                 # Clear queues so old component logs don't bleed through
                                 while not log_queue.empty():
@@ -687,11 +705,13 @@ async def stream_logs(
                                 )
 
                                 # Start new process
+                                logger.info(f"switch: starting new stream for {current_k8s_name}")
                                 process = await kubectl.stream_deployment_logs(
                                     deployment_name=current_k8s_name,
                                     namespace=namespace,
                                     lines=lines,
                                 )
+                                logger.info(f"switch: new process PID {process.pid if process else 'None'}")
 
                                 if process and process.stdout:
                                     await send_message(
@@ -705,6 +725,7 @@ async def stream_logs(
                                     await send_message(
                                         websocket, "error", message="Failed to start stream for component"
                                     )
+                            logger.info("switch: process_lock released")
 
                 except TimeoutError:
                     continue
@@ -734,12 +755,13 @@ async def stream_logs(
 
         # Run all tasks concurrently - drain tasks keep pipe buffers small,
         # reader tasks consume from bounded queues
-        stdout_drain_task = asyncio.create_task(drain_stdout())
-        stderr_drain_task = asyncio.create_task(drain_stderr())
-        log_task = asyncio.create_task(read_logs())
-        stderr_task = asyncio.create_task(read_stderr())
-        client_task = asyncio.create_task(handle_client_messages())
-        heartbeat_task = asyncio.create_task(heartbeat())
+        conn_id = f"{deployment}/{current_component}"
+        stdout_drain_task = asyncio.create_task(drain_stdout(), name=f"drain_stdout:{conn_id}")
+        stderr_drain_task = asyncio.create_task(drain_stderr(), name=f"drain_stderr:{conn_id}")
+        log_task = asyncio.create_task(read_logs(), name=f"read_logs:{conn_id}")
+        stderr_task = asyncio.create_task(read_stderr(), name=f"read_stderr:{conn_id}")
+        client_task = asyncio.create_task(handle_client_messages(), name=f"client_msgs:{conn_id}")
+        heartbeat_task = asyncio.create_task(heartbeat(), name=f"heartbeat:{conn_id}")
 
         all_tasks = [stdout_drain_task, stderr_drain_task, log_task, stderr_task, client_task, heartbeat_task]
 
@@ -749,13 +771,21 @@ async def stream_logs(
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
+            done_names = [t.get_name() for t in _done]
+            logger.info(f"task completed: {done_names}, cancelling {len(pending)} pending tasks")
+
             # Signal all tasks to stop
             running = False
 
             for task in pending:
+                task_name = task.get_name()
+                logger.debug(f"cancelling task: {task_name}")
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                try:
+                    await asyncio.wait_for(task, timeout=5.0)
+                except (asyncio.CancelledError, TimeoutError):
+                    if not task.done():
+                        logger.error(f"task {task_name} did NOT cancel within 5s")
 
         except asyncio.CancelledError:
             running = False
@@ -773,15 +803,21 @@ async def stream_logs(
     finally:
         # Clean up subprocess
         if process:
+            logger.info(f"cleanup: terminating PID {process.pid}, returncode={process.returncode}")
             try:
                 process.terminate()
                 await asyncio.wait_for(process.wait(), timeout=5.0)
+                logger.info("cleanup: process terminated cleanly")
             except TimeoutError:
+                logger.warning(f"cleanup: terminate timeout, killing PID {process.pid}")
                 process.kill()
-                with contextlib.suppress(OSError):
-                    await process.wait()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
+                    logger.info("cleanup: process killed")
+                except TimeoutError:
+                    logger.error(f"cleanup: KILL FAILED for PID {process.pid} - process may be stuck")
             except Exception as e:
-                logger.error(f"Error terminating kubectl process: {e}")
+                logger.error(f"cleanup: error terminating kubectl process: {e}")
 
         # Unregister connection only if it was registered
         if connection_registered and user_email:

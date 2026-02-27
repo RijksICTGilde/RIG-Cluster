@@ -19,12 +19,13 @@ class TestServiceType:
             "minio-storage",
             "redis",
             "namespace-redis",
+            "authorization-wall",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        assert len(ServiceType) == 9
+        assert len(ServiceType) == 10
 
 
 class TestGetAllServices:
@@ -134,6 +135,7 @@ class TestIsComponentAndDeploymentService:
             ServiceType.KEYCLOAK,
             ServiceType.PERSISTENT_STORAGE,
             ServiceType.TEMP_STORAGE,
+            ServiceType.AUTHORIZATION_WALL,
         ],
     )
     def test_component_services(self, service: ServiceType):

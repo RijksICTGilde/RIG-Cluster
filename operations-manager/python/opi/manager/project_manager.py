@@ -2527,6 +2527,7 @@ class ProjectManager:
             context["REDIS_HOST"] = redis_secret.host
             context["REDIS_PORT"] = redis_secret.port  # Keep as int for YAML type preservation
             context["REDIS_PASSWORD"] = redis_secret.password
+            context["REDIS_USERNAME"] = redis_secret.username
             context["REDIS_URL"] = redis_secret.url
 
         logger.debug(f"Built helm values context with {len(context)} variables for deployment '{deployment_name}'")
@@ -4075,12 +4076,13 @@ class ProjectManager:
             component_uses_minio = False
             component_uses_sso = False
             component_uses_redis = False
+            component_uses_authorization_wall = False
 
             if component_reference:
                 component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
                 component_services = [match.value for match in component_query.find(project_data)]
                 # Flatten the services list (in case it's nested)
-                all_services = []
+                all_services: list[str] = []
                 for services in component_services:
                     if isinstance(services, list):
                         all_services.extend(services)
@@ -4097,6 +4099,7 @@ class ProjectManager:
                 component_uses_redis = (
                     ServiceType.REDIS.value in all_services or ServiceType.NAMESPACE_REDIS.value in all_services
                 )
+                component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
 
             # Build envFrom secrets list based on services used and user env vars
             # This list determines which secrets are referenced in the deployment manifest
@@ -4209,6 +4212,65 @@ class ProjectManager:
             # config_handler.add_custom_config(component_name, "port", application_port)
             # config_handler.add_custom_config(component_name, "unique_name", unique_name)
 
+            # Add authorization-wall sidecar if enabled
+            if component_uses_authorization_wall:
+                keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
+                if keycloak_secret:
+                    # Extract optional config (banner) from project-level services
+                    banner_text = None
+                    project_services = project_data.get("services", [])
+                    for service_item in project_services:
+                        if isinstance(service_item, dict) and ServiceType.AUTHORIZATION_WALL.value in service_item:
+                            auth_wall_data = service_item[ServiceType.AUTHORIZATION_WALL.value]
+                            if isinstance(auth_wall_data, dict):
+                                auth_wall_config = auth_wall_data.get("config", {})
+                                if isinstance(auth_wall_config, dict):
+                                    banner_text = auth_wall_config.get("banner")
+                            break
+
+                    variables["authorization_wall"] = {
+                        "issuer_url": keycloak_secret.discovery_url.replace("/.well-known/openid-configuration", ""),
+                        "client_id": keycloak_secret.client_id,
+                        "keycloak_secret_name": KeycloakSecret.get_secret_name(deployment_name),
+                        "cookie_secret_name": f"{unique_name}-oauth2-cookie",
+                        "banner": banner_text,
+                    }
+                    variables["sidecars"] = ["authorization-wall"]
+                    variables["service_port"] = 4180
+                    logger.info(f"Authorization wall enabled for component '{component_name}'")
+                else:
+                    logger.warning(
+                        f"Component '{component_name}' uses authorization-wall but no keycloak service configured"
+                    )
+
+            # Create authorization-wall cookie secret if needed
+            if component_uses_authorization_wall and "authorization_wall" in variables:
+                import secrets as secrets_module
+
+                cookie_secret_value = secrets_module.token_urlsafe(32)
+                cookie_secret_name = variables["authorization_wall"]["cookie_secret_name"]
+                secret_template_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
+                )
+                cookie_secret_vars = {
+                    "name": cookie_secret_name,
+                    "namespace": namespace,
+                    "secret_pairs": {"cookie-secret": cookie_secret_value},
+                }
+                # Determine output dir for the cookie secret manifest
+                if target_dir:
+                    cookie_output_dir = os.path.join(working_dir, target_dir)
+                else:
+                    cookie_output_dir = os.path.join(working_dir, project_name, deployment_name)
+                self._manifest_generator.create_manifest_file(
+                    template_path=secret_template_path,
+                    values=cookie_secret_vars,
+                    output_dir=cookie_output_dir,
+                    output_filename=f"{cookie_secret_name}-secret",
+                    use_sops=True,
+                )
+                logger.info(f"Created authorization-wall cookie secret: {cookie_secret_name}")
+
             # Create each manifest type in the git repository
             manifests = ["deployment.yaml.jinja", "service.yaml.jinja", "allow-all-network-policy.yaml.jinja"]
 
@@ -4244,6 +4306,7 @@ class ProjectManager:
                         # Iterate over each path to create separate ingress for each
                         for path_config in component_paths:
                             path_value = path_config["match"] or "/"
+                            rewrite_value = path_config.get("rewrite")
 
                             # Generate unique ingress name that includes the path
                             ingress_name = generate_ingress_name_from_path(ingress_base_name, path_value)
@@ -4283,6 +4346,7 @@ class ProjectManager:
                                     "service_name": unique_name,  # Service name stays the same
                                     "hostname": ingress_hostname,
                                     "path": path_value,  # Path for this specific ingress
+                                    "rewrite": rewrite_value,  # Path rewrite target (e.g. "/" to strip prefix)
                                     "issuer_name": ingress_issuer_name,  # Namespace-scoped Issuer (for external domains)
                                     "cluster_issuer": ingress_cluster_issuer,  # ClusterIssuer (for cluster domains)
                                     "tls_secret_name": generate_tls_secret_name(ingress_name),
@@ -4999,21 +5063,27 @@ class ProjectManager:
                     if source_deployment:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
-                        # Clone all properties except name, components, and subdomain
-                        # subdomain must be unique per deployment to avoid domain conflicts
+                        # Clone properties from source, excluding fields that must be
+                        # unique or that tie the deployment to a custom domain setup.
+                        # Custom domains (base-domain, domain-mode, issuer) are not copied
+                        # because cloned deployments should use the default cluster domain
+                        # rather than inheriting the source's DNS config.
+                        clone_exclude_keys = [
+                            "name",
+                            "components",
+                            "subdomain",
+                            "base-domain",
+                            "domain-mode",
+                            "issuer",
+                        ]
                         new_deployment.update(
-                            {
-                                key: value
-                                for key, value in source_deployment.items()
-                                if key not in ["name", "components", "subdomain"]
-                            }
+                            {key: value for key, value in source_deployment.items() if key not in clone_exclude_keys}
                         )
 
-                        # TODO: We don't explicitly store the "domain type" (e.g. whether the
-                        # subdomain is derived from the deployment name). This heuristic preserves
-                        # the domain setup when the source used its deployment name as subdomain.
-                        # A proper fix would be to store the domain type explicitly so we can
-                        # reliably reconstruct the correct subdomain for cloned deployments.
+                        # When the source's subdomain matches its deployment name, it means
+                        # components share a single hostname and use paths to differentiate.
+                        # Preserve this pattern for the clone by setting subdomain to the
+                        # new deployment name.
                         source_subdomain = source_deployment.get("subdomain")
                         source_name = source_deployment.get("name")
                         if source_subdomain and source_subdomain == source_name:
@@ -6116,10 +6186,6 @@ class ProjectManager:
             Dictionary containing deletion results
         """
         return await self._delete_project_manager.delete_project(project_name, force=force)
-
-    async def delete_deployment_resources(self, project_name: str, deployment_name: str) -> dict[str, Any]:
-        """Delete resources for a specific deployment."""
-        return await self._delete_project_manager.delete_deployment_resources(project_name, deployment_name)
 
 
 def create_project_manager() -> ProjectManager:

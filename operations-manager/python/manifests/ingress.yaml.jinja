@@ -8,6 +8,9 @@ metadata:
     # ============================================================
     haproxy.router.openshift.io/ip_whitelist: {{ ip_whitelist | default("0.0.0.0/0,::/0") }}
     haproxy.router.openshift.io/timeout: "300s"
+{% if rewrite %}
+    haproxy.router.openshift.io/rewrite-target: {{ rewrite }}
+{% endif %}
 {% if enable_tls %}
     # HSTS for internet.nl compliance (1 year, includeSubDomains, preload)
     # See: https://internet.nl/faqs/https/
@@ -41,6 +44,10 @@ metadata:
     # Content-Security-Policy: Baseline CSP (applications should override with stricter policy)
     # Note: This is a permissive default; applications should set their own CSP header
     nginx.ingress.kubernetes.io/configuration-snippet: |
+{% if rewrite %}
+{% set rewrite_base = '' if rewrite == '/' else rewrite %}
+      rewrite "^{{ path }}/?(.*)$" "{{ rewrite_base }}/$1" break;
+{% endif %}
       more_set_headers "X-Content-Type-Options: nosniff";
       more_set_headers "X-Frame-Options: DENY";
       more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
