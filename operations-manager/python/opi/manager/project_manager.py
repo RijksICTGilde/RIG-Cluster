@@ -82,7 +82,13 @@ from opi.utils.naming import (
     generate_unique_name,
     get_component_ingress_map,
 )
-from opi.utils.project_utils import normalize_container_image
+from opi.utils.project_utils import (
+    ComponentValidationError,
+    build_component_config,
+    normalize_container_image,
+    validate_component_paths,
+    validate_root_component,
+)
 from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
@@ -5091,6 +5097,342 @@ class ProjectManager:
             error_msg = f"Error upserting deployment '{deployment_name}': {e}"
             logger.exception(error_msg)
             return {"success": False, "created": False, "error": error_msg, "error_type": "internal_error"}
+
+    async def add_component(
+        self,
+        name: str,
+        image: str,
+        deployment_names: list[str],
+        component_type: str = "single",
+        port: int | None = None,
+        path: str = "/",
+        services: list[str] | None = None,
+        cpu_limit: str | None = None,
+        memory_limit: str | None = None,
+        env_vars: str | None = None,
+        aliases: str | None = None,
+        root: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Add a new component definition to the project and reference it in specified deployments.
+
+        Args:
+            name: Component name (must be K8s-compliant and unique within the project)
+            image: Container image URL
+            deployment_names: Deployments to add this component to (must already exist)
+            component_type: Component type (e.g. "single", "frontend", "backend")
+            port: Inbound port (None for background workers that don't serve HTTP)
+            path: Ingress path (only relevant if publish-on-web is in services)
+            services: Component's uses-services list (e.g. ["postgresql-database"])
+            cpu_limit: CPU limit (e.g. "500m")
+            memory_limit: Memory limit (e.g. "512Mi")
+            env_vars: User environment variables in KEY=value format (will be AGE-encrypted)
+            aliases: YAML string of alias definitions (e.g. "DATABASE_URL: $HOST:$PORT/$DB_NAME")
+            root: Whether this is the root component (nice-url mode)
+
+        Returns:
+            Result dict with success status, component config, and deployments updated
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            # Validate component name is unique
+            existing_components = project_data.get("components", [])
+            for comp in existing_components:
+                if comp.get("name") == name:
+                    return {
+                        "success": False,
+                        "error": f"Component '{name}' already exists in project '{project_name}'",
+                        "error_type": "duplicate_component",
+                    }
+
+            # Validate all deployment_names exist
+            existing_deployments = project_data.get("deployments", [])
+            existing_deployment_names = {d.get("name") for d in existing_deployments}
+            invalid_deployments = [d for d in deployment_names if d not in existing_deployment_names]
+            if invalid_deployments:
+                return {
+                    "success": False,
+                    "error": f"Deployments not found: {invalid_deployments}",
+                    "error_type": "invalid_deployments",
+                }
+
+            # Validate path uniqueness and root component constraints per target deployment
+            for deployment in existing_deployments:
+                dep_name = deployment.get("name")
+                if dep_name not in deployment_names:
+                    continue
+                domain_mode = deployment.get("domain-mode", "component-specific")
+
+                # Collect existing component paths in this deployment
+                existing_paths = []
+                existing_root_info = []
+                for comp_ref in deployment.get("components", []):
+                    comp_ref_name = comp_ref.get("reference")
+                    if comp_ref_name:
+                        for comp_def in existing_components:
+                            if comp_def.get("name") == comp_ref_name:
+                                existing_paths.append(comp_def.get("path", "/"))
+                                existing_root_info.append(
+                                    (
+                                        comp_ref_name,
+                                        comp_ref.get("root", False),
+                                        comp_def.get("ports", {}).get("inbound", [None])[0]
+                                        if comp_def.get("ports", {}).get("inbound")
+                                        else None,
+                                    )
+                                )
+                                break
+
+                # Validate path uniqueness (including the new component)
+                try:
+                    validate_component_paths([*existing_paths, path], domain_mode)
+                except ComponentValidationError as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "error_type": "validation_error",
+                    }
+
+                # Validate root component constraints (including the new component)
+                try:
+                    validate_root_component([*existing_root_info, (name, root, port)], domain_mode)
+                except ComponentValidationError as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "error_type": "validation_error",
+                    }
+
+            # Validate requested services against project-level services
+            if services:
+                project_service_names = set(
+                    ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
+                )
+                invalid_services = [s for s in services if s not in project_service_names]
+                if invalid_services:
+                    return {
+                        "success": False,
+                        "error": f"Services not defined on project: {invalid_services}. Available services: {sorted(project_service_names) if project_service_names else 'none'}",
+                        "error_type": "invalid_services",
+                    }
+
+            # Normalize image
+            normalized_image, was_normalized = normalize_container_image(image)
+            warnings: list[str] = []
+            if was_normalized:
+                warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
+
+            # Build component config using shared function
+            public_key = get_project_public_key(project_data)
+            try:
+                component_config = await build_component_config(
+                    name=name,
+                    component_type=component_type,
+                    port=port,
+                    path=path,
+                    services=services or [],
+                    cpu_limit=cpu_limit,
+                    memory_limit=memory_limit,
+                    env_vars=env_vars,
+                    aliases=aliases,
+                    root=root,
+                    public_key=public_key,
+                )
+            except (ComponentValidationError, ValueError) as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "error_type": "validation_error",
+                }
+
+            # Add component to project
+            if "components" not in project_data:
+                project_data["components"] = []
+            project_data["components"].append(component_config)
+
+            # Add component reference to specified deployments
+            deployments_updated = []
+            for deployment in existing_deployments:
+                dep_name = deployment.get("name")
+                if dep_name in deployment_names:
+                    existing_refs = {c.get("reference") for c in deployment.get("components", [])}
+                    if name not in existing_refs:
+                        ref: dict[str, Any] = {"reference": name, "image": normalized_image}
+                        if root:
+                            ref["root"] = True
+                        deployment.setdefault("components", []).append(ref)
+                        deployments_updated.append(dep_name)
+
+            # Save and commit
+            await self.save_project_data()
+
+            git_connector = await self.get_git_connector_for_project_files()
+            commit_message = f"Add component '{name}' to project '{project_name}'"
+            if deployments_updated:
+                commit_message += f" (deployments: {', '.join(deployments_updated)})"
+            await git_connector.commit_and_push(commit_message)
+
+            logger.info(f"Successfully added component '{name}' to project '{project_name}'")
+            result: dict[str, Any] = {
+                "success": True,
+                "component": component_config,
+                "deployments_updated": deployments_updated,
+            }
+            if warnings:
+                result["warnings"] = warnings
+            return result
+
+        except Exception as e:
+            error_msg = f"Error adding component '{name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def add_component_to_deployment(
+        self,
+        deployment_name: str,
+        component_name: str,
+        image: str,
+    ) -> dict[str, Any]:
+        """
+        Add an existing component to a deployment that doesn't yet include it.
+
+        Args:
+            deployment_name: Name of the target deployment
+            component_name: Name of an existing component in the project
+            image: Container image URL for this deployment
+
+        Returns:
+            Result dict with success status and component reference added
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            # Validate deployment exists
+            existing_deployments = project_data.get("deployments", [])
+            target_deployment = None
+            for deployment in existing_deployments:
+                if deployment.get("name") == deployment_name:
+                    target_deployment = deployment
+                    break
+
+            if target_deployment is None:
+                return {
+                    "success": False,
+                    "error": f"Deployment '{deployment_name}' not found in project '{project_name}'",
+                    "error_type": "deployment_not_found",
+                }
+
+            # Validate component exists in project
+            existing_components = project_data.get("components", [])
+            component_def = None
+            for comp in existing_components:
+                if comp.get("name") == component_name:
+                    component_def = comp
+                    break
+
+            if component_def is None:
+                return {
+                    "success": False,
+                    "error": f"Component '{component_name}' not found in project '{project_name}'",
+                    "error_type": "component_not_found",
+                }
+
+            # Validate component is not already in this deployment
+            existing_refs = {c.get("reference") for c in target_deployment.get("components", [])}
+            if component_name in existing_refs:
+                return {
+                    "success": False,
+                    "error": f"Component '{component_name}' is already in deployment '{deployment_name}'",
+                    "error_type": "duplicate_component_in_deployment",
+                }
+
+            # Validate path uniqueness and root component constraints
+            domain_mode = target_deployment.get("domain-mode", "component-specific")
+            new_path = component_def.get("path", "/")
+            new_root = component_def.get("root", False)
+            new_port = (
+                component_def.get("ports", {}).get("inbound", [None])[0]
+                if component_def.get("ports", {}).get("inbound")
+                else None
+            )
+
+            existing_paths = []
+            existing_root_info = []
+            for comp_ref in target_deployment.get("components", []):
+                comp_ref_name = comp_ref.get("reference")
+                if comp_ref_name:
+                    for comp_def in existing_components:
+                        if comp_def.get("name") == comp_ref_name:
+                            existing_paths.append(comp_def.get("path", "/"))
+                            existing_root_info.append(
+                                (
+                                    comp_ref_name,
+                                    comp_ref.get("root", False),
+                                    comp_def.get("ports", {}).get("inbound", [None])[0]
+                                    if comp_def.get("ports", {}).get("inbound")
+                                    else None,
+                                )
+                            )
+                            break
+
+            try:
+                validate_component_paths([*existing_paths, new_path], domain_mode)
+            except ComponentValidationError as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "error_type": "validation_error",
+                }
+
+            try:
+                validate_root_component([*existing_root_info, (component_name, new_root, new_port)], domain_mode)
+            except ComponentValidationError as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "error_type": "validation_error",
+                }
+
+            # Normalize image
+            normalized_image, was_normalized = normalize_container_image(image)
+            warnings: list[str] = []
+            if was_normalized:
+                warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
+
+            # Add component reference to the deployment
+            component_ref: dict[str, Any] = {"reference": component_name, "image": normalized_image}
+            if new_root:
+                component_ref["root"] = True
+            target_deployment.setdefault("components", []).append(component_ref)
+
+            # Save and commit
+            await self.save_project_data()
+
+            git_connector = await self.get_git_connector_for_project_files()
+            commit_message = (
+                f"Add component '{component_name}' to deployment '{deployment_name}' in project '{project_name}'"
+            )
+            await git_connector.commit_and_push(commit_message)
+
+            logger.info(
+                f"Successfully added component '{component_name}' to deployment '{deployment_name}' "
+                f"in project '{project_name}'"
+            )
+            result: dict[str, Any] = {
+                "success": True,
+                "component_reference": component_ref,
+            }
+            if warnings:
+                result["warnings"] = warnings
+            return result
+
+        except Exception as e:
+            error_msg = f"Error adding component '{component_name}' to deployment '{deployment_name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
     async def update_image_and_regenerate(
         self,
