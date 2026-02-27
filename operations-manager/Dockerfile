@@ -1,6 +1,6 @@
 # Multi-stage Docker build for operations-manager with optimized caching
 # Stage 1: Base system with dependencies (rarely changes)
-FROM python:3.13-slim AS base-system
+FROM python:3.14-slim AS base-system
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
