@@ -1,6 +1,6 @@
 # Multi-stage Docker build for operations-manager with optimized caching
 # Stage 1: Base system with dependencies (rarely changes)
-FROM python:3.13-slim AS base-system
+FROM python:3.14-slim AS base-system
 
 # Pin tool versions for deterministic builds and optimal layer caching.
 # Bump these ARGs when you need a newer version.
