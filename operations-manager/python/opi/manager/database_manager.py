@@ -1,6 +1,7 @@
 """Database service manager for handling PostgreSQL resources."""
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -15,6 +16,15 @@ from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DatabaseStateResult:
+    """Result of _ensure_database_state with the final resolved identifiers."""
+
+    database: str
+    schema: str
+    password: str
 
 
 class DatabaseManager:
@@ -204,7 +214,7 @@ class DatabaseManager:
 
             # PHASE 2: DATABASE STATE VERIFICATION - Ensure database exists with correct state
             logger.info(f"Phase 2: Verifying database state for {project_name}/{deployment_name}")
-            resolved_password = await self._ensure_database_state(
+            db_state = await self._ensure_database_state(
                 project_name,
                 deployment_name,
                 deployment,
@@ -217,8 +227,20 @@ class DatabaseManager:
                 generation,
             )
 
-            # Use the resolved password from clone operation if available, otherwise use Phase 1 password
-            final_password = resolved_password if resolved_password is not None else db_password
+            # Use the final identifiers from _ensure_database_state, which may differ
+            # from the initial values if a generational failover occurred during clone.
+            db_database = db_state.database
+            db_schema = db_state.schema
+            final_password = db_state.password
+
+            # Set the default search_path for the role scoped to this database.
+            # This ensures applications that don't explicitly set a search_path
+            # still resolve to the correct schema. Idempotent and safe on every sync.
+            await self.postgres_connector.set_role_search_path(
+                username=db_username,
+                database=db_database,
+                schema=db_schema,
+            )
 
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
             logger.info(f"Phase 3: Storing final credentials for {project_name}/{deployment_name}")
@@ -408,7 +430,7 @@ class DatabaseManager:
         project_data: dict[str, Any] | None = None,
         force_clone_override: bool = False,
         generation: int | None = None,
-    ) -> str | None:
+    ) -> DatabaseStateResult:
         """
         Ensure the database exists in the correct state, handling clone-from and force-clone logic.
         This runs regardless of whether credentials existed initially.
@@ -434,8 +456,8 @@ class DatabaseManager:
             force_clone_override: Runtime override for force_clone (from API)
 
         Returns:
-            The resolved password if credentials were resolved during a remote-source clone,
-            None otherwise (caller should use the original db_password).
+            DatabaseStateResult with the final database, schema, and password.
+            These may differ from the input values if a generational failover occurred.
         """
         clone_from = deployment.get("clone-from")
         # Use runtime override if True, otherwise fall back to deployment config
@@ -491,7 +513,7 @@ class DatabaseManager:
                         f"No postgresql-database service in remote source '{remote_source_name}', "
                         "skipping database clone"
                     )
-                    return None
+                    return DatabaseStateResult(database=db_database, schema=db_schema, password=db_password)
 
                 chisel_config = remote_source.get("chisel")
 
@@ -527,8 +549,13 @@ class DatabaseManager:
                     deployment_name, ServiceType.POSTGRESQL_DATABASE.value, generation
                 )
 
-                # Return the resolved password so the caller uses the correct credentials
-                return result.get("resolved_password")
+                # Return the final identifiers from the clone operation
+                target = result.get("target", {})
+                return DatabaseStateResult(
+                    database=target.get("database", db_database),
+                    schema=target.get("schema", db_schema),
+                    password=result.get("resolved_password", db_password),
+                )
             elif clone_type == "deployment":
                 # Local deployment clone - extract reference name
                 clone_source_ref = clone_from.get("reference")
@@ -559,32 +586,56 @@ class DatabaseManager:
             )
             target_db_exists = database_result["status"] == "exists"
 
+            # Track whether we created the database in this operation (for cleanup on failure)
+            database_created_here = not target_db_exists
+
             # Track the final generation used for this clone
             final_generation = generation
 
-            if force_clone and target_db_exists:
-                # Generational approach: increment generation and create new versioned database
-                # Instead of destroying the old database, create a new versioned one
+            if target_db_exists and (force_clone or generation is None):
+                # Generational failover: create a new versioned database instead of
+                # cloning into an existing (potentially broken/limbo) one.
+                # Triggers when:
+                # - force_clone=True: explicit user request
+                # - generation is None: database exists but no generation was ever recorded,
+                #   indicating a previous clone failed before recording its generation
                 new_generation = (generation or 0) + 1
-                db_database = generate_database_name(project_name, deployment_name, new_generation)
-                db_schema = db_database  # Schema matches database name
 
-                logger.info(
-                    f"force_clone=True: Using generational approach. "
-                    f"Creating new database {db_database} (generation {generation} -> {new_generation})"
-                )
+                # Find an available generation — previous failed attempts may have left
+                # orphaned versioned databases that were not cleaned up
+                max_attempts = 5
+                for _attempt in range(max_attempts):
+                    db_database = generate_database_name(project_name, deployment_name, new_generation)
+                    db_schema = db_database
 
-                # Create new versioned database (old database is preserved)
-                database_result = await self.postgres_connector.create_database(
-                    database_name=db_database,
-                    owner=db_username,
-                )
-                if database_result["status"] != "created":
-                    raise Exception(
-                        f"Failed to create versioned database {db_database}: {database_result.get('message', 'Unknown error')}"
+                    logger.info(
+                        f"Generational failover: creating database {db_database} "
+                        f"(generation {generation} -> {new_generation}, "
+                        f"force_clone={force_clone})"
                     )
+
+                    database_result = await self.postgres_connector.create_database(
+                        database_name=db_database,
+                        owner=db_username,
+                    )
+                    if database_result["status"] == "created":
+                        break
+
+                    # Versioned database already exists (leftover from previous failed clone)
+                    logger.warning(
+                        f"Database {db_database} already exists (leftover from failed clone), "
+                        f"trying generation {new_generation + 1}"
+                    )
+                    new_generation += 1
+                else:
+                    raise Exception(
+                        f"Could not find an available generation after {max_attempts} attempts "
+                        f"(tried up to generation {new_generation}). Manual cleanup required."
+                    )
+
                 logger.info(f"Created new versioned database: {db_database}")
                 final_generation = new_generation
+                database_created_here = True
             elif database_result["status"] == "created":
                 logger.info(f"Created database for cloning: {db_database}")
             else:
@@ -606,18 +657,32 @@ class DatabaseManager:
                     else:
                         logger.warning(f"PostInitSQL execution issue: {init_result}")
 
-            # STEP 2: Perform the clone operation using database template
-            clone_result = await self.postgres_connector.clone_schema(
-                source_database=source_database,
-                target_database=db_database,
-                source_schema=source_schema,
-                target_schema=db_schema,
-                target_owner=db_username,
-                target_owner_password=db_password,
-            )
+            # STEP 2: Perform the clone operation
+            # If clone fails and we created the database in this operation, clean it up
+            # to prevent a limbo state with a partially-created database
+            try:
+                clone_result = await self.postgres_connector.clone_schema(
+                    source_database=source_database,
+                    target_database=db_database,
+                    source_schema=source_schema,
+                    target_schema=db_schema,
+                    target_owner=db_username,
+                    target_owner_password=db_password,
+                )
 
-            if clone_result["status"] != "success":
-                raise RuntimeError(f"Failed to clone database: {clone_result.get('message', 'Unknown error')}")
+                if clone_result["status"] != "success":
+                    raise RuntimeError(f"Failed to clone database: {clone_result.get('message', 'Unknown error')}")
+            except Exception:
+                if database_created_here:
+                    logger.warning(
+                        f"Clone failed for {db_database}, cleaning up freshly created database to prevent limbo state"
+                    )
+                    try:
+                        await self.postgres_connector.delete_database(db_database)
+                        logger.info(f"Cleaned up database {db_database} after failed clone")
+                    except Exception as cleanup_err:
+                        logger.error(f"Failed to clean up database {db_database} after failed clone: {cleanup_err}")
+                raise
 
             logger.info(f"Successfully cloned database from {source_database} to {db_database}")
             logger.info(f"Schema cloned with target name '{db_schema}' - no additional rename needed")
@@ -686,7 +751,7 @@ class DatabaseManager:
             else:
                 logger.info(f"Database schema already exists: {db_schema}")
 
-        return None  # No password override needed, caller uses original db_password
+        return DatabaseStateResult(database=db_database, schema=db_schema, password=db_password)
 
     async def _validate_clone_source(self, source_database: str, source_schema: str) -> None:
         """
@@ -832,59 +897,63 @@ class DatabaseManager:
             # Ensure we have a PostgreSQL connector for this deployment
             self._ensure_connection()
 
-            # Get appropriate database configuration (namespace-specific or shared)
-            db_host, admin_username, admin_password = await self._get_database_config_for_deployment(
-                project_data, deployment
-            )
-
-            # Generate database identifiers (base name without version for deletion)
-            # Note: For versioned databases, deletion should be handled by ArgoCD pruning
             db_username = generate_database_name(project_name, deployment_name, None)
-            db_database = db_username
 
-            # Delete database (this will cascade delete all schemas and objects within it)
-            try:
-                database_result = await self.postgres_connector.delete_database(
-                    host=db_host,
-                    admin_username=admin_username,
-                    admin_password=admin_password,
-                    database_name=db_database,
+            # Build list of all databases to delete: base name + all generational versions
+            databases_to_delete = [generate_database_name(project_name, deployment_name, None)]
+            current_generation = self._get_deployment_database_generation(project_data, deployment_name)
+            if current_generation is not None and current_generation > 0:
+                databases_to_delete.extend(
+                    generate_database_name(project_name, deployment_name, gen)
+                    for gen in range(1, current_generation + 1)
+                )
+                logger.info(
+                    f"Deployment has generation {current_generation}, "
+                    f"will attempt to delete {len(databases_to_delete)} database(s): {databases_to_delete}"
                 )
 
-                if database_result["status"] in ["success", "deleted"]:
-                    deletion_results["operations"].append(
-                        {"type": "database_deletion", "target": db_database, "status": "success"}
+            # Delete all databases (base + generational versions)
+            for db_database in databases_to_delete:
+                try:
+                    database_result = await self.postgres_connector.delete_database(
+                        database_name=db_database,
                     )
-                    logger.info(f"Successfully deleted database (with all schemas): {db_database}")
-                else:
-                    deletion_results["operations"].append(
-                        {
-                            "type": "database_deletion",
-                            "target": db_database,
-                            "status": "not_found"
-                            if "does not exist" in database_result.get("message", "")
-                            else "failed",
-                            "error": database_result.get("message", "Unknown error"),
-                        }
-                    )
-                    if "does not exist" not in database_result.get("message", ""):
+
+                    if database_result["status"] in ["success", "deleted"]:
+                        deletion_results["operations"].append(
+                            {"type": "database_deletion", "target": db_database, "status": "success"}
+                        )
+                        logger.info(f"Successfully deleted database (with all schemas): {db_database}")
+                    elif database_result["status"] == "not_found" or "does not exist" in database_result.get(
+                        "message", ""
+                    ):
+                        deletion_results["operations"].append(
+                            {"type": "database_deletion", "target": db_database, "status": "not_found"}
+                        )
+                        logger.debug(f"Database {db_database} does not exist, skipping")
+                    else:
+                        deletion_results["operations"].append(
+                            {
+                                "type": "database_deletion",
+                                "target": db_database,
+                                "status": "failed",
+                                "error": database_result.get("message", "Unknown error"),
+                            }
+                        )
                         deletion_results["errors"].append(
                             f"Failed to delete database {db_database}: {database_result.get('message')}"
                         )
 
-            except Exception as e:
-                deletion_results["operations"].append(
-                    {"type": "database_deletion", "target": db_database, "status": "error", "error": str(e)}
-                )
-                deletion_results["errors"].append(f"Error deleting database {db_database}: {e}")
-                logger.exception(f"Error deleting database {db_database}: {e}")
+                except Exception as e:
+                    deletion_results["operations"].append(
+                        {"type": "database_deletion", "target": db_database, "status": "error", "error": str(e)}
+                    )
+                    deletion_results["errors"].append(f"Error deleting database {db_database}: {e}")
+                    logger.exception(f"Error deleting database {db_database}: {e}")
 
             # Delete user (do this last since it owns the database)
             try:
                 update_result = await self.postgres_connector.delete_user(
-                    host=db_host,
-                    admin_username=admin_username,
-                    admin_password=admin_password,
                     username=db_username,
                 )
 

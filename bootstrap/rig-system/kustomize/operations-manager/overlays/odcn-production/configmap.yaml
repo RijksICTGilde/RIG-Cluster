@@ -34,13 +34,16 @@ data:
 
     KEYCLOAK_URL=https://keycloak.rijksapp.nl
 
+    PROMETHEUS_URL=http://prometheus.rig-prd-operations:9090
+    PROMETHEUS_EXTERNAL_URL=https://prometheus.rig.prd1.gn2.quattro.rijksapps.nl
+
     ARGOCD_HOST=argocd-server
     ARGOCD_PORT=80
 
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
 
-    ALLOWED_EMAILS=anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
+    ALLOWED_EMAILS=mailto:maurits.mink@rijksoverheid.nl,sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
     GRAFANA_DATASOURCE_UID=mimir-prd
     ENABLE_TRACEMALLOC=false
     ARGOCD_MANAGER=rig-prd-operations

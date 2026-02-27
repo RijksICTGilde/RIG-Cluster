@@ -5,7 +5,6 @@ Tests the ability to define multiple paths for a component, each generating
 its own Kubernetes Ingress resource.
 """
 
-import pytest
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.utils.naming import generate_ingress_name_from_path
 
@@ -103,22 +102,35 @@ class TestExtractComponentPaths:
             {"match": "/v1", "rewrite": None},
         ]
 
-    def test_rewrite_raises_not_implemented(self):
-        """Rewrite option should raise NotImplementedError."""
+    def test_rewrite_passes_through(self):
+        """Rewrite option should be included in the path config."""
         project_data = {
             "components": [
                 {
                     "name": "api",
                     "path": [
-                        {"match": "/api", "rewrite": "/"},
+                        {"match": "/kader", "rewrite": "/"},
                     ],
                 }
             ]
         }
-        with pytest.raises(NotImplementedError) as exc_info:
-            self.handler.extract_component_paths(project_data, "api")
-        assert "Path rewrite is not yet implemented" in str(exc_info.value)
-        assert "rewrite='/'" in str(exc_info.value)
+        result = self.handler.extract_component_paths(project_data, "api")
+        assert result == [{"match": "/kader", "rewrite": "/"}]
+
+    def test_rewrite_none_when_not_specified(self):
+        """Rewrite should be None when not specified in path config."""
+        project_data = {
+            "components": [
+                {
+                    "name": "api",
+                    "path": [
+                        {"match": "/api"},
+                    ],
+                }
+            ]
+        }
+        result = self.handler.extract_component_paths(project_data, "api")
+        assert result == [{"match": "/api", "rewrite": None}]
 
     def test_component_not_found(self):
         """Non-existent component should return default path."""

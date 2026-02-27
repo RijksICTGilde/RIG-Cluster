@@ -131,8 +131,9 @@ async def initialize_database_pools() -> None:
         password=settings.DATABASE_ADMIN_PASSWORD,
         database=settings.DATABASE_NAME,
         port=5432,
-        min_size=2,
+        min_size=0,
         max_size=10,
+        max_inactive_connection_lifetime=300.0,
     )
 
     try:

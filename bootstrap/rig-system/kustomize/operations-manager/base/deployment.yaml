@@ -29,6 +29,10 @@ spec:
       - name: operations-manager
         image: operations-manager:latest
         imagePullPolicy: Always
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sleep", "5"]
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -42,19 +46,24 @@ spec:
         ports:
         - containerPort: 8000
           name: http
-        readinessProbe:
+        startupProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: 8000
           initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 60
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8000
           periodSeconds: 10
           timeoutSeconds: 5
-          failureThreshold: 3
+          failureThreshold: 1
         livenessProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: 8000
-          initialDelaySeconds: 15
           periodSeconds: 20
           timeoutSeconds: 5
           failureThreshold: 3

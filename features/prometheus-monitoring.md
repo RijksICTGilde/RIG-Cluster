@@ -137,6 +137,9 @@ These custom metrics help identify which internal component is consuming memory.
 | `opi_gc_objects{generation="0"}` | Python GC gen-0 objects (short-lived) |
 | `opi_gc_objects{generation="1"}` | Python GC gen-1 objects (survived one collection) |
 | `opi_gc_objects{generation="2"}` | Python GC gen-2 objects (long-lived, potential leaks) |
+| `opi_container_memory_bytes` | Total container memory from cgroup (Python + subprocesses) |
+| `opi_child_process_count` | Number of active child processes |
+| `opi_child_process_rss_bytes` | RSS per active child process (labeled by pid and command) |
 
 #### Database connection pools
 
@@ -169,27 +172,85 @@ opi_tracemalloc_alloc_bytes{file=~"opi/.*"}
 opi_tracemalloc_alloc_bytes{file="opi/services/project_service.py"}[1h]
 ```
 
+### Container Memory and Subprocess Tracking
+
+The Operations Manager spawns subprocesses (git, kubectl, sops, age, psql, kopia, mc) that
+consume memory outside the Python process. The built-in `process_resident_memory_bytes` only
+tracks the Python process RSS — but Kubernetes counts **all** memory in the container's cgroup
+when deciding to OOM kill.
+
+These metrics bridge that gap:
+
+| Query | What it shows |
+|-------|---------------|
+| `opi_container_memory_bytes{job="operations-manager"}` | Total container memory from cgroup (Python + all subprocesses) — **this is what Kubernetes measures for OOM** |
+| `opi_child_process_rss_bytes{job="operations-manager"}` | RSS of each active child process (labeled by pid and command) |
+| `opi_child_process_count{job="operations-manager"}` | Number of active child processes at scrape time |
+
+#### Key queries for OOM investigation
+
+```promql
+# Total container memory in MB (what Kubernetes sees)
+opi_container_memory_bytes{job="operations-manager"} / 1024 / 1024
+
+# How close to OOM kill threshold (2Gi limit for ODCN production)
+opi_container_memory_bytes{job="operations-manager"} / 2147483648
+
+# Subprocess memory overhead (container total minus Python RSS)
+(opi_container_memory_bytes{job="operations-manager"} - process_resident_memory_bytes{job="operations-manager"}) / 1024 / 1024
+
+# Active child processes and their memory (check during heavy operations)
+opi_child_process_rss_bytes{job="operations-manager"}
+
+# Child process count over time (spikes = concurrent subprocess activity)
+opi_child_process_count{job="operations-manager"}
+```
+
+**Note:** The child process scan runs at each Prometheus scrape (every 30s). Short-lived
+subprocesses (< 30s) may not be captured individually, but their memory impact is always
+reflected in `opi_container_memory_bytes`. The cgroup metric handles cgroups v2 and v1.
+
+#### Known memory-heavy subprocesses
+
+| Connector | Command | Risk |
+|-----------|---------|------|
+| `postgres.py` | pg_dump/psql (schema clone) | High — database dumps can be large |
+| `git.py` | git clone/push | High — depends on repo size |
+| `kopia.py` | kopia backup/restore | High — backup data in memory |
+| `kubectl.py` | kubectl apply (large manifests) | Moderate |
+| `sops.py` / `age.py` | sops/age encrypt/decrypt | Low |
+| `minio_mc.py` | mc commands | Low-moderate |
+
 ### Diagnosing an OOM Kill
 
 When the Operations Manager gets OOMKilled, use these queries to understand what happened leading up to the kill:
 
 ```promql
-# 1. Was memory growing steadily? (check the graph view)
-process_resident_memory_bytes{job="operations-manager"}
+# 1. Was container memory approaching the limit? (start here)
+opi_container_memory_bytes{job="operations-manager"} / 1024 / 1024
 
-# 2. What internal structures were growing?
+# 2. Was it the Python process or subprocesses?
+process_resident_memory_bytes{job="operations-manager"} / 1024 / 1024
+
+# 3. Subprocess overhead (if this is large, subprocesses caused the OOM)
+(opi_container_memory_bytes{job="operations-manager"} - process_resident_memory_bytes{job="operations-manager"}) / 1024 / 1024
+
+# 4. Were there many concurrent child processes?
+opi_child_process_count{job="operations-manager"}
+
+# 5. What internal structures were growing?
 opi_projects_cached
 opi_task_managers_active
 opi_background_tasks_active
 opi_websocket_connections_global
 
-# 3. Were GC gen-2 objects accumulating? (objects that survive collection = potential leak)
+# 6. Were GC gen-2 objects accumulating? (objects that survive collection = potential leak)
 opi_gc_objects{generation="2"}
 
-# 4. Were database connections piling up?
+# 7. Were database connections piling up?
 opi_database_pool_active_connections
 
-# 5. If tracemalloc was enabled, which files were the biggest allocators?
+# 8. If tracemalloc was enabled, which files were the biggest allocators?
 topk(10, opi_tracemalloc_alloc_bytes)
 ```
 

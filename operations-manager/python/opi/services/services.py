@@ -352,6 +352,14 @@ class ServiceAdapter:
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
         ),
+        ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
+            name="Authorization Wall",
+            description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties",
+            icon="schild",
+            color="groen",
+            scope="component",
+            variables=[],
+        ),
     }
 
     @classmethod

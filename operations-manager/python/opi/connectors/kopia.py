@@ -240,6 +240,8 @@ class KopiaConnector:
         logger.debug(f"Running Kopia command: {' '.join(safe_cmd)}")
 
         try:
+            from opi.core.metrics import track_subprocess_memory
+
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -247,10 +249,11 @@ class KopiaConnector:
                 env=self.env,
             )
 
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=timeout,
-            )
+            async with track_subprocess_memory("kopia"):
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=timeout,
+                )
 
             stdout_str = stdout.decode("utf-8") if stdout else ""
             stderr_str = stderr.decode("utf-8") if stderr else ""

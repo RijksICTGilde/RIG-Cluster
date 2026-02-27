@@ -134,7 +134,11 @@ class KubectlConnector:
             raise KubectlConnectionError("Connection still failed")
 
     async def _run_kubectl_command(
-        self, args: list[str], env: dict[str, str] | None = None, stdin_input: str | None = None
+        self,
+        args: list[str],
+        env: dict[str, str] | None = None,
+        stdin_input: str | None = None,
+        timeout: int = 60,
     ) -> tuple[str, str, int]:
         """
         Run a kubectl command directly with subprocess.
@@ -143,13 +147,14 @@ class KubectlConnector:
             args: List of kubectl command arguments
             env: Optional environment variables
             stdin_input: Optional string to pass to stdin
+            timeout: Maximum seconds to wait for the command to complete (default: 60)
 
         Returns:
             Tuple of (stdout, stderr, return_code)
 
         Raises:
             KubectlConnectionError: If kubectl connection is not available
-            KubectlExecutionError: If kubectl command fails
+            KubectlExecutionError: If kubectl command fails or times out
         """
         # Check connection before running command
         if not KubectlConnector.isConnected:
@@ -164,6 +169,8 @@ class KubectlConnector:
         cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
         cmd_str = f"kubectl {cmd_args_str}"
 
+        from opi.core.metrics import track_subprocess_memory
+
         if stdin_input:
             # Use shell execution with EOF markers for stdin input to handle spaces/newlines properly
             shell_cmd = f"{cmd_str} <<'EOF'\n{stdin_input}\nEOF"
@@ -175,22 +182,37 @@ class KubectlConnector:
                 shell_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env
             )
 
-            # Wait for command to complete
-            stdout, stderr = await process.communicate()
+            # Wait for command to complete with timeout
+            try:
+                async with track_subprocess_memory("kubectl"):
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            except TimeoutError:
+                logger.error(f"kubectl command timed out after {timeout}s")
+                process.kill()
+                await process.wait()
+                return "", f"Command timed out after {timeout}s", 1
         else:
             # Use regular exec for commands without stdin
             cmd = ["kubectl"]
             cmd.extend(args)
 
-            logger.debug(f"Running kubectl command: {cmd_str}")
+            logger.debug("Running kubectl command")
 
             # Create process
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env
             )
 
-            # Wait for command to complete
-            stdout, stderr = await process.communicate()
+            # Wait for command to complete with timeout
+            try:
+                async with track_subprocess_memory("kubectl"):
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            except TimeoutError:
+                logger.error(f"kubectl command timed out after {timeout}s")
+                process.kill()
+                await process.wait()
+                return "", f"Command timed out after {timeout}s", 1
+
         stdout_str = stdout.decode("utf-8").strip()
         stderr_str = stderr.decode("utf-8").strip()
 
@@ -204,9 +226,9 @@ class KubectlConnector:
                 logger.error(error_msg)
                 raise KubectlConnectionError(error_msg)
         else:
-            logger.debug(f"kubectl command succeeded: {cmd_str}")
+            logger.debug("kubectl command succeeded")
 
-        return stdout_str, stderr_str, process.returncode
+        return stdout_str, stderr_str, process.returncode or 0
 
     async def run_command(
         self, args: list[str], env: dict[str, str] | None = None, stdin_input: str | None = None

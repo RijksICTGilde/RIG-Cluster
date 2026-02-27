@@ -15,12 +15,23 @@ Custom collectors here add OPI-specific internal state:
 - Optional tracemalloc breakdown by file
 """
 
+import asyncio
 import gc
 import logging
+import os
+import time
 import tracemalloc
 
 from prometheus_client.core import GaugeMetricFamily
 from prometheus_client.registry import Collector
+
+_PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
+
+# Peak memory tracking state (updated by background sampler every second)
+_peak_memory_bytes: int = 0
+_peak_memory_timestamp: float = 0.0
+_last_reset_timestamp: float = 0.0
+_sample_task: asyncio.Task[None] | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +170,100 @@ class OPICollector(Collector):
             logger.debug("Failed to collect GC metrics", exc_info=True)
         yield gc_objects
 
+        # --- Container cgroup memory (what Kubernetes sees) ---
+        cgroup_mem = GaugeMetricFamily(
+            "opi_container_memory_bytes",
+            "Total container memory from cgroup including subprocesses",
+        )
+        for cgroup_path in [
+            "/sys/fs/cgroup/memory.current",  # cgroups v2
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",  # cgroups v1
+        ]:
+            try:
+                with open(cgroup_path) as f:
+                    cgroup_mem.add_metric([], int(f.read().strip()))
+                break
+            except FileNotFoundError:
+                continue
+            except Exception:
+                logger.debug("Failed to read cgroup memory from %s", cgroup_path, exc_info=True)
+                break
+        yield cgroup_mem
+
+        # --- Child process memory (subprocess RSS at scrape time) ---
+        child_rss = GaugeMetricFamily(
+            "opi_child_process_rss_bytes",
+            "RSS memory of active child processes",
+            labels=["pid", "command"],
+        )
+        child_count = GaugeMetricFamily(
+            "opi_child_process_count",
+            "Number of active child processes",
+        )
+        my_pid = os.getpid()
+        num_children = 0
+        try:
+            for entry in os.listdir("/proc"):
+                if not entry.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{entry}/stat") as f:
+                        stat = f.read()
+                    # Parse: pid (comm) state ppid ...
+                    # comm can contain spaces/parens, find closing paren
+                    close_paren = stat.rfind(")")
+                    fields_after_comm = stat[close_paren + 2 :].split()
+                    ppid = int(fields_after_comm[1])
+                    if ppid != my_pid:
+                        continue
+                    rss_pages = int(fields_after_comm[21])
+                    rss_bytes = rss_pages * _PAGE_SIZE
+                    with open(f"/proc/{entry}/cmdline") as f:
+                        cmdline = f.read().replace("\0", " ").strip()[:100]
+                    child_rss.add_metric([entry, cmdline], rss_bytes)
+                    num_children += 1
+                except (FileNotFoundError, IndexError, ValueError, PermissionError):
+                    continue
+        except Exception:
+            logger.debug("Failed to scan child processes", exc_info=True)
+        child_count.add_metric([], num_children)
+        yield child_rss
+        yield child_count
+
+        # --- Peak memory (sampled every second by background task) ---
+        peak_mem = GaugeMetricFamily(
+            "opi_peak_memory_bytes",
+            "Peak container memory since last reset (sampled every second)",
+        )
+        peak_mem.add_metric([], _peak_memory_bytes)
+        yield peak_mem
+
+        peak_ts = GaugeMetricFamily(
+            "opi_peak_memory_timestamp",
+            "Unix timestamp when peak memory was recorded",
+        )
+        peak_ts.add_metric([], _peak_memory_timestamp)
+        yield peak_ts
+
+        # --- Per-connector subprocess memory deltas ---
+        connector_delta = GaugeMetricFamily(
+            "opi_connector_max_memory_delta_bytes",
+            "Maximum memory delta observed during subprocess calls per connector",
+            labels=["connector"],
+        )
+        for name, delta in _connector_max_memory_delta.items():
+            connector_delta.add_metric([name], delta)
+        yield connector_delta
+
+        connector_calls = GaugeMetricFamily(
+            "opi_connector_subprocess_calls_total",
+            "Total subprocess calls per connector since last restart",
+            labels=["connector"],
+        )
+        for name, count in _connector_subprocess_calls.items():
+            connector_calls.add_metric([name], count)
+        yield connector_calls
+
     def describe(self):
         """Return empty description; metrics are generated dynamically."""
         return []
@@ -227,3 +332,96 @@ def setup_tracemalloc() -> None:
     tracemalloc.start()
     REGISTRY.register(TracmallocCollector())
     logger.info("Tracemalloc started and collector registered (adds memory overhead)")
+
+
+def _read_cgroup_memory() -> int | None:
+    """Read current cgroup memory usage. Returns bytes or None if unavailable."""
+    for path in [
+        "/sys/fs/cgroup/memory.current",
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    ]:
+        try:
+            with open(path) as f:
+                return int(f.read().strip())
+        except FileNotFoundError:
+            continue
+        except Exception:
+            return None
+    return None
+
+
+async def _peak_memory_sampler() -> None:
+    """Background task that samples cgroup memory every second and tracks the peak."""
+    global _peak_memory_bytes, _peak_memory_timestamp
+    while True:
+        try:
+            mem = _read_cgroup_memory()
+            if mem is not None and mem > _peak_memory_bytes:
+                _peak_memory_bytes = mem
+                _peak_memory_timestamp = time.time()
+        except Exception:
+            logger.debug("Failed to sample cgroup memory", exc_info=True)
+        await asyncio.sleep(1)
+
+
+def start_peak_memory_tracking() -> None:
+    """Start the background peak memory sampler. Safe to call multiple times."""
+    global _sample_task, _peak_memory_bytes, _peak_memory_timestamp, _last_reset_timestamp
+    if _sample_task and not _sample_task.done():
+        return
+    _peak_memory_bytes = 0
+    _peak_memory_timestamp = 0.0
+    _last_reset_timestamp = time.time()
+    _sample_task = asyncio.create_task(_peak_memory_sampler())
+    logger.info("Started peak memory sampler (1s interval)")
+
+
+def stop_peak_memory_tracking() -> None:
+    """Stop the background peak memory sampler."""
+    global _sample_task
+    if _sample_task and not _sample_task.done():
+        _sample_task.cancel()
+        logger.info("Stopped peak memory sampler")
+    _sample_task = None
+
+
+# --- Per-connector subprocess memory tracking ---
+# Records the max memory delta observed per connector during subprocess calls.
+# Key: connector name (e.g. "git", "kubectl", "sops"), Value: max delta in bytes.
+_connector_max_memory_delta: dict[str, int] = {}
+# Tracks count of subprocess calls per connector
+_connector_subprocess_calls: dict[str, int] = {}
+
+
+class _SubprocessMemoryTracker:
+    """Context manager that measures cgroup memory delta around a subprocess call.
+
+    Usage:
+        async with track_subprocess_memory("git"):
+            stdout, stderr = await process.communicate()
+    """
+
+    def __init__(self, connector: str) -> None:
+        self.connector = connector
+        self.before: int = 0
+
+    async def __aenter__(self) -> "_SubprocessMemoryTracker":
+        self.before = _read_cgroup_memory() or 0
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        after = _read_cgroup_memory() or 0
+        delta = after - self.before
+        _connector_subprocess_calls[self.connector] = _connector_subprocess_calls.get(self.connector, 0) + 1
+        if delta > _connector_max_memory_delta.get(self.connector, 0):
+            _connector_max_memory_delta[self.connector] = delta
+            logger.info(
+                f"New peak memory delta for {self.connector}: "
+                f"{delta / 1024 / 1024:.1f} MB (before={self.before / 1024 / 1024:.1f} MB, "
+                f"after={after / 1024 / 1024:.1f} MB)"
+            )
+
+
+def track_subprocess_memory(connector: str) -> _SubprocessMemoryTracker:
+    """Track memory delta around a subprocess call for a given connector name."""
+    return _SubprocessMemoryTracker(connector)

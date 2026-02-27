@@ -495,6 +495,9 @@ class KeycloakConnector:
                 self.admin.change_current_realm("master")
                 return False
 
+            # find_client_by_client_id switches back to master, so re-switch to target realm
+            self.admin.change_current_realm(realm_name)
+
             # Delete the client using its internal ID
             self.admin.delete_client(client_id=target_client["id"])
 

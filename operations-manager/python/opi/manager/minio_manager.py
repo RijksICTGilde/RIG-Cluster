@@ -496,7 +496,20 @@ class MinioManager:
                 return deletion_results
 
             minio_username = generate_minio_username(project_name, deployment_name)
-            bucket_name = generate_bucket_name(project_name, deployment_name, None)
+
+            # Build list of all buckets to delete: base name + all generational versions
+            buckets_to_delete = [generate_bucket_name(project_name, deployment_name, None)]
+            current_generation = self._get_deployment_bucket_generation(project_data, deployment_name)
+            if current_generation is not None and current_generation > 0:
+                buckets_to_delete.extend(
+                    generate_bucket_name(project_name, deployment_name, gen) for gen in range(1, current_generation + 1)
+                )
+                logger.info(
+                    f"Deployment has generation {current_generation}, "
+                    f"will attempt to delete {len(buckets_to_delete)} bucket(s): {buckets_to_delete}"
+                )
+
+            bucket_name = buckets_to_delete[0]  # Base name for policy/access operations
 
             # Remove bucket access from user first
             try:
@@ -570,39 +583,45 @@ class MinioManager:
                 deletion_results["errors"].append(f"Error deleting policy {policy_name}: {e}")
                 logger.exception("Error deleting MinIO policy")
 
-            # Delete bucket (force=True to delete even if not empty)
-            try:
-                bucket_result = await minio_connector.delete_bucket(alias_name, bucket_name, force=True)
+            # Delete all buckets (base + generational versions)
+            for bucket_to_delete in buckets_to_delete:
+                try:
+                    bucket_result = await minio_connector.delete_bucket(alias_name, bucket_to_delete, force=True)
 
-                if bucket_result["status"] in ["deleted", "success"]:
-                    deletion_results["operations"].append(
-                        {"type": "minio_bucket_deletion", "target": bucket_name, "status": "success"}
-                    )
-                    logger.info(f"Successfully deleted MinIO bucket: {bucket_name}")
-                elif bucket_result["status"] == "not_found" or "does not exist" in bucket_result.get("message", ""):
-                    deletion_results["operations"].append(
-                        {"type": "minio_bucket_deletion", "target": bucket_name, "status": "not_found"}
-                    )
-                    logger.info(f"MinIO bucket {bucket_name} does not exist or was already deleted")
-                else:
+                    if bucket_result["status"] in ["deleted", "success"]:
+                        deletion_results["operations"].append(
+                            {"type": "minio_bucket_deletion", "target": bucket_to_delete, "status": "success"}
+                        )
+                        logger.info(f"Successfully deleted MinIO bucket: {bucket_to_delete}")
+                    elif bucket_result["status"] == "not_found" or "does not exist" in bucket_result.get("message", ""):
+                        deletion_results["operations"].append(
+                            {"type": "minio_bucket_deletion", "target": bucket_to_delete, "status": "not_found"}
+                        )
+                        logger.debug(f"MinIO bucket {bucket_to_delete} does not exist, skipping")
+                    else:
+                        deletion_results["operations"].append(
+                            {
+                                "type": "minio_bucket_deletion",
+                                "target": bucket_to_delete,
+                                "status": "failed",
+                                "error": bucket_result.get("message", "Unknown error"),
+                            }
+                        )
+                        deletion_results["errors"].append(
+                            f"Failed to delete bucket {bucket_to_delete}: {bucket_result.get('message')}"
+                        )
+
+                except Exception as e:
                     deletion_results["operations"].append(
                         {
                             "type": "minio_bucket_deletion",
-                            "target": bucket_name,
-                            "status": "failed",
-                            "error": bucket_result.get("message", "Unknown error"),
+                            "target": bucket_to_delete,
+                            "status": "error",
+                            "error": str(e),
                         }
                     )
-                    deletion_results["errors"].append(
-                        f"Failed to delete bucket {bucket_name}: {bucket_result.get('message')}"
-                    )
-
-            except Exception as e:
-                deletion_results["operations"].append(
-                    {"type": "minio_bucket_deletion", "target": bucket_name, "status": "error", "error": str(e)}
-                )
-                deletion_results["errors"].append(f"Error deleting bucket {bucket_name}: {e}")
-                logger.exception("Error deleting MinIO bucket")
+                    deletion_results["errors"].append(f"Error deleting bucket {bucket_to_delete}: {e}")
+                    logger.exception(f"Error deleting MinIO bucket {bucket_to_delete}")
 
             # Delete user
             try:

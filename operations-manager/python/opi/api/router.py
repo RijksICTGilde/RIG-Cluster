@@ -1441,6 +1441,99 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
             await project_manager.close()
 
 
+@api_router.get(
+    "/projects/{project_name}/deployments/{deployment_name}/:refresh",
+    responses={
+        200: {"model": RefreshProjectResponse, "description": "Deployment refreshed successfully"},
+    },
+)
+@validate_api_token
+async def refresh_deployment(
+    request: Request, project_name: str, deployment_name: str, force_clone: bool = False
+) -> JSONResponse:
+    """
+    Refresh a single deployment by reprocessing it from the project YAML file.
+
+    This re-runs the provisioning steps for the specified deployment only,
+    without affecting other deployments in the project.
+
+    Query Parameters:
+        force_clone: Force clone even if target resources exist (default: False)
+
+    Example:
+    curl -X GET "http://localhost:9595/api/projects/example-name/deployments/staging/:refresh" \\
+      -H "X-API-Key: d68d6aebd694d636e5eb4784a952b9c3"
+    """
+    project_manager = None
+    try:
+        logger.info(f"Deployment refresh request for: {project_name}/{deployment_name} (force_clone={force_clone})")
+
+        if not validate_project_name(project_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+
+        project_service = get_project_service()
+        project = project_service.get_project(project_name)
+
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in project registry")
+
+        project_manager = create_project_manager()
+        project_file_path = f"projects/{project.filename}"
+
+        processing_result = await project_manager.process_project_from_git(
+            project_file_path, deployment_name=deployment_name, force_clone=force_clone
+        )
+
+        if processing_result:
+            logger.info(f"Deployment refresh completed successfully: {project_name}/{deployment_name}")
+
+            urls: dict[str, dict[str, Any]] = {}
+            deployment_results = project_manager.get_deployment_results()
+            for dep_name, dep_result in deployment_results.items():
+                urls[dep_name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
+
+            content = {
+                "status": "success",
+                "message": f"Deployment '{deployment_name}' in project '{project_name}' refreshed successfully",
+                "project": {"name": project_name, "file_path": project_file_path},
+                "urls": urls,
+                "processing": {
+                    "status": "completed",
+                    "message": f"Deployment '{deployment_name}' processed successfully",
+                    "result": processing_result,
+                },
+            }
+            return JSONResponse(content=content, status_code=200)
+        else:
+            logger.warning(f"Deployment refresh failed: {project_name}/{deployment_name}")
+
+            content = {
+                "status": "failed",
+                "message": f"Deployment '{deployment_name}' in project '{project_name}' refresh failed",
+                "project": {"name": project_name, "file_path": project_file_path},
+                "processing": {
+                    "status": "failed",
+                    "message": f"Failed to process deployment '{deployment_name}'",
+                    "result": processing_result,
+                },
+            }
+            return JSONResponse(content=content, status_code=500)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing deployment refresh request: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Error refreshing deployment: {e!s}")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
 @api_router.delete("/projects/{project_name}")
 @validate_api_token
 async def delete_project(
