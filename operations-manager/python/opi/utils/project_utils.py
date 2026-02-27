@@ -22,6 +22,192 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 logger = logging.getLogger(__name__)
 
 
+class ComponentValidationError(ValueError):
+    """Raised when component configuration validation fails."""
+
+
+def validate_component_paths(component_paths: list[str], domain_mode: str) -> None:
+    """
+    Validate path uniqueness for shared-domain modes.
+
+    When using shared domains (deployment-name, custom), all component paths
+    within a deployment must be unique to enable correct routing.
+
+    Args:
+        component_paths: List of paths from all components in the deployment
+        domain_mode: The deployment's domain mode
+
+    Raises:
+        ValueError: If duplicate paths are found in a shared-domain mode
+    """
+    if domain_mode not in ("deployment-name", "custom"):
+        return
+
+    seen_paths: set[str] = set()
+    duplicate_paths: list[str] = []
+    for path in component_paths:
+        if path in seen_paths:
+            duplicate_paths.append(path)
+        seen_paths.add(path)
+
+    if duplicate_paths:
+        raise ComponentValidationError(
+            f"When using shared domains (domain mode: {domain_mode}), all component paths must be unique. "
+            f"Duplicate paths found: {', '.join(duplicate_paths)}. "
+            f"Please assign different paths to each component (e.g., /, /api, /admin)."
+        )
+
+
+def validate_root_component(components_with_root: list[tuple[str, bool, int | None]], domain_mode: str) -> None:
+    """
+    Validate root component constraints.
+
+    In nice-url mode, at most one component can be the root, and it must have a port.
+
+    Args:
+        components_with_root: List of (name, is_root, port) tuples for all components in the deployment
+        domain_mode: The deployment's domain mode
+
+    Raises:
+        ValueError: If root component constraints are violated
+    """
+    root_components = [(name, port) for name, is_root, port in components_with_root if is_root]
+
+    if not root_components:
+        return
+
+    if domain_mode != "nice-url":
+        root_names = [name for name, _ in root_components]
+        raise ComponentValidationError(
+            f"Root component flag is only valid in nice-url domain mode, "
+            f"but domain mode is '{domain_mode}'. Components marked as root: {', '.join(root_names)}"
+        )
+
+    if len(root_components) > 1:
+        root_names = [name for name, _ in root_components]
+        raise ComponentValidationError(
+            f"In nice-url mode, only one component can be marked as root. "
+            f"Found {len(root_components)} root components: {', '.join(root_names)}"
+        )
+
+    root_name, root_port = root_components[0]
+    if root_port is None:
+        raise ComponentValidationError(
+            f"Component '{root_name}' is marked as root but has no port specified. "
+            f"Root component must have a port for web publishing."
+        )
+
+
+def parse_aliases(aliases_str: str) -> dict[str, Any]:
+    """
+    Parse a YAML aliases string into a dictionary.
+
+    Aliases allow components to reference system-provided variables using
+    $VARIABLE_NAME syntax (e.g., DATABASE_URL: $HOST:$PORT/$DB_NAME).
+
+    Args:
+        aliases_str: YAML-formatted string of alias definitions
+
+    Returns:
+        Parsed dictionary of aliases
+
+    Raises:
+        ValueError: If the aliases string is not valid YAML or not a dict
+    """
+    try:
+        yaml_instance = YAML()
+        aliases_dict = yaml_instance.load(aliases_str)
+        if aliases_dict and isinstance(aliases_dict, dict):
+            return aliases_dict
+        return {}
+    except Exception as e:
+        raise ComponentValidationError(f"Invalid aliases format: {e!s}") from e
+
+
+async def build_component_config(
+    name: str,
+    component_type: str,
+    port: int | None,
+    path: str,
+    services: list[str],
+    cpu_limit: str | None = None,
+    memory_limit: str | None = None,
+    env_vars: str | None = None,
+    aliases: str | None = None,
+    root: bool = False,
+    public_key: str | None = None,
+    default_port: int | None = None,
+) -> dict[str, Any]:
+    """
+    Build a complete component config dict.
+
+    This is the shared component building logic used by both project creation
+    and the add-component API.
+
+    Args:
+        name: Component name
+        component_type: Component type (e.g., "single", "frontend", "backend")
+        port: Inbound port (None for background workers)
+        path: Ingress path (e.g., "/", "/api")
+        services: Component's uses-services list as strings
+        cpu_limit: CPU limit (e.g., "1", "500m")
+        memory_limit: Memory limit (e.g., "256Mi", "1Gi")
+        env_vars: Environment variables in KEY=value format (will be encrypted)
+        aliases: YAML string of alias definitions
+        root: Whether this is the root component (nice-url mode)
+        public_key: AGE public key for encrypting env vars
+        default_port: Default port if none specified (e.g., 8080 for project creation)
+
+    Returns:
+        Component configuration dictionary
+    """
+    # Parse component-level services
+    component_services = ServiceAdapter.parse_services_from_strings(services)
+
+    inbound_ports = [port] if port else ([default_port] if default_port else [])
+    component_config: dict[str, Any] = {
+        "name": name,
+        "type": component_type,
+        "ports": {"inbound": inbound_ports, "outbound": [80, 443]},
+        "path": path,
+        "uses-services": [service.value for service in component_services],
+        "uses-components": [],
+    }
+
+    # Add root flag for nice-url mode
+    if root:
+        component_config["root"] = True
+
+    # Add storage configurations from services
+    storage_configs = ServiceAdapter.create_storage_configs(component_services)
+    if storage_configs:
+        component_config["storage"] = storage_configs
+
+    # Add resource limits if specified
+    if cpu_limit or memory_limit:
+        component_config["resources"] = {}
+        if cpu_limit:
+            component_config["resources"]["cpu"] = cpu_limit
+        if memory_limit:
+            component_config["resources"]["memory"] = memory_limit
+
+    # Encrypt and add user env vars if provided
+    if env_vars:
+        if not public_key:
+            logger.warning(f"Could not encrypt env_vars for component '{name}': no AGE public key available")
+        else:
+            encrypted_env_vars = await encrypt_age_content(env_vars, public_key)
+            component_config["user-env-vars"] = LiteralScalarString(encrypted_env_vars)
+
+    # Add aliases if provided (no encryption needed - they reference system variables)
+    if aliases:
+        aliases_dict = parse_aliases(aliases)
+        if aliases_dict:
+            component_config["aliases"] = aliases_dict
+
+    return component_config
+
+
 def normalize_container_image(image: str) -> tuple[str, bool]:
     """
     Normalize a container image reference to lowercase.
@@ -111,53 +297,23 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     components_list = []
     if project_data.components:
         for idx, comp in enumerate(project_data.components):
-            # Parse component-level services
-            component_services = ServiceAdapter.parse_services_from_strings(comp.services or [])
-
-            component_config = {
-                "name": f"component-{idx + 1}",
-                "type": comp.type,
-                "ports": {"inbound": [comp.port] if comp.port else [8080], "outbound": [80, 443]},
-                "path": comp.path,  # Publication path for ingress routing
-                "uses-services": [service.value for service in component_services],
-                "uses-components": [],
-            }
-
-            # Add root flag for nice-url mode (designates component to receive bare subdomain traffic)
-            if comp.root:
-                component_config["root"] = True
-
-            # Add storage configurations from services
-            storage_configs = ServiceAdapter.create_storage_configs(component_services)
-            if storage_configs:
-                component_config["storage"] = storage_configs
-
-            # Add resource limits if specified
-            if comp.cpu_limit or comp.memory_limit:
-                component_config["resources"] = {}
-                if comp.cpu_limit:
-                    component_config["resources"]["cpu"] = comp.cpu_limit
-                if comp.memory_limit:
-                    component_config["resources"]["memory"] = comp.memory_limit
-
             try:
-                if comp.env_vars:
-                    encrypted_env_vars = await encrypt_age_content(comp.env_vars, public_key)
-                    component_config["user-env-vars"] = LiteralScalarString(encrypted_env_vars)
+                component_config = await build_component_config(
+                    name=f"component-{idx + 1}",
+                    component_type=comp.type,
+                    port=comp.port,
+                    path=comp.path,
+                    services=comp.services or [],
+                    cpu_limit=comp.cpu_limit,
+                    memory_limit=comp.memory_limit,
+                    env_vars=comp.env_vars,
+                    aliases=comp.aliases,
+                    root=comp.root,
+                    public_key=public_key,
+                    default_port=8080,
+                )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
-
-            # Add aliases if provided (no encryption needed - they reference system variables)
-            if comp.aliases:
-                try:
-                    # Parse aliases as YAML to validate format
-                    yaml_instance = YAML()
-                    aliases_dict = yaml_instance.load(comp.aliases)
-                    if aliases_dict and isinstance(aliases_dict, dict):
-                        component_config["aliases"] = aliases_dict
-                except Exception as e:
-                    logger.warning(f"Failed to parse aliases for component {idx + 1}: {e}")
-                    raise HTTPException(status_code=400, detail=f"Invalid aliases format: {e!s}")
 
             components_list.append(component_config)
     else:
