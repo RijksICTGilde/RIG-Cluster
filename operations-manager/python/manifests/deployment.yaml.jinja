@@ -10,7 +10,7 @@ metadata:
 spec:
   strategy:
     type: {{ pod_replacement_mode }}
-  replicas: 1
+  replicas: {{ replicas }}
   revisionHistoryLimit: 3
   selector:
     matchLabels:
@@ -111,11 +111,11 @@ spec:
           {% endif %}
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
+              memory: "{{ resources_requests_memory }}"
+              cpu: "{{ resources_requests_cpu }}"
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: "{{ resources_limits_memory }}"
+              cpu: "{{ resources_limits_cpu }}"
           startupProbe:
             tcpSocket:
               port: {{ application_port }}

@@ -10,6 +10,7 @@ import os
 import tempfile
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.config import settings
@@ -30,7 +31,7 @@ async def push_image(
     file: UploadFile,
     image_name: str = Query(..., description="Name of the container image"),
     tag: str = Query(..., description="Image tag"),
-) -> dict:
+) -> JSONResponse:
     """
     Upload a Docker image tarball and push it to the configured container registry.
 
@@ -78,11 +79,13 @@ async def push_image(
 
         image_ref = await connector.push_image(tarball_path, project_name, image_name, tag)
 
-        return {
-            "status": "success",
-            "message": f"Successfully pushed to {image_ref}",
-            "image": image_ref,
-        }
+        return JSONResponse(
+            {
+                "status": "success",
+                "message": f"Successfully pushed to {image_ref}",
+                "image": image_ref,
+            }
+        )
 
     except HTTPException:
         raise

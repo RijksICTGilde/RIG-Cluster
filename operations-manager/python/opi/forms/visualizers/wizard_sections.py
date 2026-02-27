@@ -114,11 +114,9 @@ COMPONENTS_SECTION = FormSection(
                 ),
                 Fieldset(
                     legend="Resources",
-                    description="CPU en geheugen limieten voor dit component. Gebruik de standaardwaarden als je niet zeker weet wat je nodig hebt. Dit kan later aangepast worden."
+                    description="Geheugen limieten voor dit component. Gebruik de standaardwaarden als je niet zeker weet wat je nodig hebt. Dit kan later aangepast worden. "
                     "Deze waardes zijn een richtlijn, de waardes zullen aangepast worden aan het daadwerkelijke gebruik.",
                     children=[
-                        "resources/cpu/request",
-                        "resources/cpu/limit",
                         "resources/memory/request",
                         "resources/memory/limit",
                     ],

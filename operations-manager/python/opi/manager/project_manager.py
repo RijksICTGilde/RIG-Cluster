@@ -1738,18 +1738,27 @@ class ProjectManager:
                         f"{[r.get('name') for r in registries]}"
                     )
 
-                # Generate registry secret name for infrastructure (using "infrastructure" as deployment name)
-                from opi.utils.naming import generate_registry_secret_name
-
-                registry_secret_name = generate_registry_secret_name("infrastructure", registry_name)
                 database_image = database_config.get("image")
+                secret_name_ref = registry_config.get("secretName")
+
+                if secret_name_ref:
+                    # Pre-existing secret: use directly, skip creation
+                    registry_secret_name = secret_name_ref
+                    logger.info(
+                        f"PostgreSQL will use pre-existing imagePullSecret '{registry_secret_name}' "
+                        f"for image '{database_image}'"
+                    )
+                else:
+                    # Generate registry secret name for infrastructure (using "infrastructure" as deployment name)
+                    from opi.utils.naming import generate_registry_secret_name
+
+                    registry_secret_name = generate_registry_secret_name("infrastructure", registry_name)
+                    logger.info(
+                        f"PostgreSQL will use imagePullSecret '{registry_secret_name}' for image '{database_image}'"
+                    )
 
                 # Map the database image to its registry secret
                 image_pull_secrets_map[database_image] = registry_secret_name
-
-                logger.info(
-                    f"PostgreSQL will use imagePullSecret '{registry_secret_name}' for image '{database_image}'"
-                )
 
             cluster_manifest = render_template(
                 "postgresql-cluster.yaml.jinja",
@@ -1820,8 +1829,8 @@ class ProjectManager:
                 f.write(network_policy_manifest)
             logger.info(f"Created network policy for infrastructure namespace: {infrastructure_namespace}")
 
-            # Create registry secret if PostgreSQL uses a private registry
-            if registry_name and registry_config:
+            # Create registry secret if PostgreSQL uses a private registry (skip for pre-existing secrets)
+            if registry_name and registry_config and not registry_config.get("secretName"):
                 logger.info(
                     f"Creating registry secret for PostgreSQL infrastructure in namespace: {infrastructure_namespace}"
                 )
@@ -3845,23 +3854,31 @@ class ProjectManager:
 
         for registry_name, registry_config in registry_configs_map.items():
             registry_url = registry_config.get("url", "")
-            username = registry_config.get("username", "")
-            password_encrypted = registry_config.get("password", "")
+            secret_name_ref = registry_config.get("secretName")
 
-            # Decrypt password (should be AGE-encrypted)
-            private_key = await get_decoded_project_private_key(project_data)
-            password = await decrypt_password_smart(password_encrypted, private_key)
+            if secret_name_ref:
+                # Pre-existing secret: use directly, skip creation
+                secret_name = secret_name_ref
+                logger.info(f"Registry '{registry_name}' uses pre-existing secret '{secret_name}' ({registry_url})")
+            else:
+                # Credential-based: decrypt and create RegistrySecret
+                username = registry_config.get("username", "")
+                password_encrypted = registry_config.get("password", "")
 
-            # Generate secret name using naming utility
-            secret_name = generate_registry_secret_name(deployment_name, registry_name)
+                # Decrypt password (should be AGE-encrypted)
+                private_key = await get_decoded_project_private_key(project_data)
+                password = await decrypt_password_smart(password_encrypted, private_key)
 
-            # Create RegistrySecret instance
-            registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
+                # Generate secret name using naming utility
+                secret_name = generate_registry_secret_name(deployment_name, registry_name)
 
-            # Add to secrets to be created (using generic secret template with dockerconfigjson type)
-            self._add_secret_to_create(deployment_name, registry_name, registry_secret)
+                # Create RegistrySecret instance
+                registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
 
-            logger.info(f"Created registry secret '{secret_name}' for registry '{registry_name}' ({registry_url})")
+                # Add to secrets to be created (using generic secret template with dockerconfigjson type)
+                self._add_secret_to_create(deployment_name, registry_name, registry_secret)
+
+                logger.info(f"Created registry secret '{secret_name}' for registry '{registry_name}' ({registry_url})")
 
             # Map all images using this registry to the secret name
             for image_url, img_registry_name in image_to_registry_map.items():
@@ -3920,6 +3937,25 @@ class ProjectManager:
 
             # Extract metrics configuration from component (for Prometheus scraping)
             metrics_config = self._project_file_handler.extract_component_metrics(project_data, component_reference)
+
+            # Extract resource configuration (component-level, then deployment-level overrides)
+            component_resources = self._project_file_handler.extract_component_resources(
+                project_data, component_reference
+            )
+            deployment_resources = self._project_file_handler.extract_deployment_component_resources(
+                project_data, deployment_name, component_reference
+            )
+            if deployment_resources:
+                logger.info(f"Found deployment-level resource overrides for component: {component_name}")
+                component_resources.update(deployment_resources)
+
+            # Extract disabled state — disabled components get replicas: 0
+            is_disabled, disabled_reason = self._project_file_handler.extract_component_disabled(
+                project_data, component_reference
+            )
+            replicas = 0 if is_disabled else 1
+            if is_disabled:
+                logger.info(f"Component '{component_name}' is disabled (reason: {disabled_reason}), setting replicas=0")
 
             # Extract user environment variables from component definition
             user_env_vars = await self._project_file_handler.extract_component_user_env_vars(
@@ -4174,6 +4210,13 @@ class ProjectManager:
                 # Prometheus metrics configuration (port and path for scraping)
                 "metrics_port": metrics_config.get("port"),
                 "metrics_path": metrics_config.get("path"),
+                # Resource configuration (requests and limits)
+                "resources_requests_memory": component_resources["requests_memory"],
+                "resources_requests_cpu": component_resources["requests_cpu"],
+                "resources_limits_memory": component_resources["limits_memory"],
+                "resources_limits_cpu": component_resources["limits_cpu"],
+                # Replicas (0 when component is disabled)
+                "replicas": replicas,
             }
 
             logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")

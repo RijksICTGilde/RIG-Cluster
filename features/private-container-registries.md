@@ -34,12 +34,29 @@ deployments:
 
 ## Configuration
 
+A registry uses **either** credentials (username/password) **or** a pre-existing Kubernetes secret (`secretName`), not both.
+
+### Credential-based (Operations Manager creates the secret)
+
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Unique identifier (multiple registries can share same URL) |
-| `url` | Yes | Registry URL without protocol (e.g., `docker.io`, `ghcr.io`) |
+| `url` | Yes | Registry URL without protocol, may include path (e.g., `ghcr.io`, `rcr.rijksapps.nl/rig`) |
 | `username` | Yes | Username or token name |
-| `password` | Yes | AGE-encrypted password or token |
+| `password` | Yes | AGE-encrypted password or token (supports `plain:` prefix for unencrypted) |
+
+### Pre-existing secret (Operations Manager references an existing secret)
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Unique identifier |
+| `url` | Yes | Registry URL without protocol, may include path |
+| `secretName` | Yes | Name of an existing `kubernetes.io/dockerconfigjson` secret in the namespace |
+
+When `secretName` is used, the Operations Manager skips secret creation and uses the referenced secret directly in `imagePullSecrets`. This is useful when:
+- The secret is managed externally (e.g., by the platform team)
+- The secret is pre-provisioned in the namespace
+- You want to share a single pull secret across deployments
 
 ## Examples
 
@@ -111,6 +128,37 @@ deployments:
         registry: github-org-b
 ```
 
+### Pre-existing secret (secretName)
+```yaml
+registries:
+  - name: platform-registry
+    url: rcr.rijksapps.nl/rig
+    secretName: rcr-pull-secret    # Must already exist in the namespace
+
+deployments:
+  - name: production
+    components:
+      - reference: api
+        image: "rcr.rijksapps.nl/rig/my-project/api:v1.0"
+        registry: platform-registry
+```
+
+### Sandbox registry (plain text credentials)
+```yaml
+registries:
+  - name: sandbox-registry
+    url: registry.sandbox.rijksapp.dev
+    username: admin
+    password: "plain:admin1234"     # plain: prefix skips AGE decryption
+
+deployments:
+  - name: production
+    components:
+      - reference: frontend
+        image: "registry.sandbox.rijksapp.dev/rig/my-project/frontend:v1"
+        registry: sandbox-registry
+```
+
 ### Mixed public and private images
 ```yaml
 deployments:
@@ -147,6 +195,43 @@ services:
 ```
 
 **Note**: The `registry` field in `namespace-postgresql-database` service config works the same as deployment components - it references a registry defined in the top-level `registries:` section.
+
+## Image Upload API
+
+The Operations Manager provides an API to push Docker image tarballs to the configured platform registry. This is the primary way to get custom images into the sandbox or production registry.
+
+### Push an image
+
+```bash
+# 1. Save your image as a tar
+docker save my-app:v1.0 -o /tmp/my-app.tar
+
+# 2. Upload via the API
+curl -X POST "https://<ops-manager-url>/api/v1/projects/<project-name>/images/push?image_name=my-app&tag=v1.0" \
+  -H "X-API-Key: <project-api-key>" \
+  -F "file=@/tmp/my-app.tar"
+```
+
+The image lands at `{REGISTRY_URL}/{REGISTRY_ORG}/{project-name}/{image-name}:{tag}`.
+
+### Important
+
+- The project namespace still needs an `imagePullSecret` to pull from the registry
+- Either configure a registry with credentials in the project YAML, or use `secretName` to reference a pre-provisioned pull secret
+- Maximum upload size is configurable via `IMAGE_UPLOAD_MAX_SIZE_MB` (default: 5120 MB)
+
+## Registry URL Paths
+
+Registry URLs can include paths, not just domains. This is useful when a single registry hosts multiple organizations:
+
+```yaml
+registries:
+  - name: my-org-registry
+    url: rcr.rijksapps.nl/rig/my-project    # URL with org/project path
+    secretName: rcr-pull-secret
+```
+
+The `url` field is used as the key in `.dockerconfigjson` auth entries. Docker/containerd supports path-based matching, so `rcr.rijksapps.nl/rig/my-project` in the auth dict matches images under that path.
 
 ## Troubleshooting
 
@@ -191,8 +276,9 @@ services:
 
 ## Security Best Practices
 
-1. Always encrypt passwords with AGE (never commit plain text)
-2. Use service accounts with minimal permissions (read-only)
-3. Rotate credentials regularly
-4. Use descriptive registry names (e.g., `harbor-prod`, `github-org-packages`)
-5. In ODC-Noord: Always use Quay proxy, never expose direct external registry credentials
+1. Always encrypt passwords with AGE (never commit plain text) — use `plain:` prefix only for local/sandbox development
+2. Use `secretName` when credentials are managed externally (avoids storing them in the project YAML)
+3. Use service accounts with minimal permissions (read-only)
+4. Rotate credentials regularly
+5. Use descriptive registry names (e.g., `harbor-prod`, `github-org-packages`)
+6. In ODC-Noord: Always use Quay proxy, never expose direct external registry credentials

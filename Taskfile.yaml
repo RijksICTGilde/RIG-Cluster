@@ -1738,8 +1738,21 @@ tasks:
     desc: "Delete Kind cluster used for integration testing"
     cmds:
       - |
+        PREVIOUS_CONTEXT=$(kubectl config current-context 2>/dev/null || true)
         echo "Deleting Kind cluster 'rig-integration-test'..."
         kind delete cluster --name rig-integration-test
+        # Restore previous context if it was switched to the integration test cluster
+        if [ "$PREVIOUS_CONTEXT" = "kind-rig-integration-test" ]; then
+          # Integration test context is gone, try to switch to sandbox or default
+          FALLBACK=$(kubectl config get-contexts -o name 2>/dev/null | grep -m1 "sandbox\|kind-rig" || true)
+          if [ -n "$FALLBACK" ]; then
+            kubectl config use-context "$FALLBACK"
+            echo "Switched kubectl context to: $FALLBACK"
+          fi
+        else
+          # Was already on a different context, nothing to do (kind delete removes the integration context)
+          echo "kubectl context remains: $(kubectl config current-context 2>/dev/null || echo 'none')"
+        fi
         echo "Cluster deleted."
     silent: false
 
@@ -2457,6 +2470,11 @@ tasks:
 
         # Clean up
         rm -rf "$TEMP_DIR"
+
+        # Trigger ArgoCD to refresh the infrastructure application
+        echo "Triggering ArgoCD refresh for sandbox-infrastructure..."
+        kubectl annotate application -n {{.RIG_NAMESPACE}} sandbox-infrastructure \
+          argocd.argoproj.io/refresh=normal --overwrite 2>/dev/null || true
 
         echo "Infrastructure sync complete"
     silent: true
