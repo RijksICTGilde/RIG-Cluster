@@ -185,3 +185,20 @@ def reset_kubectl_singleton() -> Any:
     yield
     # Clean up after test
     KubectlConnector._instance = None
+
+
+@pytest.fixture(autouse=True)
+def reset_readiness_state() -> Any:
+    """Reset readiness singleton and mark all services as ready for tests."""
+    import opi.core.readiness as readiness_module
+
+    # Reset the singleton so each test starts fresh
+    readiness_module._state = None
+    state = readiness_module.get_readiness_state()
+    state.database.mark_ready()
+    state.keycloak.mark_ready()
+    state.oauth.mark_ready()
+    state.projects.mark_ready()
+    yield
+    # Clean up after test
+    readiness_module._state = None
