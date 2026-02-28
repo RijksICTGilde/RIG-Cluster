@@ -136,10 +136,11 @@ spec:
             failureThreshold: 3
 {% if sidecars is defined and sidecars %}
 {% for sidecar in sidecars %}
+{% set section = 'container' %}
 {% include 'sidecar-' + sidecar + '.yaml.jinja' %}
 {% endfor %}
 {% endif %}
-      {% if storage_configs or (ca_config and ca_config.enabled) %}
+      {% if storage_configs or (ca_config and ca_config.enabled) or (sidecars is defined and sidecars) %}
       volumes:
       {% if storage_configs %}
       {% for storage in storage_configs %}
@@ -160,4 +161,10 @@ spec:
             path: {{ ca_config.node_path }}
             type: File
       {% endif %}
+{% if sidecars is defined and sidecars %}
+{% for sidecar in sidecars %}
+{% set section = 'volumes' %}
+{% include 'sidecar-' + sidecar + '.yaml.jinja' %}
+{% endfor %}
+{% endif %}
       {% endif %}

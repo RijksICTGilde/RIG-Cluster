@@ -188,10 +188,22 @@ class ArgoConnector:
         return True
 
     async def _make_authenticated_request(
-        self, method: str, url: str, json_data: dict | None = None, retry_count: int = 0
+        self,
+        method: str,
+        url: str,
+        json_data: dict | None = None,
+        retry_count: int = 0,
+        timeout_seconds: int = 30,
     ) -> tuple[int, str]:
         """
         Make an authenticated HTTP request with automatic retry on 401.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL
+            json_data: Optional JSON body
+            retry_count: Current retry attempt (for 401 handling)
+            timeout_seconds: Request timeout in seconds (default: 30)
 
         Returns:
             Tuple of (status_code, response_text)
@@ -201,8 +213,9 @@ class ArgoConnector:
 
         ssl_context = await self._create_ssl_context()
         connector = aiohttp.TCPConnector(ssl=ssl_context)
+        request_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
 
-        async with aiohttp.ClientSession(connector=connector) as session:
+        async with aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session:
             headers = {"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"}
             logger.debug(f"Request headers: {headers}")
             logger.debug(f"Making {method} request to: {url}")

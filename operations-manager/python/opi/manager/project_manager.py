@@ -3,6 +3,7 @@ The project manager handles project files. It can read, update, delete, or proce
 Processing means it can create, update, or delete any resources defined in a project file.
 """
 
+import asyncio
 import glob
 import logging
 import os
@@ -1087,6 +1088,9 @@ class ProjectManager:
                 # Include secrets from _secrets_to_create if available
                 if deployment_name in self._secrets_to_create:
                     for secret_data in self._secrets_to_create[deployment_name].values():
+                        # Skip registry secrets - they are imagePullSecrets, not service config
+                        if isinstance(secret_data, RegistrySecret):
+                            continue
                         if hasattr(secret_data, "to_config_data"):
                             # Handle typed secret objects using config method (main keys only, no aliases)
                             config_vars = secret_data.to_config_data()
@@ -1476,8 +1480,25 @@ class ProjectManager:
                 logger.warning(f"Failed to delete old SOPS secret (continuing anyway): {e}")
 
         if create_sops_secret:
-            await self._sops_handler.store_project_sops_key_in_namespace(namespace, private_key, public_key)
-            logger.info(f"Created new SOPS secret for project {project_name} in namespace {namespace}")
+            max_retries = 10
+            for attempt in range(1, max_retries + 1):
+                result = await self._sops_handler.store_project_sops_key_in_namespace(
+                    namespace, private_key, public_key
+                )
+                if result:
+                    logger.info(f"Created new SOPS secret for project {project_name} in namespace {namespace}")
+                    break
+                if attempt < max_retries:
+                    logger.warning(
+                        f"Failed to create SOPS secret in namespace {namespace} "
+                        f"(attempt {attempt}/{max_retries}), retrying in 1s (RBAC may still be propagating)"
+                    )
+                    await asyncio.sleep(1)
+                else:
+                    raise RuntimeError(
+                        f"Failed to create SOPS secret in namespace {namespace} after {max_retries} attempts. "
+                        "RBAC permissions may not have propagated for this namespace."
+                    )
         else:
             logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
 
@@ -4314,6 +4335,31 @@ class ProjectManager:
                 )
                 logger.info(f"Created authorization-wall cookie secret: {cookie_secret_name}")
 
+            # Generate extra manifests for sidecars (e.g. ConfigMaps)
+            # Each sidecar template can define a 'configmap' section that produces a standalone manifest
+            if "sidecars" in variables:
+                if target_dir:
+                    sidecar_output_dir = os.path.join(working_dir, target_dir)
+                else:
+                    sidecar_output_dir = os.path.join(working_dir, project_name, deployment_name)
+
+                for sidecar_name in variables["sidecars"]:
+                    sidecar_template_path = os.path.join(
+                        os.path.dirname(__file__), "..", "..", "manifests", f"sidecar-{sidecar_name}.yaml.jinja"
+                    )
+                    configmap_variables = variables.copy()
+                    configmap_variables["section"] = "configmap"
+                    configmap_manifest_name = generate_manifest_name(component_name, f"{sidecar_name}-configmap")
+                    self._manifest_generator.create_manifest_file(
+                        template_path=sidecar_template_path,
+                        values=configmap_variables,
+                        output_dir=sidecar_output_dir,
+                        output_filename=configmap_manifest_name,
+                        use_sops=False,
+                    )
+                    created_files.append(f"{configmap_manifest_name}.yaml")
+                    logger.info(f"Created sidecar configmap for '{sidecar_name}': {configmap_manifest_name}")
+
             # Create each manifest type in the git repository
             manifests = ["deployment.yaml.jinja", "service.yaml.jinja", "allow-all-network-policy.yaml.jinja"]
 
@@ -5547,12 +5593,113 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
+    async def upsert_registry_by_secret(
+        self,
+        name: str,
+        url: str,
+        secret_name: str,
+    ) -> dict[str, Any]:
+        """
+        Add or update a registry that references a pre-existing Kubernetes secret.
+
+        Args:
+            name: Unique registry identifier
+            url: Registry URL (without protocol, may include path)
+            secret_name: Name of an existing kubernetes.io/dockerconfigjson secret
+
+        Returns:
+            Result dict with success status and whether it was created or updated
+        """
+        project_data = await self.get_contents()
+        project_name = await self.get_name()
+
+        registries = project_data.get("registries", [])
+        registry_entry = {"name": name, "url": url, "secretName": secret_name}
+
+        created = True
+        for i, reg in enumerate(registries):
+            if reg.get("name") == name:
+                registries[i] = registry_entry
+                created = False
+                break
+        else:
+            registries.append(registry_entry)
+
+        project_data["registries"] = registries
+
+        await self.save_project_data()
+
+        git_connector = await self.get_git_connector_for_project_files()
+        action = "Add" if created else "Update"
+        await git_connector.commit_and_push(f"{action} registry '{name}' (secretName) in project '{project_name}'")
+
+        logger.info(f"Successfully {'added' if created else 'updated'} registry '{name}' in project '{project_name}'")
+        return {"success": True, "created": created, "registry": registry_entry}
+
+    async def upsert_registry_by_credentials(
+        self,
+        name: str,
+        url: str,
+        username: str,
+        password: str,
+    ) -> dict[str, Any]:
+        """
+        Add or update a registry with username/password credentials.
+
+        The password is AGE-encrypted with the project's public key before storing.
+
+        Args:
+            name: Unique registry identifier
+            url: Registry URL (without protocol, may include path)
+            username: Registry username or token name
+            password: Registry password or token (will be AGE-encrypted)
+
+        Returns:
+            Result dict with success status and whether it was created or updated
+        """
+        project_data = await self.get_contents()
+        project_name = await self.get_name()
+
+        public_key = get_project_public_key(project_data)
+        if not public_key:
+            return {
+                "success": False,
+                "error": "Project has no AGE public key configured",
+                "error_type": "missing_public_key",
+            }
+
+        encrypted_password = LiteralScalarString(await encrypt_age_content(password, public_key))
+
+        registries = project_data.get("registries", [])
+        registry_entry = {"name": name, "url": url, "username": username, "password": encrypted_password}
+
+        created = True
+        for i, reg in enumerate(registries):
+            if reg.get("name") == name:
+                registries[i] = registry_entry
+                created = False
+                break
+        else:
+            registries.append(registry_entry)
+
+        project_data["registries"] = registries
+
+        await self.save_project_data()
+
+        git_connector = await self.get_git_connector_for_project_files()
+        action = "Add" if created else "Update"
+        await git_connector.commit_and_push(f"{action} registry '{name}' (credentials) in project '{project_name}'")
+
+        logger.info(f"Successfully {'added' if created else 'updated'} registry '{name}' in project '{project_name}'")
+        return {"success": True, "created": created, "registry": {"name": name, "url": url, "username": username}}
+
     async def update_image_and_regenerate(
         self,
         deployment_name: str,
         component_name: str,
         new_image_url: str,
         service_actions: dict[str, dict[str, dict[str, dict[str, str]]]] | None = None,
+        registry: str | None = None,
     ) -> dict[str, Any]:
         """
         Update component image and optionally perform service-specific actions.
@@ -5574,6 +5721,7 @@ class ProjectManager:
                                     }
                                 }
                             }
+            registry: Optional registry name to link to this component for imagePullSecret creation
 
         Returns:
             Result dict with status, updates, and actions performed
@@ -5592,7 +5740,17 @@ class ProjectManager:
         # 1. Load project data
         project_data = await self.get_contents()
 
-        # 2. Find deployment (raise ValueError if not found)
+        # 2. Validate registry exists if provided
+        if registry:
+            registries = self._project_file_handler.extract_registries(project_data)
+            registry_names = [r.get("name") for r in registries]
+            if registry not in registry_names:
+                raise ValueError(
+                    f"Registry '{registry}' not found in project '{project_name}'. "
+                    f"Available registries: {registry_names or 'none'}"
+                )
+
+        # 3. Find deployment (raise ValueError if not found)
         deployment = await self.get_deployment_by_name(deployment_name)
         if not deployment:
             raise ValueError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
@@ -5605,6 +5763,9 @@ class ProjectManager:
                 component_found = True
                 old_image = comp.get("image")
                 comp["image"] = new_image_url
+                if registry:
+                    comp["registry"] = registry
+                    logger.info(f"Set registry '{registry}' on component '{component_name}'")
                 break
 
         if not component_found:

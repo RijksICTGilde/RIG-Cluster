@@ -1109,6 +1109,7 @@ tasks:
           CACHE_IMAGE: ghcr.io/minbzk/base-images/operations-manager:cache
           BUILDER_NAME: operations-manager-builder
           PLATFORMS: linux/amd64,linux/arm64
+          SKIP_VALIDATION: "true"
 
   update-cmp-kustomize-sops:
     desc: "Build and deploy the cmp-kustomize-sops image to the local kind cluster"
@@ -2532,7 +2533,6 @@ tasks:
         echo "Building operations-manager Docker image..."
         docker buildx build \
           --target application \
-          --cache-from operations-manager:latest \
           --load \
           -t operations-manager \
           -f operations-manager/Dockerfile .
@@ -2549,7 +2549,6 @@ tasks:
         echo "Building operations-manager Docker image..."
         docker buildx build \
           --target application \
-          --cache-from operations-manager:latest \
           --load \
           -t operations-manager \
           -f operations-manager/Dockerfile .

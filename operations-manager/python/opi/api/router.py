@@ -547,6 +547,12 @@ class ServiceReference(BaseModel):
 class UpdateImageRequest(BaseModel):
     componentName: str = Field(..., description="Name of the component to update", example="frontend")
     newImageUrl: str = Field(..., description="New image URL", example="nginx:1.21")
+    registry: str | None = Field(
+        None,
+        max_length=63,
+        description="Registry name to use for pulling this image (must be defined in project registries). "
+        "When set, links the deployment component to the registry for imagePullSecret creation.",
+    )
     services: dict[str, ServiceReference] | None = Field(
         None,
         description="Service-specific actions for storage recreation. Key is service type (e.g., 'persistent-storage')",
@@ -557,6 +563,11 @@ class UpdateImageRequest(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {"componentName": "frontend", "newImageUrl": "nginx:1.21"},
+                {
+                    "componentName": "frontend",
+                    "newImageUrl": "registry.example.com/myorg/frontend:v1.0",
+                    "registry": "my-registry",
+                },
                 {
                     "componentName": "frontend",
                     "newImageUrl": "nginx:1.22",
@@ -763,6 +774,25 @@ class SelfServiceComponent(BaseModel):
     aliases: str | None = Field(None, max_length=4096)  # Aliases for system-provided variables (not encoded)
     services: list[str] | None = None  # ["keycloak", "postgres", "minio"]
     root: bool = False  # Whether this component receives the root path in nice-url mode
+
+
+class AddRegistryBySecretRequest(BaseModel):
+    """Request to add a registry that references a pre-existing Kubernetes secret."""
+
+    name: str = Field(..., max_length=63, description="Unique registry identifier")
+    url: str = Field(..., max_length=512, description="Registry URL without protocol (may include path)")
+    secret_name: str = Field(
+        ..., max_length=253, alias="secretName", description="Name of existing K8s dockerconfigjson secret"
+    )
+
+
+class AddRegistryByCredentialsRequest(BaseModel):
+    """Request to add a registry with username/password credentials."""
+
+    name: str = Field(..., max_length=63, description="Unique registry identifier")
+    url: str = Field(..., max_length=512, description="Registry URL without protocol (may include path)")
+    username: str = Field(..., max_length=256, description="Registry username or token name")
+    password: str = Field(..., max_length=4096, description="Registry password or token (will be AGE-encrypted)")
 
 
 class AddComponentRequest(BaseModel):
@@ -1245,20 +1275,32 @@ async def update_deployment_image(
 
     Basic image update:
     ```bash
-    curl -X PUT "http://localhost:9595/api/projects/my-project/deployments/staging/image" \
-      -H "Content-Type: application/json" \
-      -H "X-API-Key: your-api-key" \
+    curl -X PUT "http://localhost:9595/api/projects/my-project/deployments/staging/image" \\
+      -H "Content-Type: application/json" \\
+      -H "X-API-Key: your-api-key" \\
       -d '{
         "componentName": "frontend",
         "newImageUrl": "nginx:1.21"
       }'
     ```
 
+    Image update with private registry:
+    ```bash
+    curl -X PUT "http://localhost:9595/api/projects/my-project/deployments/staging/image" \\
+      -H "Content-Type: application/json" \\
+      -H "X-API-Key: your-api-key" \\
+      -d '{
+        "componentName": "frontend",
+        "newImageUrl": "registry.example.com/myorg/frontend:v1.0",
+        "registry": "my-registry"
+      }'
+    ```
+
     Image update with storage recreation:
     ```bash
-    curl -X PUT "http://localhost:9595/api/projects/my-project/deployments/staging/image" \
-      -H "Content-Type: application/json" \
-      -H "X-API-Key: your-api-key" \
+    curl -X PUT "http://localhost:9595/api/projects/my-project/deployments/staging/image" \\
+      -H "Content-Type: application/json" \\
+      -H "X-API-Key: your-api-key" \\
       -d '{
         "componentName": "frontend",
         "newImageUrl": "nginx:1.22",
@@ -1298,6 +1340,7 @@ async def update_deployment_image(
             component_name=image_data.componentName,
             new_image_url=image_data.newImageUrl,
             service_actions=service_actions,
+            registry=image_data.registry,
         )
 
         content = {
@@ -2504,3 +2547,186 @@ async def list_subdomains(
     except Exception as e:
         logger.error(f"Error listing subdomains: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing subdomains: {e}")
+
+
+@api_router.post(
+    "/projects/{project_name}/registries/by-secret",
+    responses={
+        201: {"description": "Registry added successfully"},
+        200: {"description": "Registry updated successfully"},
+    },
+)
+@validate_api_token
+async def add_registry_by_secret(
+    request: Request, project_name: str, registry_data: AddRegistryBySecretRequest = Body(...)
+) -> JSONResponse:
+    """
+    Add or update a container registry that references a pre-existing Kubernetes secret.
+
+    If a registry with the same name already exists, it is updated (upsert).
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example:
+    ```bash
+    curl -X POST "http://localhost:9595/api/projects/my-project/registries/by-secret" \\
+      -H "Content-Type: application/json" \\
+      -H "X-API-Key: your-api-key" \\
+      -d '{
+        "name": "platform-registry",
+        "url": "rcr.rijksapps.nl/rig",
+        "secretName": "rcr-pull-secret"
+      }'
+    ```
+    """
+    project_manager = None
+    try:
+        logger.info(
+            f"Adding registry '{sanitize_for_log(registry_data.name)}' (by-secret) "
+            f"to project: {sanitize_for_log(project_name)}"
+        )
+
+        if not validate_project_name(project_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+
+        result = await project_manager.upsert_registry_by_secret(
+            name=registry_data.name,
+            url=registry_data.url,
+            secret_name=registry_data.secret_name,
+        )
+
+        if result["success"]:
+            # Process the project to reconcile imagePullSecrets
+            processing_result = await project_manager.process_project_from_git(f"projects/{project_name}.yaml")
+
+            status_code = 201 if result["created"] else 200
+            return JSONResponse(
+                content={
+                    "status": "success",
+                    "message": f"Registry '{registry_data.name}' {'added' if result['created'] else 'updated'} successfully",
+                    "registry": result["registry"],
+                    "created": result["created"],
+                    "processing": {"status": "completed" if processing_result else "failed"},
+                },
+                status_code=status_code,
+            )
+        else:
+            return JSONResponse(
+                content={
+                    "status": "failed",
+                    "message": f"Failed to add registry '{registry_data.name}'",
+                    "error": result["error"],
+                    "error_type": result.get("error_type"),
+                },
+                status_code=400,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding registry by secret: {e!s}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+@api_router.post(
+    "/projects/{project_name}/registries/by-credentials",
+    responses={
+        201: {"description": "Registry added successfully"},
+        200: {"description": "Registry updated successfully"},
+    },
+)
+@validate_api_token
+async def add_registry_by_credentials(
+    request: Request, project_name: str, registry_data: AddRegistryByCredentialsRequest = Body(...)
+) -> JSONResponse:
+    """
+    Add or update a container registry with username/password credentials.
+
+    The password is AGE-encrypted with the project's public key before storing.
+    If a registry with the same name already exists, it is updated (upsert).
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example:
+    ```bash
+    curl -X POST "http://localhost:9595/api/projects/my-project/registries/by-credentials" \\
+      -H "Content-Type: application/json" \\
+      -H "X-API-Key: your-api-key" \\
+      -d '{
+        "name": "github-packages",
+        "url": "ghcr.io",
+        "username": "my-github-user",
+        "password": "ghp_xxxxxxxxxxxx"
+      }'
+    ```
+    """
+    project_manager = None
+    try:
+        logger.info(
+            f"Adding registry '{sanitize_for_log(registry_data.name)}' (by-credentials) "
+            f"to project: {sanitize_for_log(project_name)}"
+        )
+
+        if not validate_project_name(project_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+
+        result = await project_manager.upsert_registry_by_credentials(
+            name=registry_data.name,
+            url=registry_data.url,
+            username=registry_data.username,
+            password=registry_data.password,
+        )
+
+        if result["success"]:
+            # Process the project to reconcile imagePullSecrets
+            processing_result = await project_manager.process_project_from_git(f"projects/{project_name}.yaml")
+
+            status_code = 201 if result["created"] else 200
+            return JSONResponse(
+                content={
+                    "status": "success",
+                    "message": f"Registry '{registry_data.name}' {'added' if result['created'] else 'updated'} successfully",
+                    "registry": result["registry"],
+                    "created": result["created"],
+                    "processing": {"status": "completed" if processing_result else "failed"},
+                },
+                status_code=status_code,
+            )
+        else:
+            error_status_codes = {
+                "missing_public_key": 400,
+            }
+            status_code = error_status_codes.get(result.get("error_type"), 400)
+            return JSONResponse(
+                content={
+                    "status": "failed",
+                    "message": f"Failed to add registry '{registry_data.name}'",
+                    "error": result["error"],
+                    "error_type": result.get("error_type"),
+                },
+                status_code=status_code,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding registry by credentials: {e!s}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+    finally:
+        if project_manager:
+            await project_manager.close()
