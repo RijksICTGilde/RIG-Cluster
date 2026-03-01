@@ -369,6 +369,7 @@ class KeycloakYamlHandler:
                     authenticate_by_default=item.get("authenticateByDefault", False),
                     sync_mode=config.get("syncMode", "FORCE"),
                     enabled=item.get("enabled", True),
+                    update_profile_first_login=item.get("updateProfileFirstLogin", "off"),
                 )
             else:
                 # OIDC identity provider (default)
@@ -380,6 +381,7 @@ class KeycloakYamlHandler:
                     client_secret=config.get("clientSecret"),
                     discovery_url=config.get("discoveryUrl"),
                     authenticate_by_default=item.get("authenticateByDefault", True),
+                    update_profile_first_login=item.get("updateProfileFirstLogin", "off"),
                 )
 
             # Process mappers if present

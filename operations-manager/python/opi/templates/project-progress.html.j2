@@ -78,18 +78,39 @@
                     </c-alert>
                 </div>
 
-                {# Actions #}
-                <c-action-group
-                    :actions="[
-                        {
-                            'type': 'link',
-                            'kind': 'primary',
-                            'size': 'md',
-                            'label': 'Terug naar Dashboard',
-                            'url': '/dashboard',
-                            'icon': 'home'
-                        }
-                    ]"/>
+                {# Actions — project details link shown after completion #}
+                <div id="actions-section">
+                    <c-action-group id="default-actions"
+                        :actions="[
+                            {
+                                'type': 'link',
+                                'kind': 'primary',
+                                'size': 'md',
+                                'label': 'Terug naar Dashboard',
+                                'url': '/dashboard',
+                                'icon': 'home'
+                            }
+                        ]"/>
+                    <c-action-group id="completed-actions" style="display: none;"
+                        :actions="[
+                            {
+                                'type': 'link',
+                                'kind': 'primary',
+                                'size': 'md',
+                                'label': 'Naar Projectdetails',
+                                'url': '/projects/details/{{ project_name }}',
+                                'icon': 'publicatie'
+                            },
+                            {
+                                'type': 'link',
+                                'kind': 'secondary',
+                                'size': 'md',
+                                'label': 'Terug naar Dashboard',
+                                'url': '/dashboard',
+                                'icon': 'home'
+                            }
+                        ]"/>
+                </div>
             </c-layout-flow>
 </c-page>
 
@@ -497,6 +518,11 @@
         if (successMessage) {
             successMessage.style.display = 'block';
         }
+        // Swap action buttons: hide default, show completed (with project details link)
+        const defaultActions = document.getElementById('default-actions');
+        const completedActions = document.getElementById('completed-actions');
+        if (defaultActions) defaultActions.style.display = 'none';
+        if (completedActions) completedActions.style.display = '';
     }
 
     function showError(error) {

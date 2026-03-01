@@ -25,6 +25,8 @@ spec:
           value: "/tmp"
         - name: PYTHONTMPDIR
           value: "/tmp"
+        - name: TEMP_DIR
+          value: "/data"
         - name: ENVIRONMENT
           value: "sandboxed-local"
         - name: LOCAL_DEVELOPMENT
@@ -66,6 +68,8 @@ spec:
         - name: config-volume
           mountPath: /etc/config
           readOnly: true
+        - name: data
+          mountPath: /data
         resources:
           limits:
             cpu: "4"
@@ -95,4 +99,7 @@ spec:
       - name: config-volume
         configMap:
           name: operations-manager-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: operations-manager-data
       serviceAccountName: namespace-manager

@@ -32,6 +32,7 @@ def get_menu_items(user: dict[str, Any] | None = None) -> list[dict[str, str]]:
         {"label": "Dashboard", "link": "/dashboard", "icon": "home"},
         {"label": "Projecten", "link": "/projects", "icon": "applicatie"},
         {"label": "Nieuw Project", "link": "/projects/new", "icon": "plus"},
+        {"label": "Nieuw Project (Wizard)", "link": "/forms/wizard/restart", "icon": "plus"},
         {"label": "Services", "link": "/services", "icon": "server"},
         {"label": "Metrics", "link": "/metrics-explorer", "icon": "grafiek-lijn"},
         {"label": "Architecture", "link": "/architecture", "icon": "info"},

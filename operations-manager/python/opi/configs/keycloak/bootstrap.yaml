@@ -18,6 +18,7 @@ identityProviders:
     providerId: "saml"
     enabled: true
     authenticateByDefault: false
+    updateProfileFirstLogin: "off"
     config:
       idpEntityId: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/authentication/idp/metadata"
       singleSignOnServiceUrl: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/authentication/idp/single-sign-on"

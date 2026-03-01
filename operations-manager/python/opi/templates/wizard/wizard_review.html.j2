@@ -1,0 +1,68 @@
+{#
+  Wizard Review Fragment - summary of all steps before final submission.
+
+  Required context:
+    - steps: WizardSteps object
+    - flow_id: FormFlow ID
+    - section_summaries: list of dicts with section_id, title, icon, summary_html
+#}
+
+{# Step indicator OOB swap #}
+<div id="wizard-steps" hx-swap-oob="outerHTML">
+    {% include "wizard/wizard_steps_indicator.html.j2" %}
+</div>
+
+<div class="wizard-review" id="wizard-step-inner">
+    <div class="wizard-step__header">
+        <c-heading type="h2">
+            <c-icon icon="vinkje" size="md" />
+            Controleer uw gegevens
+        </c-heading>
+        <p class="wizard-step__description">
+            Controleer de ingevulde gegevens hieronder voordat u het project aanmaakt.
+        </p>
+    </div>
+
+    <c-layout-flow gap="lg">
+        {% for section in section_summaries %}
+        <c-card outline="true" padding="md">
+            <div class="wizard-review__section">
+                <div class="wizard-review__section-header">
+                    <c-heading type="h3">
+                        {% if section.icon %}<c-icon icon="{{ section.icon }}" size="lg" />{% endif %}
+                        {{ section.title }}
+                    </c-heading>
+                    <c-button kind="tertiary" size="sm"
+                              showIcon="before" icon="bewerken"
+                              hx-get="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
+                              hx-target="#wizard-step-content"
+                              hx-swap="innerHTML">
+                        Bewerken
+                    </c-button>
+                </div>
+                <div class="wizard-review__section-content">
+                    {{ section.summary_html | safe }}
+                </div>
+            </div>
+        </c-card>
+        {% endfor %}
+    </c-layout-flow>
+
+    <div class="wizard-step__actions">
+        <c-button kind="secondary"
+                  showIcon="before" icon="terug"
+                  hx-get="/forms/wizard/{{ flow_id }}/step/{{ steps.last }}"
+                  hx-target="#wizard-step-content"
+                  hx-swap="innerHTML">
+            Terug
+        </c-button>
+
+        <c-button kind="primary"
+                  showIcon="before" icon="publicatie"
+                  hx-post="/forms/wizard/{{ flow_id }}/submit"
+                  hx-target="#wizard-step-content"
+                  hx-swap="innerHTML">
+            Project aanmaken
+        </c-button>
+    </div>
+</div>
