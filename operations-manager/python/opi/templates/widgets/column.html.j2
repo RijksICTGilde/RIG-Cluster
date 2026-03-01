@@ -1,0 +1,4 @@
+{% from "widgets/_macros.html.j2" import html_attributes %}
+<c-layout-column size="md-{{ column.width }}"{% if column.css_class %} class="{{ column.css_class|e }}"{% endif %} {{ html_attributes(column.attributes) }}>
+    {{ child_html }}
+</c-layout-column>

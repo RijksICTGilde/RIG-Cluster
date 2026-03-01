@@ -40,6 +40,7 @@ identityProviders:
     providerId: "oidc"
     enabled: true
     authenticateByDefault: false  # Show login form with SSO option button
+    updateProfileFirstLogin: "off"
     config:
       clientId: "{{ platform_client.client_id }}"
       clientSecret: "{{ platform_client.client_secret }}"

@@ -1,0 +1,23 @@
+{% from "widgets/_macros.html.j2" import helper_text, render_errors, bool_attr %}
+{% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
+{% set max_items = field.max_items or field.attributes.get('max_items') %}
+{% set add_label = field.attributes.get('add_label', 'Item toevoegen') %}
+{% set current_count = items_html|length %}
+{% set add_disabled = max_items is not none and current_count >= max_items|int %}
+<div class="rvo-sequence" id="{{ field.path|e }}-container"
+     data-min-items="{{ min_items }}" data-max-items="{{ max_items|default('', true) }}" data-current-count="{{ current_count }}">
+    <span class="utrecht-form-label">{{ field.label|e }}</span>
+    {{ helper_text(field) }}
+    <div class="rvo-sequence__items" id="{{ field.path|e }}-items">
+        {% for item in items_html %}{{ item }}{% endfor %}
+    </div>
+    <div class="rvo-sequence__actions">
+        <c-button kind="tertiary" size="sm"
+                  showIcon="before" icon="plus"
+                  @click="sequenceAdd('{{ field.path|e }}')"
+                  {{ bool_attr("disabled", add_disabled) }}>
+            {{ add_label|e }}
+        </c-button>
+    </div>
+    {{ render_errors(field.errors) }}
+</div>

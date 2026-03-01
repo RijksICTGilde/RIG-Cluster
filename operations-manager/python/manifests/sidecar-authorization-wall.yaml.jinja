@@ -1,3 +1,4 @@
+{% if section == 'container' %}
         - name: authorization-wall
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
           args:
@@ -9,11 +10,10 @@
             - --redirect-url=https://{{ hostname }}/oauth2/callback
             - --email-domain=*
             - --cookie-secure=true
-{% if authorization_wall.banner %}
             - --skip-provider-button=false
+            - --custom-templates-dir=/etc/oauth2-proxy/templates
+{% if authorization_wall.banner %}
             - --banner={{ authorization_wall.banner }}
-{% else %}
-            - --skip-provider-button=true
 {% endif %}
             - --insecure-oidc-allow-unverified-email=true
             - --scope=openid profile email
@@ -31,6 +31,10 @@
           ports:
             - containerPort: 4180
               name: oauth2-proxy
+          volumeMounts:
+            - name: oauth2-signin-templates
+              mountPath: /etc/oauth2-proxy/templates
+              readOnly: true
           resources:
             requests:
               memory: "32Mi"
@@ -59,3 +63,101 @@
               port: 4180
             initialDelaySeconds: 3
             periodSeconds: 30
+{% elif section == 'volumes' %}
+        - name: oauth2-signin-templates
+          configMap:
+            name: {{ name }}-oauth2-signin
+{% elif section == 'configmap' %}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ name }}-oauth2-signin"
+  namespace: "{{ namespace }}"
+  labels:
+    app: "{{ name }}"
+    project: "{{ project.name }}"
+    component: application
+data:
+  sign_in.html: |
+    <!DOCTYPE html>
+    <html lang="nl">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Inloggen</title>
+        <style>
+            *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+            body {
+                font-family: 'RijksoverheidSansWebText', Verdana, Arial, sans-serif;
+                background-color: #F1F5F9;
+                color: #1E293B;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                padding: 1rem;
+            }
+            .card {
+                background: #FFFFFF;
+                border-radius: 4px;
+                border: 1px solid #CBD5E1;
+                padding: 2.5rem 2rem;
+                max-width: 440px;
+                width: 100%;
+                text-align: center;
+            }
+            .card h1 {
+                font-size: 1.25rem;
+                font-weight: 700;
+                color: #1E293B;
+                margin-bottom: 0.75rem;
+            }
+            .card p {
+                font-size: 0.95rem;
+                color: #475569;
+                line-height: 1.5;
+                margin-bottom: 1.5rem;
+            }
+            .btn {
+                display: inline-block;
+                background-color: #007BC7;
+                color: #FFFFFF;
+                font-family: inherit;
+                font-size: 1.125rem;
+                font-weight: 700;
+                border: 1px solid #007BC7;
+                border-radius: 4px;
+                padding: 0.625rem 1.5rem;
+                cursor: pointer;
+                text-decoration: none;
+                transition: background-color 0.15s, border-color 0.15s;
+            }
+            .btn:hover, .btn:focus {
+                background-color: #01689B;
+                border-color: #01689B;
+                outline: 2px solid #007BC7;
+                outline-offset: 2px;
+            }
+            .subtitle {
+                font-size: 0.875rem;
+                color: #64748B;
+                margin-top: 1.5rem;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h1>Deze website heeft beperkte toegang</h1>
+            {{"{{"}} if .SignInMessage {{"}}"}}
+            <p>{{"{{"}} .SignInMessage {{"}}"}}</p>
+            {{"{{"}} else {{"}}"}}
+            <p>Log in om verder te gaan.</p>
+            {{"{{"}} end {{"}}"}}
+            <form method="GET" action="{{"{{"}} .ProxyPrefix {{"}}"}}/start">
+                <input type="hidden" name="rd" value="{{"{{"}} .Redirect {{"}}"}}">
+                <button type="submit" class="btn">Inloggen</button>
+            </form>
+        </div>
+    </body>
+    </html>
+{% endif %}

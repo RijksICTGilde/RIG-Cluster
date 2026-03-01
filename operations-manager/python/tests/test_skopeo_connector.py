@@ -107,9 +107,9 @@ class TestCommandConstruction:
     def test_build_destination(self, connector):
         with patch("opi.connectors.skopeo.settings") as mock_settings:
             mock_settings.REGISTRY_URL = "rcr.rijksapps.nl"
-            mock_settings.REGISTRY_ORG = "rig"
-            dest = connector._build_destination("my-project", "myapp", "v1")
-            assert dest == "docker://rcr.rijksapps.nl/rig/my-project/myapp:v1"
+            mock_settings.REGISTRY_ORG = "rig/zad"
+            dest = connector._build_destination("myapp", "v1")
+            assert dest == "docker://rcr.rijksapps.nl/rig/zad:myapp-v1"
 
     def test_build_command_with_creds(self, connector):
         with patch("opi.connectors.skopeo.settings") as mock_settings:
@@ -154,8 +154,8 @@ class TestPushImage:
             mock_settings.REGISTRY_USERNAME = "rig+zad"
             mock_settings.REGISTRY_VERIFY_TLS = True
 
-            result = await connector.push_image("/tmp/img.tar", "my-project", "myapp", "v1.0")
-            assert result == "rcr.rijksapps.nl/rig/my-project/myapp:v1.0"
+            result = await connector.push_image("/tmp/img.tar", "myapp", "v1.0")
+            assert result == "rcr.rijksapps.nl/rig:myapp-v1.0"
 
     @pytest.mark.asyncio
     async def test_push_fails(self, connector):
@@ -173,17 +173,17 @@ class TestPushImage:
             mock_settings.REGISTRY_VERIFY_TLS = True
 
             with pytest.raises(SkopeoExecutionError, match="unauthorized"):
-                await connector.push_image("/tmp/img.tar", "proj", "app", "v1")
+                await connector.push_image("/tmp/img.tar", "app", "v1")
 
     @pytest.mark.asyncio
     async def test_push_skopeo_unavailable(self, connector):
         connector.is_skopeo_available = False
         with pytest.raises(SkopeoConnectionError):
-            await connector.push_image("/tmp/img.tar", "proj", "app", "v1")
+            await connector.push_image("/tmp/img.tar", "app", "v1")
 
     @pytest.mark.asyncio
     async def test_push_registry_not_configured(self, connector):
         with patch("opi.connectors.skopeo.settings") as mock_settings:
             mock_settings.REGISTRY_URL = ""
             with pytest.raises(SkopeoValidationError):
-                await connector.push_image("/tmp/img.tar", "proj", "app", "v1")
+                await connector.push_image("/tmp/img.tar", "app", "v1")

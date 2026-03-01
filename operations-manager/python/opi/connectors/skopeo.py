@@ -114,9 +114,14 @@ class SkopeoConnector:
                 f"Invalid tag '{tag}': must start with alphanumeric and contain only letters, digits, dots, hyphens, underscores"
             )
 
-    def _build_destination(self, project_name: str, image_name: str, tag: str) -> str:
-        """Build the full destination registry URL."""
-        return f"docker://{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}/{project_name}/{image_name}:{tag}"
+    def _build_destination(self, image_name: str, tag: str) -> str:
+        """Build the full destination registry URL.
+
+        Image name is encoded into the tag (e.g. mink-latest) because Quay does not
+        support nested repos under a single robot-account-scoped repository.
+        """
+        combined_tag = f"{image_name}-{tag}"
+        return f"docker://{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}:{combined_tag}"
 
     def _build_command(self, tarball_path: str, destination: str) -> list[str]:
         """Build the skopeo copy command."""
@@ -141,18 +146,20 @@ class SkopeoConnector:
                 masked[i + 1] = f"{parts[0]}:***" if len(parts) == 2 else "***"
         return masked
 
-    async def push_image(self, tarball_path: str, project_name: str, image_name: str, tag: str) -> str:
+    async def push_image(self, tarball_path: str, image_name: str, tag: str) -> str:
         """
         Push a Docker image tarball to the configured registry.
 
+        Image name is encoded into the tag (e.g. rig/zad:mink-latest) because Quay
+        does not support nested repos under a single robot-account-scoped repository.
+
         Args:
             tarball_path: Path to the Docker image tarball (from docker save)
-            project_name: Project name for namespacing in the registry
             image_name: Name of the image
             tag: Image tag
 
         Returns:
-            The full image reference that was pushed (e.g. rcr.rijksapps.nl/rig/project/name:tag)
+            The full image reference that was pushed (e.g. rcr.rijksapps.nl/rig/zad:mink-latest)
 
         Raises:
             SkopeoConnectionError: If skopeo is not available
@@ -168,7 +175,7 @@ class SkopeoConnector:
         self._validate_image_name(image_name)
         self._validate_tag(tag)
 
-        destination = self._build_destination(project_name, image_name, tag)
+        destination = self._build_destination(image_name, tag)
         cmd = self._build_command(tarball_path, destination)
 
         masked_cmd = self._mask_credentials(cmd)
@@ -188,7 +195,8 @@ class SkopeoConnector:
             logger.error(f"Skopeo push failed (exit {process.returncode}): {stderr}")
             raise SkopeoExecutionError(f"Failed to push image: {stderr.strip()}")
 
-        image_ref = f"{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}/{project_name}/{image_name}:{tag}"
+        combined_tag = f"{image_name}-{tag}"
+        image_ref = f"{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}:{combined_tag}"
         logger.info(f"Successfully pushed image to {image_ref}")
         if stdout:
             logger.debug(f"Skopeo output: {stdout.strip()}")

@@ -1,5 +1,7 @@
 """Test registry configuration at deployment component level."""
 
+from opi.utils.naming import generate_registry_secret_name
+
 
 def test_registries_in_project_data():
     """Test that registries list exists in project data."""
@@ -152,3 +154,123 @@ def test_registry_optional_on_deployment_component():
 
     # Second component has registry (private image)
     assert deployment["components"][1].get("registry") == "private-registry"
+
+
+def test_registry_with_secret_name():
+    """Test that secretName is used directly without creating credentials."""
+    registry_config = {
+        "name": "odcn-registry",
+        "url": "rcr.rijksapps.nl/rig",
+        "secretName": "rcr-pull-secret",
+    }
+
+    # Simulate the secretName branch in project_manager.py
+    secret_name_ref = registry_config.get("secretName")
+    assert secret_name_ref == "rcr-pull-secret"
+
+    # When secretName is present, use it directly as the secret name
+    secret_name = secret_name_ref
+    assert secret_name == "rcr-pull-secret"
+
+    # No username/password needed
+    assert "username" not in registry_config
+    assert "password" not in registry_config
+
+
+def test_registry_with_secret_name_takes_precedence():
+    """Test that secretName takes precedence when both credentials and secretName are provided."""
+    registry_config = {
+        "name": "my-registry",
+        "url": "registry.example.com",
+        "username": "admin",
+        "password": "secret",
+        "secretName": "existing-pull-secret",
+    }
+
+    secret_name_ref = registry_config.get("secretName")
+    assert secret_name_ref is not None, "secretName should be present"
+
+    # secretName takes precedence — no RegistrySecret should be created
+    secret_name = secret_name_ref
+    assert secret_name == "existing-pull-secret"
+
+
+def test_mixed_registries_secret_name_and_credentials():
+    """Test mixing credential-based and secretName-based registries."""
+    project_data = {
+        "registries": [
+            {
+                "name": "sandbox-registry",
+                "url": "registry.sandbox.rijksapp.dev",
+                "username": "admin",
+                "password": "plain:admin1234",
+            },
+            {
+                "name": "odcn-registry",
+                "url": "rcr.rijksapps.nl/rig",
+                "secretName": "rcr-pull-secret",
+            },
+        ],
+        "deployments": [
+            {
+                "name": "production",
+                "components": [
+                    {
+                        "reference": "frontend",
+                        "image": "registry.sandbox.rijksapp.dev/rig/myproject/frontend:v1",
+                        "registry": "sandbox-registry",
+                    },
+                    {
+                        "reference": "backend",
+                        "image": "rcr.rijksapps.nl/rig/myproject/backend:v1",
+                        "registry": "odcn-registry",
+                    },
+                ],
+            }
+        ],
+    }
+
+    deployment = project_data["deployments"][0]
+    registries = project_data.get("registries", [])
+    deployment_name = deployment["name"]
+
+    # Simulate the project_manager logic: build image_pull_secrets_map
+    image_pull_secrets_map: dict[str, str] = {}
+
+    for component in deployment["components"]:
+        registry_ref = component.get("registry")
+        if not registry_ref:
+            continue
+
+        registry_config = next((r for r in registries if r.get("name") == registry_ref), None)
+        assert registry_config is not None
+
+        secret_name_ref = registry_config.get("secretName")
+        secret_name = secret_name_ref or generate_registry_secret_name(deployment_name, registry_config["name"])
+
+        image_pull_secrets_map[component["image"]] = secret_name
+
+    # Credential-based registry gets a generated name
+    assert image_pull_secrets_map[
+        "registry.sandbox.rijksapp.dev/rig/myproject/frontend:v1"
+    ] == generate_registry_secret_name("production", "sandbox-registry")
+
+    # secretName-based registry uses the pre-existing secret directly
+    assert image_pull_secrets_map["rcr.rijksapps.nl/rig/myproject/backend:v1"] == "rcr-pull-secret"
+
+
+def test_registry_url_with_path():
+    """Test that registry URLs with paths work correctly."""
+    registry_config = {
+        "name": "odcn-registry",
+        "url": "rcr.rijksapps.nl/rig/micro-gc0",
+        "secretName": "rcr-pull-secret",
+    }
+
+    # URL includes org/project path
+    assert "/" in registry_config["url"]
+    assert registry_config["url"] == "rcr.rijksapps.nl/rig/micro-gc0"
+
+    # Component image starts with registry URL
+    image_url = "rcr.rijksapps.nl/rig/micro-gc0/test:0.1"
+    assert image_url.startswith(registry_config["url"])

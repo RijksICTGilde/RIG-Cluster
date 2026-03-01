@@ -1,0 +1,22 @@
+presets:
+  - id: lokale-ontwikkeling
+    label: Lokale ontwikkeling
+    description: Voegt een ontwikkel-client toe met localhost redirect URI's
+    icon: laptop
+    color: hemelblauw
+    values:
+      services/keycloak/config/additional-clients:
+        - name: local-development
+          redirect-uris:
+            - "http://localhost:8080/*"
+            - "http://127.0.0.1:8080/*"
+
+  - id: toegangsbeperking
+    label: Toegangsbeperking
+    description: Schakelt rolgebaseerde toegangsbeperking in met standaard instellingen
+    icon: schild-met-vinkje-erop
+    color: oranje
+    values:
+      services/keycloak/config/restrict-access/enabled: true
+      services/keycloak/config/restrict-access/realm-role: allowed-user
+      services/keycloak/config/restrict-access/error-message: "${accessDeniedNoPermission}"

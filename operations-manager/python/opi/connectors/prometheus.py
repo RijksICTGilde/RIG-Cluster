@@ -116,9 +116,9 @@ class PrometheusConnector:
         self._ensure_connected()
 
         if namespace:
-            query = f'sum(container_memory_usage_bytes{{namespace="{namespace}",container!=""}}) by (pod)'
+            query = f'sum(container_memory_working_set_bytes{{namespace="{namespace}",container!=""}}) by (pod)'
         else:
-            query = 'sum(container_memory_usage_bytes{container!=""}) by (namespace, pod)'
+            query = 'sum(container_memory_working_set_bytes{container!=""}) by (namespace, pod)'
 
         logger.debug(f"Querying memory usage: {query}")
 
@@ -262,7 +262,7 @@ class PrometheusConnector:
 
             # Total memory usage
             memory_result: list[dict[str, Any]] = self.prom.custom_query(
-                'sum(container_memory_usage_bytes{container!=""})'
+                'sum(container_memory_working_set_bytes{container!=""})'
             )
             if memory_result:
                 overview["total_memory_bytes"] = int(float(memory_result[0]["value"][1]))
@@ -415,9 +415,7 @@ class PrometheusConnector:
                 metrics["cpu_cores"] = float(cpu_result[0]["value"][1])
 
             # Memory usage (current, in bytes)
-            memory_query = (
-                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
-            )
+            memory_query = f'sum(container_memory_working_set_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
             memory_result: list[dict[str, Any]] = self.prom.custom_query(memory_query)
             if memory_result and len(memory_result) > 0:
                 memory_bytes = float(memory_result[0]["value"][1])
@@ -561,9 +559,7 @@ class PrometheusConnector:
                     )
 
             # Memory usage time-series (in bytes, we'll convert to MB)
-            memory_query = (
-                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
-            )
+            memory_query = f'sum(container_memory_working_set_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
             memory_result = self.prom.custom_query_range(
                 query=memory_query,
                 start_time=start_time,

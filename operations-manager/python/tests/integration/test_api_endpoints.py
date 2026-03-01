@@ -16,13 +16,14 @@ class TestLogsEndpoint:
     def test_get_logs_returns_json(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that the logs endpoint returns JSON response."""
-        response = test_client.get("/api/logs/test-project")
+        response = test_client.get("/api/logs/test-project", headers={"X-API-Key": api_key})
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
@@ -31,13 +32,14 @@ class TestLogsEndpoint:
     def test_get_logs_with_lines_parameter(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that the lines parameter is respected."""
-        response = test_client.get("/api/logs/test-project?lines=50")
+        response = test_client.get("/api/logs/test-project?lines=50", headers={"X-API-Key": api_key})
         assert response.status_code == 200
         data = response.json()
         assert data["filters"]["lines"] == 50
@@ -45,13 +47,14 @@ class TestLogsEndpoint:
     def test_get_logs_with_deployment_filter(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that deployment filter works."""
-        response = test_client.get("/api/logs/test-project?deployment=main")
+        response = test_client.get("/api/logs/test-project?deployment=main", headers={"X-API-Key": api_key})
         assert response.status_code == 200
         data = response.json()
         assert data["filters"]["deployment"] == "main"
@@ -59,13 +62,16 @@ class TestLogsEndpoint:
     def test_get_logs_with_component_filter(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that component filter works."""
-        response = test_client.get("/api/logs/test-project?deployment=main&component=web")
+        response = test_client.get(
+            "/api/logs/test-project?deployment=main&component=web", headers={"X-API-Key": api_key}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["filters"]["component"] == "web"
@@ -73,39 +79,42 @@ class TestLogsEndpoint:
     def test_get_logs_nonexistent_project(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that error is returned for nonexistent project."""
-        response = test_client.get("/api/logs/nonexistent-project")
-        # Note: The API currently returns 500 when a 404 exception is raised
-        # inside the error handler. This test validates the behavior.
-        assert response.status_code in (404, 500)
+        response = test_client.get("/api/logs/nonexistent-project", headers={"X-API-Key": api_key})
+        # Note: The API returns 401 if the project doesn't exist (API key won't match).
+        # It may return 404 or 500 if the project exists but other errors occur.
+        assert response.status_code in (401, 404, 500)
 
     def test_get_logs_invalid_lines_parameter(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that invalid lines parameter returns 422."""
-        response = test_client.get("/api/logs/test-project?lines=0")
+        response = test_client.get("/api/logs/test-project?lines=0", headers={"X-API-Key": api_key})
         assert response.status_code == 422
 
     def test_get_logs_lines_exceeds_max(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that lines exceeding max returns 422."""
-        response = test_client.get("/api/logs/test-project?lines=2000")
+        response = test_client.get("/api/logs/test-project?lines=2000", headers={"X-API-Key": api_key})
         assert response.status_code == 422
 
 

@@ -1,0 +1,16 @@
+# Project template — base skeleton for new projects.
+#
+# Fields managed by editables (display-name, description, clusters,
+# services, users, components, deployments) are NOT included here;
+# they come from the wizard form data.
+#
+# ${SETTING_NAME} placeholders are resolved from opi.core.config.settings
+# at load time.
+
+repositories:
+  - name: main-repo
+    url: "${PROJECT_REPO_URL}"
+    username: "${PROJECT_REPO_USERNAME}"
+    password: "${PROJECT_REPO_PASSWORD}"
+    branch: "${PROJECT_REPO_BRANCH}"
+    path: "."

@@ -1,0 +1,4 @@
+{% from "widgets/_macros.html.j2" import html_attributes %}
+<c-layout-row gap="{{ row.gap|e }}"{% if row.css_class %} class="{{ row.css_class|e }}"{% endif %} {{ html_attributes(row.attributes) }}>
+    {{ children_content }}
+</c-layout-row>

@@ -1,0 +1,22 @@
+{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, bool_attr, optional_attr, htmx_attrs, extra_attrs %}
+<div class="rvo-form-group">
+    <label class="utrecht-form-label" for="{{ field.path|e }}">
+        {{ field.label|e }}
+        {% if field.required %} <span class="rvo-required">*</span>{% endif %}
+    </label>
+    {{ helper_text(field) }}
+    {{ render_examples(field) }}
+    <input
+        type="file"
+        id="{{ field.path|e }}"
+        name="{{ field.path|e }}"
+        class="rvo-file-input"
+        {{ optional_attr("accept", field.attributes.get('accept', '')) }}
+        {{ bool_attr("multiple", field.attributes.get('multiple', false)) }}
+        {{ bool_attr("required", field.required) }}
+        {{ bool_attr("disabled", field.readonly) }}
+        {{ htmx_attrs(field) }}
+        {{ extra_attrs(field) }}
+    />
+    {{ render_errors(field.errors) }}
+</div>

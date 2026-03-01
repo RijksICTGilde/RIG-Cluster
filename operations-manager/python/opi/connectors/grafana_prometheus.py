@@ -317,9 +317,9 @@ class GrafanaPrometheusConnector:
         self._ensure_connected()
 
         if namespace:
-            query = f'sum(container_memory_usage_bytes{{namespace="{namespace}",container!=""}}) by (pod)'
+            query = f'sum(container_memory_working_set_bytes{{namespace="{namespace}",container!=""}}) by (pod)'
         else:
-            query = 'sum(container_memory_usage_bytes{container!=""}) by (namespace, pod)'
+            query = 'sum(container_memory_working_set_bytes{container!=""}) by (namespace, pod)'
 
         logger.debug(f"Querying memory usage: {query}")
 
@@ -419,7 +419,7 @@ class GrafanaPrometheusConnector:
 
             # Total memory usage
             memory_result = self._execute_query(
-                'sum(container_memory_usage_bytes{container!=""})',
+                'sum(container_memory_working_set_bytes{container!=""})',
                 instant=True,
             )
             if memory_result:
@@ -495,9 +495,7 @@ class GrafanaPrometheusConnector:
                 metrics["cpu_cores"] = float(cpu_result[0]["value"][1])
 
             # Memory usage
-            memory_query = (
-                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
-            )
+            memory_query = f'sum(container_memory_working_set_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
             memory_result = self._execute_query(memory_query, instant=True)
             if memory_result and len(memory_result) > 0:
                 memory_bytes = float(memory_result[0]["value"][1])
@@ -598,9 +596,7 @@ class GrafanaPrometheusConnector:
                     result["cpu"].append({"timestamp": ts, "value": round(cpu_millicores, 2)})
 
             # Memory usage time-series
-            memory_query = (
-                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
-            )
+            memory_query = f'sum(container_memory_working_set_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
             memory_result = self._execute_query(
                 memory_query, instant=False, start_time=start_time, end_time=end_time, step=step
             )

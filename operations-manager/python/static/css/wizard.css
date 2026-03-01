@@ -1,0 +1,394 @@
+/* Wizard CSS - extracted from wizard_page.html.j2 and roos.py */
+
+/* Helper text spacing — stack description + help_text vertically */
+.rvo-form-field__helper-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+/* Breadcrumb */
+.rvo-breadcrumb {
+    display: flex;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    gap: 0.5rem;
+}
+.rvo-breadcrumb li:not(:last-child)::after {
+    content: "/";
+    margin-left: 0.5rem;
+    color: #666;
+}
+.rvo-breadcrumb a {
+    color: #007BC7;
+    text-decoration: none;
+}
+.rvo-breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+/* Wizard Steps Indicator */
+.wizard-steps {
+    margin-bottom: 1rem;
+}
+.wizard-steps__list {
+    display: flex;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    gap: 0;
+}
+.wizard-steps__item {
+    flex: 1;
+    text-align: center;
+    position: relative;
+}
+.wizard-steps__item:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 1.25rem;
+    right: -50%;
+    width: 100%;
+    height: 2px;
+    background: #E0E0E0;
+    z-index: 0;
+}
+.wizard-steps__item--completed:not(:last-child)::after {
+    background: #39870C;
+}
+.wizard-steps__link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    color: inherit;
+    position: relative;
+    z-index: 1;
+    cursor: default;
+}
+a.wizard-steps__link {
+    cursor: pointer;
+}
+a.wizard-steps__link:hover .wizard-steps__label {
+    text-decoration: underline;
+}
+.wizard-steps__link--disabled .wizard-steps__label {
+    opacity: 0.5;
+}
+.wizard-steps__number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    background: #E0E0E0;
+    color: #333;
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+.wizard-steps__item--active .wizard-steps__number {
+    background: #007BC7;
+    color: white;
+}
+.wizard-steps__item--completed .wizard-steps__number {
+    background: #39870C;
+    color: white;
+}
+.wizard-steps__label {
+    font-size: 0.8125rem;
+    color: #333;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.wizard-steps__item--active .wizard-steps__label {
+    font-weight: 600;
+    color: #007BC7;
+}
+.wizard-steps__progress {
+    height: 4px;
+    background: #E0E0E0;
+    border-radius: 2px;
+    margin-top: 1rem;
+    overflow: hidden;
+}
+.wizard-steps__progress-bar {
+    height: 100%;
+    background: #007BC7;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+/* Wizard Step Content */
+.wizard-content {
+    background: white;
+    padding: 2rem;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.wizard-step__header {
+    margin-bottom: 1.5rem;
+}
+.wizard-step__description {
+    color: #666;
+    margin-top: 0.5rem;
+}
+.wizard-step__fields {
+    margin-bottom: 2rem;
+}
+.wizard-step__actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 1.5rem;
+    border-top: 1px solid #E0E0E0;
+}
+.wizard-step__actions-right {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+/* Nested fieldsets (sub-sections) get a card-like border */
+c-fieldset c-fieldset {
+    border: 1px solid #E0E0E0;
+    border-radius: 4px;
+    padding: 1.25rem;
+    background: #FAFAFA;
+}
+
+/* Sequence items */
+.rvo-sequence__item--inline {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+.rvo-sequence__item--inline > :first-child {
+    flex: 1;
+}
+.rvo-sequence__item--inline c-button {
+    flex-shrink: 0;
+    margin-top: 0.25rem;
+}
+.rvo-sequence__item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+.rvo-sequence__actions {
+    margin-top: 0.5rem;
+}
+.rvo-sequence__items {
+    margin-bottom: 0.25rem;
+}
+
+/* Preset cards - reuses .service-card classes */
+.wizard-step__presets {
+    margin-bottom: 1.5rem;
+}
+
+/* Key-value editor */
+.kv-toggle {
+    display: inline-flex;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+.kv-toggle__btn {
+    padding: 0.25rem 0.75rem;
+    border: none;
+    background: #f5f5f5;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #333;
+}
+.kv-toggle__btn:not(:last-child) {
+    border-right: 1px solid #ccc;
+}
+.kv-toggle__btn--active {
+    background: #007BC7;
+    color: white;
+}
+.kv-editor__status {
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+    min-height: 1.25rem;
+}
+.kv-editor__status--ok {
+    color: #39870C;
+}
+.kv-editor__status--error {
+    color: #C00;
+}
+
+/* Radio option descriptions */
+.rvo-radio-description {
+    margin: -0.25rem 0 0 1.75rem;
+}
+
+/* Wizard Review */
+.wizard-review__section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+.wizard-review__section-content {
+    font-size: 0.9375rem;
+    color: #333;
+}
+.wizard-review__section-content dl {
+    display: grid;
+    grid-template-columns: minmax(150px, auto) 1fr;
+    gap: 0.5rem 1rem;
+    margin: 0;
+}
+.wizard-review__section-content dt {
+    font-weight: 600;
+    color: #555;
+}
+.wizard-review__section-content dd {
+    margin: 0;
+}
+
+/* Service cards (from roos.py) */
+.service-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+    margin-top: 0.5rem;
+}
+.service-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    border: 2px solid var(--rvo-color-grijs-300, #e5e5e5);
+    border-radius: 8px;
+    background: white;
+    transition: border-color 0.2s, background-color 0.2s;
+    cursor: pointer;
+}
+.service-card:hover {
+    border-color: var(--rvo-color-hemelblauw, #007BC7);
+}
+.service-card--selected {
+    border-color: var(--rvo-color-hemelblauw, #007BC7);
+    background: var(--rvo-color-hemelblauw-100, #E5F0F9);
+}
+.service-card--locked-checked {
+    border-color: var(--rvo-color-hemelblauw, #007BC7);
+    background: var(--rvo-color-hemelblauw-100, #E5F0F9);
+    opacity: 0.85;
+}
+.service-card__content {
+    flex: 1;
+    cursor: pointer;
+}
+.service-card__header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+.service-card__title {
+    font-weight: 600;
+    color: var(--rvo-color-zwart, #000);
+}
+.service-card__description {
+    font-size: 0.875rem;
+    color: var(--rvo-color-grijs-700, #666);
+    margin: 0;
+    line-height: 1.4;
+}
+.service-card__hint {
+    font-size: 0.8rem;
+    color: var(--rvo-color-hemelblauw, #007BC7);
+    margin: 0.25rem 0 0 0;
+    font-style: italic;
+}
+
+/* Display field header (for display_card widget) */
+.rvo-display-field__header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Field with help icon - icon renders inline before the field component */
+.field-help-btn {
+    cursor: pointer;
+}
+.field-help-btn:hover {
+    opacity: 0.7;
+}
+
+/* Service card help icon */
+.service-card__help-btn {
+    margin-left: auto;
+    cursor: pointer;
+}
+.service-card__help-btn:hover {
+    opacity: 0.7;
+}
+
+/* Service help modal */
+.service-help-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+}
+.service-help-backdrop.is-open {
+    display: block;
+}
+.service-help-modal {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.95);
+    z-index: 1001;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    width: min(640px, 90vw);
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 1.5rem 2rem 2rem;
+}
+.service-help-modal.is-open {
+    display: block;
+    transform: translate(-50%, -50%) scale(1);
+}
+.service-help-modal__header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
+}
+.service-help-modal__close {
+    margin-left: auto;
+    cursor: pointer;
+}
+.service-help-modal__close:hover {
+    opacity: 0.7;
+}
+.service-help-modal__body {
+    line-height: 1.6;
+}
+.service-help-modal__body ul {
+    padding-left: 1.25rem;
+    margin: 0.5rem 0;
+}
+.service-help-modal__body li {
+    margin-bottom: 0.25rem;
+}

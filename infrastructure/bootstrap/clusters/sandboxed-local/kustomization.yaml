@@ -11,3 +11,4 @@ resources:
   - ../../infrastructure/minio/controller/overlays/sandboxed-local
   - ../../infrastructure/prometheus/controller/overlays/sandboxed-local
   - ../../infrastructure/redis/controller/overlays/sandboxed-local
+  - ../../infrastructure/registry/controller/overlays/sandboxed-local

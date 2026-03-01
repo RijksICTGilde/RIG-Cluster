@@ -1,0 +1,20 @@
+{% from "widgets/_macros.html.j2" import bool_attr %}
+{% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
+{% set remove_disabled = (field.children|length if field.children else 0) <= min_items %}
+{% set remove_label = field.attributes.get('remove_label', 'Verwijderen') %}
+<div class="rvo-sequence__item rvo-card rvo-card--outline rvo-card--padding-md" data-index="{{ index }}">
+    <div class="rvo-sequence__item-header">
+        <span></span>
+        <c-button kind="warning-subtle" size="sm"
+                  showIcon="before" icon="verwijderen"
+                  @click="sequenceRemove('{{ field.path|e }}', {{ index }})"
+                  {{ bool_attr("disabled", remove_disabled) }}>
+            {{ remove_label|e }}
+        </c-button>
+    </div>
+    <div class="rvo-sequence__item-content">
+        <c-layout-flow gap="md">
+            {{ item_html }}
+        </c-layout-flow>
+    </div>
+</div>

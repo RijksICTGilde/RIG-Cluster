@@ -55,6 +55,21 @@ class ServiceDefinition:
     # TODO: specific definitions should not be here
     storage_config: dict[str, Any] | None = None
     component_flag: str | None = None
+    hidden: bool = False
+    help_template: str | None = None
+    """Optional Jinja2 template name (relative to ``templates/help/``) with a
+    long-form explanation shown in a popup when the user clicks the info icon."""
+    requires: list[str] = field(default_factory=list)
+    """Service requirements using path syntax.
+
+    Each entry is a yaml_path that must exist in the form data:
+    - ``services/keycloak`` — the keycloak service must be selected
+    - ``services/keycloak/config/restrict-access`` — this config
+      path must be present
+
+    Used for both UI behavior (auto-select, lock) and submit-time
+    validation.
+    """
 
 
 class DatabaseVariables(Enum):
@@ -288,12 +303,13 @@ class ServiceAdapter:
             scope="component",
             secret_class="KeycloakSecret",
             variables=[var.value for var in KeycloakVariables],
+            requires=["services/publish-on-web"],
         ),
         ServiceType.PERSISTENT_STORAGE: ServiceDefinition(
             name="Permanente opslag",
             description="Gegevens blijven bewaard tijdens de levenscyclus van de applicatie",
             icon="server",
-            color="paars",
+            color="grijs-600",
             scope="component",
             storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
             variables=[var.value for var in StorageVariables if var.value.name == "DATA_PATH"],
@@ -324,6 +340,7 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
+            hidden=True,
         ),
         ServiceType.MINIO_STORAGE: ServiceDefinition(
             name="MinIO Object Storage",
@@ -351,16 +368,51 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
+            hidden=True,
         ),
         ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
             name="Authorization Wall",
             description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties",
-            icon="schild",
+            icon="schild-met-vinkje-erop",
             color="groen",
             scope="component",
+            help_template="authorization-wall.html.j2",
             variables=[],
+            requires=[
+                "services/publish-on-web",
+                "services/keycloak",
+                "services/keycloak/config/restrict-access",
+            ],
         ),
     }
+
+    @classmethod
+    def resolve_service_dependencies(cls, selected: list[str]) -> list[str]:
+        """Add missing service-level dependencies to a list of selected services.
+
+        Only resolves ``services/X`` requires (single-level paths).
+        Config-level requirements are not resolved here.
+
+        Returns a new list with dependencies prepended before the services
+        that need them, preserving original order.
+        """
+        selected_set = set(selected)
+        to_add: list[str] = []
+        for svc_name in selected:
+            try:
+                svc_type = ServiceType(svc_name)
+            except ValueError:
+                continue
+            definition = cls.SERVICE_DEFINITIONS.get(svc_type)
+            if not definition or not definition.requires:
+                continue
+            for req in definition.requires:
+                if req.startswith("services/") and req.count("/") == 1:
+                    dep_name = req.removeprefix("services/")
+                    if dep_name not in selected_set:
+                        selected_set.add(dep_name)
+                        to_add.append(dep_name)
+        return [*to_add, *selected]
 
     @classmethod
     def get_all_services(cls) -> list[ServiceType]:

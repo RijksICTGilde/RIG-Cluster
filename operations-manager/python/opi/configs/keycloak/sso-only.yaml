@@ -37,6 +37,7 @@ identityProviders:
     providerId: "oidc"
     enabled: true
     authenticateByDefault: true
+    updateProfileFirstLogin: "off"
     config:
       clientId: "{{ platform_client.client_id }}"
       clientSecret: "{{ platform_client.client_secret }}"

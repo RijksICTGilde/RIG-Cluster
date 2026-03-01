@@ -762,6 +762,7 @@ class KeycloakConnector:
         discovery_url: str,
         provider_type: str = "oidc",
         authenticate_by_default: bool = True,
+        update_profile_first_login: str = "off",
     ) -> dict[str, Any]:
         """
         Add an OIDC identity provider to a realm.
@@ -775,6 +776,7 @@ class KeycloakConnector:
             discovery_url: OIDC discovery URL (.well-known/openid-configuration)
             provider_type: Type of provider (default: "oidc")
             authenticate_by_default: Auto-redirect to this IDP on login (default: True)
+            update_profile_first_login: Whether to show profile update on first login (default: "off")
 
         Returns:
             Dictionary containing provider information
@@ -806,7 +808,7 @@ class KeycloakConnector:
             "displayName": display_name,
             "providerId": provider_type,
             "enabled": True,
-            "updateProfileFirstLoginMode": "off",
+            "updateProfileFirstLoginMode": update_profile_first_login,
             "trustEmail": True,
             "storeToken": True,
             "addReadTokenRoleOnCreate": True,
@@ -869,6 +871,7 @@ class KeycloakConnector:
         authenticate_by_default: bool = True,
         sync_mode: str = "FORCE",
         enabled: bool = True,
+        update_profile_first_login: str = "off",
     ) -> dict[str, Any]:
         """
         Add a SAML identity provider to a realm.
@@ -890,6 +893,7 @@ class KeycloakConnector:
             authenticate_by_default: Auto-redirect to this IDP on login
             sync_mode: Sync mode for attributes (FORCE, IMPORT, INHERIT)
             enabled: Whether the IDP is enabled
+            update_profile_first_login: Whether to show profile update on first login (default: "off")
 
         Returns:
             Dictionary containing provider information
@@ -934,7 +938,7 @@ class KeycloakConnector:
             "displayName": display_name,
             "providerId": "saml",
             "enabled": enabled,
-            "updateProfileFirstLoginMode": "on",
+            "updateProfileFirstLoginMode": update_profile_first_login,
             "trustEmail": True,
             "storeToken": False,
             "addReadTokenRoleOnCreate": False,

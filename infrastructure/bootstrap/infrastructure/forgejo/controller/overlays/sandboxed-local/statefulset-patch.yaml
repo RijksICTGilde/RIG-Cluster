@@ -57,3 +57,11 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /var/lib/gitea
+        - name: custom-robots
+          mountPath: /var/lib/gitea/custom/robots.txt
+          subPath: robots.txt
+          readOnly: true
+      volumes:
+      - name: custom-robots
+        configMap:
+          name: forgejo-robots

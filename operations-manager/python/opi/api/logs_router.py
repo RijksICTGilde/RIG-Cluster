@@ -7,8 +7,9 @@ running on the current cluster.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from opi.api.endpoint_util import validate_api_token
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
@@ -29,7 +30,9 @@ logs_router: APIRouter = APIRouter(
 
 
 @logs_router.get("/{project_name}")
+@validate_api_token
 async def get_deployment_logs(
+    request: Request,
     project_name: str,
     deployment: str | None = Query(None, description="Filter by deployment name"),
     component: str | None = Query(None, description="Filter by component name"),

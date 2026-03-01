@@ -20,6 +20,73 @@ from opi.utils.env_vars import validate_and_parse_env_vars
 
 logger = logging.getLogger(__name__)
 
+# Default resource values for deployment containers
+DEFAULT_RESOURCES: dict[str, str] = {
+    "requests_memory": "128Mi",
+    "requests_cpu": "50m",
+    "limits_memory": "512Mi",
+    "limits_cpu": "1000m",
+}
+
+
+def _parse_resources_block(raw: dict | None, defaults: dict[str, str] | None = None) -> dict[str, str]:
+    """
+    Parse a nested resources block into flat keys with defaults.
+
+    Args:
+        raw: Nested dict like {"requests": {"memory": "256Mi"}, "limits": {"cpu": "500m"}}
+        defaults: Default values to use for missing keys (uses DEFAULT_RESOURCES if None)
+
+    Returns:
+        Flat dict with all 4 keys filled in
+    """
+    if defaults is None:
+        defaults = DEFAULT_RESOURCES
+
+    if not raw or not isinstance(raw, dict):
+        return defaults.copy()
+
+    requests = raw.get("requests", {}) or {}
+    limits = raw.get("limits", {}) or {}
+
+    return {
+        "requests_memory": str(requests.get("memory", defaults["requests_memory"])),
+        "requests_cpu": str(requests.get("cpu", defaults["requests_cpu"])),
+        "limits_memory": str(limits.get("memory", defaults["limits_memory"])),
+        "limits_cpu": str(limits.get("cpu", defaults["limits_cpu"])),
+    }
+
+
+def _parse_resources_block_partial(raw: dict | None) -> dict[str, str]:
+    """
+    Parse a nested resources block into flat keys without filling defaults.
+
+    Only returns keys that are explicitly set in the raw block.
+
+    Args:
+        raw: Nested dict like {"limits": {"memory": "2048Mi"}}
+
+    Returns:
+        Flat dict with only the keys that were explicitly set
+    """
+    if not raw or not isinstance(raw, dict):
+        return {}
+
+    result: dict[str, str] = {}
+    requests = raw.get("requests", {}) or {}
+    limits = raw.get("limits", {}) or {}
+
+    if "memory" in requests:
+        result["requests_memory"] = str(requests["memory"])
+    if "cpu" in requests:
+        result["requests_cpu"] = str(requests["cpu"])
+    if "memory" in limits:
+        result["limits_memory"] = str(limits["memory"])
+    if "cpu" in limits:
+        result["limits_cpu"] = str(limits["cpu"])
+
+    return result
+
 
 class ProjectFileHandler:
     """Handler for project file operations including reading, parsing, and change detection."""
@@ -733,6 +800,154 @@ class ProjectFileHandler:
         return {"port": metrics_port, "path": metrics_path}
 
     # ========================================================================
+    # Resource Configuration Methods
+    # ========================================================================
+
+    def extract_component_resources(self, project_data: dict[str, Any], component_name: str) -> dict[str, str]:
+        """
+        Extract resource configuration from a component definition by name.
+
+        Returns flat dict with keys: requests_memory, requests_cpu, limits_memory, limits_cpu.
+        Missing values are filled with defaults.
+
+        Args:
+            project_data: The parsed project data
+            component_name: Name of the component to find resources for
+
+        Returns:
+            Flat dictionary with resource values (always complete with defaults)
+        """
+        resources_path = f"$.components[?(@.name='{component_name}')].resources"
+        raw_resources = self.extract_value_by_path(project_data, resources_path, None)
+
+        return _parse_resources_block(raw_resources)
+
+    def extract_deployment_component_resources(
+        self, project_data: dict[str, Any], deployment_name: str, component_reference: str
+    ) -> dict[str, str] | None:
+        """
+        Extract resource configuration from a deployment-level component override.
+
+        Returns None if no deployment-level resources are defined (no override).
+        Returns flat dict with partial or full overrides when present.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+
+        Returns:
+            Flat dictionary with resource overrides, or None if absent
+        """
+        # Navigate manually for nested array filter
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                raw_resources = comp.get("resources")
+                if raw_resources is None:
+                    return None
+                # Parse without defaults — return only what's explicitly set
+                return _parse_resources_block_partial(raw_resources)
+        return None
+
+    def extract_component_disabled(self, project_data: dict[str, Any], component_name: str) -> tuple[bool, str]:
+        """
+        Extract disabled state from a component definition.
+
+        Args:
+            project_data: The parsed project data
+            component_name: Name of the component
+
+        Returns:
+            Tuple of (disabled, reason)
+        """
+        disabled_path = f"$.components[?(@.name='{component_name}')].disabled"
+        disabled = self.extract_value_by_path(project_data, disabled_path, False)
+
+        reason_path = f"$.components[?(@.name='{component_name}')].disabled-reason"
+        reason = self.extract_value_by_path(project_data, reason_path, "")
+
+        return bool(disabled), str(reason or "")
+
+    def set_component_disabled(
+        self, project_data: dict[str, Any], component_name: str, disabled: bool, reason: str
+    ) -> bool:
+        """
+        Set the disabled state on a component in the project data.
+
+        Modifies project_data in place.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            component_name: Name of the component
+            disabled: Whether to disable the component
+            reason: Reason for disabling
+
+        Returns:
+            True if the component was found and updated, False otherwise
+        """
+        components = project_data.get("components", [])
+        for comp in components:
+            if comp.get("name") == component_name:
+                comp["disabled"] = disabled
+                if disabled:
+                    comp["disabled-reason"] = reason
+                elif "disabled-reason" in comp:
+                    del comp["disabled-reason"]
+                logger.info(
+                    f"Set component '{component_name}' disabled={disabled}"
+                    + (f" reason='{reason}'" if disabled else "")
+                )
+                return True
+        logger.warning(f"Component '{component_name}' not found for disabled state update")
+        return False
+
+    def set_component_resources(
+        self, project_data: dict[str, Any], component_name: str, resources: dict[str, str]
+    ) -> bool:
+        """
+        Set resource configuration on a component in the project data.
+
+        Modifies project_data in place. The resources dict uses flat keys
+        (requests_memory, requests_cpu, limits_memory, limits_cpu).
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            component_name: Name of the component
+            resources: Flat dict with resource values
+
+        Returns:
+            True if the component was found and updated, False otherwise
+        """
+        components = project_data.get("components", [])
+        for comp in components:
+            if comp.get("name") == component_name:
+                if "resources" not in comp:
+                    comp["resources"] = {}
+                res = comp["resources"]
+                if "requests" not in res:
+                    res["requests"] = {}
+                if "limits" not in res:
+                    res["limits"] = {}
+                if "requests_memory" in resources:
+                    res["requests"]["memory"] = resources["requests_memory"]
+                if "requests_cpu" in resources:
+                    res["requests"]["cpu"] = resources["requests_cpu"]
+                if "limits_memory" in resources:
+                    res["limits"]["memory"] = resources["limits_memory"]
+                if "limits_cpu" in resources:
+                    res["limits"]["cpu"] = resources["limits_cpu"]
+                logger.info(f"Updated resources for component '{component_name}': {resources}")
+                return True
+        logger.warning(f"Component '{component_name}' not found for resource update")
+        return False
+
+    # ========================================================================
     # Service Config Generation Methods (reference/config pattern)
     # ========================================================================
 
@@ -1441,7 +1656,9 @@ class ProjectFileHandler:
             project_data: The parsed project data
 
         Returns:
-            List of registry configuration dicts with keys: name, url, username, password
+            List of registry configuration dicts with keys: name, url, and either
+            (username, password) for credential-based auth, or secretName for
+            pre-existing Kubernetes secrets. URL may include paths (e.g., rcr.rijksapps.nl/rig).
         """
         registries_path = "$.registries[*]"
         registries = self.extract_value_by_path(project_data, registries_path, [])

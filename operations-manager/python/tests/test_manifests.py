@@ -305,9 +305,18 @@ class TestRenderRealTemplates:
         assert "--oidc-issuer-url=https://keycloak.example.com/realms/test" in args
         assert "--client-id=my-client" in args
         assert "--upstream=http://localhost:8080" in args
-        # Without banner, skip-provider-button should be true (auto-redirect)
-        assert "--skip-provider-button=true" in args
+        # Custom sign-in page is always shown
+        assert "--skip-provider-button=false" in args
+        assert "--custom-templates-dir=/etc/oauth2-proxy/templates" in args
         assert not any(arg.startswith("--banner=") for arg in args)
+        # Sidecar should have volumeMount for custom templates
+        assert sidecar["volumeMounts"][0]["name"] == "oauth2-signin-templates"
+        assert sidecar["volumeMounts"][0]["mountPath"] == "/etc/oauth2-proxy/templates"
+        # Pod should have the ConfigMap volume
+        volumes = doc["spec"]["template"]["spec"]["volumes"]
+        oauth2_vol = [v for v in volumes if v["name"] == "oauth2-signin-templates"]
+        assert len(oauth2_vol) == 1
+        assert oauth2_vol[0]["configMap"]["name"] == "web-oauth2-signin"
 
     def test_deployment_template_with_authorization_wall_banner(self):
         result = render_template(
@@ -338,9 +347,30 @@ class TestRenderRealTemplates:
         containers = doc["spec"]["template"]["spec"]["containers"]
         sidecar = containers[1]
         args = sidecar["args"]
-        # With banner, skip-provider-button should be false (show sign-in page)
         assert "--skip-provider-button=false" in args
         assert "--banner=Welcome to our application. Please log in." in args
+
+    def test_authorization_wall_configmap_section(self):
+        """The sidecar template's configmap section should produce a valid ConfigMap with sign_in.html."""
+        result = render_template(
+            "sidecar-authorization-wall.yaml.jinja",
+            {
+                "section": "configmap",
+                "name": "web",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["kind"] == "ConfigMap"
+        assert doc["metadata"]["name"] == "web-oauth2-signin"
+        assert doc["metadata"]["namespace"] == "rig-proj"
+        assert "sign_in.html" in doc["data"]
+        html = doc["data"]["sign_in.html"]
+        assert "Deze website heeft beperkte toegang" in html
+        assert "Inloggen" in html
+        assert ".ProxyPrefix" in html
 
     def test_deployment_template_without_sidecars(self):
         result = render_template(

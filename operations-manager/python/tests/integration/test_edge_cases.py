@@ -23,6 +23,7 @@ class TestEmptyResults:
     def test_logs_endpoint_empty_logs(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_project_service: None,
         mock_cluster_config: None,
@@ -38,7 +39,7 @@ class TestEmptyResults:
             mock_instance.get_deployment_logs = empty_logs
             mock_class.return_value = mock_instance
 
-            response = test_client.get("/api/logs/test-project")
+            response = test_client.get("/api/logs/test-project", headers={"X-API-Key": api_key})
             assert response.status_code == 200
             data = response.json()
             assert data["status"] == "success"
@@ -69,6 +70,7 @@ class TestInvalidInputs:
     def test_logs_invalid_project_name_special_chars(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
@@ -76,13 +78,14 @@ class TestInvalidInputs:
     ) -> None:
         """Test that project names with special characters are handled."""
         # URL encoding should handle this
-        response = test_client.get("/api/logs/project%20with%20spaces")
-        # Should return 404 or 500 as project doesn't exist
-        assert response.status_code in (404, 500)
+        response = test_client.get("/api/logs/project%20with%20spaces", headers={"X-API-Key": api_key})
+        # Should return 404 or 500 as project doesn't exist (or 401 if API key doesn't match)
+        assert response.status_code in (401, 404, 500)
 
     def test_logs_very_long_project_name(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
@@ -90,9 +93,9 @@ class TestInvalidInputs:
     ) -> None:
         """Test that very long project names are handled."""
         long_name = "a" * 100
-        response = test_client.get(f"/api/logs/{long_name}")
-        # Should return error as project doesn't exist
-        assert response.status_code in (404, 500)
+        response = test_client.get(f"/api/logs/{long_name}", headers={"X-API-Key": api_key})
+        # Should return error as project doesn't exist (or 401 if API key doesn't match)
+        assert response.status_code in (401, 404, 500)
 
     def test_logs_empty_project_name(
         self,
@@ -126,13 +129,14 @@ class TestBoundaryValues:
     def test_logs_minimum_lines(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test minimum valid lines parameter."""
-        response = test_client.get("/api/logs/test-project?lines=1")
+        response = test_client.get("/api/logs/test-project?lines=1", headers={"X-API-Key": api_key})
         assert response.status_code == 200
         data = response.json()
         assert data["filters"]["lines"] == 1
@@ -140,13 +144,14 @@ class TestBoundaryValues:
     def test_logs_maximum_lines(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test maximum valid lines parameter."""
-        response = test_client.get("/api/logs/test-project?lines=1000")
+        response = test_client.get("/api/logs/test-project?lines=1000", headers={"X-API-Key": api_key})
         assert response.status_code == 200
         data = response.json()
         assert data["filters"]["lines"] == 1000
@@ -154,37 +159,40 @@ class TestBoundaryValues:
     def test_logs_negative_lines(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test negative lines parameter returns 422."""
-        response = test_client.get("/api/logs/test-project?lines=-1")
+        response = test_client.get("/api/logs/test-project?lines=-1", headers={"X-API-Key": api_key})
         assert response.status_code == 422
 
     def test_logs_float_lines(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test float lines parameter returns 422."""
-        response = test_client.get("/api/logs/test-project?lines=10.5")
+        response = test_client.get("/api/logs/test-project?lines=10.5", headers={"X-API-Key": api_key})
         assert response.status_code == 422
 
     def test_logs_string_lines(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test string lines parameter returns 422."""
-        response = test_client.get("/api/logs/test-project?lines=abc")
+        response = test_client.get("/api/logs/test-project?lines=abc", headers={"X-API-Key": api_key})
         assert response.status_code == 422
 
 
@@ -195,13 +203,14 @@ class TestSpecialCharactersInFilters:
     def test_logs_deployment_with_hyphen(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test deployment names with hyphens (valid Kubernetes names)."""
-        response = test_client.get("/api/logs/test-project?deployment=my-deployment")
+        response = test_client.get("/api/logs/test-project?deployment=my-deployment", headers={"X-API-Key": api_key})
         assert response.status_code == 200
         data = response.json()
         assert data["filters"]["deployment"] == "my-deployment"
@@ -209,13 +218,16 @@ class TestSpecialCharactersInFilters:
     def test_logs_component_with_numbers(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test component names with numbers (valid Kubernetes names)."""
-        response = test_client.get("/api/logs/test-project?deployment=main&component=web123")
+        response = test_client.get(
+            "/api/logs/test-project?deployment=main&component=web123", headers={"X-API-Key": api_key}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["filters"]["component"] == "web123"
@@ -228,13 +240,14 @@ class TestAPIResponseFormats:
     def test_logs_response_structure(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that logs response has consistent structure."""
-        response = test_client.get("/api/logs/test-project")
+        response = test_client.get("/api/logs/test-project", headers={"X-API-Key": api_key})
         assert response.status_code == 200
         data = response.json()
 
@@ -267,6 +280,7 @@ class TestConcurrentOperations:
     def test_multiple_simultaneous_log_requests(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
@@ -276,7 +290,7 @@ class TestConcurrentOperations:
         import concurrent.futures
 
         def make_request() -> int:
-            response = test_client.get("/api/logs/test-project")
+            response = test_client.get("/api/logs/test-project", headers={"X-API-Key": api_key})
             return response.status_code
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
@@ -336,38 +350,41 @@ class TestQueryParameterEdgeCases:
     def test_unknown_query_parameters_ignored(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that unknown query parameters are ignored."""
-        response = test_client.get("/api/logs/test-project?unknown_param=value")
+        response = test_client.get("/api/logs/test-project?unknown_param=value", headers={"X-API-Key": api_key})
         assert response.status_code == 200
 
     def test_duplicate_query_parameters(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that duplicate query parameters are handled (last value wins)."""
-        response = test_client.get("/api/logs/test-project?lines=10&lines=20")
+        response = test_client.get("/api/logs/test-project?lines=10&lines=20", headers={"X-API-Key": api_key})
         # FastAPI typically takes the last value for single parameters
         assert response.status_code == 200
 
     def test_empty_query_parameter_value(
         self,
         test_client: TestClient,
+        api_key: str,
         mock_kubectl_connected: None,
         mock_kubectl_logs: None,
         mock_project_service: None,
         mock_cluster_config: None,
     ) -> None:
         """Test that empty query parameter values are handled."""
-        response = test_client.get("/api/logs/test-project?deployment=")
+        response = test_client.get("/api/logs/test-project?deployment=", headers={"X-API-Key": api_key})
         assert response.status_code == 200
         data = response.json()
         # Empty string should be treated as no filter

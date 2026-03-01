@@ -1,0 +1,89 @@
+{% extends "base.html.j2" %}
+
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="lg" size="lg">
+    <c-heading type="h1" textContent="Dynamic Form Demo" />
+
+    <c-text>
+        Dit is een demonstratie van het dynamische formulier systeem.
+        Het formulier wordt gegenereerd vanuit een Pydantic model met FormMeta annotaties.
+    </c-text>
+
+    {# Form Container #}
+    <div class="project-form-container">
+        <form method="POST" action="/projects/form-demo" autocomplete="off">
+            {{ form_html | process_components }}
+        </form>
+    </div>
+
+    {# Debug: Show extracted fields #}
+    <c-fieldset legend="Debug: Extracted Fields" :collapsible="true" :defaultCollapsed="true">
+        <div class="debug-fields">
+            <table class="rvo-table">
+                <thead>
+                    <tr>
+                        <th>Field Name</th>
+                        <th>Widget Type</th>
+                        <th>Required</th>
+                        <th>Label</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for field in fields %}
+                    <tr>
+                        <td><code>{{ field.name }}</code></td>
+                        <td>{{ field.widget_type }}</td>
+                        <td>{{ "Ja" if field.required else "Nee" }}</td>
+                        <td>{{ field.label }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </c-fieldset>
+
+    {# Debug: Show project data #}
+    <c-fieldset legend="Debug: Project Data (JSON)" :collapsible="true" :defaultCollapsed="true">
+        <pre style="background: #f5f5f5; padding: 1rem; overflow-x: auto; font-size: 0.875rem;">{{ project_data | tojson(indent=2) }}</pre>
+    </c-fieldset>
+</c-layout-flow>
+
+<style>
+    .project-form-container {
+        background: white;
+        padding: 2rem;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .debug-fields {
+        overflow-x: auto;
+    }
+
+    .rvo-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .rvo-table th,
+    .rvo-table td {
+        padding: 0.5rem;
+        text-align: left;
+        border-bottom: 1px solid #e5e5e5;
+    }
+
+    .rvo-table th {
+        background: #f5f5f5;
+        font-weight: 600;
+    }
+
+    .rvo-table code {
+        background: #f0f0f0;
+        padding: 0.125rem 0.25rem;
+        border-radius: 2px;
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %}

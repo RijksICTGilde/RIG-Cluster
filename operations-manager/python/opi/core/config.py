@@ -294,6 +294,14 @@ class Settings(BaseSettings):
     GRAFANA_TOKEN: str | None = None
     GRAFANA_DATASOURCE_UID: str | None = None  # Auto-discovered if not set
 
+    # Resource tuning configuration
+    RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
+    RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed
+    RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Only recommend if diff > 20%
+
+    # Deployment sanitization configuration
+    SANITIZE_RESTART_THRESHOLD: int = 10  # Restarts above this = broken
+
     # Backup configuration
     BACKUP_S3_ENDPOINT: str = "minio.rig-backup-destination.svc:9000"
     BACKUP_S3_BUCKET: str = "rig-backups"  # Fallback bucket when project context unavailable
