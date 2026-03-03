@@ -829,6 +829,17 @@ class AddComponentToDeploymentRequest(BaseModel):
     image: str = Field(..., max_length=512, description="Container image URL for this deployment")
 
 
+class AddServiceRequest(BaseModel):
+    """Request to add a service to an existing project."""
+
+    service: str = Field(..., max_length=63, description="Service name (e.g. 'postgresql-database')")
+    components: list[str] | None = Field(
+        None,
+        description="Optional list of component names whose uses-services should also be updated. "
+        "If omitted/empty, the service is only added at the project level.",
+    )
+
+
 class SelfServiceProjectRequest(BaseModel):
     # Project Details (from form fields)
     project_name: str = Field(..., max_length=63)  # Generated technical name (short, compliant)
@@ -1254,6 +1265,117 @@ async def add_component_to_deployment(
         raise
     except Exception as e:
         logger.error(f"Error adding component to deployment: {e!s}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+@api_router.post(
+    "/projects/{project_name}/services",
+    responses={
+        201: {"description": "Service added (or already present) successfully"},
+    },
+)
+@validate_api_token
+async def add_service(request: Request, project_name: str, service_data: AddServiceRequest = Body(...)) -> JSONResponse:
+    """
+    Add a service to an existing project.
+
+    The service (and any auto-resolved dependencies) is added at the
+    project level.  If ``components`` is provided, those components'
+    ``uses-services`` lists are updated as well.
+
+    The request always succeeds — if the service already exists it is
+    reported in ``services_skipped`` / ``warnings``.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+
+    Example:
+    ```bash
+    curl -X POST "http://localhost:9595/api/projects/my-project/services" \\
+      -H "Content-Type: application/json" \\
+      -H "X-API-Key: your-api-key" \\
+      -d '{
+        "service": "postgresql-database",
+        "components": ["main"]
+      }'
+    ```
+    """
+    project_manager = None
+    try:
+        logger.info(
+            f"Adding service '{sanitize_for_log(service_data.service)}' to project: {sanitize_for_log(project_name)}"
+        )
+
+        # Validate project name format
+        if not validate_project_name(project_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+
+        # Create project manager instance
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+
+        # Add the service
+        result = await project_manager.add_service(
+            service_name=service_data.service,
+            component_names=service_data.components,
+        )
+
+        if result["success"]:
+            # Process deployments only when new services were actually added
+            processing_status = "skipped"
+            if result.get("services_added"):
+                processing_success = True
+                project_data = await project_manager.get_contents()
+                for deployment in project_data.get("deployments", []):
+                    dep_name = deployment.get("name")
+                    if dep_name:
+                        dep_result = await project_manager.process_project_from_git(
+                            f"projects/{project_name}.yaml",
+                            deployment_name=dep_name,
+                        )
+                        if not dep_result:
+                            logger.error(
+                                f"Deployment processing failed for deployment '{dep_name}' in project '{sanitize_for_log(project_name)}'"
+                            )
+                            processing_success = False
+                processing_status = "completed" if processing_success else "failed"
+
+            content: dict[str, Any] = {
+                "status": "success",
+                "message": f"Service '{service_data.service}' added successfully",
+                "services_added": result.get("services_added", []),
+                "services_skipped": result.get("services_skipped", []),
+                "components_updated": result.get("components_updated", []),
+                "processing": {"status": processing_status},
+            }
+            if result.get("warnings"):
+                content["warnings"] = result["warnings"]
+            return JSONResponse(content=content, status_code=201)
+        else:
+            error_status_codes = {
+                "invalid_service": 400,
+                "invalid_components": 400,
+                "internal_error": 500,
+            }
+            status_code = error_status_codes.get(result.get("error_type"), 400)
+
+            content = {
+                "status": "failed",
+                "message": f"Failed to add service '{service_data.service}'",
+                "error": result["error"],
+                "error_type": result["error_type"],
+            }
+            return JSONResponse(content=content, status_code=status_code)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding service: {e!s}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
     finally:
         if project_manager:
