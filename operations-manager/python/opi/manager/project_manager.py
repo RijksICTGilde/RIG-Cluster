@@ -48,7 +48,7 @@ from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.handlers.sops import SopsHandler
 from opi.manager.revision_manager import RevisionManager
-from opi.services import ServiceAdapter, ServiceType, VariableDefinition
+from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.project_service import ProjectUser, get_project_service
 from opi.utils.age import (
     decrypt_age_content,
@@ -5475,7 +5475,7 @@ class ProjectManager:
 
             try:
                 result = ServiceAdapter.add_services_to_project(project_data, [service_name], component_names)
-            except ValueError as e:
+            except ServiceValidationError as e:
                 error_type = "invalid_components" if "Components not found" in str(e) else "invalid_service"
                 return {"success": False, "error": str(e), "error_type": error_type}
 
