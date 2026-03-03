@@ -87,7 +87,7 @@ def compute_memory_recommendation(
     buffer_percent: int = 25,
     threshold_percent: int = 20,
     has_oom_kills: bool = False,
-    min_memory_mi: int = 12,
+    min_memory_mi: int = 25,
 ) -> tuple[str, str, str] | None:
     """
     Compute a memory recommendation based on observed usage.
