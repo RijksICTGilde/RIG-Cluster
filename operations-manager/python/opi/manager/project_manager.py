@@ -5448,6 +5448,57 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
+    async def add_service(
+        self,
+        service_name: str,
+        component_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add a service to the project's services list.
+
+        The service (and any auto-resolved dependencies) is added at the
+        project level.  Optionally, the listed components' ``uses-services``
+        are updated as well.
+
+        Args:
+            service_name: Service to add (e.g. ``"postgresql-database"``).
+            component_names: Optional component names whose ``uses-services``
+                should also be updated.
+
+        Returns:
+            Result dict with ``success``, ``services_added``,
+            ``services_skipped``, ``components_updated``, and ``warnings``.
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            try:
+                result = ServiceAdapter.add_services_to_project(project_data, [service_name], component_names)
+            except ValueError as e:
+                error_type = "invalid_components" if "Components not found" in str(e) else "invalid_service"
+                return {"success": False, "error": str(e), "error_type": error_type}
+
+            # Persist changes only when something was actually added
+            if result["services_added"]:
+                await self.save_project_data()
+                git_connector = await self.get_git_connector_for_project_files()
+                added = ", ".join(result["services_added"])
+                commit_message = f"Add service(s) {added} to project '{project_name}'"
+                await git_connector.commit_and_push(commit_message)
+
+            logger.info(
+                f"Add service '{service_name}' to project '{project_name}': "
+                f"added={result['services_added']}, skipped={result['services_skipped']}"
+            )
+
+            return {"success": True, **result}
+
+        except Exception as e:
+            error_msg = f"Error adding service '{service_name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
     async def add_component_to_deployment(
         self,
         deployment_name: str,
