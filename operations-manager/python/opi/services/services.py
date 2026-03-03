@@ -15,6 +15,10 @@ from opi.services.services_enums import ServiceType
 logger = logging.getLogger(__name__)
 
 
+class ServiceValidationError(ValueError):
+    """Raised for user-facing service validation failures."""
+
+
 @dataclass
 class VariableDefinition:
     """
@@ -546,11 +550,11 @@ class ServiceAdapter:
             except ValueError:
                 # Provide helpful error message for renamed service
                 if service_name == "sso-rijk":
-                    raise ValueError(
+                    raise ServiceValidationError(
                         "Service 'sso-rijk' has been renamed to 'keycloak'. "
                         "Please update your project.yaml to use 'keycloak' instead."
                     ) from None
-                raise ValueError(f"Unknown service: {service_name}") from None
+                raise ServiceValidationError(f"Unknown service: {service_name}") from None
 
         return services
 
@@ -699,7 +703,7 @@ class ServiceAdapter:
             existing_components = {comp.get("name"): comp for comp in project_data.get("components", [])}
             invalid_components = [c for c in component_names if c not in existing_components]
             if invalid_components:
-                raise ValueError(f"Components not found in project: {invalid_components}")
+                raise ServiceValidationError(f"Components not found in project: {invalid_components}")
 
         # Append new services to the project-level list
         if "services" not in project_data:
