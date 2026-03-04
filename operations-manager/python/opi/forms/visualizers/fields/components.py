@@ -15,16 +15,15 @@ from opi.forms.editables.fields.components import (
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE,
     COMPONENT_REWRITE_PATH_EDITABLE,
+    COMPONENT_SERVICES_EDITABLE,
     COMPONENT_STORAGE_SEQUENCE_EDITABLE,
     COMPONENT_USER_ENV_VARS_EDITABLE,
-    COMPONENT_USES_SERVICES_EDITABLE,
     COMPONENTS_SEQUENCE_EDITABLE,
     INBOUND_PORT_EDITABLE,
     OUTBOUND_PORT_EDITABLE,
     STORAGE_MOUNT_PATH_EDITABLE,
     STORAGE_NAME_EDITABLE,
     STORAGE_SIZE_EDITABLE,
-    STORAGE_TYPE_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
@@ -108,8 +107,8 @@ COMPONENT_RESOURCES_MEMORY_LIMIT = EditableVisualizer(
     help_text="Het maximale geheugen. Bij overschrijding wordt het component herstart (OOMKilled).",
 )
 
-COMPONENT_USES_SERVICES = EditableVisualizer(
-    editable=COMPONENT_USES_SERVICES_EDITABLE,
+COMPONENT_SERVICES = EditableVisualizer(
+    editable=COMPONENT_SERVICES_EDITABLE,
     widget=WidgetType.CHECKBOX_GROUP,
     label="Gebruikte services",
     description="Selecteer welke services dit component gebruikt. Standaard zijn alle services geselecteerd.",
@@ -168,15 +167,6 @@ STORAGE_NAME = EditableVisualizer(
     help_text="Unieke naam voor dit opslagvolume binnen het component.",
 )
 
-STORAGE_TYPE = EditableVisualizer(
-    editable=STORAGE_TYPE_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Type",
-    help_text=(
-        "Persistent: data blijft behouden bij herstarts. Ephemeral: tijdelijke opslag, gaat verloren bij herstarts."
-    ),
-)
-
 STORAGE_SIZE = EditableVisualizer(
     editable=STORAGE_SIZE_EDITABLE,
     widget=WidgetType.SELECT,
@@ -196,7 +186,7 @@ COMPONENT_STORAGE_SEQUENCE = EditableVisualizer(
     widget=WidgetType.SEQUENCE,
     label="Opslagvolumes",
     help_text="Persistente of tijdelijke opslagvolumes die in de container worden gemount",
-    children=[STORAGE_NAME, STORAGE_TYPE, STORAGE_SIZE, STORAGE_MOUNT_PATH],
+    children=[STORAGE_NAME, STORAGE_SIZE, STORAGE_MOUNT_PATH],
 )
 
 COMPONENTS_SEQUENCE = EditableVisualizer(
@@ -212,7 +202,7 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         COMPONENT_RESOURCES_MEMORY_LIMIT,
         COMPONENT_PORTS_INBOUND,
         COMPONENT_PORTS_OUTBOUND,
-        COMPONENT_USES_SERVICES,
+        COMPONENT_SERVICES,
         COMPONENT_PATH,
         COMPONENT_REWRITE_PATH,
         COMPONENT_ALIASES,

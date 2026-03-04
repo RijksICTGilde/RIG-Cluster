@@ -351,7 +351,7 @@ class FormRenderer:
 
         Currently extracts:
         - ``project_services``: list of enabled service names, used by
-          ``FilteredServiceOptionsProvider`` to limit the uses-services
+          ``FilteredServiceOptionsProvider`` to limit the component services
           checkbox group to project-enabled services.
         - ``component_names``: list of component names, used by
           ``ComponentReferenceOptionsProvider`` for deployment references.

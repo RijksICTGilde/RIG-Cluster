@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from opi.forms.editables.converters import (
     ContainerImageConverter,
-    EnsureListConverter,
     IntegerConverter,
     KeyValueConverter,
+    ServiceListConverter,
 )
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
@@ -83,9 +83,9 @@ COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE = Editable(
     default="512Mi",
 )
 
-COMPONENT_USES_SERVICES_EDITABLE = Editable(
-    yaml_path="components[*]/uses-services",
-    converter=EnsureListConverter(),
+COMPONENT_SERVICES_EDITABLE = Editable(
+    yaml_path="components[*]/services",
+    converter=ServiceListConverter(),
     values_provider="FilteredServiceOptionsProvider",
     default="__all__",
 )
@@ -118,11 +118,6 @@ STORAGE_NAME_EDITABLE = Editable(
     required=True,
 )
 
-STORAGE_TYPE_EDITABLE = Editable(
-    yaml_path="components[*]/storage[*]/type",
-    values_provider="StorageTypeOptionsProvider",
-)
-
 STORAGE_SIZE_EDITABLE = Editable(
     yaml_path="components[*]/storage[*]/size",
     values_provider="StorageSizeOptionsProvider",
@@ -137,7 +132,7 @@ COMPONENT_STORAGE_SEQUENCE_EDITABLE = Editable(
     yaml_path="components[*]/storage",
     depends_on="services",
     show_when={"contains_any": ["persistent-storage", "temp-storage"]},
-    children=[STORAGE_NAME_EDITABLE, STORAGE_TYPE_EDITABLE, STORAGE_SIZE_EDITABLE, STORAGE_MOUNT_PATH_EDITABLE],
+    children=[STORAGE_NAME_EDITABLE, STORAGE_SIZE_EDITABLE, STORAGE_MOUNT_PATH_EDITABLE],
 )
 
 COMPONENTS_SEQUENCE_EDITABLE = Editable(
@@ -152,7 +147,7 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
         COMPONENT_PORTS_INBOUND_EDITABLE,
         COMPONENT_PORTS_OUTBOUND_EDITABLE,
-        COMPONENT_USES_SERVICES_EDITABLE,
+        COMPONENT_SERVICES_EDITABLE,
         COMPONENT_PATH_EDITABLE,
         COMPONENT_REWRITE_PATH_EDITABLE,
         COMPONENT_ALIASES_EDITABLE,

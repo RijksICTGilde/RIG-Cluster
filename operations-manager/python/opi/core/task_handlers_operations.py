@@ -366,7 +366,9 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             }
         else:
             processing_error = project_manager.get_processing_error()
-            error_msg = processing_error or f"Failed to process deployment '{deployment_name}' in project '{project_name}'"
+            error_msg = (
+                processing_error or f"Failed to process deployment '{deployment_name}' in project '{project_name}'"
+            )
             logger.warning("Deployment refresh failed: %s/%s", project_name, deployment_name)
             progress.fail_task(deploy_task, error_msg)
             progress.fail_project(error_msg)

@@ -805,7 +805,7 @@ class AddComponentRequest(BaseModel):
     port: int | None = Field(None, ge=1, le=65535, description="Inbound port (omit for background workers)")
     path: str = Field("/", max_length=256, description="Ingress path (only relevant with publish-on-web service)")
     services: list[str] | None = Field(
-        None, description="Component uses-services list (e.g. ['postgresql-database']). NOT inherited from project."
+        None, description="Component services list (e.g. ['postgresql-database']). NOT inherited from project."
     )
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'")
@@ -1014,7 +1014,11 @@ async def upsert_deployment(
                 "urls": urls,
                 "processing": {
                     "status": "completed" if processing_result else "failed",
-                    **({"error": project_manager.get_processing_error()} if not processing_result and project_manager.get_processing_error() else {}),
+                    **(
+                        {"error": project_manager.get_processing_error()}
+                        if not processing_result and project_manager.get_processing_error()
+                        else {}
+                    ),
                 },
             }
             if result.get("warnings"):
@@ -1062,7 +1066,7 @@ async def add_component(
     Add a new component definition to an existing project.
 
     The component is added to the project's components array and referenced in
-    the specified deployments. Each component declares its own uses-services list,
+    the specified deployments. Each component declares its own services list,
     which determines what secrets/env vars it receives.
 
     Headers:
@@ -1148,7 +1152,11 @@ async def add_component(
                 "urls": urls,
                 "processing": {
                     "status": "completed" if processing_success else "failed",
-                    **({"error": project_manager.get_processing_error()} if not processing_success and project_manager.get_processing_error() else {}),
+                    **(
+                        {"error": project_manager.get_processing_error()}
+                        if not processing_success and project_manager.get_processing_error()
+                        else {}
+                    ),
                 },
             }
             if result.get("warnings"):
@@ -1270,7 +1278,11 @@ async def add_component_to_deployment(
                 "urls": urls,
                 "processing": {
                     "status": "completed" if processing_success else "failed",
-                    **({"error": project_manager.get_processing_error()} if not processing_success and project_manager.get_processing_error() else {}),
+                    **(
+                        {"error": project_manager.get_processing_error()}
+                        if not processing_success and project_manager.get_processing_error()
+                        else {}
+                    ),
                 },
             }
             if result.get("warnings"):
@@ -2899,7 +2911,11 @@ async def add_registry_by_secret(
                     "created": result["created"],
                     "processing": {
                         "status": "completed" if processing_result else "failed",
-                        **({"error": project_manager.get_processing_error()} if not processing_result and project_manager.get_processing_error() else {}),
+                        **(
+                            {"error": project_manager.get_processing_error()}
+                            if not processing_result and project_manager.get_processing_error()
+                            else {}
+                        ),
                     },
                 },
                 status_code=status_code,
@@ -2993,7 +3009,11 @@ async def add_registry_by_credentials(
                     "created": result["created"],
                     "processing": {
                         "status": "completed" if processing_result else "failed",
-                        **({"error": project_manager.get_processing_error()} if not processing_result and project_manager.get_processing_error() else {}),
+                        **(
+                            {"error": project_manager.get_processing_error()}
+                            if not processing_result and project_manager.get_processing_error()
+                            else {}
+                        ),
                     },
                 },
                 status_code=status_code,

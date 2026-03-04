@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from opi.core.config import settings
-from opi.services import ServiceAdapter
+from opi.services import ServiceAdapter, ServiceType
 from opi.utils.age import encrypt_age_content
 from opi.utils.api_keys import generate_api_key
 from opi.utils.sops import generate_sops_key_pair
@@ -149,7 +149,7 @@ async def build_component_config(
         component_type: Component type (e.g., "single", "frontend", "backend")
         port: Inbound port (None for background workers)
         path: Ingress path (e.g., "/", "/api")
-        services: Component's uses-services list as strings
+        services: Component's services list as strings
         cpu_limit: CPU limit (e.g., "1", "500m")
         memory_limit: Memory limit (e.g., "256Mi", "1Gi")
         env_vars: Environment variables in KEY=value format (will be encrypted)
@@ -165,23 +165,38 @@ async def build_component_config(
     component_services = ServiceAdapter.parse_services_from_strings(services)
 
     inbound_ports = [port] if port else ([default_port] if default_port else [])
+    # Build services list in v2 format (mixed string/dict)
+    storage_configs = ServiceAdapter.create_storage_configs(component_services)
+    storage_by_service: dict[str, list[dict[str, Any]]] = {}
+    for config in storage_configs:
+        # create_storage_configs returns dicts with type, name, size, mount-path
+        service_name = (
+            ServiceType.PERSISTENT_STORAGE.value
+            if config.get("type") == "persistent"
+            else ServiceType.TEMP_STORAGE.value
+        )
+        storage_by_service.setdefault(service_name, []).append({k: v for k, v in config.items() if k != "type"})
+
+    services_list: list[str | dict[str, Any]] = []
+    for service in component_services:
+        service_value = service.value
+        if service_value in storage_by_service:
+            services_list.append({service_value: {"config": storage_by_service[service_value]}})
+        else:
+            services_list.append(service_value)
+
     component_config: dict[str, Any] = {
         "name": name,
         "type": component_type,
         "ports": {"inbound": inbound_ports, "outbound": [80, 443]},
         "path": path,
-        "uses-services": [service.value for service in component_services],
+        "services": services_list,
         "uses-components": [],
     }
 
     # Add root flag for nice-url mode
     if root:
         component_config["root"] = True
-
-    # Add storage configurations from services
-    storage_configs = ServiceAdapter.create_storage_configs(component_services)
-    if storage_configs:
-        component_config["storage"] = storage_configs
 
     # Add resource limits if specified
     if cpu_limit or memory_limit:
@@ -290,10 +305,12 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     # Repository password from settings (supports plain:, age:, base64+age: prefixes)
     repo_password = settings.PROJECT_REPO_PASSWORD
 
+    # Parse project-level services using the service adapter
+    project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])
+
     # Build components list from form data
     components_list = []
-    has_explicit_components = bool(project_data.components)
-    if has_explicit_components:
+    if project_data.components:
         for idx, comp in enumerate(project_data.components):
             try:
                 component_config = await build_component_config(
@@ -316,12 +333,30 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
             components_list.append(component_config)
     else:
         # Default component if none specified
-        # Services and storage will be added by add_services_to_project() below
-        fallback_component_config = {
+        # Create fallback component with project-level services (v2 format)
+        fallback_services_list: list[str | dict[str, Any]] = []
+        storage_configs = ServiceAdapter.create_storage_configs(project_services)
+        storage_by_svc: dict[str, list[dict[str, Any]]] = {}
+        for cfg in storage_configs:
+            svc_name = (
+                ServiceType.PERSISTENT_STORAGE.value
+                if cfg.get("type") == "persistent"
+                else ServiceType.TEMP_STORAGE.value
+            )
+            storage_by_svc.setdefault(svc_name, []).append({k: v for k, v in cfg.items() if k != "type"})
+
+        for service in project_services:
+            sv = service.value
+            if sv in storage_by_svc:
+                fallback_services_list.append({sv: {"config": storage_by_svc[sv]}})
+            else:
+                fallback_services_list.append(sv)
+
+        fallback_component_config: dict[str, Any] = {
             "name": "main",
             "type": "deployment",
             "ports": {"inbound": [8080], "outbound": [80, 443]},
-            "uses-services": [],
+            "services": fallback_services_list,
             "uses-components": [],
         }
 
@@ -410,12 +445,15 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         config_section["contact-email"] = project_data.contact_email
 
     # Create project structure
+    from opi.services.schema_migration import LATEST_SCHEMA_VERSION
+
     project_config = {
+        "schema-version": LATEST_SCHEMA_VERSION,
         "name": project_data.project_name,
         "display-name": project_data.display_name,
         "description": project_data.project_description or "Project created via self-service portal",
         "clusters": [project_data.cluster],
-        "services": [],  # Populated by add_services_to_project() below
+        "services": [service.value for service in project_services],  # Project-level services
         "config": config_section,
         "repositories": [
             {
@@ -430,16 +468,6 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         "components": components_list,
         "deployments": deployments_list,
     }
-
-    # Add project-level services using the shared service logic.
-    # For the default component case, also update its uses-services and storage.
-    service_names = project_data.services or []
-    if service_names:
-        ServiceAdapter.add_services_to_project(
-            project_config,
-            service_names=service_names,
-            component_names=["main"] if not has_explicit_components else None,
-        )
 
     # Add users if provided
     if project_data.user_email and project_data.user_role:

@@ -620,23 +620,36 @@ class ProjectFileHandler:
         """
         Extract storage configuration from a component definition by name.
 
+        Reads from the v2 format where storage lives under service entries
+        in the component's ``services`` list (e.g. ``persistent-storage``
+        and ``temp-storage`` dict entries with ``config`` lists).
+
         Args:
             project_data: The parsed project data
             component_name: Name of the component to find storage for
 
         Returns:
-            List of storage configurations or empty list if no storage found
+            List of storage configurations or empty list if no storage found.
+            Each dict has keys: name, size, mount-path, type.
         """
-        # Use JSONPath with extended parser to find the component by name and extract its storage config
-        path = f"$.components[?(@.name='{component_name}')].storage"
-        storage_config = self.extract_value_by_path(project_data, path, [])
+        component = self._find_component(project_data, component_name)
+        if not component:
+            logger.debug(f"Component '{component_name}' not found")
+            return []
 
-        if storage_config:
-            logger.info(f"Found {len(storage_config)} storage config(s) for component '{component_name}'")
-            return storage_config
+        storage_configs = extract_storage_from_component_services(component)
+        if storage_configs:
+            logger.info(f"Found {len(storage_configs)} storage config(s) for component '{component_name}'")
         else:
             logger.debug(f"No storage configuration found for component '{component_name}'")
-            return []
+        return storage_configs
+
+    def _find_component(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
+        """Find a component dict by name in project data."""
+        for comp in project_data.get("components", []):
+            if isinstance(comp, dict) and comp.get("name") == component_name:
+                return comp
+        return None
 
     async def extract_component_user_env_vars(
         self, project_data: dict[str, Any], component_name: str
@@ -791,12 +804,15 @@ class ProjectFileHandler:
             component_name: Name of the component to find
 
         Returns:
-            True if publish-on-web service is in the component's uses-services array, False otherwise
+            True if publish-on-web service is in the component's services list, False otherwise
         """
-        # Check uses-services array for publish-on-web service
-        uses_services_path = f"$.components[?(@.name='{component_name}')].uses-services"
-        uses_services = self.extract_value_by_path(project_data, uses_services_path, [])
-        component_services = ServiceAdapter.parse_services_from_strings(uses_services or [])
+        component = self._find_component(project_data, component_name)
+        if not component:
+            logger.debug(f"Component '{component_name}' not found for publish-on-web check")
+            return False
+
+        service_names = extract_service_names_from_component(component)
+        component_services = ServiceAdapter.parse_services_from_strings(service_names)
         has_publish_service = ServiceType.PUBLISH_ON_WEB in component_services
 
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
@@ -1637,10 +1653,14 @@ class ProjectFileHandler:
         backup_config = self.extract_backup_config(project_data)
         project_backup_enabled = backup_config.get("enabled", False)
 
-        # Then check per-storage override
-        # Path: $.components[?(@.name=='component_name')].storage[?(@.name=='storage_name')].backup
-        path = f"$.components[?(@.name=='{component_name}')].storage[?(@.name=='{storage_name}')].backup"
-        storage_backup = self.extract_value_by_path(project_data, path, None)
+        # Then check per-storage override — look in component services for storage config
+        storage_backup = None
+        component = self._find_component(project_data, component_name)
+        if component:
+            for item in extract_storage_from_component_services(component):
+                if item.get("name") == storage_name and "backup" in item:
+                    storage_backup = item["backup"]
+                    break
 
         # Per-storage setting overrides project setting if specified
         if storage_backup is not None:
@@ -2090,7 +2110,7 @@ class ProjectFileHandler:
 
     def extract_helm_chart_uses_services(self, project_data: dict[str, Any], chart_name: str) -> list[str]:
         """
-        Extract uses-services from a helm-chart definition.
+        Extract services from a helm-chart definition.
 
         Args:
             project_data: The parsed project data
@@ -2099,14 +2119,16 @@ class ProjectFileHandler:
         Returns:
             List of service names the helm chart uses
         """
-        path = f"$.helm-charts[?(@.name=='{chart_name}')].uses-services"
-        services = self.extract_value_by_path(project_data, path, [])
+        for chart in project_data.get("helm-charts", []):
+            if isinstance(chart, dict) and chart.get("name") == chart_name:
+                services = chart.get("services", [])
+                if services:
+                    service_names = ServiceAdapter.extract_service_names_from_project_services(services)
+                    logger.info(f"Helm chart '{chart_name}' uses services: {service_names}")
+                    return service_names
+                break
 
-        if services:
-            logger.info(f"Helm chart '{chart_name}' uses services: {services}")
-            return services if isinstance(services, list) else [services]
-
-        logger.debug(f"No uses-services found for helm chart '{chart_name}'")
+        logger.debug(f"No services found for helm chart '{chart_name}'")
         return []
 
     # ========================================================================
@@ -2260,7 +2282,7 @@ class ProjectFileHandler:
 
     def extract_helmfile_uses_services(self, project_data: dict[str, Any], helmfile_name: str) -> list[str]:
         """
-        Extract uses-services from a helmfile definition.
+        Extract services from a helmfile definition.
 
         Args:
             project_data: The parsed project data
@@ -2269,14 +2291,16 @@ class ProjectFileHandler:
         Returns:
             List of service names the helmfile uses
         """
-        path = f"$.helmfile[?(@.name=='{helmfile_name}')].uses-services"
-        services = self.extract_value_by_path(project_data, path, [])
+        for hf in project_data.get("helmfile", []):
+            if isinstance(hf, dict) and hf.get("name") == helmfile_name:
+                services = hf.get("services", [])
+                if services:
+                    service_names = ServiceAdapter.extract_service_names_from_project_services(services)
+                    logger.info(f"Helmfile '{helmfile_name}' uses services: {service_names}")
+                    return service_names
+                break
 
-        if services:
-            logger.info(f"Helmfile '{helmfile_name}' uses services: {services}")
-            return services if isinstance(services, list) else [services]
-
-        logger.debug(f"No uses-services found for helmfile '{helmfile_name}'")
+        logger.debug(f"No services found for helmfile '{helmfile_name}'")
         return []
 
     def deployment_uses_service(
@@ -2289,8 +2313,8 @@ class ProjectFileHandler:
         Check if a deployment uses any of the specified services.
 
         This checks both:
-        1. Components referenced by the deployment and their uses-services
-        2. Helm-charts referenced by the deployment and their uses-services
+        1. Components referenced by the deployment and their services
+        2. Helm-charts referenced by the deployment and their services
 
         Args:
             project_data: The parsed project data
@@ -2305,54 +2329,29 @@ class ProjectFileHandler:
         for component_ref in component_refs:
             ref_name = component_ref.get("reference") if isinstance(component_ref, dict) else component_ref
             if ref_name:
-                path = f"$.components[?(@.name=='{ref_name}')].uses-services"
-                services = self.extract_value_by_path(project_data, path, [])
-                if services:
-                    service_list = services if isinstance(services, list) else [services]
-                    for service in service_list:
-                        service_name = (
-                            service
-                            if isinstance(service, str)
-                            else next(iter(service.keys()))
-                            if isinstance(service, dict)
-                            else str(service)
-                        )
-                        if service_name in service_types:
-                            return True
+                component = self._find_component(project_data, ref_name)
+                if component:
+                    service_names = extract_service_names_from_component(component)
+                    if any(s in service_types for s in service_names):
+                        return True
 
         # Check helm-charts
         helm_chart_refs = self.extract_deployment_helm_charts(project_data, deployment_name)
         for helm_chart_ref in helm_chart_refs:
             ref_name = helm_chart_ref.get("reference") if isinstance(helm_chart_ref, dict) else helm_chart_ref
             if ref_name:
-                services = self.extract_helm_chart_uses_services(project_data, ref_name)
-                for service in services:
-                    service_name = (
-                        service
-                        if isinstance(service, str)
-                        else next(iter(service.keys()))
-                        if isinstance(service, dict)
-                        else str(service)
-                    )
-                    if service_name in service_types:
-                        return True
+                service_names = self.extract_helm_chart_uses_services(project_data, ref_name)
+                if any(s in service_types for s in service_names):
+                    return True
 
         # Check helmfiles
         helmfile_refs = self.extract_deployment_helmfiles(project_data, deployment_name)
         for helmfile_ref in helmfile_refs:
             ref_name = helmfile_ref.get("reference") if isinstance(helmfile_ref, dict) else helmfile_ref
             if ref_name:
-                services = self.extract_helmfile_uses_services(project_data, ref_name)
-                for service in services:
-                    service_name = (
-                        service
-                        if isinstance(service, str)
-                        else next(iter(service.keys()))
-                        if isinstance(service, dict)
-                        else str(service)
-                    )
-                    if service_name in service_types:
-                        return True
+                service_names = self.extract_helmfile_uses_services(project_data, ref_name)
+                if any(s in service_types for s in service_names):
+                    return True
 
         return False
 
@@ -2383,12 +2382,11 @@ class ProjectFileHandler:
             if not ref_name:
                 continue
 
-            path = f"$.components[?(@.name=='{ref_name}')].uses-services"
-            services = self.extract_value_by_path(project_data, path, [])
-            if not services:
+            component = self._find_component(project_data, ref_name)
+            if not component:
                 continue
 
-            service_list = services if isinstance(services, list) else [services]
+            service_list = component.get("services", [])
             for service in service_list:
                 if isinstance(service, str):
                     service_name = service
@@ -2596,6 +2594,66 @@ class ProjectFileHandler:
             "en": "Go to application",
         }
         return defaults.get(language, defaults["nl"])
+
+
+def extract_storage_from_component_services(component: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract storage configurations from a v2 component's services list.
+
+    In v2 format, storage is defined under service dict entries like::
+
+        services:
+        - persistent-storage:
+            config:
+            - name: data
+              size: 250Mi
+              mount-path: /data
+
+    This function finds ``persistent-storage`` and ``temp-storage`` entries,
+    extracts their config items, and adds back the ``type`` field for
+    downstream compatibility (PVC manager, backup, etc.).
+
+    Args:
+        component: A component dict from project data
+
+    Returns:
+        List of storage config dicts with keys: name, size, mount-path, type
+    """
+    from opi.services.schema_migration import _STORAGE_SERVICE_TO_TYPE
+
+    storage_configs: list[dict[str, Any]] = []
+    services = component.get("services", [])
+
+    for entry in services:
+        if not isinstance(entry, dict):
+            continue
+        for service_name, service_data in entry.items():
+            if service_name not in _STORAGE_SERVICE_TO_TYPE:
+                continue
+            storage_type = _STORAGE_SERVICE_TO_TYPE[service_name]
+            config_items = service_data.get("config", []) if isinstance(service_data, dict) else []
+            for item in config_items:
+                if isinstance(item, dict):
+                    config = dict(item)
+                    config["type"] = storage_type
+                    storage_configs.append(config)
+
+    return storage_configs
+
+
+def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
+    """
+    Extract service names from a v2 component's services list.
+
+    Handles the mixed string/dict format (same as root-level services).
+
+    Args:
+        component: A component dict from project data
+
+    Returns:
+        List of service name strings
+    """
+    return ServiceAdapter.extract_service_names_from_project_services(component.get("services", []))
 
 
 def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:

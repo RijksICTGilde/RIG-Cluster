@@ -206,9 +206,7 @@ class KeyValueConverter:
         if isinstance(value, dict):
             # Legacy: stored as dict (pre-existing projects).
             # Convert to YAML text for editing.
-            return yaml.dump(
-                value, default_flow_style=False, allow_unicode=True
-            ).rstrip("\n")
+            return yaml.dump(value, default_flow_style=False, allow_unicode=True).rstrip("\n")
         return str(value or "")
 
     def write(self, value: Any) -> str:
@@ -217,9 +215,7 @@ class KeyValueConverter:
             return value.strip()
         if isinstance(value, dict):
             # Already structured (e.g. from stored YAML) — convert to text
-            return yaml.dump(
-                value, default_flow_style=False, allow_unicode=True
-            ).rstrip("\n")
+            return yaml.dump(value, default_flow_style=False, allow_unicode=True).rstrip("\n")
         return str(value or "").strip()
 
     def view(self, value: Any) -> str:

@@ -640,15 +640,13 @@ class KeycloakManager:
 
         # Then check if any of these components use Keycloak service
         for component_ref in component_refs:
-            component_query = jsonpath_parse(f"$.components[?@.name=='{component_ref}']['uses-services']")
-            component_services = [match.value for match in component_query.find(project_data)]
-            # Flatten the services list (in case it's nested)
-            all_services = []
-            for services in component_services:
-                if isinstance(services, list):
-                    all_services.extend(services)
-                else:
-                    all_services.append(services)
+            component = next(
+                (c for c in project_data.get("components", []) if c.get("name") == component_ref),
+                None,
+            )
+            if not component:
+                continue
+            all_services = ServiceAdapter.extract_service_names_from_project_services(component.get("services", []))
 
             if ServiceType.KEYCLOAK.value in all_services:
                 sso_components.append(component_ref)
@@ -672,9 +670,11 @@ class KeycloakManager:
             components = project_data.get("components", [])
             for component in components:
                 if component.get("name") == component_reference:
-                    # Check uses-services array for Keycloak
-                    uses_services = component.get("uses-services", [])
-                    component_services = ServiceAdapter.parse_services_from_strings(uses_services)
+                    # Check services list for Keycloak
+                    service_names = ServiceAdapter.extract_service_names_from_project_services(
+                        component.get("services", [])
+                    )
+                    component_services = ServiceAdapter.parse_services_from_strings(service_names)
                     has_keycloak_service = ServiceType.KEYCLOAK in component_services
 
                     if has_keycloak_service:
@@ -720,9 +720,11 @@ class KeycloakManager:
             if not helm_chart_def:
                 continue
 
-            # Check uses-services in the helm-chart definition
-            uses_services = helm_chart_def.get("uses-services", [])
-            chart_services = ServiceAdapter.parse_services_from_strings(uses_services)
+            # Check services in the helm-chart definition
+            service_names = ServiceAdapter.extract_service_names_from_project_services(
+                helm_chart_def.get("services", [])
+            )
+            chart_services = ServiceAdapter.parse_services_from_strings(service_names)
             if ServiceType.KEYCLOAK in chart_services:
                 return True
 
@@ -760,9 +762,9 @@ class KeycloakManager:
             if not helmfile_def:
                 continue
 
-            # Check uses-services in the helmfile definition
-            uses_services = helmfile_def.get("uses-services", [])
-            helmfile_services = ServiceAdapter.parse_services_from_strings(uses_services)
+            # Check services in the helmfile definition
+            service_names = ServiceAdapter.extract_service_names_from_project_services(helmfile_def.get("services", []))
+            helmfile_services = ServiceAdapter.parse_services_from_strings(service_names)
             if ServiceType.KEYCLOAK in helmfile_services:
                 return True
 

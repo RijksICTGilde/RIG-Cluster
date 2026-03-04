@@ -322,7 +322,11 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             "urls": urls,
             "processing": {
                 "status": "completed" if succeeded else "failed",
-                **({"error": project_manager.get_processing_error()} if not succeeded and project_manager.get_processing_error() else {}),
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
             },
             "web_addresses": [url for dep_urls in urls.values() for url in dep_urls.get("urls", {}).values()],
             "warnings": result.get("warnings", []),

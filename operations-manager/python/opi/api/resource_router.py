@@ -281,9 +281,7 @@ async def tune_resources(
             base_request_mb = _k8s_memory_to_mb(base_resources["requests_memory"])
             new_request_mb = _k8s_memory_to_mb(new_request)
             if new_request_mb > base_request_mb and new_request_mb <= base_request_mb * 2:
-                file_handler.set_component_resources(
-                    project_data, component_ref, {"requests_memory": new_request}
-                )
+                file_handler.set_component_resources(project_data, component_ref, {"requests_memory": new_request})
 
             changes.append(
                 {

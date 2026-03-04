@@ -45,7 +45,11 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.handlers.project_file_handler import (
+    ProjectFileHandler,
+    extract_service_names_from_component,
+    save_project_file,
+)
 from opi.handlers.sops import SopsHandler
 from opi.manager.revision_manager import RevisionManager
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
@@ -519,16 +523,8 @@ class ProjectManager:
 
             # Check services used by this component
 
-            component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
-            component_services = [match.value for match in component_query.find(project_data)]
-
-            # Flatten services list
-            all_services = []
-            for services in component_services:
-                if isinstance(services, list):
-                    all_services.extend(services)
-                else:
-                    all_services.append(services)
+            component = self._project_file_handler._find_component(project_data, component_reference)
+            all_services = extract_service_names_from_component(component) if component else []
 
             # Check for each service type
             # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
@@ -2163,6 +2159,20 @@ class ProjectManager:
             )
 
             current_yaml = analysis["current_yaml"]
+
+            # Auto-migrate schema if needed
+            from opi.services.schema_migration import migrate_to_latest
+
+            current_yaml, was_migrated = migrate_to_latest(current_yaml)
+            if was_migrated:
+                project_name = current_yaml.get("name", relative_project_file_path)
+                logger.info(f"Schema migration applied for project '{project_name}', committing changes")
+                save_project_file(project_full_file_path, current_yaml)
+                await git_connector_for_project_files.commit_and_push(
+                    f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}"
+                )
+                analysis["current_yaml"] = current_yaml
+
             previous_yaml = analysis["previous_yaml"]
             changes = analysis["changes"]
 
@@ -4217,15 +4227,8 @@ class ProjectManager:
             component_uses_authorization_wall = False
 
             if component_reference:
-                component_query = jsonpath_parse(f"$.components[?@.name=='{component_reference}']['uses-services']")
-                component_services = [match.value for match in component_query.find(project_data)]
-                # Flatten the services list (in case it's nested)
-                all_services: list[str] = []
-                for services in component_services:
-                    if isinstance(services, list):
-                        all_services.extend(services)
-                    else:
-                        all_services.append(services)
+                component_def = self._project_file_handler._find_component(project_data, component_reference)
+                all_services: list[str] = extract_service_names_from_component(component_def) if component_def else []
 
                 # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
                 component_uses_postgresql = (
@@ -5376,7 +5379,7 @@ class ProjectManager:
             component_type: Component type (e.g. "single", "frontend", "backend")
             port: Inbound port (None for background workers that don't serve HTTP)
             path: Ingress path (only relevant if publish-on-web is in services)
-            services: Component's uses-services list (e.g. ["postgresql-database"])
+            services: Component's services list (e.g. ["postgresql-database"])
             cpu_limit: CPU limit (e.g. "500m")
             memory_limit: Memory limit (e.g. "512Mi")
             env_vars: User environment variables in KEY=value format (will be AGE-encrypted)

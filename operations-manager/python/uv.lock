@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.13.*"
 
 [[package]]
@@ -1994,6 +1994,7 @@ dev = [
     { name = "polib" },
     { name = "pre-commit" },
     { name = "pyright" },
+    { name = "pytest" },
     { name = "ruff" },
     { name = "setuptools" },
 ]
@@ -2055,6 +2056,7 @@ dev = [
     { name = "polib", specifier = ">=1.2.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "pyright", specifier = ">=1.1.401" },
+    { name = "pytest", specifier = ">=9.0.2" },
     { name = "ruff", specifier = ">=0.11.11" },
     { name = "setuptools", specifier = ">=80.8.0" },
 ]

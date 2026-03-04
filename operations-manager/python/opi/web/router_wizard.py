@@ -63,6 +63,10 @@ def _render_step_html(
     renderer = _create_renderer()
     if not section.layout:
         return ""
+    # Allow enforcers to transform data before rendering (e.g. extract
+    # storage from services into a virtual key for the storage editables).
+    if section.enforcer and hasattr(section.enforcer, "prepare"):
+        yaml_data = section.enforcer.prepare(yaml_data)
     return renderer.render_fields_from_editables(
         editables=section.editables,
         yaml_data=yaml_data,

@@ -66,7 +66,7 @@ class TestCleanupStrategyDefinitions:
 
 
 # ---------------------------------------------------------------------------
-# Helper: build project YAML with component → uses-services mapping
+# Helper: build project YAML with component → services mapping
 # ---------------------------------------------------------------------------
 
 
@@ -97,7 +97,7 @@ def _make_deployment(
 
 
 def _make_component(name: str, services: list[str]) -> dict:
-    return {"name": name, "uses-services": services}
+    return {"name": name, "services": services}
 
 
 # ---------------------------------------------------------------------------

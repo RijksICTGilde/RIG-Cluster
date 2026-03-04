@@ -120,7 +120,7 @@ COMPONENTS_SECTION = FormSection(
                 Fieldset(
                     legend="Services",
                     description="Selecteer welke services dit component gebruikt.",
-                    children=["uses-services"],
+                    children=["services"],
                 ),
                 Fieldset(
                     legend="Publicatie",

@@ -72,6 +72,7 @@ dev = [
     "setuptools>=80.8.0",
     "djlint>=1.36.1",
     "debugpy>=1.8.0",
+    "pytest>=9.0.2",
 ]
 
 

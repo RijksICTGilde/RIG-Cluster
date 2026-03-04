@@ -1772,8 +1772,10 @@ async def _update_keycloak_redirect_uris_for_deployment(
         for component_ref in component_refs:
             for component in project_data.get("components", []):
                 if component.get("name") == component_ref:
-                    uses_services = component.get("uses-services", [])
-                    component_services = ServiceAdapter.parse_services_from_strings(uses_services)
+                    service_names = ServiceAdapter.extract_service_names_from_project_services(
+                        component.get("services", [])
+                    )
+                    component_services = ServiceAdapter.parse_services_from_strings(service_names)
                     if ServiceType.KEYCLOAK in component_services:
                         sso_components.append(component_ref)
                     break

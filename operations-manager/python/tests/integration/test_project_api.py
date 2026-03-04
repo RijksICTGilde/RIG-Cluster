@@ -874,7 +874,7 @@ class TestAddComponentEndpoint:
             "type": "deployment",
             "ports": {"inbound": [], "outbound": [80, 443]},
             "path": "/",
-            "uses-services": ["postgresql-database"],
+            "services": ["postgresql-database"],
             "uses-components": [],
         }
         mock_pm = create_mock_project_manager(
@@ -914,7 +914,7 @@ class TestAddComponentEndpoint:
             "type": "deployment",
             "ports": {"inbound": [], "outbound": [80, 443]},
             "path": "/",
-            "uses-services": [],
+            "services": [],
             "uses-components": [],
         }
         mock_pm = create_mock_project_manager(
@@ -939,7 +939,7 @@ class TestAddComponentEndpoint:
         assert response.status_code == 201
         data = response.json()
         assert data["status"] == "success"
-        assert data["component"]["uses-services"] == []
+        assert data["component"]["services"] == []
 
     def test_add_component_duplicate_name(
         self,
@@ -1100,7 +1100,7 @@ class TestAddComponentEndpoint:
             "type": "frontend",
             "ports": {"inbound": [8080], "outbound": [80, 443]},
             "path": "/",
-            "uses-services": [],
+            "services": [],
             "uses-components": [],
         }
         mock_pm = create_mock_project_manager(
@@ -1139,7 +1139,7 @@ class TestAddComponentEndpoint:
             "type": "backend",
             "ports": {"inbound": [3000], "outbound": [80, 443]},
             "path": "/api",
-            "uses-services": ["postgresql-database"],
+            "services": ["postgresql-database"],
             "uses-components": [],
             "aliases": {"DATABASE_URL": "$DATABASE_SERVER_HOST:$DATABASE_SERVER_PORT/$DATABASE_DB"},
         }
@@ -1183,7 +1183,7 @@ class TestAddComponentEndpoint:
             "type": "frontend",
             "ports": {"inbound": [8080], "outbound": [80, 443]},
             "path": "/",
-            "uses-services": [],
+            "services": [],
             "uses-components": [],
             "root": True,
         }

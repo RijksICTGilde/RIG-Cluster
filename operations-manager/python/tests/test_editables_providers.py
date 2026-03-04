@@ -180,13 +180,13 @@ class TestResolveOptionsWithMixedContext:
         This was a bug: the extra keys caused a TypeError, and the fallback
         re-instantiated the provider without any kwargs at all."""
         from opi.forms.visualizers.bridge import resolve_options_for_editable
-        from opi.forms.visualizers.fields.components import COMPONENT_USES_SERVICES
+        from opi.forms.visualizers.fields.components import COMPONENT_SERVICES
 
         context = {
             "project_services": ["publish-on-web", "keycloak"],
             "component_names": ["frontend"],
         }
-        options = resolve_options_for_editable(COMPONENT_USES_SERVICES, context=context)
+        options = resolve_options_for_editable(COMPONENT_SERVICES, context=context)
         values = [o["value"] for o in options]
         assert "publish-on-web" in values
         assert "keycloak" in values

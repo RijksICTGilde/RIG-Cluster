@@ -322,7 +322,7 @@ class TestCheckboxGroupCoercion:
     def test_single_string_coerced_to_list_in_json_pipeline(self):
         processor = EditableFormProcessor()
         services_vis = EditableVisualizer(
-            editable=Editable(yaml_path="components[*]/uses-services"),
+            editable=Editable(yaml_path="components[*]/services"),
             widget=WidgetType.CHECKBOX_GROUP,
             label="Services",
         )
@@ -332,15 +332,15 @@ class TestCheckboxGroupCoercion:
             label="Components",
             children=[services_vis],
         )
-        submitted = {"components": [{"uses-services": "publish-on-web"}]}
-        yaml_data = {"components": [{"name": "web", "uses-services": []}]}
+        submitted = {"components": [{"services": "publish-on-web"}]}
+        yaml_data = {"components": [{"name": "web", "services": []}]}
         result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
-        assert result["components"][0]["uses-services"] == ["publish-on-web"]
+        assert result["components"][0]["services"] == ["publish-on-web"]
 
     def test_list_stays_list_in_json_pipeline(self):
         processor = EditableFormProcessor()
         services_vis = EditableVisualizer(
-            editable=Editable(yaml_path="components[*]/uses-services"),
+            editable=Editable(yaml_path="components[*]/services"),
             widget=WidgetType.CHECKBOX_GROUP,
             label="Services",
         )
@@ -350,15 +350,15 @@ class TestCheckboxGroupCoercion:
             label="Components",
             children=[services_vis],
         )
-        submitted = {"components": [{"uses-services": ["publish-on-web", "keycloak"]}]}
-        yaml_data = {"components": [{"name": "web", "uses-services": []}]}
+        submitted = {"components": [{"services": ["publish-on-web", "keycloak"]}]}
+        yaml_data = {"components": [{"name": "web", "services": []}]}
         result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
-        assert result["components"][0]["uses-services"] == ["publish-on-web", "keycloak"]
+        assert result["components"][0]["services"] == ["publish-on-web", "keycloak"]
 
     def test_none_coerced_to_empty_list(self):
         processor = EditableFormProcessor()
         services_vis = EditableVisualizer(
-            editable=Editable(yaml_path="components[*]/uses-services"),
+            editable=Editable(yaml_path="components[*]/services"),
             widget=WidgetType.CHECKBOX_GROUP,
             label="Services",
         )
@@ -369,14 +369,14 @@ class TestCheckboxGroupCoercion:
             children=[services_vis],
         )
         submitted = {"components": [{"name": "web"}]}
-        yaml_data = {"components": [{"name": "web", "uses-services": ["old"]}]}
+        yaml_data = {"components": [{"name": "web", "services": ["old"]}]}
         result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
-        assert result["components"][0]["uses-services"] == []
+        assert result["components"][0]["services"] == []
 
     def test_flat_key_single_string_coerced(self):
         processor = EditableFormProcessor()
         services_vis = EditableVisualizer(
-            editable=Editable(yaml_path="components[*]/uses-services"),
+            editable=Editable(yaml_path="components[*]/services"),
             widget=WidgetType.CHECKBOX_GROUP,
             label="Services",
         )
@@ -386,7 +386,7 @@ class TestCheckboxGroupCoercion:
             label="Components",
             children=[services_vis],
         )
-        parsed = {"components[0]/uses-services": "publish-on-web"}
-        yaml_data = {"components": [{"name": "web", "uses-services": []}]}
+        parsed = {"components[0]/services": "publish-on-web"}
+        yaml_data = {"components": [{"name": "web", "services": []}]}
         result = processor.apply_to_yaml(parsed, [comp_seq], yaml_data)
-        assert result["components"][0]["uses-services"] == ["publish-on-web"]
+        assert result["components"][0]["services"] == ["publish-on-web"]

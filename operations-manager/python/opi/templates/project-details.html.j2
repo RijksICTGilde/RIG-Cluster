@@ -1277,9 +1277,20 @@
                             </div>
                             {% endif %}
 
-                            {% if component['uses-services'] %}
+                            {% if component.services %}
                             <div class="spec-item">
-                                <strong>Services:</strong> {{ component['uses-services']|join(", ")|replace("-", " ")|title }}
+                                <strong>Services:</strong>
+                                {% set svc_names = [] %}
+                                {% for svc in component.services %}
+                                    {% if svc is string %}
+                                        {% set _ = svc_names.append(svc) %}
+                                    {% elif svc is mapping %}
+                                        {% for key in svc %}
+                                            {% set _ = svc_names.append(key) %}
+                                        {% endfor %}
+                                    {% endif %}
+                                {% endfor %}
+                                {{ svc_names|join(", ")|replace("-", " ")|title }}
                             </div>
                             {% endif %}
                         </div>

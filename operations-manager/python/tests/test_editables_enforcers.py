@@ -115,7 +115,7 @@ class TestComponentServicesEnforcer:
     def test_valid_services_pass(self):
         data = self._make_data(
             ["keycloak", "redis"],
-            [{"name": "web", "uses-services": ["keycloak"]}],
+            [{"name": "web", "services": ["keycloak"]}],
         )
         result = ComponentServicesEnforcer().enforce(data, data)
         assert result is data
@@ -123,7 +123,7 @@ class TestComponentServicesEnforcer:
     def test_invalid_service_raises_with_component_name(self):
         data = self._make_data(
             ["keycloak"],
-            [{"name": "web", "uses-services": ["nonexistent"]}],
+            [{"name": "web", "services": ["nonexistent"]}],
         )
         with pytest.raises(ValueError, match=r"Component 'web'.*nonexistent"):
             ComponentServicesEnforcer().enforce(data, data)
@@ -131,7 +131,7 @@ class TestComponentServicesEnforcer:
     def test_all_default_allowed(self):
         data = self._make_data(
             ["keycloak"],
-            [{"name": "web", "uses-services": "__all__"}],
+            [{"name": "web", "services": "__all__"}],
         )
         result = ComponentServicesEnforcer().enforce(data, data)
         assert result is data
@@ -139,7 +139,7 @@ class TestComponentServicesEnforcer:
     def test_empty_services_skips_validation(self):
         data = self._make_data(
             [],
-            [{"name": "web", "uses-services": ["anything"]}],
+            [{"name": "web", "services": ["anything"]}],
         )
         result = ComponentServicesEnforcer().enforce(data, data)
         assert result is data
@@ -156,7 +156,7 @@ class TestComponentServicesEnforcer:
         """Handles service-keyed dict format like {"keycloak": {...}}."""
         data = self._make_data(
             [{"keycloak": {"config": {}}}],
-            [{"name": "web", "uses-services": ["keycloak"]}],
+            [{"name": "web", "services": ["keycloak"]}],
         )
         result = ComponentServicesEnforcer().enforce(data, data)
         assert result is data
@@ -165,7 +165,7 @@ class TestComponentServicesEnforcer:
         """Handles legacy {"name": "keycloak"} format."""
         data = self._make_data(
             [{"name": "keycloak"}],
-            [{"name": "web", "uses-services": ["keycloak"]}],
+            [{"name": "web", "services": ["keycloak"]}],
         )
         result = ComponentServicesEnforcer().enforce(data, data)
         assert result is data

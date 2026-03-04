@@ -384,7 +384,7 @@ class FilteredServiceOptionsProvider:
     """
     Provides service options filtered to project-level enabled services.
 
-    Used by component `uses-services` checkbox group. Only shows services
+    Used by component `services` checkbox group. Only shows services
     that the project has enabled (cross-part dependency).
     """
 
