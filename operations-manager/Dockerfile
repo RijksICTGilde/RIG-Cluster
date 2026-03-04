@@ -107,6 +107,13 @@ COPY operations-manager/python/.env /app/
 COPY operations-manager/python/.env.local /app/
 COPY operations-manager/python/.env.production /app/
 
+# Copy Alembic configuration (for database migrations)
+COPY operations-manager/python/alembic.ini /app/
+
+# Copy entrypoint script
+COPY operations-manager/docker-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Copy application code and resources (change frequently - put last for optimal caching)
 COPY operations-manager/python/opi ./opi
 COPY operations-manager/python/manifests ./manifests
@@ -129,5 +136,5 @@ EXPOSE 5678
 # Use tini as PID 1 to properly reap zombie child processes
 ENTRYPOINT ["tini", "--"]
 
-# Set the command to run the application
-CMD ["python", "-m", "opi.server"]
+# Set the command to run the entrypoint script (which handles migrations then starts the app)
+CMD ["/app/entrypoint.sh"]

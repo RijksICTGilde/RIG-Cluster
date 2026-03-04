@@ -342,12 +342,13 @@ if __name__ == "__main__":
         uvicorn.run("opi.server:app", host="0.0.0.0", port=8000, reload=False)
     elif settings.DEBUG_MODE == "reload":
         # Reload mode: Fast iteration, no debugging
-        logger.info("🔥 Hot-reload mode: File changes will auto-reload")
+        logger.info("🔥 Hot-reload mode: File changes will auto-reload (debounce: 2.5s)")
         uvicorn.run(
             "opi.server:app",
             host="0.0.0.0",
             port=8000,
             reload=True,
+            reload_delay=2.5,  # Wait 2.5s for file changes to settle before reloading
             reload_dirs=["/app/opi", "/app/templates", "/app/manifests"],
         )
     else:

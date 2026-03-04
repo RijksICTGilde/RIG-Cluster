@@ -566,7 +566,12 @@ async def check_minio_availability() -> bool:
 
 
 async def _setup_database(readiness: "ReadinessState") -> bool:
-    """Initialize database pools. Returns True on success."""
+    """Initialize database pools. Returns True on success.
+
+    Note: Database migrations are now primarily handled by the Docker entrypoint
+    (docker-entrypoint.sh) which runs 'alembic upgrade head' before starting the app.
+    This function provides a backup/sanity check to verify the schema is ready.
+    """
     try:
         from opi.core.database_pools import is_database_available
 
@@ -576,11 +581,14 @@ async def _setup_database(readiness: "ReadinessState") -> bool:
 
         await initialize_database_pools()
 
-        # Run Alembic migrations to ensure schema is up to date
+        # Run Alembic migrations as a backup check (primary responsibility now in entrypoint)
         try:
+            logger.info("Running Alembic migrations as sanity check (primary migrations handled by entrypoint)")
             _run_alembic_migrations()
+            logger.info("Alembic migration sanity check completed")
         except Exception as e:
-            logger.warning(f"Failed to run Alembic migrations: {e}")
+            # Log but don't fail - entrypoint already ran migrations before this code executed
+            logger.debug(f"Alembic sanity check skipped or encountered non-fatal issue: {e}")
 
         readiness.database.mark_ready()
         return True
