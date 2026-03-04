@@ -4,7 +4,7 @@
     {{ helper_text(field) }}
     <div class="service-cards-grid" id="{{ field.path|e }}-grid">
         {% for card in cards %}
-        <div class="service-card{% if card.checked %} service-card--selected{% endif %}{% if card.is_locked %} service-card--locked-checked{% endif %}" data-service="{{ card.value|e }}"{% if card.data_requires %} data-requires='{{ card.data_requires }}'{% endif %}>
+        <div class="service-card{% if card.checked %} service-card--selected{% endif %}{% if card.is_locked %} service-card--locked-checked{% endif %}" data-service="{{ card.value|e }}"{% if card.data_requires %} data-requires='{{ card.data_requires }}'{% endif %}{% if card.server_locked %} data-locked="true"{% endif %}>
             <c-checkbox
                 id="{{ field.path|e }}-{{ card.value|e }}"
                 name="{{ field.path|e }}[]"
@@ -12,6 +12,9 @@
                 {{ bool_attr("checked", card.checked) }}
                 {{ bool_attr("disabled", card.disabled) }}
             />
+            {% if card.checked and card.disabled %}
+            <input type="hidden" name="{{ field.path|e }}[]" value="{{ card.value|e }}" />
+            {% endif %}
             <div class="service-card__content">
                 <div class="service-card__header">
                     <c-icon icon="{{ card.icon|e }}" color="{{ card.color|e }}" size="lg" />

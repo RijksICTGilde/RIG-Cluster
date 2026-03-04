@@ -333,6 +333,9 @@ class FormRenderer:
                     edit_mode=edit_mode,
                     provider_context=provider_context,
                 )
+                # Pass locked services to service_cards widget
+                if str(editable.widget) == "service_cards" and "_locked_services" in yaml_data:
+                    form_field.attributes["locked_values"] = ",".join(yaml_data["_locked_services"])
                 fields_by_name[form_field.path] = form_field
 
         all_fields = list(fields_by_name.values())
@@ -557,8 +560,10 @@ class FormRenderer:
         """Apply edit mode constraints to fields.
 
         Sets readonly=True for fields marked with readonly_on_edit=True.
+        Sets edit_mode=True on all fields so widgets can adapt.
         """
         for field in fields:
+            field.edit_mode = True
             if field.readonly_on_edit:
                 field.readonly = True
 

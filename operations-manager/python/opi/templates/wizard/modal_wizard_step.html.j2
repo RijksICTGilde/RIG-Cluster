@@ -67,14 +67,6 @@
             {% endif %}
 
             <div class="wizard-step__actions-right">
-                {% if not steps.is_last and steps.count > 1 %}
-                <c-button kind="tertiary"
-                          hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/skip"
-                          hx-target="#edit-section-inner" hx-swap="innerHTML">
-                    Later configureren
-                </c-button>
-                {% endif %}
-
                 {% if steps.is_last %}
                 <c-button type="submit" kind="primary" showIcon="before" icon="publicatie">
                     Opslaan

@@ -41,6 +41,8 @@ from opi.forms.visualizers.sections import FormSection
 def _extract_services(data: dict[str, Any]) -> list[str]:
     """Extract active service names from wizard form data."""
     services = data.get("services", [])
+    if isinstance(services, str):
+        return [services] if services else []
     if isinstance(services, list):
         return extract_service_names(services)
     return []

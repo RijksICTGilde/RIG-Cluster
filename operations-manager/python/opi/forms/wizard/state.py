@@ -116,6 +116,10 @@ class WizardState:
     template_data: dict[str, Any] = field(default_factory=dict)
     """Static project template data (repositories, etc.) — lowest priority layer."""
 
+    locked_services: list[str] = field(default_factory=list)
+    """Services that existed in the project before the wizard started.
+    These cannot be removed and are rendered as locked in the service cards."""
+
     stashed_data: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Step data parked when a conditional section becomes inactive.
 
@@ -177,6 +181,7 @@ class WizardState:
             "project_name": self.project_name,
             "template_data": self.template_data,
             "stashed_data": self.stashed_data,
+            "locked_services": self.locked_services,
         }
 
     def stash_inactive_sections(self, active_section_ids: list[str]) -> None:
@@ -212,4 +217,5 @@ class WizardState:
             project_name=data.get("project_name"),
             template_data=data.get("template_data", {}),
             stashed_data=data.get("stashed_data", {}),
+            locked_services=data.get("locked_services", []),
         )

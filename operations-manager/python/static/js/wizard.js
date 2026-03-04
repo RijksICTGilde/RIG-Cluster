@@ -24,9 +24,10 @@ function sequenceRemove(path, index) {
  * Route the sequence action to the correct handler based on context.
  */
 function _sequenceDispatch(action, path, index) {
-    var form = document.getElementById('wizard-step-form');
+    var form = document.getElementById('wizard-step-form')
+            || document.getElementById('modal-wizard-form');
     if (form) {
-        /* Wizard context: inject hidden fields and trigger HTMX submit */
+        /* Wizard / modal-wizard context: inject hidden fields and trigger HTMX submit */
         _seqHidden(form, '_seq_action', action);
         _seqHidden(form, '_seq_path', path);
         _seqHidden(form, '_seq_index', index);
@@ -34,7 +35,7 @@ function _sequenceDispatch(action, path, index) {
         return;
     }
 
-    /* Detail-edit modal context */
+    /* Detail-edit modal context (legacy non-wizard edit) */
     var modal = document.getElementById('edit-section-modal');
     if (modal && modal.dataset.projectName && modal.dataset.sectionId) {
         _sequenceEditModal(modal, action, path, index);
@@ -252,7 +253,8 @@ function initServiceCards(grid) {
             }
 
             var requirers = revDeps[svc] || [];
-            var locked = checked && requirers.length > 0;
+            var serverLocked = card.dataset.locked === 'true';
+            var locked = checked && (requirers.length > 0 || serverLocked);
 
             if (locked) {
                 card.classList.add('service-card--locked-checked');
@@ -417,7 +419,8 @@ document.addEventListener('htmx:afterSettle', function(event) {
 document.addEventListener('change', function(e) {
     var el = e.target.closest('[data-rerender]');
     if (!el) return;
-    var form = document.getElementById('wizard-step-form');
+    var form = document.getElementById('wizard-step-form')
+            || document.getElementById('modal-wizard-form');
     if (!form) return;
     _seqHidden(form, '_rerender', '1');
     htmx.trigger(form, 'submit');

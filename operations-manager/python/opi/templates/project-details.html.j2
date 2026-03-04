@@ -4287,8 +4287,8 @@
             innerEl.innerHTML = html;
             // Activate HTMX on the new server-rendered content
             if (typeof htmx !== 'undefined') htmx.process(innerEl);
-            // Initialize KV editors in the new content
-            if (typeof initKvEditors === 'function') initKvEditors(innerEl);
+            // Initialize wizard widgets (service cards, KV editors) in the new content
+            if (typeof initWizardWidgets === 'function') initWizardWidgets(innerEl);
         })
         .catch(function(err) {
             innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';

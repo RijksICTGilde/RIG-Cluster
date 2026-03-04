@@ -88,11 +88,20 @@ def _render_section_html(
     section,
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
+    locked_services: list[str] | None = None,
 ) -> str:
-    """Render form fields for a section."""
+    """Render form fields for a section.
+
+    Args:
+        locked_services: Service names that cannot be unchecked (existing project services).
+            Passed via ``_locked_services`` key in yaml_data so ``render_service_cards`` can
+            lock them independently of dependency-based locking.
+    """
     renderer = _create_renderer()
     if not section.layout:
         return ""
+    if locked_services is not None:
+        yaml_data = {**yaml_data, "_locked_services": locked_services}
     html = renderer.render_fields_from_editables(
         editables=section.editables,
         yaml_data=yaml_data,
@@ -246,7 +255,8 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 
     smart_set_value(yaml_data, seq_path, items)
 
-    fields_html = _render_section_html(section, yaml_data)
+    locked_services = state.locked_services if state else None
+    fields_html = _render_section_html(section, yaml_data, locked_services=locked_services)
     return HTMLResponse(content=fields_html)
 
 
@@ -283,6 +293,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         project_name=project_name,
     )
     state.step_data = step_data
+    state.locked_services = _extract_services(project_data)
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
         if step_data.get(section_id):
@@ -292,7 +303,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # Render first step
     section = _get_section_from_flow(flow, first_step)
     yaml_data = state.get_merged_data()
-    step_html = _render_section_html(section, yaml_data)
+    step_html = _render_section_html(section, yaml_data, locked_services=state.locked_services)
 
     rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
     return HTMLResponse(content=rendered)
@@ -315,7 +326,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
     save_modal_wizard_state(request, state)
 
     yaml_data = state.get_merged_data()
-    step_html = _render_section_html(section, yaml_data)
+    step_html = _render_section_html(section, yaml_data, locked_services=state.locked_services)
 
     rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
     return HTMLResponse(content=rendered)
@@ -325,7 +336,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate step data and advance to next step, or complete the flow."""
-    project, user_email = _require_project_edit_access(request, project_name)
+    _require_project_edit_access(request, project_name)
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -334,7 +345,13 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     flow = get_flow(flow_id)
     section = _get_section_from_flow(flow, section_id)
 
-    # Parse JSON body
+    # Parse JSON body (requires htmx json-enc extension on the client)
+    content_type = request.headers.get("content-type", "")
+    if "application/json" not in content_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Verwacht JSON body (json-enc extensie niet geladen?)",
+        )
     body = await request.json()
 
     # Handle sequence actions inline
@@ -361,23 +378,34 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
                 items.pop(remove_index)
 
         smart_set_value(merged, str(seq_path), items)
-        step_html = _render_section_html(section, merged)
+        step_html = _render_section_html(section, merged, locked_services=state.locked_services)
         rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
     submitted_data = body
 
-    # Service add-only enforcement
-    if section_id == "services-edit":
-        project_data = project.data or {}
-        existing_services = set(_extract_services(project_data))
+    # Service removal enforcement: only locked (original) services cannot be removed
+    if section_id == "services-edit" and state.locked_services:
         submitted_services = set(_extract_services(submitted_data))
-        removed = existing_services - submitted_services
+        removed = set(state.locked_services) - submitted_services
         if removed:
-            errors = {"services": [f"Services kunnen niet verwijderd worden: {', '.join(sorted(removed))}"]}
-            step_html = _render_section_html(section, project_data, errors=errors)
-            rendered = _render_modal_step(request, flow_id, section, step_html, project_name, errors=errors)
-            return HTMLResponse(content=rendered, status_code=422)
+            global_errors = [
+                "Het verwijderen van bestaande services wordt nog niet ondersteund. "
+                "De volgende services zijn weer aangevinkt: "
+                f"{', '.join(sorted(removed))}."
+            ]
+            # Re-render with merged data so user doesn't lose other changes
+            yaml_data = state.get_merged_data()
+            step_html = _render_section_html(section, yaml_data, locked_services=state.locked_services)
+            rendered = _render_modal_step(
+                request,
+                flow_id,
+                section,
+                step_html,
+                project_name,
+                global_errors=global_errors,
+            )
+            return HTMLResponse(content=rendered)
 
     # Validate
     processor = EditableFormProcessor()
@@ -393,9 +421,9 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
 
     if errors:
-        step_html = _render_section_html(section, submitted_yaml, errors=errors)
+        step_html = _render_section_html(section, submitted_yaml, errors=errors, locked_services=state.locked_services)
         rendered = _render_modal_step(request, flow_id, section, step_html, project_name, errors=errors)
-        return HTMLResponse(content=rendered, status_code=422)
+        return HTMLResponse(content=rendered)
 
     # Store step data
     section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
@@ -424,7 +452,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         save_modal_wizard_state(request, state)
 
         yaml_data = state.get_merged_data()
-        step_html = _render_section_html(next_section, yaml_data)
+        step_html = _render_section_html(next_section, yaml_data, locked_services=state.locked_services)
         rendered = _render_modal_step(request, flow_id, next_section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
