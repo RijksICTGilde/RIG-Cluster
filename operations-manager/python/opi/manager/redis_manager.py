@@ -285,6 +285,35 @@ class RedisManager:
 
         return deletion_results
 
+    async def handle_service_removal(
+        self,
+        project_name: str,
+        deployment_name: str,
+        deployment_data: dict[str, Any],
+        project_data: dict[str, Any],
+        marked_for_deletion_service: Any = None,
+    ) -> dict[str, Any]:
+        """Handle cleanup when Redis service is removed from a deployment.
+
+        Redis resources are ephemeral (ACL users), so they are always deleted
+        immediately.  The ``marked_for_deletion_service`` parameter is accepted
+        for interface consistency but is ignored.
+
+        Args:
+            project_name: Name of the project.
+            deployment_name: Name of the deployment losing the service.
+            deployment_data: The deployment dict from the *previous* YAML.
+            project_data: The *previous* project YAML (so internal service
+                checks still pass).
+            marked_for_deletion_service: Ignored (Redis is always immediate).
+
+        Returns:
+            Structured result dict with operations, errors, success.
+        """
+        result = await self.delete_resources_for_deployment(project_data, deployment_data)
+        result["trigger"] = "service_removal"
+        return result
+
     async def _deployment_uses_redis(self, project_data: dict[str, Any], deployment_name: str) -> bool:
         """Check if a deployment uses Redis service."""
         return self.project_manager._project_file_handler.deployment_uses_service(

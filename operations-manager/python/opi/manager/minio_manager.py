@@ -1,7 +1,10 @@
 """MinIO service manager for handling object storage resources."""
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.cluster_config import get_minio_host, get_minio_port
@@ -666,6 +669,81 @@ class MinioManager:
         deletion_results["success"] = len(deletion_results["errors"]) == 0
 
         return deletion_results
+
+    async def handle_service_removal(
+        self,
+        project_name: str,
+        deployment_name: str,
+        deployment_data: dict[str, Any],
+        project_data: dict[str, Any],
+        marked_for_deletion_service: "MarkedForDeletionService | None" = None,
+    ) -> dict[str, Any]:
+        """Handle cleanup when MinIO service is removed from a deployment.
+
+        If a ``MarkedForDeletionService`` is provided the bucket, user, and
+        policy are marked for deferred deletion.  Otherwise they are deleted
+        immediately via ``delete_resources_for_deployment``.
+
+        Args:
+            project_name: Name of the project.
+            deployment_name: Name of the deployment losing the service.
+            deployment_data: The deployment dict from the *previous* YAML.
+            project_data: The *previous* project YAML (so internal service
+                checks still pass).
+            marked_for_deletion_service: Optional service for deferred deletion.
+
+        Returns:
+            Structured result dict with operations, errors, success.
+        """
+        cluster = deployment_data.get("cluster", "")
+
+        result: dict[str, Any] = {
+            "service": "minio",
+            "deployment": deployment_name,
+            "trigger": "service_removal",
+            "operations": [],
+            "success": True,
+            "errors": [],
+        }
+
+        if marked_for_deletion_service is not None:
+            bucket_name = generate_bucket_name(project_name, deployment_name)
+            minio_user = generate_minio_username(project_name, deployment_name)
+            minio_policy = generate_minio_policy_name(project_name, deployment_name)
+
+            for rtype, rname in [
+                ("minio_bucket", bucket_name),
+                ("minio_user", minio_user),
+                ("minio_policy", minio_policy),
+            ]:
+                await marked_for_deletion_service.mark_resource(
+                    resource_type=rtype,
+                    resource_name=rname,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    metadata={"server_alias": "minio"},
+                )
+
+            result["operations"].append(
+                {
+                    "type": "mark_for_deletion",
+                    "resource_type": "minio_bucket",
+                    "resource_name": bucket_name,
+                    "status": "marked",
+                }
+            )
+            logger.info(
+                "Marked MinIO resources for deferred deletion: %s (project=%s, deployment=%s)",
+                bucket_name,
+                project_name,
+                deployment_name,
+            )
+        else:
+            result = await self.delete_resources_for_deployment(project_data, deployment_data)
+            result["trigger"] = "service_removal"
+
+        return result
 
     async def _deployment_uses_minio(self, project_data: dict[str, Any], deployment_name: str) -> bool:
         """

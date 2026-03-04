@@ -2188,21 +2188,23 @@ class ProjectManager:
             # directly by DatabaseManager and MinioManager during their create_resources_for_deployment
             # methods. The clone-from configuration is read from the deployment and processed inline.
 
+            # Build a marked-for-deletion service if database pool is available
+            # (shared by deployment deletion and service-removal cleanup)
+            marked_service = None
+            try:
+                from opi.core.database_pools import get_database_pool
+                from opi.services.marked_for_deletion_service import MarkedForDeletionService
+
+                pool = get_database_pool("main")
+                marked_service = MarkedForDeletionService(pool)
+            except (KeyError, ValueError):
+                logger.warning("Database pool not available - persistent resources will be deleted immediately")
+
+            project_name = current_yaml.get("name", "unknown")
+
             # Step 1.6: Process deployment removals BEFORE creations
             if previous_yaml is not None and deployment_changes["deleted"]:
                 logger.info("Processing %d deleted deployment(s)", len(deployment_changes["deleted"]))
-                project_name = current_yaml.get("name", "unknown")
-
-                # Build a marked-for-deletion service if database pool is available
-                marked_service = None
-                try:
-                    from opi.core.database_pools import get_database_pool
-                    from opi.services.marked_for_deletion_service import MarkedForDeletionService
-
-                    pool = get_database_pool("main")
-                    marked_service = MarkedForDeletionService(pool)
-                except (KeyError, ValueError):
-                    logger.warning("Database pool not available - persistent resources will be deleted immediately")
 
                 for value in deployment_changes["deleted"].values():
                     if isinstance(value, dict) and "name" in value:
@@ -2214,10 +2216,33 @@ class ProjectManager:
                                 deployment_data=value,
                                 project_data=current_yaml,
                                 marked_for_deletion_service=marked_service,
+                                previous_yaml=previous_yaml,
                             )
                         except Exception as e:
                             logger.exception("Failed to delete resources for deployment %s: %s", dep_name, e)
                             critical_failures.append(f"Failed to delete removed deployment '{dep_name}': {e}")
+
+            # Step 1.7: Detect and clean up services removed from surviving deployments
+            if previous_yaml is not None:
+                try:
+                    svc_removal_result = await self._delete_project_manager.cleanup_removed_services_from_yaml_change(
+                        project_name=project_name,
+                        previous_yaml=previous_yaml,
+                        current_yaml=current_yaml,
+                        marked_for_deletion_service=marked_service,
+                    )
+                    if svc_removal_result.get("services_removed", 0) > 0:
+                        logger.info(
+                            "Service removal cleanup: %d service(s) cleaned up",
+                            svc_removal_result["services_removed"],
+                        )
+                    if svc_removal_result.get("errors"):
+                        for err in svc_removal_result["errors"]:
+                            logger.error("Service removal error: %s", err)
+                            critical_failures.append(err)
+                except Exception as e:
+                    logger.exception("Failed to process service removal cleanup: %s", e)
+                    critical_failures.append(f"Service removal cleanup failed: {e}")
 
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")

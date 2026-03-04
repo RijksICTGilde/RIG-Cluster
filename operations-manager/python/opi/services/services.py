@@ -74,6 +74,17 @@ class ServiceDefinition:
     Used for both UI behavior (auto-select, lock) and submit-time
     validation.
     """
+    cleanup_strategy: str = "none"
+    """How server-side resources are cleaned up when the service is removed.
+
+    - ``"none"``      — no server-side resources to clean up (e.g. storage PVCs,
+                         ingress config).  This is the default.
+    - ``"immediate"``  — ephemeral / easily recreatable resources are deleted
+                         right away (e.g. Redis ACL users, Keycloak clients).
+    - ``"deferred"``   — persistent data resources are marked for deferred
+                         deletion so they can be recovered (e.g. databases,
+                         MinIO buckets).
+    """
 
 
 class DatabaseVariables(Enum):
@@ -308,6 +319,7 @@ class ServiceAdapter:
             secret_class="KeycloakSecret",
             variables=[var.value for var in KeycloakVariables],
             requires=["services/publish-on-web"],
+            cleanup_strategy="immediate",
         ),
         ServiceType.PERSISTENT_STORAGE: ServiceDefinition(
             name="Permanente opslag",
@@ -335,6 +347,7 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
+            cleanup_strategy="deferred",
         ),
         ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ServiceDefinition(
             name="Namespace PostgreSQL Database",
@@ -345,6 +358,7 @@ class ServiceAdapter:
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
             hidden=True,
+            cleanup_strategy="deferred",
         ),
         ServiceType.MINIO_STORAGE: ServiceDefinition(
             name="MinIO Object Storage",
@@ -354,6 +368,7 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="MinIOSecret",
             variables=[var.value for var in MinIOVariables],
+            cleanup_strategy="deferred",
         ),
         ServiceType.REDIS: ServiceDefinition(
             name="Redis Cache",
@@ -363,6 +378,7 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
+            cleanup_strategy="immediate",
         ),
         ServiceType.NAMESPACE_REDIS: ServiceDefinition(
             name="Namespace Redis Cache",
@@ -373,6 +389,7 @@ class ServiceAdapter:
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
             hidden=True,
+            cleanup_strategy="immediate",
         ),
         ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
             name="Authorization Wall",
@@ -466,6 +483,15 @@ class ServiceAdapter:
     def filter_deployment_services(cls, services: list[ServiceType]) -> list[ServiceType]:
         """Filter services to only include deployment-shared ones."""
         return [service for service in services if cls.is_deployment_service(service)]
+
+    @classmethod
+    def get_cleanable_service_types(cls) -> list[ServiceType]:
+        """Get all service types that have server-side resources requiring cleanup."""
+        return [
+            svc_type
+            for svc_type, definition in cls.SERVICE_DEFINITIONS.items()
+            if definition.cleanup_strategy != "none"
+        ]
 
     @classmethod
     def get_storage_services(cls, services: list[ServiceType]) -> list[ServiceType]:

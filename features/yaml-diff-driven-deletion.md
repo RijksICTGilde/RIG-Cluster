@@ -2,7 +2,7 @@
 
 ## What It Is
 
-When a user removes a deployment from their project YAML file, the system automatically detects the removal and cleans up the associated infrastructure resources. Persistent data resources (databases, MinIO buckets) are protected by a two-phase deletion process with a configurable grace period, allowing accident recovery via git revert.
+When a user removes a deployment or a service from their project YAML file, the system automatically detects the change and cleans up the associated infrastructure resources. Persistent data resources (databases, MinIO buckets) are protected by a two-phase deletion process with a configurable grace period, allowing accident recovery via git revert.
 
 ## How It Works
 
@@ -20,6 +20,7 @@ When a deployment is removed from YAML:
    - ArgoCD application files and AppProject files
    - Repository secret files
    - Keycloak clients
+   - Redis ACL users
    - Deployment manifests from git repositories
    - Subdomain registrations
 
@@ -28,6 +29,20 @@ When a deployment is removed from YAML:
    - MinIO buckets, users, and policies
    - Backup data (Kopia snapshots for the deployment)
    - Namespaces containing persistent resources
+
+### Service-Level Change Detection
+
+When a deployment *survives* a YAML change but one or more services are removed from it (e.g., `postgresql-database` dropped from a component's `uses-services`), the system detects the removal and triggers the same cleanup flow.
+
+Each `ServiceDefinition` declares a `cleanup_strategy`:
+
+| Strategy | Services | Behavior |
+|----------|----------|----------|
+| `deferred` | postgresql-database, namespace-postgresql-database, minio-storage | Mark for deferred deletion (data is precious) |
+| `immediate` | redis, namespace-redis, keycloak | Delete right away (ephemeral/recreatable) |
+| `none` | publish-on-web, authorization-wall, persistent-storage, temp-storage | No server-side resources to clean up |
+
+Each service manager owns its cleanup logic via `handle_service_removal()`, which decides internally whether to mark or delete based on the availability of a `MarkedForDeletionService`. The orchestrator (`cleanup_removed_services_from_yaml_change`) iterates cleanable services, detects removals using `deployment_uses_service()`, and delegates to the appropriate manager.
 
 ### Reconciliation
 
@@ -106,8 +121,13 @@ If a deployment is accidentally removed from YAML and the user reverts the git c
 | `opi/core/marked_for_deletion_schema.py` | SQL schema for the table |
 | `opi/services/marked_for_deletion_service.py` | CRUD service layer |
 | `opi/migrations/versions/002_add_marked_for_deletion.py` | Alembic migration |
-| `opi/manager/delete_project_manager.py` | New `delete_deployment_from_yaml_change()` method |
-| `opi/manager/project_manager.py` | Wired deletion into `process_project_from_git()` |
+| `opi/services/services.py` | `cleanup_strategy` on `ServiceDefinition` |
+| `opi/manager/database_manager.py` | `handle_service_removal()` for PostgreSQL |
+| `opi/manager/minio_manager.py` | `handle_service_removal()` for MinIO |
+| `opi/manager/redis_manager.py` | `handle_service_removal()` for Redis |
+| `opi/manager/keycloak_manager.py` | `handle_service_removal()` for Keycloak |
+| `opi/manager/delete_project_manager.py` | `delete_deployment_from_yaml_change()` and `cleanup_removed_services_from_yaml_change()` |
+| `opi/manager/project_manager.py` | Wired deletion + service removal into `process_project_from_git()` |
 | `opi/jobs/reconciliation.py` | Reconciliation job with backup purge support |
 | `opi/api/admin_router.py` | Admin API endpoints for cleanup and reconciliation |
 | `opi/api/endpoint_util.py` | `validate_admin_api_key` decorator |

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
@@ -992,6 +993,76 @@ class DatabaseManager:
         deletion_results["success"] = len(deletion_results["errors"]) == 0
 
         return deletion_results
+
+    async def handle_service_removal(
+        self,
+        project_name: str,
+        deployment_name: str,
+        deployment_data: dict[str, Any],
+        project_data: dict[str, Any],
+        marked_for_deletion_service: "MarkedForDeletionService | None" = None,
+    ) -> dict[str, Any]:
+        """Handle cleanup when PostgreSQL service is removed from a deployment.
+
+        If a ``MarkedForDeletionService`` is provided the database and user are
+        marked for deferred deletion (allowing recovery).  Otherwise they are
+        deleted immediately via ``delete_resources_for_deployment``.
+
+        Args:
+            project_name: Name of the project.
+            deployment_name: Name of the deployment losing the service.
+            deployment_data: The deployment dict from the *previous* YAML.
+            project_data: The *previous* project YAML (so internal service
+                checks still pass).
+            marked_for_deletion_service: Optional service for deferred deletion.
+
+        Returns:
+            Structured result dict with operations, errors, success.
+        """
+        cluster = deployment_data.get("cluster", "")
+
+        result: dict[str, Any] = {
+            "service": "database",
+            "deployment": deployment_name,
+            "trigger": "service_removal",
+            "operations": [],
+            "success": True,
+            "errors": [],
+        }
+
+        if marked_for_deletion_service is not None:
+            db_name = generate_database_name(project_name, deployment_name)
+            for rtype, rname in [
+                ("postgresql_database", db_name),
+                ("postgresql_user", db_name),
+            ]:
+                await marked_for_deletion_service.mark_resource(
+                    resource_type=rtype,
+                    resource_name=rname,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    metadata={"server": settings.DATABASE_HOST},
+                )
+            result["operations"].append(
+                {
+                    "type": "mark_for_deletion",
+                    "resource_type": "postgresql_database",
+                    "resource_name": db_name,
+                    "status": "marked",
+                }
+            )
+            logger.info(
+                "Marked database resources for deferred deletion: %s (project=%s, deployment=%s)",
+                db_name,
+                project_name,
+                deployment_name,
+            )
+        else:
+            result = await self.delete_resources_for_deployment(project_data, deployment_data)
+            result["trigger"] = "service_removal"
+
+        return result
 
     def _project_uses_namespace_postgresql(self, project_data: dict[str, Any]) -> bool:
         """

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from fastapi import HTTPException
 
@@ -13,6 +13,7 @@ from opi.connectors import create_argo_connector
 from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
+from opi.services import ServiceAdapter, ServiceType
 from opi.services.project_service import get_project_service
 
 if TYPE_CHECKING:
@@ -21,14 +22,10 @@ from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
     generate_backup_prefix,
-    generate_bucket_name,
-    generate_database_name,
     generate_deployment_manifest_path,
     generate_gitops_argocd_application_path,
     generate_infrastructure_application_name,
     generate_infrastructure_argocd_folder_path,
-    generate_minio_policy_name,
-    generate_minio_username,
     get_output_filename_from_template,
 )
 
@@ -1535,6 +1532,7 @@ class DeleteProjectManager:
         deployment_data: dict[str, Any],
         project_data: dict[str, Any],
         marked_for_deletion_service: MarkedForDeletionService | None = None,
+        previous_yaml: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Delete deployment resources detected as removed from project YAML.
 
@@ -1553,6 +1551,8 @@ class DeleteProjectManager:
             project_data: The *current* project YAML (deployment already removed).
             marked_for_deletion_service: Service for marking persistent resources.
                 If None, persistent resources are deleted immediately (legacy behavior).
+            previous_yaml: The *previous* project YAML for reliable service detection.
+                If None, falls back to legacy detection from deployment_data.
 
         Returns:
             Dictionary containing deletion results and status.
@@ -1716,69 +1716,75 @@ class DeleteProjectManager:
             logger.exception("Error deleting Keycloak resources for %s/%s", project_name, deployment_name)
 
         # --- Persistent data resources ---
-        services = deployment_data.get("services", [])
-        has_database = any(s.get("reference") in ("database", "postgresql") for s in services if isinstance(s, dict))
-        has_minio = any(
-            s.get("reference") in ("minio", "minio-storage", "object-storage") for s in services if isinstance(s, dict)
-        )
+        # Use deployment_uses_service for reliable detection when previous_yaml
+        # is available; fall back to legacy heuristic otherwise.
+        file_handler = self.project_manager._project_file_handler
+        if previous_yaml is not None:
+            has_database = file_handler.deployment_uses_service(
+                previous_yaml,
+                deployment_name,
+                [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value],
+            )
+            has_minio = file_handler.deployment_uses_service(
+                previous_yaml,
+                deployment_name,
+                [ServiceType.MINIO_STORAGE.value],
+            )
+        else:
+            # Legacy fallback: unreliable but kept for backward compatibility
+            services = deployment_data.get("services", [])
+            has_database = any(
+                s.get("reference") in ("database", "postgresql") for s in services if isinstance(s, dict)
+            )
+            has_minio = any(
+                s.get("reference") in ("minio", "minio-storage", "object-storage")
+                for s in services
+                if isinstance(s, dict)
+            )
+
+        # Use the project_data to pass to managers — for a deleted deployment
+        # we pass previous_yaml so the internal service checks pass.
+        service_check_yaml = previous_yaml if previous_yaml is not None else project_data
+
+        # Delegate to managers via handle_service_removal
+        if has_database:
+            try:
+                db_manager = await self.project_manager._ensure_database_manager()
+                db_result = await db_manager.handle_service_removal(
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    deployment_data=deployment_data,
+                    project_data=service_check_yaml,
+                    marked_for_deletion_service=marked_for_deletion_service,
+                )
+                deletion_results["service_results"]["database"] = db_result
+                deletion_results["operations"].extend(db_result.get("operations", []))
+                if db_result.get("errors"):
+                    deletion_results["errors"].extend(db_result["errors"])
+            except Exception as e:
+                deletion_results["errors"].append(f"Error handling database service removal: {e}")
+                logger.exception("Error handling database service removal")
+
+        if has_minio:
+            try:
+                minio_result = await self.project_manager._minio_manager.handle_service_removal(
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    deployment_data=deployment_data,
+                    project_data=service_check_yaml,
+                    marked_for_deletion_service=marked_for_deletion_service,
+                )
+                deletion_results["service_results"]["minio"] = minio_result
+                deletion_results["operations"].extend(minio_result.get("operations", []))
+                if minio_result.get("errors"):
+                    deletion_results["errors"].extend(minio_result["errors"])
+            except Exception as e:
+                deletion_results["errors"].append(f"Error handling MinIO service removal: {e}")
+                logger.exception("Error handling MinIO service removal")
+
+        has_deferred = has_database or has_minio
 
         if marked_for_deletion_service is not None:
-            # Mark persistent resources for deferred deletion
-            if has_database:
-                db_name = generate_database_name(project_name, deployment_name)
-                await marked_for_deletion_service.mark_resource(
-                    resource_type="postgresql_database",
-                    resource_name=db_name,
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    cluster=cluster,
-                    metadata={"server": settings.DATABASE_HOST},
-                )
-                await marked_for_deletion_service.mark_resource(
-                    resource_type="postgresql_user",
-                    resource_name=db_name,
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    cluster=cluster,
-                    metadata={"server": settings.DATABASE_HOST},
-                )
-                deletion_results["operations"].append(
-                    {
-                        "type": "mark_for_deletion",
-                        "resource_type": "postgresql_database",
-                        "resource_name": db_name,
-                        "status": "marked",
-                    }
-                )
-
-            if has_minio:
-                bucket_name = generate_bucket_name(project_name, deployment_name)
-                minio_user = generate_minio_username(project_name, deployment_name)
-                minio_policy = generate_minio_policy_name(project_name, deployment_name)
-
-                for rtype, rname in [
-                    ("minio_bucket", bucket_name),
-                    ("minio_user", minio_user),
-                    ("minio_policy", minio_policy),
-                ]:
-                    await marked_for_deletion_service.mark_resource(
-                        resource_type=rtype,
-                        resource_name=rname,
-                        project_name=project_name,
-                        deployment_name=deployment_name,
-                        cluster=cluster,
-                        metadata={"server_alias": "minio"},
-                    )
-
-                deletion_results["operations"].append(
-                    {
-                        "type": "mark_for_deletion",
-                        "resource_type": "minio_bucket",
-                        "resource_name": bucket_name,
-                        "status": "marked",
-                    }
-                )
-
             # Mark backup data for deferred deletion
             if base_namespace:
                 from opi.manager.backup.base import BackupConfig, get_backup_bucket_name
@@ -1830,14 +1836,14 @@ class DeleteProjectManager:
             # Handle namespace: mark instead of deleting if it has persistent resources
             if base_namespace and not namespace_used_by_others:
                 namespace = get_prefixed_namespace(cluster, base_namespace)
-                if has_database or has_minio:
+                if has_deferred:
                     await marked_for_deletion_service.mark_resource(
                         resource_type="namespace",
                         resource_name=namespace,
                         project_name=project_name,
                         deployment_name=deployment_name,
                         cluster=cluster,
-                        metadata={"has_marked_pvcs": has_database or has_minio},
+                        metadata={"has_marked_pvcs": has_deferred},
                     )
                     deletion_results["operations"].append(
                         {
@@ -1857,23 +1863,7 @@ class DeleteProjectManager:
                         }
                     )
         else:
-            # No marking service: delete persistent resources immediately (legacy)
-            try:
-                db_manager = await self.project_manager._ensure_database_manager()
-                database_results = await db_manager.delete_resources_for_deployment(project_data, deployment_data)
-                deletion_results["service_results"]["database"] = database_results
-                deletion_results["operations"].extend(database_results.get("operations", []))
-            except Exception as e:
-                deletion_results["errors"].append(f"Error deleting database resources: {e}")
-                logger.exception("Error deleting database resources")
-
-            minio_results = await self.project_manager._minio_manager.delete_resources_for_deployment(
-                project_data, deployment_data
-            )
-            deletion_results["service_results"]["minio"] = minio_results
-            deletion_results["operations"].extend(minio_results.get("operations", []))
-
-            # Delete namespace if safe
+            # No marking service: delete namespace if safe (legacy)
             if base_namespace and not namespace_used_by_others and argocd_app_deleted:
                 namespace = get_prefixed_namespace(cluster, base_namespace)
                 ns_deleted = await self.project_manager._kubectl_connector.delete_namespace(namespace)
@@ -1957,3 +1947,133 @@ class DeleteProjectManager:
             len(deletion_results["errors"]),
         )
         return deletion_results
+
+    # -- Service-type → manager mapping -----------------------------------
+
+    _SERVICE_TYPE_MANAGER_ATTR: ClassVar[dict[ServiceType, str]] = {
+        ServiceType.POSTGRESQL_DATABASE: "database",
+        ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
+        ServiceType.MINIO_STORAGE: "minio",
+        ServiceType.REDIS: "redis",
+        ServiceType.NAMESPACE_REDIS: "redis",
+        ServiceType.KEYCLOAK: "keycloak",
+    }
+
+    async def _get_manager_for_service(self, manager_key: str) -> Any:
+        """Resolve the manager instance for a given manager key."""
+        if manager_key == "database":
+            return await self.project_manager._ensure_database_manager()
+        if manager_key == "minio":
+            return self.project_manager._minio_manager
+        if manager_key == "redis":
+            return self.project_manager._redis_manager
+        if manager_key == "keycloak":
+            return self.project_manager._keycloak_manager
+        raise ValueError(f"Unknown manager key: {manager_key}")
+
+    async def cleanup_removed_services_from_yaml_change(
+        self,
+        project_name: str,
+        previous_yaml: dict[str, Any],
+        current_yaml: dict[str, Any],
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
+    ) -> dict[str, Any]:
+        """Detect services removed from surviving deployments and clean them up.
+
+        For each deployment that exists in both the previous and current YAML,
+        this compares service usage.  If a service was used before but is no
+        longer used, the corresponding manager's ``handle_service_removal()``
+        is called.
+
+        Args:
+            project_name: Name of the project.
+            previous_yaml: The previous project YAML.
+            current_yaml: The current project YAML.
+            marked_for_deletion_service: Optional service for deferred deletion
+                of persistent resources.
+
+        Returns:
+            Aggregated result dict with per-deployment, per-service results.
+        """
+        results: dict[str, Any] = {
+            "project": project_name,
+            "trigger": "service_removal_detection",
+            "deployments_checked": 0,
+            "services_removed": 0,
+            "service_results": [],
+            "errors": [],
+            "success": True,
+        }
+
+        previous_deployments = {
+            dep["name"]: dep for dep in previous_yaml.get("deployments", []) if isinstance(dep, dict) and "name" in dep
+        }
+        current_deployments = {
+            dep["name"]: dep for dep in current_yaml.get("deployments", []) if isinstance(dep, dict) and "name" in dep
+        }
+
+        # Only check deployments that survive (exist in both)
+        surviving = set(previous_deployments) & set(current_deployments)
+        results["deployments_checked"] = len(surviving)
+
+        if not surviving:
+            logger.debug("No surviving deployments to check for service removal")
+            return results
+
+        # Get all service types that require cleanup
+        cleanable_services = ServiceAdapter.get_cleanable_service_types()
+
+        file_handler = self.project_manager._project_file_handler
+
+        for dep_name in sorted(surviving):
+            prev_dep_data = previous_deployments[dep_name]
+
+            for svc_type in cleanable_services:
+                svc_values = [svc_type.value]
+                # Group related service types that share a manager
+                # (e.g., namespace-postgresql-database is handled by database manager)
+                # We only need to check once per manager per deployment
+                manager_key = self._SERVICE_TYPE_MANAGER_ATTR.get(svc_type)
+                if manager_key is None:
+                    continue
+
+                was_used = file_handler.deployment_uses_service(previous_yaml, dep_name, svc_values)
+                still_used = file_handler.deployment_uses_service(current_yaml, dep_name, svc_values)
+
+                if was_used and not still_used:
+                    logger.info(
+                        "Service '%s' removed from deployment '%s' in project '%s'",
+                        svc_type.value,
+                        dep_name,
+                        project_name,
+                    )
+                    results["services_removed"] += 1
+
+                    try:
+                        manager = await self._get_manager_for_service(manager_key)
+                        svc_result = await manager.handle_service_removal(
+                            project_name=project_name,
+                            deployment_name=dep_name,
+                            deployment_data=prev_dep_data,
+                            project_data=previous_yaml,
+                            marked_for_deletion_service=marked_for_deletion_service,
+                        )
+                        results["service_results"].append(svc_result)
+                        if svc_result.get("errors"):
+                            results["errors"].extend(svc_result["errors"])
+                    except Exception as e:
+                        error_msg = f"Error cleaning up {svc_type.value} for deployment {dep_name}: {e}"
+                        results["errors"].append(error_msg)
+                        logger.exception(error_msg)
+
+        results["success"] = len(results["errors"]) == 0
+
+        if results["services_removed"] > 0:
+            logger.info(
+                "Service removal cleanup for project '%s': %d service(s) removed across %d deployment(s)",
+                project_name,
+                results["services_removed"],
+                results["deployments_checked"],
+            )
+
+        return results
