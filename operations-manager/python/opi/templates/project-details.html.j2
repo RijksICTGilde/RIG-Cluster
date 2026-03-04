@@ -3253,6 +3253,8 @@
     }
 </style>
 
+<script src="/static/js/codemirror-bundle.js"></script>
+<script src="/static/js/codemirror-kv.js"></script>
 <script src="/static/js/wizard.js"></script>
 <script>
     /**
@@ -4280,6 +4282,7 @@
         })
         .then(function(html) {
             contentEl.innerHTML = html;
+            if (typeof initKvEditors === 'function') initKvEditors(contentEl);
         })
         .catch(function(err) {
             contentEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
@@ -4565,6 +4568,7 @@
             if (response.status === 422) {
                 return response.text().then(function(html) {
                     contentEl.innerHTML = html;
+                    if (typeof initKvEditors === 'function') initKvEditors(contentEl);
                     isEditSubmitting = false;
                 });
             }

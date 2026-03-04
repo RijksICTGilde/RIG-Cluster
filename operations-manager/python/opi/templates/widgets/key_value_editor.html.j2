@@ -13,6 +13,7 @@
     <c-textarea-field
         id="{{ field.path|e }}"
         name="{{ field.path|e }}"
+        data-cm-kv="true"
         label=""
         rows="5"
         {{ optional_attr("placeholder", "KEY=value" if initial_format == "env" else "KEY: value") }}

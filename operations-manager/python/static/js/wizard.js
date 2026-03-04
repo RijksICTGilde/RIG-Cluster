@@ -74,6 +74,7 @@ function _sequenceEditModal(modal, action, path, index) {
             delete grid.dataset.initialized;
             initServiceCards(grid);
         });
+        if (typeof initKvEditors === 'function') initKvEditors(contentEl);
     })
     .catch(function(err) {
         var errorEl = document.getElementById('edit-section-error');
@@ -136,6 +137,7 @@ function kvToggleFormat(editorId, newFormat) {
             ? 'kv-toggle__btn kv-toggle__btn--active'
             : 'kv-toggle__btn';
     }
+    if (typeof switchKvLanguage === 'function') switchKvLanguage(editorId, newFormat);
     kvValidate(editorId);
 }
 
@@ -430,6 +432,7 @@ document.addEventListener('keydown', function(e) {
 function initWizardWidgets(container) {
     container = container || document;
     container.querySelectorAll('.service-cards-grid').forEach(initServiceCards);
+    if (typeof initKvEditors === 'function') initKvEditors(container);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
