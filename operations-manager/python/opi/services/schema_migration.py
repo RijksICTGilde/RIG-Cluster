@@ -31,7 +31,7 @@ def detect_schema_version(project_data: dict[str, Any]) -> int:
 
     Checks for an explicit `schema-version` field first. Falls back to
     structure detection: presence of `uses-services` on any component,
-    helm-chart, or helmfile indicates v1.
+    helm-chart, helmfile, or deployment indicates v1.
     """
     if "schema-version" in project_data:
         return project_data["schema-version"]
@@ -49,6 +49,10 @@ def detect_schema_version(project_data: dict[str, Any]) -> int:
         if isinstance(hf, dict) and "uses-services" in hf:
             return 1
 
+    for dep in project_data.get("deployments", []):
+        if isinstance(dep, dict) and "uses-services" in dep:
+            return 1
+
     # No version field and no uses-services found — assume v1 (unversioned)
     return 1
 
@@ -57,19 +61,26 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
     """
     Run all needed migrations to bring project data to the latest schema version.
 
+    Also repairs v2 files that still contain stale ``uses-services`` or
+    ``storage`` keys (written by a bug in ``add_services_to_project`` that
+    has since been fixed).
+
     Returns:
         Tuple of (migrated_data, was_migrated). was_migrated is True if any
         migration was applied.
     """
     version = detect_schema_version(project_data)
-
-    if version >= LATEST_SCHEMA_VERSION:
-        return project_data, False
+    migrated = False
 
     if version < 2:
         project_data = _migrate_v1_to_v2(project_data)
+        migrated = True
+    else:
+        # Repair: clean up stale v1 keys on files already marked v2
+        if _cleanup_stale_v1_keys(project_data):
+            migrated = True
 
-    return project_data, True
+    return project_data, migrated
 
 
 def _migrate_v1_to_v2(project_data: dict[str, Any]) -> dict[str, Any]:
@@ -105,6 +116,12 @@ def _migrate_v1_to_v2(project_data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(hf, dict):
             continue
         _migrate_uses_services_key(hf)
+
+    # Migrate deployments
+    for dep in project_data.get("deployments", []):
+        if not isinstance(dep, dict):
+            continue
+        _merge_uses_services_into_services(dep)
 
     project_data["schema-version"] = LATEST_SCHEMA_VERSION
 
@@ -174,3 +191,127 @@ def _migrate_uses_services_key(entity: dict[str, Any]) -> None:
 
     entity["services"] = uses_services
     del entity["uses-services"]
+
+
+def _cleanup_stale_v1_keys(project_data: dict[str, Any]) -> bool:
+    """Remove stale ``uses-services`` / ``storage`` keys from v2 project files.
+
+    These can exist when an older version of ``add_services_to_project()``
+    wrote v1-style keys back into a file that had already been migrated to v2.
+
+    Because the component may already have a valid ``services`` list (v2),
+    we merge any entries from the stale ``uses-services`` into it rather
+    than overwriting.
+
+    Returns True if any cleanup was performed.
+    """
+    cleaned = False
+
+    for component in project_data.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        if "uses-services" not in component and "storage" not in component:
+            continue
+
+        project_name = project_data.get("name", "unknown")
+        comp_name = component.get("name", "?")
+        logger.warning(
+            f"Project '{project_name}' component '{comp_name}' has stale v1 keys on a v2 file — merging into services"
+        )
+        _merge_stale_v1_into_v2(component)
+        cleaned = True
+
+    for chart in project_data.get("helm-charts", []):
+        if isinstance(chart, dict) and "uses-services" in chart:
+            _migrate_uses_services_key(chart)
+            cleaned = True
+
+    for hf in project_data.get("helmfile", []):
+        if isinstance(hf, dict) and "uses-services" in hf:
+            _migrate_uses_services_key(hf)
+            cleaned = True
+
+    for dep in project_data.get("deployments", []):
+        if isinstance(dep, dict) and "uses-services" in dep:
+            _merge_uses_services_into_services(dep)
+            cleaned = True
+
+    return cleaned
+
+
+def _merge_stale_v1_into_v2(component: dict[str, Any]) -> None:
+    """Merge stale ``uses-services``/``storage`` into existing v2 ``services``.
+
+    The old ``add_services_to_project()`` wrote ``uses-services`` alongside
+    the existing ``services`` key.  This merges those stale entries (with
+    any storage config) into the canonical ``services`` list and removes
+    the old keys.
+    """
+    existing_services: list[str | dict[str, Any]] = component.get("services", [])
+    stale_services: list[str] = component.get("uses-services", [])
+    stale_storage: list[dict[str, Any]] = component.get("storage", [])
+
+    if not isinstance(stale_services, list):
+        stale_services = []
+    if not isinstance(stale_storage, list):
+        stale_storage = []
+
+    # Collect names already present in the v2 services list
+    existing_names: set[str] = set()
+    for entry in existing_services:
+        if isinstance(entry, str):
+            existing_names.add(entry)
+        elif isinstance(entry, dict):
+            existing_names.update(entry.keys())
+
+    # Group stale storage items by service name
+    storage_by_service: dict[str, list[dict[str, Any]]] = {}
+    for item in stale_storage:
+        if not isinstance(item, dict):
+            continue
+        storage_type = item.get("type", "persistent")
+        service_name = _STORAGE_TYPE_TO_SERVICE.get(storage_type)
+        if service_name:
+            storage_by_service.setdefault(service_name, []).append({k: v for k, v in item.items() if k != "type"})
+
+    # Merge stale services that aren't already in the v2 list
+    for svc_name in stale_services:
+        if svc_name in existing_names:
+            continue
+        if svc_name in storage_by_service:
+            existing_services.append({svc_name: {"config": storage_by_service[svc_name]}})
+        else:
+            existing_services.append(svc_name)
+
+    component["services"] = existing_services
+    component.pop("uses-services", None)
+    component.pop("storage", None)
+
+
+def _merge_uses_services_into_services(entity: dict[str, Any]) -> None:
+    """Safely rename ``uses-services`` → ``services``, merging if both exist.
+
+    Used for deployments, helm-charts, and helmfiles where entries are plain
+    strings (no storage config to embed).
+    """
+    stale: list[str] = entity.get("uses-services", [])
+    if not isinstance(stale, list):
+        stale = []
+
+    existing: list[str | dict[str, Any]] = entity.get("services", [])
+    if not isinstance(existing, list):
+        existing = []
+
+    existing_names = set()
+    for entry in existing:
+        if isinstance(entry, str):
+            existing_names.add(entry)
+        elif isinstance(entry, dict):
+            existing_names.update(entry.keys())
+
+    for svc in stale:
+        if svc not in existing_names:
+            existing.append(svc)
+
+    entity["services"] = existing
+    entity.pop("uses-services", None)

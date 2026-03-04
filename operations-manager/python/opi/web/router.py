@@ -785,6 +785,7 @@ async def project_details(request: Request, project_name: str):
         logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
+
             raw_user_env_vars = component.get("user-env-vars")
             logger.info(
                 f"Component '{component_name}': has user-env-vars={raw_user_env_vars is not None}, type={type(raw_user_env_vars).__name__ if raw_user_env_vars else 'None'}"

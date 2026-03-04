@@ -295,6 +295,15 @@ class TestValidAuthentication:
         mock_project_manager_success: Any,
     ) -> None:
         """Test that upsert deployment with valid API key succeeds."""
+        # Mock task_service on app state so the async path works
+        mock_task_service = MagicMock()
+
+        async def mock_create_task(**kwargs: Any) -> dict[str, Any]:
+            return {"task_id": "test-task-123", "status": "pending"}
+
+        mock_task_service.create_task = mock_create_task
+        test_client.app.state.task_service = mock_task_service  # type: ignore[union-attr]
+
         response = test_client.post(
             "/api/projects/project-a/:upsert-deployment",
             headers={"X-API-Key": "valid-api-key-a"},
@@ -303,10 +312,10 @@ class TestValidAuthentication:
                 "components": [{"reference": "web", "image": "nginx:latest"}],
             },
         )
-        # Should succeed (201 for created)
-        assert response.status_code == 201
+        # Async path returns 202 Accepted with task info
+        assert response.status_code == 202
         data = response.json()
-        assert data["status"] == "success"
+        assert data["task_id"] == "test-task-123"
 
 
 @pytest.mark.integration

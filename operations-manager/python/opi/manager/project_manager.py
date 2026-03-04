@@ -5554,13 +5554,13 @@ class ProjectManager:
         Add a service to the project's services list.
 
         The service (and any auto-resolved dependencies) is added at the
-        project level.  Optionally, the listed components' ``uses-services``
-        are updated as well.
+        project level.  Optionally, the listed components' ``services``
+        lists are updated as well.
 
         Args:
             service_name: Service to add (e.g. ``"postgresql-database"``).
-            component_names: Optional component names whose ``uses-services``
-                should also be updated.
+            component_names: Optional component names whose ``services``
+                lists should also be updated.
 
         Returns:
             Result dict with ``success``, ``services_added``,

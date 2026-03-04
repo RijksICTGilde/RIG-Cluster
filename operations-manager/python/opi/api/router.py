@@ -836,7 +836,7 @@ class AddServiceRequest(BaseModel):
     service: str = Field(..., max_length=63, description="Service name (e.g. 'postgresql-database')")
     components: list[str] | None = Field(
         None,
-        description="Optional list of component names whose uses-services should also be updated. "
+        description="Optional list of component names whose services list should also be updated. "
         "If omitted/empty, the service is only added at the project level.",
     )
 
@@ -1329,7 +1329,7 @@ async def add_service(request: Request, project_name: str, service_data: AddServ
 
     The service (and any auto-resolved dependencies) is added at the
     project level.  If ``components`` is provided, those components'
-    ``uses-services`` lists are updated as well.
+    ``services`` lists are updated as well.
 
     The request always succeeds — if the service already exists it is
     reported in ``services_skipped`` / ``warnings``.

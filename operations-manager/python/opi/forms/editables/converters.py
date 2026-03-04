@@ -204,9 +204,11 @@ class KeyValueConverter:
     def read(self, value: Any) -> str:
         """Return the stored text for display in the editor."""
         if isinstance(value, dict):
+            if not value:
+                return ""
             # Legacy: stored as dict (pre-existing projects).
-            # Convert to YAML text for editing.
-            return yaml.dump(value, default_flow_style=False, allow_unicode=True).rstrip("\n")
+            # dict() strips ruamel CommentedMap so stdlib yaml.dump works.
+            return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
         return str(value or "")
 
     def write(self, value: Any) -> str:
@@ -214,8 +216,9 @@ class KeyValueConverter:
         if isinstance(value, str):
             return value.strip()
         if isinstance(value, dict):
-            # Already structured (e.g. from stored YAML) — convert to text
-            return yaml.dump(value, default_flow_style=False, allow_unicode=True).rstrip("\n")
+            if not value:
+                return ""
+            return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
         return str(value or "").strip()
 
     def view(self, value: Any) -> str:

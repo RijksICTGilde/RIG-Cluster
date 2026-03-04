@@ -510,6 +510,35 @@ class ServiceAdapter:
         return storage_configs
 
     @classmethod
+    def build_component_service_entries(cls, service_names: list[str]) -> list[str | dict[str, Any]]:
+        """Build a component-level services list with storage configs embedded.
+
+        Converts a flat list of service name strings into the v2 mixed format
+        where storage services carry their config inline::
+
+            ["publish-on-web", {"persistent-storage": {"config": [...]}}]
+        """
+        parsed = cls.parse_services_from_strings(service_names)
+        storage_configs = cls.create_storage_configs(parsed)
+
+        storage_by_svc: dict[str, list[dict[str, Any]]] = {}
+        for cfg in storage_configs:
+            svc_name = (
+                ServiceType.PERSISTENT_STORAGE.value
+                if cfg.get("type") == "persistent"
+                else ServiceType.TEMP_STORAGE.value
+            )
+            storage_by_svc.setdefault(svc_name, []).append({k: v for k, v in cfg.items() if k != "type"})
+
+        entries: list[str | dict[str, Any]] = []
+        for svc in parsed:
+            if svc.value in storage_by_svc:
+                entries.append({svc.value: {"config": storage_by_svc[svc.value]}})
+            else:
+                entries.append(svc.value)
+        return entries
+
+    @classmethod
     def extract_service_names_from_project_services(cls, project_services: list[str | dict]) -> list[str]:
         """
         Extract service names from project-level services list.
@@ -691,9 +720,9 @@ class ServiceAdapter:
         Args:
             project_data: The mutable project configuration dict.
             service_names: Services to add (e.g. ``["postgresql-database"]``).
-            component_names: Optional component names whose ``uses-services``
-                should also be updated. If *None* or empty the services are only
-                added at the project level.
+            component_names: Optional component names whose ``services``
+                list should also be updated. If *None* or empty the services
+                are only added at the project level.
 
         Returns:
             Result dict with keys ``services_added``, ``services_skipped``,
@@ -736,35 +765,26 @@ class ServiceAdapter:
             project_data["services"] = []
         project_data["services"].extend(services_added)
 
-        # Optionally update component uses-services
+        # Optionally update component services
         if component_names:
-            # Pre-compute storage configs once for all components
-            parsed_services = cls.parse_services_from_strings(all_service_names)
-            storage_configs = cls.create_storage_configs(parsed_services)
+            # Build new entries in v2 mixed format
+            new_entries = cls.build_component_service_entries(all_service_names)
 
             for comp_name in component_names:
                 comp = existing_components[comp_name]
-                comp_services = comp.get("uses-services", [])
-                comp_updated = False
+                existing_comp_services: list[str | dict[str, Any]] = comp.get("services", [])
+                existing_comp_svc_names = set(cls.extract_service_names_from_project_services(existing_comp_services))
 
-                for svc in all_service_names:
-                    if svc not in comp_services:
-                        comp_services.append(svc)
-                        comp_updated = True
+                entries_to_add = [
+                    entry
+                    for entry in new_entries
+                    if (entry if isinstance(entry, str) else next(iter(entry))) not in existing_comp_svc_names
+                ]
 
-                if comp_updated:
-                    comp["uses-services"] = comp_services
+                if entries_to_add:
+                    existing_comp_services.extend(entries_to_add)
+                    comp["services"] = existing_comp_services
                     components_updated.append(comp_name)
-
-                    # Add storage configs for storage services
-                    if storage_configs:
-                        existing_storage = comp.get("storage", [])
-                        existing_storage_names = {s.get("name") for s in existing_storage}
-                        for sc in storage_configs:
-                            if sc.get("name") not in existing_storage_names:
-                                existing_storage.append(sc)
-                        if existing_storage:
-                            comp["storage"] = existing_storage
 
         return {
             "services_added": services_added,
