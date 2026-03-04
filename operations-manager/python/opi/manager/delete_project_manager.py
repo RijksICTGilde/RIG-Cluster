@@ -1702,23 +1702,14 @@ class DeleteProjectManager:
             deletion_results["errors"].append(f"Error waiting for ArgoCD app deletion: {e}")
             logger.exception("Error waiting for ArgoCD app deletion: %s", app_name)
 
-        # 3. Delete Keycloak resources (ephemeral)
-        try:
-            keycloak_results = await self.project_manager._keycloak_manager.delete_resources_for_deployment(
-                project_data, deployment_data
-            )
-            deletion_results["service_results"]["keycloak"] = keycloak_results
-            deletion_results["operations"].extend(keycloak_results.get("operations", []))
-            if keycloak_results.get("errors"):
-                deletion_results["errors"].extend(keycloak_results["errors"])
-        except Exception as e:
-            deletion_results["errors"].append(f"Error deleting Keycloak resources: {e}")
-            logger.exception("Error deleting Keycloak resources for %s/%s", project_name, deployment_name)
-
-        # --- Persistent data resources ---
+        # --- Service resource cleanup ---
         # Use deployment_uses_service for reliable detection when previous_yaml
         # is available; fall back to legacy heuristic otherwise.
+        # We pass previous_yaml to managers so their internal service checks pass
+        # (the deployment no longer exists in current_yaml).
         file_handler = self.project_manager._project_file_handler
+        service_check_yaml = previous_yaml if previous_yaml is not None else project_data
+
         if previous_yaml is not None:
             has_database = file_handler.deployment_uses_service(
                 previous_yaml,
@@ -1729,6 +1720,11 @@ class DeleteProjectManager:
                 previous_yaml,
                 deployment_name,
                 [ServiceType.MINIO_STORAGE.value],
+            )
+            has_redis = file_handler.deployment_uses_service(
+                previous_yaml,
+                deployment_name,
+                [ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value],
             )
         else:
             # Legacy fallback: unreliable but kept for backward compatibility
@@ -1741,12 +1737,40 @@ class DeleteProjectManager:
                 for s in services
                 if isinstance(s, dict)
             )
+            has_redis = False  # Legacy path didn't handle Redis
 
-        # Use the project_data to pass to managers — for a deleted deployment
-        # we pass previous_yaml so the internal service checks pass.
-        service_check_yaml = previous_yaml if previous_yaml is not None else project_data
+        # 3. Delete Keycloak resources (ephemeral)
+        # Uses service_check_yaml so the deployment's component references are found
+        try:
+            keycloak_results = await self.project_manager._keycloak_manager.delete_resources_for_deployment(
+                service_check_yaml, deployment_data
+            )
+            deletion_results["service_results"]["keycloak"] = keycloak_results
+            deletion_results["operations"].extend(keycloak_results.get("operations", []))
+            if keycloak_results.get("errors"):
+                deletion_results["errors"].extend(keycloak_results["errors"])
+        except Exception as e:
+            deletion_results["errors"].append(f"Error deleting Keycloak resources: {e}")
+            logger.exception("Error deleting Keycloak resources for %s/%s", project_name, deployment_name)
 
-        # Delegate to managers via handle_service_removal
+        # 3b. Delete Redis resources (ephemeral)
+        if has_redis:
+            try:
+                redis_result = await self.project_manager._redis_manager.handle_service_removal(
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    deployment_data=deployment_data,
+                    project_data=service_check_yaml,
+                )
+                deletion_results["service_results"]["redis"] = redis_result
+                deletion_results["operations"].extend(redis_result.get("operations", []))
+                if redis_result.get("errors"):
+                    deletion_results["errors"].extend(redis_result["errors"])
+            except Exception as e:
+                deletion_results["errors"].append(f"Error deleting Redis resources: {e}")
+                logger.exception("Error deleting Redis resources for %s/%s", project_name, deployment_name)
+
+        # Delegate persistent resources to managers via handle_service_removal
         if has_database:
             try:
                 db_manager = await self.project_manager._ensure_database_manager()
