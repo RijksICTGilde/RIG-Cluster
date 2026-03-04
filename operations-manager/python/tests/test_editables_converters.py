@@ -96,43 +96,66 @@ class TestIntegerListConverter:
 
 
 class TestKeyValueConverter:
-    def test_read_dict_to_env_string(self):
-        result = KeyValueConverter(fmt="env").read({"KEY": "value", "OTHER": "val2"})
-        assert "KEY=value" in result
-        assert "OTHER=val2" in result
-
     def test_read_dict_to_yaml_string(self):
+        """Legacy dict values are converted to YAML text for editing."""
         result = KeyValueConverter(fmt="yaml").read({"KEY": "value", "OTHER": "val2"})
         assert "KEY: value" in result
         assert "OTHER: val2" in result
 
-    def test_write_env_format(self):
-        result = KeyValueConverter().write("KEY=value\nOTHER=val2")
-        assert result == {"KEY": "value", "OTHER": "val2"}
+    def test_read_dict_legacy_env(self):
+        """Legacy dict values with env fmt also produce YAML (yaml.dump)."""
+        result = KeyValueConverter(fmt="env").read({"KEY": "value"})
+        assert "KEY: value" in result
 
-    def test_write_yaml_format(self):
-        result = KeyValueConverter().write("KEY: value\nOTHER: val2")
-        assert result == {"KEY": "value", "OTHER": "val2"}
+    def test_read_string_passthrough(self):
+        """String values are returned as-is."""
+        assert KeyValueConverter().read("KEY=value\nOTHER=val2") == "KEY=value\nOTHER=val2"
 
-    def test_write_skips_comments(self):
-        result = KeyValueConverter().write("# comment\nKEY=value")
-        assert result == {"KEY": "value"}
+    def test_write_preserves_raw_text(self):
+        """write() returns the raw text unchanged."""
+        text = "KEY=value\nOTHER=val2"
+        assert KeyValueConverter().write(text) == text
 
-    def test_write_skips_empty_lines(self):
-        result = KeyValueConverter().write("KEY=value\n\nOTHER=val2")
-        assert result == {"KEY": "value", "OTHER": "val2"}
+    def test_write_preserves_yaml(self):
+        text = "KEY: value\nOTHER: val2"
+        assert KeyValueConverter().write(text) == text
 
-    def test_write_handles_equals_in_value(self):
-        result = KeyValueConverter().write("KEY=val=ue")
-        assert result == {"KEY": "val=ue"}
+    def test_write_preserves_comments(self):
+        text = "# comment\nKEY=value"
+        assert KeyValueConverter().write(text) == text
 
-    def test_write_handles_colon_in_value(self):
-        result = KeyValueConverter().write("URL: http://example.com")
-        assert result == {"URL": "http://example.com"}
+    def test_write_preserves_empty_lines(self):
+        text = "KEY=value\n\nOTHER=val2"
+        assert KeyValueConverter().write(text) == text
+
+    def test_write_preserves_pipe_blocks(self):
+        text = "CONFIG: |\n  line1\n  line2"
+        assert KeyValueConverter().write(text) == text
+
+    def test_write_strips_whitespace(self):
+        assert KeyValueConverter().write("  KEY=value  ") == "KEY=value"
+
+    def test_write_dict_to_yaml(self):
+        """Legacy dict input is converted to YAML text."""
+        result = KeyValueConverter().write({"KEY": "value"})
+        assert "KEY: value" in result
+
+    def test_view_matches_read(self):
+        conv = KeyValueConverter()
+        assert conv.view("KEY=value") == conv.read("KEY=value")
 
     def test_default_format_is_env(self):
         conv = KeyValueConverter()
         assert conv.fmt == "env"
+
+    def test_detect_format_env(self):
+        assert KeyValueConverter().detect_format("KEY=value\nOTHER=val2") == "env"
+
+    def test_detect_format_yaml(self):
+        assert KeyValueConverter().detect_format("KEY: value\nOTHER: val2") == "yaml"
+
+    def test_detect_format_empty(self):
+        assert KeyValueConverter(fmt="env").detect_format("") == "env"
 
 
 class TestContainerImageConverter:

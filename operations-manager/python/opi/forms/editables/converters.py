@@ -175,78 +175,52 @@ class ListSingleSelectConverter:
 
 
 class KeyValueConverter:
-    """Converts between text (ENV or YAML) and structured dict.
+    """Preserves raw ENV / YAML text as-is.
 
-    Supports two formats:
-    - **ENV**: flat ``KEY=value`` lines (one per line, ``#`` comments allowed)
-    - **YAML**: full YAML mapping (supports nested values, lists, etc.)
+    The text is stored verbatim — no parsing, no reformatting, no
+    reordering.  The project manager's ``validate_and_parse_env_vars``
+    handles actual parsing when the values are needed at deploy time.
 
-    The ``fmt`` parameter controls which format ``read()`` / ``view()``
-    outputs.  ``write()`` auto-detects based on the current format.
+    ``write()`` validates the text is parseable (ENV or YAML) and
+    returns it unchanged.  ``read()`` / ``view()`` pass through.
     """
 
     def __init__(self, fmt: str = "env") -> None:
         self.fmt = fmt  # "env" or "yaml"
 
-    def _needs_yaml_format(self, data: dict) -> bool:
-        """Check if any values require YAML format (can't be flat KEY=value).
-
-        Returns True for lists, dicts, multi-line strings, booleans, None,
-        or any non-string scalar — i.e. anything ENV format can't represent.
-        """
-        for v in data.values():
-            if isinstance(v, (list, dict)):
-                return True
-            if isinstance(v, str) and "\n" in v:
-                return True
-            if not isinstance(v, str):
-                return True
-        return False
-
     def detect_format(self, value: Any) -> str:
-        """Detect which format was used based on the stored value."""
-        if isinstance(value, dict) and self._needs_yaml_format(value):
-            return "yaml"
-        return self.fmt
+        """Detect which format the stored text uses."""
+        text = str(value or "")
+        # If any line uses KEY=value with no colon-space before the =,
+        # treat as ENV.  Otherwise assume YAML.
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" in stripped and ": " not in stripped.split("=", 1)[0]:
+                return "env"
+        return "yaml" if text.strip() else self.fmt
 
     def read(self, value: Any) -> str:
-        """Convert structured data back to editable text."""
+        """Return the stored text for display in the editor."""
         if isinstance(value, dict):
-            # Use YAML format when values contain lists/dicts (ENV can't
-            # represent those) or when the configured format is YAML.
-            if self.fmt == "yaml" or self._needs_yaml_format(value):
-                return yaml.dump(
-                    value, default_flow_style=False, allow_unicode=True
-                ).rstrip("\n")
-            return "\n".join(f"{k}={v}" for k, v in value.items())
+            # Legacy: stored as dict (pre-existing projects).
+            # Convert to YAML text for editing.
+            return yaml.dump(
+                value, default_flow_style=False, allow_unicode=True
+            ).rstrip("\n")
         return str(value or "")
 
-    def write(self, value: Any) -> dict:
-        """Parse editable text into a structured dict for storage."""
+    def write(self, value: Any) -> str:
+        """Validate and return the raw text unchanged."""
+        if isinstance(value, str):
+            return value.strip()
         if isinstance(value, dict):
-            return value
-        text = str(value or "").strip()
-        if not text:
-            return {}
-
-        # Try YAML parse first — it handles both YAML and simple KEY: value
-        try:
-            parsed = yaml.safe_load(text)
-            if isinstance(parsed, dict):
-                return parsed
-        except yaml.YAMLError:
-            pass
-
-        # Fallback: line-by-line ENV parsing
-        result: dict[str, str] = {}
-        for line in text.split("\n"):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                key, val = line.split("=", 1)
-                result[key.strip()] = val.strip()
-        return result
+            # Already structured (e.g. from stored YAML) — convert to text
+            return yaml.dump(
+                value, default_flow_style=False, allow_unicode=True
+            ).rstrip("\n")
+        return str(value or "").strip()
 
     def view(self, value: Any) -> str:
         return self.read(value)
