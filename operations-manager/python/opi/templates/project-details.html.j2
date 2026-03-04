@@ -964,6 +964,12 @@
                             </div>
                         </div>
                         <p class="rvo-text--sm">{{ service_def.description }}</p>
+                        {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
+                        <button type="button" class="rvo-button rvo-button--tertiary rvo-button--sm"
+                            onclick="openEditModal('{{ service_config_sections[service.value] }}', '{{ service_def.name }} configuratie')">
+                            <c-icon icon="bewerken" size="sm" />Configureer
+                        </button>
+                        {% endif %}
                     </c-layout-flow>
                 </c-card>
                 {% endfor %}
@@ -4421,10 +4427,10 @@
 
     /* -- In-modal progress view ---------------------------------------- */
 
-    var editNextSection = null; // Tracks chained config section (e.g. keycloak-config)
+    var editNextSections = []; // Queue of config sections to chain through
 
-    function showModalProgress(taskId, nextSection) {
-        editNextSection = nextSection || null;
+    function showModalProgress(taskId, nextSections) {
+        editNextSections = nextSections ? nextSections.split(',') : [];
         var contentEl = document.getElementById('edit-section-content');
         var actionsEl = document.getElementById('edit-section-actions');
 
@@ -4491,31 +4497,38 @@
                 if (stepEl) stepEl.textContent = 'Wijzigingen succesvol verwerkt!';
                 if (bar) bar.style.width = '100%';
 
-                // Build action buttons depending on whether there's a next config section
+                // Auto-chain or show close button
                 var actionsEl = document.getElementById('edit-progress-actions');
-                if (actionsEl) {
-                    if (editNextSection) {
-                        // Service added that needs config — open config modal next
-                        var sectionTitle = {
-                            'keycloak-config': 'Keycloak configuratie',
-                            'postgresql-config': 'Database configuratie',
-                            'auth-wall-config': 'Authorization wall configuratie'
-                        }[editNextSection] || editNextSection;
+                if (editNextSections.length > 0) {
+                    var nextSection = editNextSections.shift();
+                    var sectionTitle = {
+                        'keycloak-config': 'Keycloak configuratie',
+                        'postgresql-config': 'Database configuratie',
+                        'auth-wall-config': 'Authorization wall configuratie'
+                    }[nextSection] || nextSection;
+
+                    if (stepEl) stepEl.textContent = 'Volgende stap: ' + sectionTitle;
+
+                    if (actionsEl) {
                         actionsEl.innerHTML =
-                            '<button type="button" class="rvo-button rvo-button--primary" ' +
-                                'onclick="openEditModal(\'' + editNextSection + '\', \'' + sectionTitle + '\')">' +
-                                'Configureer service' +
-                            '</button>' +
                             '<button type="button" class="rvo-button rvo-button--tertiary" ' +
-                                'onclick="closeEditModalAndReload()">Later configureren</button>';
-                    } else {
-                        actionsEl.innerHTML =
-                            '<button type="button" class="rvo-button rvo-button--primary" ' +
-                                'onclick="closeEditModalAndReload()">Sluiten</button>' +
-                            '<a href="/projects/progress/' + taskId + '" ' +
-                                'class="rvo-button rvo-button--tertiary" target="_blank" rel="noopener">' +
-                                'Bekijk volledige voortgang</a>';
+                                'onclick="editNextSections = []; closeEditModalAndReload()">Later configureren</button>';
+                        actionsEl.style.display = '';
                     }
+
+                    setTimeout(function() {
+                        var modal = document.getElementById('edit-section-modal');
+                        if (modal && modal.classList.contains('is-open')) {
+                            openEditModal(nextSection, sectionTitle);
+                        }
+                    }, 800);
+                } else if (actionsEl) {
+                    actionsEl.innerHTML =
+                        '<button type="button" class="rvo-button rvo-button--primary" ' +
+                            'onclick="closeEditModalAndReload()">Sluiten</button>' +
+                        '<a href="/projects/progress/' + taskId + '" ' +
+                            'class="rvo-button rvo-button--tertiary" target="_blank" rel="noopener">' +
+                            'Bekijk volledige voortgang</a>';
                     actionsEl.style.display = '';
                 }
             } else if (data.status === 'failed') {
@@ -4582,7 +4595,7 @@
                 // process_project: show progress in modal (pass nextSection for chaining)
                 showModalProgress(taskId, nextSection);
             } else {
-                // save_only: show brief success, then reload
+                // save_only: show brief success, then chain or reload
                 isEditSubmitting = false;
                 contentEl.innerHTML =
                     '<div class="edit-section-success">' +
@@ -4590,9 +4603,22 @@
                         '<p>Wijzigingen opgeslagen</p>' +
                     '</div>';
                 document.getElementById('edit-section-actions').style.display = 'none';
-                setTimeout(function() {
-                    closeEditModalAndReload();
-                }, 1200);
+
+                if (editNextSections.length > 0) {
+                    var nextSection = editNextSections.shift();
+                    var sectionTitle = {
+                        'keycloak-config': 'Keycloak configuratie',
+                        'postgresql-config': 'Database configuratie',
+                        'auth-wall-config': 'Authorization wall configuratie'
+                    }[nextSection] || nextSection;
+                    setTimeout(function() {
+                        openEditModal(nextSection, sectionTitle);
+                    }, 800);
+                } else {
+                    setTimeout(function() {
+                        closeEditModalAndReload();
+                    }, 1200);
+                }
             }
         })
         .catch(function(err) {

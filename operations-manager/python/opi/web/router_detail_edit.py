@@ -294,7 +294,7 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
     response = HTMLResponse(content="", status_code=200)
 
     if config_sections_needed:
-        response.headers["X-Next-Section"] = config_sections_needed[0]
+        response.headers["X-Next-Section"] = ",".join(config_sections_needed)
 
     response.headers["X-Task-Id"] = task_id
     response.background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
