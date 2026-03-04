@@ -10,19 +10,14 @@
         <button type="button" class="kv-toggle__btn{% if initial_format == 'yaml' %} kv-toggle__btn--active{% endif %}" data-format="yaml"
                 onclick="kvToggleFormat('{{ editor_id|e }}', 'yaml')">YAML</button>
     </div>
-    <c-textarea-field
+    <textarea
         id="{{ field.path|e }}"
         name="{{ field.path|e }}"
         data-cm-kv="true"
-        label=""
         rows="5"
         {{ optional_attr("placeholder", "KEY=value" if initial_format == "env" else "KEY: value") }}
         {{ bool_attr("disabled", field.readonly) }}
-        {{ optional_attr("invalid", "true" if field.errors else "") }}
-        {{ optional_attr("errorText", field.errors[0] if field.errors else "") }}
-        {{ htmx_attrs(field) }}
-        {{ extra_attrs(field) }}
-    >{{ (field.value|string if field.value else '')|e }}</c-textarea-field>
+    >{{ (field.value|string if field.value else '')|e }}</textarea>
     <div class="kv-editor__status" id="{{ editor_id|e }}-status"></div>
     {{ render_examples(field) }}
     {{ render_errors(field.errors) }}
