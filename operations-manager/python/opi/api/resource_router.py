@@ -214,12 +214,9 @@ async def tune_resources(
                 unchanged.append(component_ref)
                 continue
 
-            if max_observed_mb == 0:
-                logger.info(f"No memory data found for {unique_name}, skipping")
-                unchanged.append(component_ref)
-                continue
-
-            # Check for OOM kills
+            # Check for OOM kills before the no-metrics guard — a pod that gets
+            # OOM-killed on startup never produces Prometheus memory metrics, but
+            # we still want to bump its limits.
             has_oom_kills = False
             try:
                 oom_query = (
@@ -232,6 +229,20 @@ async def tune_resources(
                 has_oom_kills = bool(oom_results)
             except Exception as e:
                 logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")
+
+            if max_observed_mb == 0:
+                if not has_oom_kills:
+                    logger.info(f"No memory data found for {unique_name}, skipping")
+                    unchanged.append(component_ref)
+                    continue
+                # OOM with no metrics: use current YAML values as baseline so the
+                # 1.5x OOM multiplier produces a reasonable recommendation.
+                logger.info(
+                    f"No memory data for {unique_name} but OOM kills detected, "
+                    f"using current limits ({current_limit_mb:.0f}Mi) as baseline"
+                )
+                max_observed_mb = current_limit_mb
+                avg_observed_mb = current_request_mb
 
             # Compute recommendation
             recommendation = compute_memory_recommendation(

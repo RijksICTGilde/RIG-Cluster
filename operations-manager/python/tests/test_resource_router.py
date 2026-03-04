@@ -159,6 +159,73 @@ class TestTuneRecommendationCalculation:
         assert "api" in result["unchanged"]
 
 
+class TestColdOomHandling:
+    """Test that OOM kills without Prometheus metrics still produce recommendations."""
+
+    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
+    @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_metrics_connector")
+    @pytest.mark.asyncio
+    async def test_oom_without_metrics_produces_recommendation(
+        self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
+    ):
+        """Pod OOM-killed on startup with no Prometheus data should still get a recommendation."""
+        project_data = {
+            "name": "my-project",
+            "components": [
+                {
+                    "name": "api",
+                    "resources": {
+                        "requests": {"memory": "64Mi", "cpu": "50m"},
+                        "limits": {"memory": "128Mi", "cpu": "1000m"},
+                    },
+                }
+            ],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "odcn-production",
+                    "components": [{"reference": "api"}],
+                }
+            ],
+        }
+        mock_project = MagicMock()
+        mock_project.data = project_data
+        mock_project.filename = "my-project.yaml"
+        mock_service = MagicMock()
+        mock_service.get_project.return_value = mock_project
+        mock_get_service.return_value = mock_service
+
+        mock_connector = MagicMock()
+        # max_over_time -> empty, avg_over_time -> empty, OOM query -> hit
+        mock_connector.custom_query.side_effect = [
+            [],  # max: no data
+            [],  # avg: no data
+            [{"value": [0, "1"]}],  # OOM kill detected
+        ]
+        mock_get_connector.return_value = mock_connector
+        mock_reprocess.return_value = True
+
+        from opi.api.resource_router import tune_resources
+
+        mock_request = MagicMock()
+        response = await tune_resources.__wrapped__(mock_request, "my-project", deployment=None)
+
+        import json
+
+        result = json.loads(response.body)
+        assert len(result["changes"]) == 1
+        change = result["changes"][0]
+        assert change["component"] == "api"
+        assert change["has_oom_kills"] == "True"
+        # limit: current 128Mi * 1.5 = 192Mi (OOM multiplier on current limit baseline)
+        assert change["new_limits_memory"] == "192Mi"
+
+
 class TestOomGracefulDegradation:
     """Test that OOM kill query failures are handled gracefully."""
 

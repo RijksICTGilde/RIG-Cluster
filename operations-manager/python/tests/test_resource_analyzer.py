@@ -205,6 +205,25 @@ class TestComputeMemoryRecommendation:
         # 3 * 1.25 = 3.75Mi, clamped to 25Mi
         assert request == "25Mi"
 
+    def test_oom_with_zero_observed_uses_current_limit(self):
+        """When OOM kills happen on startup (no metrics), caller passes current limits
+        as observed values. The 1.5x OOM multiplier should produce limit = 128 * 1.5 = 192Mi."""
+        result = compute_memory_recommendation(
+            max_observed_mb=128,  # current limit used as baseline
+            avg_observed_mb=64,  # current request used as baseline
+            current_limit_mb=128,
+            current_request_mb=64,
+            buffer_percent=25,
+            threshold_percent=20,
+            has_oom_kills=True,
+            min_memory_mi=25,
+        )
+        assert result is not None
+        limit, request, reason = result
+        # OOM minimum = 128 * 1.5 = 192. observed+buffer = 128 * 1.25 + 25 = 185. OOM wins.
+        assert limit == "192Mi"
+        assert "OOM kills detected" in reason
+
     def test_minimum_memory_does_not_affect_higher_values(self):
         # max=100 -> 100*1.25+25 = 150. Well above 25Mi min.
         result = compute_memory_recommendation(
