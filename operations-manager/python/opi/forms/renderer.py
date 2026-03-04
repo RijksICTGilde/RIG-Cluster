@@ -5,7 +5,10 @@ The FormRenderer combines schema extraction, layout processing,
 and widget adaptation to produce complete form HTML.
 """
 
-from typing import Any, Protocol
+from __future__ import annotations
+
+import copy
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
@@ -23,7 +26,10 @@ from opi.forms.layout import (
     Sequence,
     Submit,
 )
-from opi.forms.widgets.base import WidgetAdapter
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import ProjectEditable
+    from opi.forms.widgets.base import WidgetAdapter
 
 
 class Translator(Protocol):
@@ -236,6 +242,194 @@ class FormRenderer:
             return parsed, {}
         except ValidationError as e:
             return None, self._format_validation_errors(e)
+
+    # ------------------------------------------------------------------
+    # Editable-driven rendering
+    # ------------------------------------------------------------------
+
+    def render_from_editables(
+        self,
+        editables: list[ProjectEditable],
+        yaml_data: dict[str, Any],
+        layout: LayoutElement | list[LayoutElement],
+        errors: dict[str, list[str]] | None = None,
+        edit_mode: bool = False,
+        form_id: str = "form",
+        action: str = "",
+        method: str = "post",
+        enctype: str | None = None,
+        htmx_attrs: dict[str, str] | None = None,
+    ) -> str:
+        """Render a complete form from editable definitions + YAML data."""
+        self._edit_mode = edit_mode
+        fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode)
+
+        if isinstance(layout, list):
+            content_parts = [self._render_layout_element(elem, fields_by_name) for elem in layout]
+            content_html = "\n".join(content_parts)
+        else:
+            content_html = self._render_layout_element(layout, fields_by_name)
+
+        form_start = self.adapter.render_form_start(form_id, action, method, enctype, htmx_attrs)
+        form_end = self.adapter.render_form_end()
+        return f"{form_start}\n{content_html}\n{form_end}"
+
+    def render_fields_from_editables(
+        self,
+        editables: list[ProjectEditable],
+        yaml_data: dict[str, Any],
+        layout: LayoutElement | list[LayoutElement],
+        errors: dict[str, list[str]] | None = None,
+        edit_mode: bool = False,
+    ) -> str:
+        """Render form fields without form wrapper (for HTMX partial updates)."""
+        self._edit_mode = edit_mode
+        fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode)
+
+        if isinstance(layout, list):
+            content_parts = [self._render_layout_element(elem, fields_by_name) for elem in layout]
+            return "\n".join(content_parts)
+        return self._render_layout_element(layout, fields_by_name)
+
+    def _build_fields_from_editables(
+        self,
+        editables: list[ProjectEditable],
+        yaml_data: dict[str, Any],
+        errors: dict[str, list[str]] | None = None,
+        edit_mode: bool = False,
+    ) -> dict[str, FormField]:
+        """Convert editables to FormField dict for the layout pipeline."""
+        from opi.forms.editables.bridge import editable_to_form_field, should_render_editable
+
+        errors = errors or {}
+        fields_by_name: dict[str, FormField] = {}
+
+        for editable in editables:
+            if not should_render_editable(editable, yaml_data):
+                continue
+
+            if editable.widget == "sequence":
+                seq_field = self._build_sequence_field(editable, yaml_data, errors, edit_mode)
+                fields_by_name[editable.yaml_path] = seq_field
+            else:
+                form_field = editable_to_form_field(editable, yaml_data, errors, edit_mode=edit_mode)
+                fields_by_name[form_field.path] = form_field
+
+        all_fields = list(fields_by_name.values())
+        self._translate_fields(all_fields)
+        if edit_mode:
+            self._apply_edit_mode(all_fields)
+
+        return fields_by_name
+
+    def _build_sequence_field(
+        self,
+        editable: ProjectEditable,
+        yaml_data: dict[str, Any],
+        errors: dict[str, list[str]],
+        edit_mode: bool,
+    ) -> FormField:
+        """Build a FormField for a sequence editable with item children."""
+        from opi.forms.editables.bridge import editable_to_form_field
+        from opi.forms.editables.path import get_value
+
+        items = get_value(yaml_data, editable.yaml_path) or []
+        if not isinstance(items, list):
+            items = []
+
+        seq_field = FormField(
+            name=editable.yaml_path,
+            path=editable.yaml_path,
+            schema_type=list,
+            widget_type="sequence",
+            label=editable.label or "",
+            description=editable.description,
+            min_items=editable.min_items,
+            max_items=editable.max_items,
+        )
+
+        children: list[FormField] = []
+        for index in range(len(items)):
+            item_children: list[FormField] = []
+            for child_editable in editable.children or []:
+                if child_editable.widget == "sequence":
+                    nested_seq = self._build_nested_sequence_field(
+                        child_editable, yaml_data, errors, edit_mode, parent_index=index
+                    )
+                    item_children.append(nested_seq)
+                else:
+                    child_field = editable_to_form_field(
+                        child_editable, yaml_data, errors, index=index, edit_mode=edit_mode
+                    )
+                    item_children.append(child_field)
+
+            item_field = FormField(
+                name=f"{editable.yaml_path}[{index}]",
+                path=f"{editable.yaml_path}[{index}]",
+                schema_type=dict,
+                widget_type="sequence_item",
+                label=f"Item {index + 1}",
+                required=False,
+                children=item_children,
+            )
+            children.append(item_field)
+
+        seq_field.children = children
+        return seq_field
+
+    def _build_nested_sequence_field(
+        self,
+        editable: ProjectEditable,
+        yaml_data: dict[str, Any],
+        errors: dict[str, list[str]],
+        edit_mode: bool,
+        parent_index: int,
+    ) -> FormField:
+        """Build a nested sequence (e.g., deployments[0]/components)."""
+        from opi.forms.editables.bridge import editable_to_form_field
+        from opi.forms.editables.path import get_value, resolve_path
+
+        concrete_path = resolve_path(editable.yaml_path, parent_index)
+        items = get_value(yaml_data, concrete_path) or []
+        if not isinstance(items, list):
+            items = []
+
+        nested_field = FormField(
+            name=concrete_path,
+            path=concrete_path,
+            schema_type=list,
+            widget_type="sequence",
+            label=editable.label or "",
+            min_items=editable.min_items,
+            max_items=editable.max_items,
+        )
+
+        children: list[FormField] = []
+        for child_index in range(len(items)):
+            item_children: list[FormField] = []
+            for child_editable in editable.children or []:
+                # Pre-resolve the parent [*] so editable_to_form_field
+                # only needs to resolve the child [*].
+                resolved_editable = copy.copy(child_editable)
+                resolved_editable.yaml_path = resolve_path(child_editable.yaml_path, parent_index)
+                child_field = editable_to_form_field(
+                    resolved_editable, yaml_data, errors, index=child_index, edit_mode=edit_mode
+                )
+                item_children.append(child_field)
+
+            item_field = FormField(
+                name=f"{concrete_path}[{child_index}]",
+                path=f"{concrete_path}[{child_index}]",
+                schema_type=dict,
+                widget_type="sequence_item",
+                label=f"Item {child_index + 1}",
+                required=False,
+                children=item_children,
+            )
+            children.append(item_field)
+
+        nested_field.children = children
+        return nested_field
 
     def _resolve_options(self, fields: list[FormField]) -> None:
         """Resolve dynamic options for select/radio fields."""

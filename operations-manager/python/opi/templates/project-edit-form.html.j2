@@ -25,11 +25,19 @@
     </c-alert>
     {% endif %}
 
+    {% if global_errors %}
+    <c-alert kind="error" heading="Fouten">
+        <ul>
+            {% for message in global_errors %}
+            <li>{{ message }}</li>
+            {% endfor %}
+        </ul>
+    </c-alert>
+    {% endif %}
+
     {# Form Container #}
     <div class="project-form-container">
-        <form method="POST" action="/projects/edit/{{ project_name }}">
-            {{ form_html | process_components }}
-        </form>
+        {{ form_html | process_components }}
     </div>
 </c-layout-flow>
 
