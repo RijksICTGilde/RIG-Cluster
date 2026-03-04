@@ -1,15 +1,22 @@
 """Tests for the new options providers added in Sub-part C."""
 
+<<<<<<< HEAD
 from opi.forms.visualizers.providers import (
     BaseDomainOptionsProvider,
     ClusterBaseDomainOptionsProvider,
     ComponentReferenceOptionsProvider,
     DomainModeOptionsProvider,
+=======
+from opi.forms.providers import (
+    BaseDomainOptionsProvider,
+    ComponentReferenceOptionsProvider,
+>>>>>>> 1ab0c4b (Implement Phase 2 Sub-part C: new options providers for editables package)
     FilteredServiceOptionsProvider,
     KeycloakTemplateOptionsProvider,
     PullPolicyOptionsProvider,
     RepositoryOptionsProvider,
     StorageSizeOptionsProvider,
+<<<<<<< HEAD
     StorageTypeOptionsProvider,
 )
 
@@ -23,6 +30,11 @@ class TestStorageTypeOptionsProvider:
         assert "ephemeral" in values
 
 
+=======
+)
+
+
+>>>>>>> 1ab0c4b (Implement Phase 2 Sub-part C: new options providers for editables package)
 class TestStorageSizeOptionsProvider:
     def test_returns_options(self):
         provider = StorageSizeOptionsProvider()
@@ -33,8 +45,13 @@ class TestStorageSizeOptionsProvider:
     def test_includes_common_sizes(self):
         options = StorageSizeOptionsProvider().get_options()
         values = [o["value"] for o in options]
+<<<<<<< HEAD
         assert "250Mi" in values
         assert "1Gi" in values
+=======
+        assert "1Gi" in values
+        assert "10Gi" in values
+>>>>>>> 1ab0c4b (Implement Phase 2 Sub-part C: new options providers for editables package)
 
 
 class TestKeycloakTemplateOptionsProvider:
@@ -44,11 +61,17 @@ class TestKeycloakTemplateOptionsProvider:
         assert len(options) == 2
         assert all("value" in o and "label" in o for o in options)
 
+<<<<<<< HEAD
     def test_includes_expected_template_values(self):
         options = KeycloakTemplateOptionsProvider().get_options()
         values = [o["value"] for o in options]
         assert "sso-support" in values
         assert "sso-only" in values
+=======
+    def test_includes_descriptions(self):
+        options = KeycloakTemplateOptionsProvider().get_options()
+        assert all("description" in o for o in options)
+>>>>>>> 1ab0c4b (Implement Phase 2 Sub-part C: new options providers for editables package)
 
 
 class TestPullPolicyOptionsProvider:
@@ -110,6 +133,7 @@ class TestRepositoryOptionsProvider:
         assert provider.get_options() == []
 
 
+<<<<<<< HEAD
 class TestDomainModeOptionsProvider:
     def test_returns_four_options(self):
         options = DomainModeOptionsProvider().get_options()
@@ -152,6 +176,14 @@ class TestProviderRegistry:
 
         new_names = [
             "StorageTypeOptionsProvider",
+=======
+class TestProviderRegistry:
+    def test_new_providers_registered(self):
+        """All 7 new providers are in the registry."""
+        from opi.forms.providers import PROVIDER_REGISTRY
+
+        new_names = [
+>>>>>>> 1ab0c4b (Implement Phase 2 Sub-part C: new options providers for editables package)
             "StorageSizeOptionsProvider",
             "KeycloakTemplateOptionsProvider",
             "PullPolicyOptionsProvider",
@@ -159,12 +191,16 @@ class TestProviderRegistry:
             "FilteredServiceOptionsProvider",
             "ComponentReferenceOptionsProvider",
             "RepositoryOptionsProvider",
+<<<<<<< HEAD
             "ClusterBaseDomainOptionsProvider",
+=======
+>>>>>>> 1ab0c4b (Implement Phase 2 Sub-part C: new options providers for editables package)
         ]
         for name in new_names:
             assert name in PROVIDER_REGISTRY
 
     def test_get_provider_works_for_new_providers(self):
+<<<<<<< HEAD
         from opi.forms.visualizers.providers import get_provider
 
         provider = get_provider("StorageSizeOptionsProvider")
@@ -205,3 +241,9 @@ class TestResolveOptionsWithMixedContext:
         context = {"project_services": ["keycloak"], "component_names": ["api"]}
         options = resolve_options_for_editable(editable, context=context)
         assert len(options) > 0
+=======
+        from opi.forms.providers import get_provider
+
+        provider = get_provider("StorageSizeOptionsProvider")
+        assert len(provider.get_options()) > 0
+>>>>>>> 1ab0c4b (Implement Phase 2 Sub-part C: new options providers for editables package)

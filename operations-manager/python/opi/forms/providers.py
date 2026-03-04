@@ -251,6 +251,123 @@ class DomainModeOptionsProvider:
         ]
 
 
+class StorageSizeOptionsProvider:
+    """Provides storage size options for persistent volumes."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get available storage size options."""
+        return [
+            {"value": "1Gi", "label": "1 GB"},
+            {"value": "5Gi", "label": "5 GB"},
+            {"value": "10Gi", "label": "10 GB"},
+            {"value": "20Gi", "label": "20 GB"},
+            {"value": "50Gi", "label": "50 GB"},
+            {"value": "100Gi", "label": "100 GB"},
+        ]
+
+
+class KeycloakTemplateOptionsProvider:
+    """Provides Keycloak realm template options."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get available Keycloak template options."""
+        return [
+            {
+                "value": "sso-support",
+                "label": "SSO Support (standaard)",
+                "description": "Basis SSO configuratie voor applicaties",
+            },
+            {
+                "value": "sso-support-with-users",
+                "label": "SSO Support met gebruikersbeheer",
+                "description": "SSO configuratie met lokaal gebruikersbeheer in Keycloak",
+            },
+        ]
+
+
+class PullPolicyOptionsProvider:
+    """Provides Kubernetes image pull policy options."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get available image pull policy options."""
+        return [
+            {"value": "Always", "label": "Always"},
+            {"value": "IfNotPresent", "label": "IfNotPresent"},
+            {"value": "Never", "label": "Never"},
+        ]
+
+
+class BaseDomainOptionsProvider:
+    """Provides base domain options for deployment URLs."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get available base domain options."""
+        return [
+            {"value": "", "label": "Standaard (clusternaam)"},
+            {"value": "rijksapp.nl", "label": "rijksapp.nl"},
+        ]
+
+
+class FilteredServiceOptionsProvider:
+    """
+    Provides service options filtered to project-level enabled services.
+
+    Used by component `uses-services` checkbox group. Only shows services
+    that the project has enabled (cross-part dependency).
+    """
+
+    def __init__(self, project_services: list[str] | None = None) -> None:
+        self.project_services = project_services or []
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get service options filtered to project-enabled services."""
+        options: list[dict[str, Any]] = []
+        for service_type in ServiceType:
+            if service_type.value not in self.project_services:
+                continue
+            definition = ServiceAdapter.get_service_definition(service_type)
+            options.append(
+                {
+                    "value": service_type.value,
+                    "label": definition.name,
+                    "description": definition.description,
+                    "icon": definition.icon,
+                    "color": definition.color,
+                }
+            )
+        return options
+
+
+class ComponentReferenceOptionsProvider:
+    """
+    Provides component names from the project as select options.
+
+    Used by deployment component reference selects (cross-part dependency).
+    """
+
+    def __init__(self, component_names: list[str] | None = None) -> None:
+        self.component_names = component_names or []
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get component name options."""
+        return [{"value": name, "label": name} for name in self.component_names]
+
+
+class RepositoryOptionsProvider:
+    """
+    Provides repository names from the project as select options.
+
+    Used by deployment repository selects (cross-part dependency).
+    """
+
+    def __init__(self, repository_names: list[str] | None = None) -> None:
+        self.repository_names = repository_names or []
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get repository name options."""
+        return [{"value": name, "label": name} for name in self.repository_names]
+
+
 # Registry of all available providers
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
@@ -260,6 +377,13 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "CpuLimitOptionsProvider": CpuLimitOptionsProvider,
     "MemoryLimitOptionsProvider": MemoryLimitOptionsProvider,
     "DomainModeOptionsProvider": DomainModeOptionsProvider,
+    "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
+    "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
+    "PullPolicyOptionsProvider": PullPolicyOptionsProvider,
+    "BaseDomainOptionsProvider": BaseDomainOptionsProvider,
+    "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
+    "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
+    "RepositoryOptionsProvider": RepositoryOptionsProvider,
 }
 
 
