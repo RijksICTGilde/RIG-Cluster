@@ -947,6 +947,138 @@ class ProjectFileHandler:
         logger.warning(f"Component '{component_name}' not found for resource update")
         return False
 
+    def set_deployment_component_resources(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+        resources: dict[str, str],
+    ) -> bool:
+        """
+        Set resource configuration on a component within a specific deployment.
+
+        Modifies project_data in place. The resources dict uses flat keys
+        (requests_memory, requests_cpu, limits_memory, limits_cpu).
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+            resources: Flat dict with resource values
+
+        Returns:
+            True if the deployment component was found and updated, False otherwise
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                if "resources" not in comp:
+                    comp["resources"] = {}
+                res = comp["resources"]
+                if "requests" not in res:
+                    res["requests"] = {}
+                if "limits" not in res:
+                    res["limits"] = {}
+                if "requests_memory" in resources:
+                    res["requests"]["memory"] = resources["requests_memory"]
+                if "requests_cpu" in resources:
+                    res["requests"]["cpu"] = resources["requests_cpu"]
+                if "limits_memory" in resources:
+                    res["limits"]["memory"] = resources["limits_memory"]
+                if "limits_cpu" in resources:
+                    res["limits"]["cpu"] = resources["limits_cpu"]
+                logger.info(
+                    f"Updated resources for component '{component_reference}' "
+                    f"in deployment '{deployment_name}': {resources}"
+                )
+                return True
+        logger.warning(
+            f"Component '{component_reference}' not found in deployment '{deployment_name}' for resource update"
+        )
+        return False
+
+    def extract_deployment_component_disabled(
+        self, project_data: dict[str, Any], deployment_name: str, component_reference: str
+    ) -> tuple[bool, str]:
+        """
+        Extract disabled state from a component within a specific deployment.
+
+        Falls back to component-definition-level disabled state if no deployment-level
+        override exists.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+
+        Returns:
+            Tuple of (disabled, reason)
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                if "disabled" in comp:
+                    return bool(comp.get("disabled", False)), str(comp.get("disabled-reason", ""))
+
+        # Fall back to component-definition-level disabled state
+        return self.extract_component_disabled(project_data, component_reference)
+
+    def set_deployment_component_disabled(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+        disabled: bool,
+        reason: str,
+    ) -> bool:
+        """
+        Set the disabled state on a component within a specific deployment.
+
+        Modifies project_data in place.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+            disabled: Whether to disable the component
+            reason: Reason for disabling
+
+        Returns:
+            True if the deployment component was found and updated, False otherwise
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                comp["disabled"] = disabled
+                if disabled:
+                    comp["disabled-reason"] = reason
+                elif "disabled-reason" in comp:
+                    del comp["disabled-reason"]
+                logger.info(
+                    f"Set component '{component_reference}' in deployment '{deployment_name}' "
+                    f"disabled={disabled}" + (f" reason='{reason}'" if disabled else "")
+                )
+                return True
+        logger.warning(
+            f"Component '{component_reference}' not found in deployment '{deployment_name}' for disabled state update"
+        )
+        return False
+
     # ========================================================================
     # Service Config Generation Methods (reference/config pattern)
     # ========================================================================

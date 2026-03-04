@@ -251,9 +251,10 @@ async def tune_resources(
 
             new_limit, new_request, reason = recommendation
 
-            # Apply the change at component level
-            file_handler.set_component_resources(
+            # Apply the change at deployment-component level (not the shared definition)
+            file_handler.set_deployment_component_resources(
                 project_data,
+                dep_name,
                 component_ref,
                 {
                     "limits_memory": new_limit,
@@ -349,8 +350,8 @@ async def sanitize_deployment(
             if not component_ref:
                 continue
 
-            # Skip already-disabled components
-            is_disabled, _ = file_handler.extract_component_disabled(project_data, component_ref)
+            # Skip already-disabled components (check deployment-level, falls back to definition)
+            is_disabled, _ = file_handler.extract_deployment_component_disabled(project_data, dep_name, component_ref)
             if is_disabled:
                 continue
 
@@ -407,7 +408,7 @@ async def sanitize_deployment(
 
             if reasons:
                 reason_str = "; ".join(reasons)
-                file_handler.set_component_disabled(project_data, component_ref, True, reason_str)
+                file_handler.set_deployment_component_disabled(project_data, dep_name, component_ref, True, reason_str)
                 disabled_components.append(
                     {
                         "component": component_ref,

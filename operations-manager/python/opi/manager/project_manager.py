@@ -3993,8 +3993,9 @@ class ProjectManager:
                 component_resources.update(deployment_resources)
 
             # Extract disabled state — disabled components get replicas: 0
-            is_disabled, disabled_reason = self._project_file_handler.extract_component_disabled(
-                project_data, component_reference
+            # Check deployment-level first, falls back to component-definition level
+            is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
+                project_data, deployment_name, component_reference
             )
             replicas = 0 if is_disabled else 1
             if is_disabled:
