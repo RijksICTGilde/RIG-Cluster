@@ -34,7 +34,6 @@ from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
-from opi.connectors.subdomain import SUBDOMAIN_REGISTRY_TABLE_SQL
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
@@ -46,20 +45,21 @@ from opi.services.user_service import get_user_service
 logger = logging.getLogger(__name__)
 
 
-async def create_subdomain_registry_table() -> None:
-    """Create the subdomain_registry table if it doesn't exist.
+def _run_alembic_migrations() -> None:
+    """Run Alembic migrations to bring the database schema to head.
 
-    This table is used by the nice URL feature to track globally unique subdomains.
+    This replaces the individual CREATE TABLE IF NOT EXISTS calls.
+    Alembic's baseline migration uses IF NOT EXISTS so it is safe
+    for databases that already have the tables.
     """
-    from opi.core.database_pools import get_database_pool
+    import pathlib
 
-    pool = get_database_pool("main")
-    conn = await pool.acquire()
-    try:
-        await conn.execute(SUBDOMAIN_REGISTRY_TABLE_SQL)
-        logger.debug("Subdomain registry table and indexes created/verified")
-    finally:
-        await pool.release(conn)
+    from alembic import command
+    from alembic.config import Config
+
+    ini_path = pathlib.Path(__file__).resolve().parents[2] / "alembic.ini"
+    alembic_cfg = Config(str(ini_path))
+    command.upgrade(alembic_cfg, "head")
 
 
 @retry(
@@ -576,11 +576,11 @@ async def _setup_database(readiness: "ReadinessState") -> bool:
 
         await initialize_database_pools()
 
-        # Create subdomain registry table
+        # Run Alembic migrations to ensure schema is up to date
         try:
-            await create_subdomain_registry_table()
+            _run_alembic_migrations()
         except Exception as e:
-            logger.warning(f"Failed to create subdomain registry table: {e}")
+            logger.warning(f"Failed to run Alembic migrations: {e}")
 
         readiness.database.mark_ready()
         return True
