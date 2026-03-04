@@ -76,6 +76,10 @@ class WidgetAdapter(ABC):
         """Render service options as selectable cards with icons and descriptions."""
 
     @abstractmethod
+    def render_display_card(self, field: "FormField") -> str:
+        """Render a read-only display card for status/encrypted fields."""
+
+    @abstractmethod
     def render_nested(self, field: "FormField", children_html: list[str]) -> str:
         """
         Render a nested model's fields grouped together.
@@ -223,6 +227,7 @@ class WidgetAdapter(ABC):
             "hidden": self.render_hidden,
             "password": self.render_text,  # Password uses text input with type override
             "service_cards": self.render_service_cards,
+            "display_card": self.render_display_card,
         }
 
         render_method = render_methods.get(widget_type)

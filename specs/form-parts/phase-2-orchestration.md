@@ -36,7 +36,7 @@ LAYER 1 — Depends on Layer 0 (run in parallel after Layer 0)
 
 LAYER 2 — Depends on Layer 0+1 (run in parallel)
   ├─ Sub-part G: Bridge              → impl-G-bridge.md          (needs A, B)
-  └─ Sub-part H: Widget Extension    → impl-H-widget-extension.md (no internal deps)
+  └─ Sub-part H: Widget Extension    → impl-H-widget-extension.md [DONE]
 
 LAYER 3 — Assembly (sequential, after all above)
   └─ Sub-part I: Package Init        → impl-I-package-init.md    (needs all)
