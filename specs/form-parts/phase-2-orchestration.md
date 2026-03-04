@@ -32,7 +32,7 @@ LAYER 0 — No Dependencies (run in parallel)
 LAYER 1 — Depends on Layer 0 (run in parallel after Layer 0)
   ├─ Sub-part D: Converters          → impl-D-converters.md      [DONE]
   ├─ Sub-part E: Validators          → impl-E-validators.md      [DONE]
-  └─ Sub-part F: Enforcers           → impl-F-enforcers.md       (needs A)
+  └─ Sub-part F: Enforcers           → impl-F-enforcers.md       [DONE]
 
 LAYER 2 — Depends on Layer 0+1 (run in parallel)
   ├─ Sub-part G: Bridge              → impl-G-bridge.md          (needs A, B)

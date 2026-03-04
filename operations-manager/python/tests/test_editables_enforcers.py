@@ -66,7 +66,7 @@ class TestUniqueNamesEnforcer:
     def test_custom_field_name(self):
         enforcer = UniqueNamesEnforcer(field_name="email")
         items = [{"email": "a@b.c"}, {"email": "a@b.c"}]
-        with pytest.raises(ValueError, match=r"a@b\.c"):
+        with pytest.raises(ValueError, match="a@b.c"):
             enforcer.enforce(items, {})
 
     def test_items_without_name_field(self):
