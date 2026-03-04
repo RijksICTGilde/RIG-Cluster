@@ -23,8 +23,6 @@ class TestSanitizeUnhealthyPods:
             "deployments": [
                 {
                     "name": "production",
-                    "namespace": "default",
-                    "cluster": "local",
                     "components": [{"reference": "api"}],
                 }
             ],
@@ -76,8 +74,6 @@ class TestSanitizeUnhealthyPods:
             "deployments": [
                 {
                     "name": "production",
-                    "namespace": "default",
-                    "cluster": "local",
                     "components": [{"reference": "api"}],
                 }
             ],

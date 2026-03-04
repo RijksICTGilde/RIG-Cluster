@@ -52,16 +52,12 @@ class TestGetProjectData:
 class TestTuneRecommendationCalculation:
     """Test the recommendation calculation logic end-to-end with mocked connectors."""
 
-    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=12)
-    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
     @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")
     @pytest.mark.asyncio
-    async def test_tune_with_known_values(
-        self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
-    ):
+    async def test_tune_with_known_values(self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess):
         """Verify that tune endpoint produces correct recommendations with known Prometheus values."""
         # Setup project
         project_data = {
@@ -78,8 +74,6 @@ class TestTuneRecommendationCalculation:
             "deployments": [
                 {
                     "name": "production",
-                    "namespace": "my-project",
-                    "cluster": "odcn-production",
                     "components": [{"reference": "api"}],
                 }
             ],
@@ -91,38 +85,39 @@ class TestTuneRecommendationCalculation:
         mock_service.get_project.return_value = mock_project
         mock_get_service.return_value = mock_service
 
-        # Setup Prometheus connector
+        # Setup Prometheus connector - return 100MB max observed
         mock_connector = MagicMock()
-        # Calls: max_over_time -> 100Mi, avg_over_time -> 80Mi, OOM query -> empty
+        # First call: max_over_time memory query -> 100MB in bytes
+        # Second call: OOM kills query -> empty (no OOM)
         mock_connector.custom_query.side_effect = [
-            [{"value": [0, str(100 * 1024 * 1024)]}],  # max: 100Mi
-            [{"value": [0, str(80 * 1024 * 1024)]}],  # avg: 80Mi
+            [{"value": [0, str(100 * 1024 * 1024)]}],  # 100Mi
             [],  # No OOM kills
         ]
         mock_get_connector.return_value = mock_connector
         mock_reprocess.return_value = True
 
+        # Import and call the endpoint
         from opi.api.resource_router import tune_resources
 
+        # Create a mock request
         mock_request = MagicMock()
 
         response = await tune_resources.__wrapped__(mock_request, "my-project", deployment=None)
 
+        # Verify changes were recommended (100Mi observed, 512Mi limit -> big decrease)
+        content = response.body
         import json
 
-        result = json.loads(response.body)
+        result = json.loads(content)
         assert len(result["changes"]) == 1
         assert result["changes"][0]["component"] == "api"
-        # limit: 100 * 1.25 + 25 = 150Mi (>= 100Mi threshold)
-        assert result["changes"][0]["new_limits_memory"] == "150Mi"
-        # request: 80 * 1.25 = 100Mi (< 100Mi, no +25)
-        assert result["changes"][0]["new_requests_memory"] == "100Mi"
+        # 100 * 1.25 = 125Mi
+        assert result["changes"][0]["new_limits_memory"] == "125Mi"
 
-    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")
     @pytest.mark.asyncio
-    async def test_tune_no_data_returns_unchanged(self, mock_get_connector, mock_get_service, mock_prefix):
+    async def test_tune_no_data_returns_unchanged(self, mock_get_connector, mock_get_service):
         """When Prometheus returns no data, component should be unchanged."""
         project_data = {
             "name": "my-project",
@@ -130,8 +125,6 @@ class TestTuneRecommendationCalculation:
             "deployments": [
                 {
                     "name": "production",
-                    "namespace": "my-project",
-                    "cluster": "odcn-production",
                     "components": [{"reference": "api"}],
                 }
             ],
@@ -162,15 +155,13 @@ class TestTuneRecommendationCalculation:
 class TestOomGracefulDegradation:
     """Test that OOM kill query failures are handled gracefully."""
 
-    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=12)
-    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
     @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")
     @pytest.mark.asyncio
     async def test_oom_query_failure_still_works(
-        self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
+        self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess
     ):
         """If OOM kill query fails, tuning should still proceed without OOM consideration."""
         project_data = {
@@ -186,8 +177,6 @@ class TestOomGracefulDegradation:
             "deployments": [
                 {
                     "name": "production",
-                    "namespace": "my-project",
-                    "cluster": "odcn-production",
                     "components": [{"reference": "api"}],
                 }
             ],

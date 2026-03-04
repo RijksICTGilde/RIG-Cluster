@@ -9,13 +9,12 @@ import logging
 from io import StringIO
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import create_git_connector_for_project_files
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
-from opi.core.cluster_config import get_min_memory_limit_mi, get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.project_manager import create_project_manager
@@ -119,7 +118,7 @@ async def _trigger_reprocessing(project_name: str, filename: str, deployment_nam
 @resource_router.post("/{project_name}/tune")
 @validate_api_token
 async def tune_resources(
-    request: Request,
+    request: Any,
     project_name: str,
     deployment: str | None = Query(None, description="Specific deployment to tune (optional)"),
 ) -> JSONResponse:
@@ -147,19 +146,14 @@ async def tune_resources(
     buffer_percent = settings.RESOURCE_TUNING_MEMORY_BUFFER_PERCENT
     threshold_percent = settings.RESOURCE_TUNING_THRESHOLD_PERCENT
 
+    # Get project namespace from project data
+    project_ns = project_data.get("name", project_name)
+
     deployments = project_data.get("deployments", [])
     for dep in deployments:
         dep_name = dep.get("name", "")
         if deployment and dep_name != deployment:
             continue
-
-        base_namespace = dep.get("namespace")
-        cluster = dep.get("cluster")
-        if not base_namespace or not cluster:
-            logger.warning(f"Deployment '{dep_name}' missing namespace or cluster, skipping")
-            continue
-
-        namespace = get_prefixed_namespace(cluster, base_namespace)
 
         components = dep.get("components", [])
         for comp in components:
@@ -168,6 +162,7 @@ async def tune_resources(
                 continue
 
             unique_name = generate_unique_name(dep_name, component_ref)
+            namespace = f"{project_ns}-{dep_name}"
 
             # Get current resources from project YAML
             current_resources = file_handler.extract_component_resources(project_data, component_ref)
@@ -180,35 +175,21 @@ async def tune_resources(
             current_limit_mb = _k8s_memory_to_mb(current_resources["limits_memory"])
             current_request_mb = _k8s_memory_to_mb(current_resources["requests_memory"])
 
-            # Query Prometheus for max and average memory usage (app container only)
+            # Query Prometheus for max memory usage
             max_observed_mb = 0.0
-            avg_observed_mb = 0.0
             try:
-                max_query = (
-                    f"max_over_time(container_memory_working_set_bytes{{"
+                memory_query = (
+                    f"max_over_time(container_memory_usage_bytes{{"
                     f'namespace="{namespace}", '
                     f'pod=~"{unique_name}.*", '
-                    f'container="app"}}'
+                    f'container!=""}}'
                     f"[{window_hours}h])"
                 )
-                max_results = connector.custom_query(max_query)
-                if max_results:
-                    for result in max_results:
+                results = connector.custom_query(memory_query)
+                if results:
+                    for result in results:
                         value = float(result.get("value", [0, 0])[1])
                         max_observed_mb = max(max_observed_mb, value / (1024 * 1024))
-
-                avg_query = (
-                    f"avg_over_time(container_memory_working_set_bytes{{"
-                    f'namespace="{namespace}", '
-                    f'pod=~"{unique_name}.*", '
-                    f'container="app"}}'
-                    f"[{window_hours}h])"
-                )
-                avg_results = connector.custom_query(avg_query)
-                if avg_results:
-                    for result in avg_results:
-                        value = float(result.get("value", [0, 0])[1])
-                        avg_observed_mb = max(avg_observed_mb, value / (1024 * 1024))
             except Exception as e:
                 logger.warning(f"Failed to query memory usage for {unique_name}: {e}")
                 unchanged.append(component_ref)
@@ -236,13 +217,11 @@ async def tune_resources(
             # Compute recommendation
             recommendation = compute_memory_recommendation(
                 max_observed_mb=max_observed_mb,
-                avg_observed_mb=avg_observed_mb,
                 current_limit_mb=current_limit_mb,
                 current_request_mb=current_request_mb,
                 buffer_percent=buffer_percent,
                 threshold_percent=threshold_percent,
                 has_oom_kills=has_oom_kills,
-                min_memory_mi=get_min_memory_limit_mi(cluster),
             )
 
             if recommendation is None:
@@ -270,7 +249,6 @@ async def tune_resources(
                     "previous_requests_memory": current_resources["requests_memory"],
                     "new_requests_memory": new_request,
                     "max_observed_memory_mb": f"{max_observed_mb:.0f}",
-                    "avg_observed_memory_mb": f"{avg_observed_mb:.0f}",
                     "has_oom_kills": str(has_oom_kills),
                     "reason": reason,
                 }
@@ -299,7 +277,7 @@ async def tune_resources(
 @resource_router.post("/{project_name}/sanitize")
 @validate_api_token
 async def sanitize_deployment(
-    request: Request,
+    request: Any,
     project_name: str,
     deployment: str | None = Query(None, description="Specific deployment to sanitize (optional)"),
 ) -> JSONResponse:
@@ -327,6 +305,7 @@ async def sanitize_deployment(
     disabled_components: list[dict[str, str]] = []
     healthy_components: list[str] = []
 
+    project_ns = project_data.get("name", project_name)
     restart_threshold = settings.SANITIZE_RESTART_THRESHOLD
 
     deployments = project_data.get("deployments", [])
@@ -334,14 +313,6 @@ async def sanitize_deployment(
         dep_name = dep.get("name", "")
         if deployment and dep_name != deployment:
             continue
-
-        base_namespace = dep.get("namespace")
-        cluster = dep.get("cluster")
-        if not base_namespace or not cluster:
-            logger.warning(f"Deployment '{dep_name}' missing namespace or cluster, skipping")
-            continue
-
-        namespace = get_prefixed_namespace(cluster, base_namespace)
 
         components = dep.get("components", [])
         for comp in components:
@@ -355,6 +326,7 @@ async def sanitize_deployment(
                 continue
 
             unique_name = generate_unique_name(dep_name, component_ref)
+            namespace = f"{project_ns}-{dep_name}"
 
             reasons: list[str] = []
 

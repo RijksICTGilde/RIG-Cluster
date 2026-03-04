@@ -65,55 +65,47 @@ class TestComputeMemoryRecommendation:
     """Tests for compute_memory_recommendation."""
 
     def test_within_threshold_returns_none(self):
-        # max=400 -> 400*1.25+25 = 525. Current limit=530. Change: (530-525)/530 = 0.9%
-        # avg=350 -> 350*1.25+25 = 462.5. Current request=470. Change: (470-462.5)/470 = 1.6%
-        # Both below 20% -> None
+        # Current limit 512Mi, observed 400Mi -> recommended ~500Mi
+        # Change is (512-500)/512 = 2.3%, well below 20% threshold
         result = compute_memory_recommendation(
             max_observed_mb=400,
-            avg_observed_mb=350,
-            current_limit_mb=530,
-            current_request_mb=470,
+            current_limit_mb=512,
+            current_request_mb=128,
             buffer_percent=25,
             threshold_percent=20,
         )
         assert result is None
 
     def test_above_threshold_returns_recommendation(self):
-        # max=100 -> 100*1.25+25 = 150. Current limit=512. Change: 70%
-        # avg=80 -> 80*1.25 = 100 (below 100Mi, no +25)
+        # Current limit 512Mi, observed 100Mi -> recommended 125Mi
+        # Change is (512-125)/512 = 75%, well above 20% threshold
         result = compute_memory_recommendation(
             max_observed_mb=100,
-            avg_observed_mb=80,
             current_limit_mb=512,
             current_request_mb=128,
             buffer_percent=25,
             threshold_percent=20,
         )
         assert result is not None
-        limit, request, _ = result
-        assert limit == "150Mi"  # 100 * 1.25 + 25
-        assert request == "100Mi"  # 80 * 1.25 = 100 (no +25, below threshold)
+        limit, request, reason = result
+        assert limit == "125Mi"  # 100 * 1.25 = 125
 
     def test_buffer_calculation(self):
-        # max=200 -> 200*1.5+25 = 325. avg=150 -> 150*1.5+25 = 250
         result = compute_memory_recommendation(
             max_observed_mb=200,
-            avg_observed_mb=150,
             current_limit_mb=512,
             current_request_mb=64,
             buffer_percent=50,
             threshold_percent=20,
         )
         assert result is not None
-        limit, request, _ = result
-        assert limit == "325Mi"  # 200 * 1.5 + 25
-        assert request == "250Mi"  # 150 * 1.5 + 25
+        limit, request, reason = result
+        assert limit == "300Mi"  # 200 * 1.5 = 300
 
     def test_oom_kills_force_increase(self):
-        # max=450 -> 450*1.25+25 = 587.5. OOM minimum = 512*1.5 = 768. OOM wins.
+        # Even within threshold, OOM kills should force an increase
         result = compute_memory_recommendation(
             max_observed_mb=450,
-            avg_observed_mb=400,
             current_limit_mb=512,
             current_request_mb=128,
             buffer_percent=25,
@@ -122,99 +114,48 @@ class TestComputeMemoryRecommendation:
         )
         assert result is not None
         limit, request, reason = result
+        # OOM minimum = 512 * 1.5 = 768
+        # observed + buffer = 450 * 1.25 = 562.5
+        # OOM minimum wins
         assert limit == "768Mi"
         assert "OOM kills detected" in reason
 
-    def test_request_never_exceeds_limit(self):
-        # max=100 -> 100*1.25+25 = 150. avg=120 -> 120*1.25+25 = 175, capped to 150.
+    def test_request_at_least_current(self):
         result = compute_memory_recommendation(
             max_observed_mb=100,
-            avg_observed_mb=120,
             current_limit_mb=512,
-            current_request_mb=64,
+            current_request_mb=200,
             buffer_percent=25,
             threshold_percent=20,
         )
         assert result is not None
-        limit, request, _ = result
-        assert limit == "150Mi"
-        assert request == "150Mi"
+        _, request, _ = result
+        # recommended_request = max(125 * 0.5, 200) = 200
+        assert request == "200Mi"
 
-    def test_request_based_on_avg(self):
-        # max=300 -> 300*1.25+25 = 400. avg=100 -> 100*1.25+25 = 150.
+    def test_increase_when_usage_near_limit(self):
+        # Current limit 256Mi, observed 240Mi -> recommended 300Mi
+        # Change is (300-256)/256 = 17%, below 20% threshold -> None
         result = compute_memory_recommendation(
-            max_observed_mb=300,
-            avg_observed_mb=100,
-            current_limit_mb=512,
-            current_request_mb=64,
-            buffer_percent=25,
-            threshold_percent=20,
-        )
-        assert result is not None
-        limit, request, reason = result
-        assert limit == "400Mi"  # 300 * 1.25 + 25
-        assert request == "150Mi"  # 100 * 1.25 + 25
-        assert "avg" in reason
-
-    def test_small_app_no_absolute_buffer(self):
-        # max=50 -> 50*1.25 = 62.5 (no +25, below 100). avg=40 -> 40*1.25 = 50.
-        result = compute_memory_recommendation(
-            max_observed_mb=50,
-            avg_observed_mb=40,
+            max_observed_mb=240,
             current_limit_mb=256,
             current_request_mb=128,
             buffer_percent=25,
             threshold_percent=20,
         )
-        assert result is not None
-        limit, request, _ = result
-        assert limit == "63Mi"  # 50 * 1.25 = 62.5, ceil = 63
-        assert request == "50Mi"  # 40 * 1.25 = 50
+        # 240*1.25=300, diff=300-256=44, pct=44/256=17.2% < 20%
+        assert result is None
 
     def test_significant_increase(self):
-        # max=300 -> 300*1.25+25 = 400. Current limit=256. Change: 56%.
-        # avg=200 -> 200*1.25+25 = 275. Current request=128.
+        # Current limit 256Mi, observed 300Mi -> recommended 375Mi
+        # Change is (375-256)/256 = 46%, above 20%
         result = compute_memory_recommendation(
             max_observed_mb=300,
-            avg_observed_mb=200,
             current_limit_mb=256,
             current_request_mb=128,
             buffer_percent=25,
             threshold_percent=20,
         )
         assert result is not None
-        limit, request, _ = result
-        assert limit == "400Mi"  # 300 * 1.25 + 25
-        assert request == "275Mi"  # 200 * 1.25 + 25
-
-    def test_minimum_memory_enforced(self):
-        # Very low usage (5Mi max, 3Mi avg) should be clamped to min_memory_mi
-        result = compute_memory_recommendation(
-            max_observed_mb=5,
-            avg_observed_mb=3,
-            current_limit_mb=512,
-            current_request_mb=128,
-            buffer_percent=25,
-            threshold_percent=20,
-        )
-        assert result is not None
-        limit, request, _ = result
-        # 5 * 1.25 = 6.25Mi, clamped to 25Mi
-        assert limit == "25Mi"
-        # 3 * 1.25 = 3.75Mi, clamped to 25Mi
-        assert request == "25Mi"
-
-    def test_minimum_memory_does_not_affect_higher_values(self):
-        # max=100 -> 100*1.25+25 = 150. Well above 25Mi min.
-        result = compute_memory_recommendation(
-            max_observed_mb=100,
-            avg_observed_mb=80,
-            current_limit_mb=512,
-            current_request_mb=128,
-            buffer_percent=25,
-            threshold_percent=20,
-        )
-        assert result is not None
-        limit, request, _ = result
-        assert limit == "150Mi"
-        assert request == "100Mi"
+        limit, _, reason = result
+        assert limit == "375Mi"
