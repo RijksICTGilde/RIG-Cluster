@@ -188,13 +188,24 @@ class KeyValueConverter:
     def __init__(self, fmt: str = "env") -> None:
         self.fmt = fmt  # "env" or "yaml"
 
-    def _has_complex_values(self, data: dict) -> bool:
-        """Check if any values are non-scalar (lists, dicts)."""
-        return any(isinstance(v, (list, dict)) for v in data.values())
+    def _needs_yaml_format(self, data: dict) -> bool:
+        """Check if any values require YAML format (can't be flat KEY=value).
+
+        Returns True for lists, dicts, multi-line strings, booleans, None,
+        or any non-string scalar — i.e. anything ENV format can't represent.
+        """
+        for v in data.values():
+            if isinstance(v, (list, dict)):
+                return True
+            if isinstance(v, str) and "\n" in v:
+                return True
+            if not isinstance(v, str):
+                return True
+        return False
 
     def detect_format(self, value: Any) -> str:
         """Detect which format was used based on the stored value."""
-        if isinstance(value, dict) and self._has_complex_values(value):
+        if isinstance(value, dict) and self._needs_yaml_format(value):
             return "yaml"
         return self.fmt
 
@@ -203,7 +214,7 @@ class KeyValueConverter:
         if isinstance(value, dict):
             # Use YAML format when values contain lists/dicts (ENV can't
             # represent those) or when the configured format is YAML.
-            if self.fmt == "yaml" or self._has_complex_values(value):
+            if self.fmt == "yaml" or self._needs_yaml_format(value):
                 return yaml.dump(
                     value, default_flow_style=False, allow_unicode=True
                 ).rstrip("\n")
