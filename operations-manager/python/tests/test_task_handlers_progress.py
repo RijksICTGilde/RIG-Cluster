@@ -422,6 +422,7 @@ class TestHandleRefreshDeployment:
 
         mock_pm = AsyncMock()
         mock_pm.process_project_from_git = AsyncMock(return_value=False)
+        mock_pm.get_processing_error = MagicMock(return_value=None)
         mock_pm.close = AsyncMock()
 
         mock_project_service = MagicMock()
