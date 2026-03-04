@@ -196,17 +196,17 @@ class TestComputeMemoryRecommendation:
             current_request_mb=128,
             buffer_percent=25,
             threshold_percent=20,
-            min_memory_mi=12,
+            min_memory_mi=25,
         )
         assert result is not None
         limit, request, _ = result
-        # 5 * 1.25 = 6.25Mi, clamped to 12Mi
-        assert limit == "12Mi"
-        # 3 * 1.25 = 3.75Mi, clamped to 12Mi
-        assert request == "12Mi"
+        # 5 * 1.25 = 6.25Mi, clamped to 25Mi
+        assert limit == "25Mi"
+        # 3 * 1.25 = 3.75Mi, clamped to 25Mi
+        assert request == "25Mi"
 
     def test_minimum_memory_does_not_affect_higher_values(self):
-        # max=100 -> 100*1.25+25 = 150. Well above 12Mi min.
+        # max=100 -> 100*1.25+25 = 150. Well above 25Mi min.
         result = compute_memory_recommendation(
             max_observed_mb=100,
             avg_observed_mb=80,
@@ -214,7 +214,7 @@ class TestComputeMemoryRecommendation:
             current_request_mb=128,
             buffer_percent=25,
             threshold_percent=20,
-            min_memory_mi=12,
+            min_memory_mi=25,
         )
         assert result is not None
         limit, request, _ = result

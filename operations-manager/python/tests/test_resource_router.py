@@ -52,7 +52,7 @@ class TestGetProjectData:
 class TestTuneRecommendationCalculation:
     """Test the recommendation calculation logic end-to-end with mocked connectors."""
 
-    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=12)
+    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=25)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
     @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
@@ -162,7 +162,7 @@ class TestTuneRecommendationCalculation:
 class TestOomGracefulDegradation:
     """Test that OOM kill query failures are handled gracefully."""
 
-    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=12)
+    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=25)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
     @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)

@@ -32,7 +32,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
         },
-        "min_memory_limit_mi": 12,
+        "min_memory_limit_mi": 25,
         "uses_capsule": False,
         "ca_certificate": {
             "enabled": True,
@@ -73,7 +73,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,
         },
-        "min_memory_limit_mi": 12,
+        "min_memory_limit_mi": 25,
         "uses_capsule": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -105,7 +105,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,  # Only generate HTTPS redirect URIs in production
         },
-        "min_memory_limit_mi": 12,
+        "min_memory_limit_mi": 25,
         "uses_capsule": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
@@ -565,7 +565,7 @@ def get_min_memory_limit_mi(cluster_name: str) -> int:
         Minimum memory limit in Mi
     """
     cluster_config = get_cluster_config(cluster_name)
-    return cluster_config.get("min_memory_limit_mi", 12)
+    return cluster_config.get("min_memory_limit_mi", 25)
 
 
 def uses_capsule(cluster_name: str) -> bool:
