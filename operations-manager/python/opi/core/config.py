@@ -212,6 +212,7 @@ class Settings(BaseSettings):
     API_TOKEN: str = "d68d6aebd694d636e5eb4784a952b9c3"  # Example hardcoded token for development
     USE_UNSAFE_API_KEY: bool = False  # Use hardcoded "secret" API key for development (set to True in .env.local)
     MASTER_API_KEY: str | None = None  # Master API key for admin operations (backups, etc.)
+    ADMIN_API_KEY: str | None = None  # Admin API key for cleanup, reconciliation, and maintenance operations
 
     # SOPS age key settings (from Kubernetes secret)
     SOPS_AGE_KEY_CONTENT: str | None = None  # Full SOPS age key content from secret

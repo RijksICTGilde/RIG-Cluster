@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from opi.api.admin_router import admin_router
 from opi.api.auth_routes import auth_router
 from opi.api.backup_router import backup_router
 from opi.api.federation_router import federation_router
@@ -284,6 +285,7 @@ def create_app() -> FastAPI:
     app.include_router(v2_router, include_in_schema=True)  # V2 async API endpoints
     app.include_router(task_router, include_in_schema=True)  # Async task status API
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
+    app.include_router(admin_router, include_in_schema=True)  # Admin cleanup/reconciliation API
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint
     app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs
