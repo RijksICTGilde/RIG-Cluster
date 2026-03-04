@@ -309,7 +309,7 @@ def main():
     print("\n" + "=" * 60)
     print("Session cookies:")
     for cookie in session.cookies:
-        value: str = cookie.value if cookie.value else ""
+        value: str = cookie.value or ""
         if len(value) > 20:
             print(f"  {cookie.name}: {value[:20]}...")
         else:

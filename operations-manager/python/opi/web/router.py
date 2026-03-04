@@ -1136,7 +1136,7 @@ async def project_details(request: Request, project_name: str):
                                 # This reveals errors like image pull failures that don't show
                                 # on top-level resources
                                 app_health = health.get("status", "Unknown")
-                                if app_health not in ("Healthy",):
+                                if app_health != "Healthy":
                                     try:
                                         tree_nodes = await argo_connector.get_application_resource_tree(app_name)
                                         for node in tree_nodes:

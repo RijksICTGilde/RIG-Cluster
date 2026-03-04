@@ -283,7 +283,7 @@ class GitConnector:
     @property
     def ssh_port(self) -> int:
         """Get the SSH port from the parsed URL config."""
-        if self.url_config and self.url_config.get("scheme") in ["ssh"]:
+        if self.url_config and self.url_config.get("scheme") == "ssh":
             return self.url_config.get("port", 22)
         return 22
 
@@ -342,7 +342,7 @@ class GitConnector:
         if (
             self.url_config
             and self.url_config.get("needs_auth")
-            and self.url_config.get("scheme") in ["ssh"]
+            and self.url_config.get("scheme") == "ssh"
             and self.ssh_key_path
         ):
             ssh_cmd = f"ssh -i {self.ssh_key_path}"

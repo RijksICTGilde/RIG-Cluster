@@ -113,10 +113,10 @@ class PersistentTaskProgressManager:
         await self._task_service.update_progress(
             task_id=self._task_id,
             current_step=self._current_step,
-            subtasks=subtask_list if subtask_list else None,
-            logs=self._logs if self._logs else None,
-            events=self._events if self._events else None,
-            web_addresses=self._web_addresses if self._web_addresses else None,
+            subtasks=subtask_list or None,
+            logs=self._logs or None,
+            events=self._events or None,
+            web_addresses=self._web_addresses or None,
         )
 
     def _mark_dirty(self) -> None:
@@ -148,9 +148,9 @@ class PersistentTaskProgressManager:
         if project is None:
             return
         project.current_step = self._current_step
-        project.logs = self._logs if self._logs else None
-        project.events = self._events if self._events else None
-        project.web_addresses = self._web_addresses if self._web_addresses else None
+        project.logs = self._logs or None
+        project.events = self._events or None
+        project.web_addresses = self._web_addresses or None
         project.namespace = self._namespace
 
     # ------------------------------------------------------------------

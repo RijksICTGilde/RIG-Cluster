@@ -104,9 +104,7 @@ def _assert_accepted(response: Any, expected_task_type: str) -> dict:
 class TestV2UpsertDeployment:
     """Tests for POST /api/v2/projects/{project_name}/:upsert-deployment."""
 
-    def test_returns_202_with_task_id(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
 
         response = v2_client.post(
@@ -121,9 +119,7 @@ class TestV2UpsertDeployment:
         _assert_accepted(response, "upsert_deployment")
         mock_task_service.create_task.assert_awaited_once()
 
-    def test_passes_correct_payload(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_passes_correct_payload(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
 
         v2_client.post(
@@ -204,9 +200,7 @@ class TestV2UpsertDeployment:
 class TestV2CreateProject:
     """Tests for POST /api/v2/projects."""
 
-    def test_returns_202_with_task_id(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="create_project")
 
         response = v2_client.post(
@@ -240,9 +234,7 @@ class TestV2CreateProject:
 class TestV2DeleteDeployment:
     """Tests for DELETE /api/v2/projects/{project_name}/{deployment_name}."""
 
-    def test_returns_202_with_task_id(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
 
         response = v2_client.delete(
@@ -252,9 +244,7 @@ class TestV2DeleteDeployment:
 
         _assert_accepted(response, "delete_deployment")
 
-    def test_passes_correct_payload(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_passes_correct_payload(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
 
         v2_client.delete(
@@ -279,9 +269,7 @@ class TestV2DeleteDeployment:
 class TestV2UpdateImage:
     """Tests for PUT /api/v2/projects/{project_name}/deployments/{deployment_name}/image."""
 
-    def test_returns_202_with_task_id(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="update_image")
 
         response = v2_client.put(
@@ -295,9 +283,7 @@ class TestV2UpdateImage:
 
         _assert_accepted(response, "update_image")
 
-    def test_passes_correct_payload_with_registry(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_passes_correct_payload_with_registry(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="update_image")
 
         v2_client.put(
@@ -331,9 +317,7 @@ class TestV2UpdateImage:
 class TestV2CloneDatabase:
     """Tests for POST /api/v2/projects/{project_name}/deployments/{deployment_name}/:clone-database."""
 
-    def test_returns_202_with_task_id(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         response = v2_client.post(
@@ -351,9 +335,7 @@ class TestV2CloneDatabase:
 
         _assert_accepted(response, "clone_database")
 
-    def test_passes_clone_data_in_payload(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_passes_clone_data_in_payload(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         v2_client.post(
@@ -383,9 +365,7 @@ class TestV2CloneDatabase:
 class TestV2CloneBucket:
     """Tests for POST /api/v2/projects/{project_name}/deployments/{deployment_name}/:clone-bucket."""
 
-    def test_returns_202_with_task_id(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_bucket")
 
         response = v2_client.post(
@@ -424,9 +404,7 @@ class TestV2CloneBucket:
 class TestV2RefreshDeployment:
     """Tests for POST /api/v2/projects/{project_name}/deployments/{deployment_name}/:refresh."""
 
-    def test_returns_202_with_task_id(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="refresh_deployment")
 
         response = v2_client.post(
@@ -436,9 +414,7 @@ class TestV2RefreshDeployment:
 
         _assert_accepted(response, "refresh_deployment")
 
-    def test_passes_force_clone_param(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_passes_force_clone_param(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="refresh_deployment")
 
         v2_client.post(
@@ -472,9 +448,7 @@ class TestV2TaskServiceUnavailable:
     """V2 endpoints should return 503 when task_service is not on app state."""
 
     @pytest.fixture
-    def v2_client_no_task_service(
-        self, mock_settings: Any, mock_auth_project_service: Any
-    ) -> TestClient:
+    def v2_client_no_task_service(self, mock_settings: Any, mock_auth_project_service: Any) -> TestClient:
         from opi.server import create_app
 
         app: FastAPI = create_app()
@@ -509,9 +483,7 @@ class TestV2TaskServiceUnavailable:
 class TestV2TaskPolling:
     """Test the full V2 flow: create task -> poll -> get result."""
 
-    def test_create_then_poll_pending(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_create_then_poll_pending(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         """After creating a task via V2, polling should return 202 while pending."""
         mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
 
@@ -548,9 +520,7 @@ class TestV2TaskPolling:
         assert poll_response.json()["status"] == "running"
         assert poll_response.json()["progress_percent"] == 50
 
-    def test_create_then_poll_completed(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_create_then_poll_completed(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         """After task completes, polling should return 200 with result."""
         mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
 
@@ -591,9 +561,7 @@ class TestV2TaskPolling:
         assert data["result"]["deployment_name"] == "main"
         assert "web-main-test.example.com" in data["result"]["web_addresses"][0]
 
-    def test_create_then_poll_failed(
-        self, v2_client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_create_then_poll_failed(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         """After task fails, polling should return 200 with error."""
         mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
 

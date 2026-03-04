@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from opi.core.task_worker import TaskWorker
 
 
@@ -72,10 +72,8 @@ async def _run_worker_until(
     run_task = asyncio.create_task(worker.run())
 
     async def _wait_and_cancel() -> None:
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(condition.wait(), timeout=timeout)
-        except TimeoutError:
-            pass
         run_task.cancel()
 
     cancel_task = asyncio.create_task(_wait_and_cancel())
@@ -86,10 +84,8 @@ async def _run_worker_until(
         pass
     finally:
         cancel_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await cancel_task
-        except asyncio.CancelledError:
-            pass
 
 
 class TestRegisterHandler:
@@ -152,9 +148,7 @@ class TestWorkerClaimsAndDispatches:
             progress=mock_progress_instance,
         )
         mock_task_service.start_task.assert_called_once_with("test-id")
-        mock_task_service.complete_task.assert_called_once_with(
-            "test-id", {"status": "ok"}
-        )
+        mock_task_service.complete_task.assert_called_once_with("test-id", {"status": "ok"})
         mock_progress_instance.close.assert_called_once()
 
 
@@ -256,10 +250,8 @@ class TestWorkerStop:
 
         # Cancel the run task (the background loops have long sleeps)
         run_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await run_task
-        except asyncio.CancelledError:
-            pass
 
 
 class TestWorkerHeartbeat:

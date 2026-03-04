@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from opi.core.async_task_service import AsyncTaskService, _row_to_dict
 
 

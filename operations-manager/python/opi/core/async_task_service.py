@@ -6,7 +6,7 @@ import os
 import socket
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from opi.core.database_pool import DatabasePool
@@ -14,7 +14,7 @@ from opi.core.database_pool import DatabasePool
 logger = logging.getLogger(__name__)
 
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     UPSERT_DEPLOYMENT = "upsert_deployment"
     UPDATE_IMAGE = "update_image"
     DELETE_DEPLOYMENT = "delete_deployment"
@@ -24,7 +24,7 @@ class TaskType(str, Enum):
     CREATE_PROJECT = "create_project"
 
 
-class AsyncTaskStatus(str, Enum):
+class AsyncTaskStatus(StrEnum):
     PENDING = "pending"
     CLAIMED = "claimed"
     RUNNING = "running"

@@ -912,7 +912,7 @@ class KeycloakManager:
                 ingress_hosts=ingress_hosts,
                 realm_name=realm_name,
                 support_http=support_http,
-                additional_redirect_uris=additional_redirect_uris if additional_redirect_uris else None,
+                additional_redirect_uris=additional_redirect_uris or None,
             )
 
             # Apply access restriction if configured

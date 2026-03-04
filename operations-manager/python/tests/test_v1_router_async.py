@@ -114,9 +114,7 @@ def _assert_accepted(response: Any, expected_task_type: str) -> None:
 class TestV1AsyncUpsertDeployment:
     """V1 upsert deployment with async mode (default)."""
 
-    def test_returns_202_with_task_id(
-        self, client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
 
         response = client.post(
@@ -130,9 +128,7 @@ class TestV1AsyncUpsertDeployment:
 
         _assert_accepted(response, "upsert_deployment")
 
-    def test_passes_payload_to_task_service(
-        self, client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_passes_payload_to_task_service(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
 
         client.post(
@@ -155,9 +151,7 @@ class TestV1AsyncUpsertDeployment:
 class TestV1AsyncUpdateImage:
     """V1 update image with async mode (default)."""
 
-    def test_returns_202_with_task_id(
-        self, client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="update_image")
 
         response = client.put(
@@ -172,9 +166,7 @@ class TestV1AsyncUpdateImage:
 class TestV1AsyncDeleteDeployment:
     """V1 delete deployment with async mode (default)."""
 
-    def test_returns_202_with_task_id(
-        self, client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="delete_deployment")
 
         response = client.delete(
@@ -188,9 +180,7 @@ class TestV1AsyncDeleteDeployment:
 class TestV1AsyncRefreshDeployment:
     """V1 refresh deployment with async mode (default)."""
 
-    def test_returns_202_with_task_id(
-        self, client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="refresh_deployment")
 
         response = client.get(
@@ -204,9 +194,7 @@ class TestV1AsyncRefreshDeployment:
 class TestV1AsyncCloneDatabase:
     """V1 clone database with async mode (default)."""
 
-    def test_returns_202_with_task_id(
-        self, client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         response = client.post(
@@ -228,9 +216,7 @@ class TestV1AsyncCloneDatabase:
 class TestV1AsyncCloneBucket:
     """V1 clone bucket with async mode (default)."""
 
-    def test_returns_202_with_task_id(
-        self, client: TestClient, mock_task_service: AsyncMock
-    ) -> None:
+    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_bucket")
 
         response = client.post(
@@ -311,12 +297,8 @@ def _create_mock_project_manager(
 class TestV1SyncUpsertDeployment:
     """V1 upsert deployment with sync=true (blocking)."""
 
-    def test_sync_creates_deployment_returns_201(
-        self, client: TestClient, mock_auth_project_service: Any
-    ) -> None:
-        mock_pm = _create_mock_project_manager(
-            upsert_result={"success": True, "created": True}
-        )
+    def test_sync_creates_deployment_returns_201(self, client: TestClient, mock_auth_project_service: Any) -> None:
+        mock_pm = _create_mock_project_manager(upsert_result={"success": True, "created": True})
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = client.post(
@@ -334,12 +316,8 @@ class TestV1SyncUpsertDeployment:
         assert data["deployment"]["name"] == "production"
         assert data["deployment"]["created"] is True
 
-    def test_sync_updates_deployment_returns_200(
-        self, client: TestClient, mock_auth_project_service: Any
-    ) -> None:
-        mock_pm = _create_mock_project_manager(
-            upsert_result={"success": True, "created": False}
-        )
+    def test_sync_updates_deployment_returns_200(self, client: TestClient, mock_auth_project_service: Any) -> None:
+        mock_pm = _create_mock_project_manager(upsert_result={"success": True, "created": False})
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = client.post(
@@ -356,9 +334,7 @@ class TestV1SyncUpsertDeployment:
         assert data["status"] == "success"
         assert data["deployment"]["created"] is False
 
-    def test_sync_failure_returns_400(
-        self, client: TestClient, mock_auth_project_service: Any
-    ) -> None:
+    def test_sync_failure_returns_400(self, client: TestClient, mock_auth_project_service: Any) -> None:
         mock_pm = _create_mock_project_manager(
             upsert_result={
                 "success": False,
@@ -384,9 +360,7 @@ class TestV1SyncUpsertDeployment:
 class TestV1SyncUpdateImage:
     """V1 update image with sync=true (blocking)."""
 
-    def test_sync_returns_200(
-        self, client: TestClient, mock_auth_project_service: Any
-    ) -> None:
+    def test_sync_returns_200(self, client: TestClient, mock_auth_project_service: Any) -> None:
         mock_pm = _create_mock_project_manager()
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
@@ -430,9 +404,7 @@ class TestV1SyncRefreshDeployment:
 class TestV1SyncDeleteDeployment:
     """V1 delete deployment with sync=true (blocking)."""
 
-    def test_sync_returns_200(
-        self, client: TestClient, mock_auth_project_service: Any
-    ) -> None:
+    def test_sync_returns_200(self, client: TestClient, mock_auth_project_service: Any) -> None:
         mock_pm = _create_mock_project_manager()
 
         with patch("opi.api.router.create_project_manager", return_value=mock_pm):

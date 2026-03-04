@@ -9,7 +9,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 # Functions imported locally in functions to avoid potential circular imports
@@ -21,7 +21,7 @@ from opi.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """Task status enumeration."""
 
     PENDING = "pending"
@@ -727,7 +727,7 @@ async def _monitor_project_applications_continuously(
 
                             if sync_status != "Synced":
                                 all_synced = False
-                            if health_status not in ["Healthy"]:
+                            if health_status != "Healthy":
                                 all_healthy = False
 
                     except Exception as e:

@@ -49,16 +49,24 @@ def _render_section_html(
     errors: dict[str, list[str]] | None = None,
 ) -> str:
     """Render form fields for a section (same pattern as wizard _render_step_html)."""
+    from opi.core.templates import get_templates
+
     renderer = _create_renderer()
     if not section.layout:
         return ""
-    return renderer.render_fields_from_editables(
+    html = renderer.render_fields_from_editables(
         editables=section.editables,
         yaml_data=yaml_data,
         layout=section.layout,
         errors=errors,
         edit_mode=True,
     )
+    # Process Jinja component tags in runtime-generated HTML
+    templates = get_templates()
+    process_components_filter = templates.env.filters.get("process_components")
+    if process_components_filter is not None:
+        html = str(process_components_filter(html))
+    return html
 
 
 @detail_edit_router.get("/{project_name}/edit/{section_id}", response_class=HTMLResponse)

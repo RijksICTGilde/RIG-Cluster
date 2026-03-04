@@ -5,13 +5,14 @@ Tests cover GET /api/tasks/{id}, GET /api/tasks, and POST /api/tasks/{id}/:cance
 with various task states and error conditions.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 SAMPLE_TASK_ID = "550e8400-e29b-41d4-a716-446655440000"
 
@@ -271,9 +272,7 @@ class TestCancelTask:
         data = response.json()
         assert data["status"] == "cancelled"
         assert data["task_id"] == SAMPLE_TASK_ID
-        mock_task_service.update_task_status.assert_awaited_once_with(
-            SAMPLE_TASK_ID, "cancelled"
-        )
+        mock_task_service.update_task_status.assert_awaited_once_with(SAMPLE_TASK_ID, "cancelled")
 
     def test_cancel_running_task_returns_409(
         self,

@@ -140,7 +140,7 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
 
     except Exception as exc:
         # Ensure fail_project is called for unexpected errors not already handled
-        if not isinstance(exc, (ValueError, RuntimeError)):
+        if not isinstance(exc, ValueError | RuntimeError):
             progress.fail_project(str(exc))
         raise
     finally:
@@ -273,7 +273,7 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
         }
 
     except Exception as exc:
-        if not isinstance(exc, (ValueError, RuntimeError)):
+        if not isinstance(exc, ValueError | RuntimeError):
             progress.fail_project(str(exc))
         raise
     finally:
@@ -372,7 +372,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             raise RuntimeError(error_msg)
 
     except Exception as exc:
-        if not isinstance(exc, (ValueError, RuntimeError)):
+        if not isinstance(exc, ValueError | RuntimeError):
             progress.fail_project(str(exc))
         raise
     finally:

@@ -152,9 +152,7 @@ class TaskWorker:
             try:
                 await self._task_service.send_heartbeat(task_id)
             except Exception:
-                logger.warning(
-                    "Failed to send heartbeat for task %s", task_id, exc_info=True
-                )
+                logger.warning("Failed to send heartbeat for task %s", task_id, exc_info=True)
 
     async def _stale_recovery_loop(self) -> None:
         """Periodically recover stale tasks."""

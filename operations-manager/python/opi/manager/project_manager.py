@@ -3488,8 +3488,8 @@ class ProjectManager:
         self._manifest_generator.create_kustomization_files(
             output_dir=target_path,
             namespace=namespace,
-            sops_files=all_sops_files if all_sops_files else None,
-            regular_files=regular_files if regular_files else [],
+            sops_files=all_sops_files or None,
+            regular_files=regular_files or [],
             helm_charts=helm_charts,
         )
 
@@ -3523,9 +3523,7 @@ class ProjectManager:
         try:
             project_data = await self.get_contents()
             project_name = await self.get_name()
-            logger.info(
-                f"Processing project: {project_name} and deployment {deployment_name if deployment_name else 'all'}"
-            )
+            logger.info(f"Processing project: {project_name} and deployment {deployment_name or 'all'}")
 
             if not await self.has_deployments_for_current_cluster():
                 logger.info(
@@ -3676,7 +3674,7 @@ class ProjectManager:
                 project_name,
                 api_key,
                 filename,
-                users=users if users else None,
+                users=users or None,
                 data=project_data_with_configs,
             )
 

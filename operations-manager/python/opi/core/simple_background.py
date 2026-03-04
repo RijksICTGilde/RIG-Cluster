@@ -58,7 +58,7 @@ async def _monitor_argocd_and_deployment(
                     health_status = user_app_status.get("status", {}).get("health", {}).get("status", "Unknown")
 
                     logger.debug(f"user-applications - Sync: {sync_status}, Health: {health_status}")
-                    user_app_healthy = sync_status in ["Synced"] and health_status in ["Healthy", "Progressing"]
+                    user_app_healthy = sync_status == "Synced" and health_status in ["Healthy", "Progressing"]
 
                 # Check for project-specific applications (e.g., project_name-app)
                 project_apps_healthy = True
@@ -79,7 +79,7 @@ async def _monitor_argocd_and_deployment(
                             app_health = app.get("status", {}).get("health", {}).get("status", "Unknown")
 
                             logger.debug(f"{app_name} - Sync: {app_sync}, Health: {app_health}")
-                            if not (app_sync in ["Synced"] and app_health in ["Healthy", "Progressing"]):
+                            if not (app_sync == "Synced" and app_health in ["Healthy", "Progressing"]):
                                 project_apps_healthy = False
                                 break
                 except Exception as e:

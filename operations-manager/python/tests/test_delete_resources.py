@@ -86,16 +86,16 @@ class TestDeleteResourcesForDeployment:
         # Verify delete_database was called with ONLY database_name
         mock_connector.delete_database.assert_called_once()
         call_kwargs = mock_connector.delete_database.call_args
-        assert "host" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
-        assert "admin_username" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
-        assert "admin_password" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
+        assert "host" not in (call_kwargs.kwargs or {})
+        assert "admin_username" not in (call_kwargs.kwargs or {})
+        assert "admin_password" not in (call_kwargs.kwargs or {})
         assert call_kwargs == call(database_name="test_project_pr_123")
 
         # Verify delete_user was called with ONLY username
         mock_connector.delete_user.assert_called_once()
         call_kwargs = mock_connector.delete_user.call_args
-        assert "host" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
-        assert "admin_username" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
+        assert "host" not in (call_kwargs.kwargs or {})
+        assert "admin_username" not in (call_kwargs.kwargs or {})
         assert call_kwargs == call(username="test_project_pr_123")
 
     @pytest.mark.asyncio

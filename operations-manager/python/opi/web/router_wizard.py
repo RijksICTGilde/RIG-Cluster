@@ -1237,10 +1237,10 @@ def _format_value(editable: Any, value: Any) -> str | None:
     if isinstance(value, dict):
         # Key-value editor or similar
         formatted = ", ".join(f"{k}={v}" for k, v in value.items())
-        return formatted if formatted else None
+        return formatted or None
 
     display = str(value)
-    return display if display else None
+    return display or None
 
 
 def _resolve_option_labels(editable: Any, value: Any) -> str:
