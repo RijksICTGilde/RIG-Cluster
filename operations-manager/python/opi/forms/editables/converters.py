@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import yaml
+
 
 class EncryptedDisplayConverter:
     """Displays encrypted fields as status indicators, not actual values."""
@@ -173,45 +175,53 @@ class ListSingleSelectConverter:
 
 
 class KeyValueConverter:
-    """Converts dict to/from KEY=VALUE or KEY: value text format.
+    """Converts between text (ENV or YAML) and structured dict.
 
-    Auto-detects the format on write:
-    - Lines with ``=`` are parsed as ENV format (``KEY=value``)
-    - Lines with ``: `` are parsed as YAML format (``KEY: value``)
-    - Empty lines and ``#`` comments are skipped
+    Supports two formats:
+    - **ENV**: flat ``KEY=value`` lines (one per line, ``#`` comments allowed)
+    - **YAML**: full YAML mapping (supports nested values, lists, etc.)
 
-    The ``format`` parameter controls which format ``read()`` outputs.
+    The ``fmt`` parameter controls which format ``read()`` / ``view()``
+    outputs.  ``write()`` auto-detects based on the current format.
     """
 
     def __init__(self, fmt: str = "env") -> None:
         self.fmt = fmt  # "env" or "yaml"
 
     def read(self, value: Any) -> str:
+        """Convert structured data back to editable text."""
         if isinstance(value, dict):
             if self.fmt == "yaml":
-                return "\n".join(f"{k}: {v}" for k, v in value.items())
+                return yaml.dump(
+                    value, default_flow_style=False, allow_unicode=True
+                ).rstrip("\n")
             return "\n".join(f"{k}={v}" for k, v in value.items())
         return str(value or "")
 
-    def write(self, value: Any) -> dict[str, str]:
+    def write(self, value: Any) -> dict:
+        """Parse editable text into a structured dict for storage."""
         if isinstance(value, dict):
             return value
+        text = str(value or "").strip()
+        if not text:
+            return {}
+
+        # Try YAML parse first — it handles both YAML and simple KEY: value
+        try:
+            parsed = yaml.safe_load(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except yaml.YAMLError:
+            pass
+
+        # Fallback: line-by-line ENV parsing
         result: dict[str, str] = {}
-        for line in str(value).split("\n"):
+        for line in text.split("\n"):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            if "=" in line and ": " not in line.split("=", 1)[0]:
-                # ENV format: KEY=value
+            if "=" in line:
                 key, val = line.split("=", 1)
-                result[key.strip()] = val.strip()
-            elif ": " in line:
-                # YAML format: KEY: value
-                key, val = line.split(": ", 1)
-                result[key.strip()] = val.strip()
-            elif ":" in line:
-                # YAML with no space: KEY:value
-                key, val = line.split(":", 1)
                 result[key.strip()] = val.strip()
         return result
 
