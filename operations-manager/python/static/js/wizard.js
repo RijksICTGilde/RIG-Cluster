@@ -7,24 +7,81 @@
 
 /* ========================================================================
  * Sequence item management
+ *
+ * Context-aware: works in both the wizard (HTMX form submit) and the
+ * detail-page edit modal (fetch to /sequence endpoint).
  * ======================================================================== */
 
 function sequenceAdd(path) {
-    var form = document.getElementById('wizard-step-form');
-    if (!form) return;
-    _seqHidden(form, '_seq_action', 'add');
-    _seqHidden(form, '_seq_path', path);
-    _seqHidden(form, '_seq_index', '');
-    htmx.trigger(form, 'submit');
+    _sequenceDispatch('add', path, '');
 }
 
 function sequenceRemove(path, index) {
+    _sequenceDispatch('remove', path, String(index));
+}
+
+/**
+ * Route the sequence action to the correct handler based on context.
+ */
+function _sequenceDispatch(action, path, index) {
     var form = document.getElementById('wizard-step-form');
-    if (!form) return;
-    _seqHidden(form, '_seq_action', 'remove');
-    _seqHidden(form, '_seq_path', path);
-    _seqHidden(form, '_seq_index', String(index));
-    htmx.trigger(form, 'submit');
+    if (form) {
+        /* Wizard context: inject hidden fields and trigger HTMX submit */
+        _seqHidden(form, '_seq_action', action);
+        _seqHidden(form, '_seq_path', path);
+        _seqHidden(form, '_seq_index', index);
+        htmx.trigger(form, 'submit');
+        return;
+    }
+
+    /* Detail-edit modal context */
+    var modal = document.getElementById('edit-section-modal');
+    if (modal && modal.dataset.projectName && modal.dataset.sectionId) {
+        _sequenceEditModal(modal, action, path, index);
+    }
+}
+
+/**
+ * Handle sequence action in the detail-edit modal via fetch.
+ */
+function _sequenceEditModal(modal, action, path, index) {
+    var contentEl = document.getElementById('edit-section-content');
+    if (!contentEl) return;
+    if (typeof collectFormData !== 'function') return;
+
+    var projectName = modal.dataset.projectName;
+    var sectionId = modal.dataset.sectionId;
+
+    var formData = collectFormData(contentEl);
+    formData['_seq_action'] = action;
+    formData['_seq_path'] = path;
+    formData['_seq_index'] = index;
+
+    fetch('/projects/' + projectName + '/edit/' + sectionId + '/sequence', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+    })
+    .then(function(response) {
+        if (!response.ok) throw new Error('Fout bij reeks-actie');
+        return response.text();
+    })
+    .then(function(html) {
+        contentEl.innerHTML = html;
+        /* Re-init service cards if present */
+        contentEl.querySelectorAll('.service-cards-grid').forEach(function(grid) {
+            delete grid.dataset.initialized;
+            initServiceCards(grid);
+        });
+    })
+    .catch(function(err) {
+        var errorEl = document.getElementById('edit-section-error');
+        if (errorEl) {
+            errorEl.textContent = err.message;
+            errorEl.style.display = '';
+        }
+    });
 }
 
 function _seqHidden(form, name, value) {

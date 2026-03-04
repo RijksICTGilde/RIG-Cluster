@@ -1691,7 +1691,7 @@
 
 {# Generic Edit Section Modal #}
 <div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
-<div id="edit-section-modal" class="edit-section-modal" role="dialog" aria-modal="true" aria-labelledby="edit-section-title">
+<div id="edit-section-modal" class="edit-section-modal" role="dialog" aria-modal="true" aria-labelledby="edit-section-title" data-project-name="{{ project.name }}">
     <div class="edit-section-header">
         <c-heading type="h2" id="edit-section-title"><c-icon icon="bewerken" size="lg" color="donkerblauw" /></c-heading>
         <button type="button" class="edit-modal-close-btn" onclick="closeEditModal()" title="Sluiten">
@@ -4242,59 +4242,13 @@
     let isEditSubmitting = false;
     let editPollTimer = null;
 
-    /* ---------------------------------------------------------------
-     * Sequence add/remove for edit modal
-     * (mirrors wizard.js but uses the detail-edit sequence endpoint)
-     * --------------------------------------------------------------- */
-    function sequenceAdd(path) {
-        _sequenceAction('add', path, '');
-    }
-
-    function sequenceRemove(path, index) {
-        _sequenceAction('remove', path, String(index));
-    }
-
-    function _sequenceAction(action, path, index) {
-        if (!editSectionId) return;
-        var contentEl = document.getElementById('edit-section-content');
-        if (!contentEl) return;
-
-        var formData = collectFormData(contentEl);
-        formData['_seq_action'] = action;
-        formData['_seq_path'] = path;
-        formData['_seq_index'] = index;
-
-        fetch('/projects/{{ project.name }}/edit/' + editSectionId + '/sequence', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(formData),
-        })
-        .then(function(response) {
-            if (!response.ok) throw new Error('Fout bij reeks-actie');
-            return response.text();
-        })
-        .then(function(html) {
-            contentEl.innerHTML = html;
-            // Re-init service cards if present
-            contentEl.querySelectorAll('.service-cards-grid').forEach(function(grid) {
-                delete grid.dataset.initialized;
-                if (typeof initServiceCards === 'function') initServiceCards(grid);
-            });
-        })
-        .catch(function(err) {
-            var errorEl = document.getElementById('edit-section-error');
-            if (errorEl) {
-                errorEl.textContent = err.message;
-                errorEl.style.display = '';
-            }
-        });
-    }
-
     function openEditModal(sectionId, title) {
         editSectionId = sectionId;
         isEditSubmitting = false;
         if (editPollTimer) { clearInterval(editPollTimer); editPollTimer = null; }
+
+        // Store section ID on modal element so wizard.js can find it
+        document.getElementById('edit-section-modal').dataset.sectionId = sectionId;
 
         // Set title
         var titleEl = document.getElementById('edit-section-title');
