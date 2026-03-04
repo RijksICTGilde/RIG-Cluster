@@ -123,6 +123,21 @@ a.wizard-steps__link:hover .wizard-steps__label {
     transition: width 0.3s ease;
 }
 
+/* Edit modal wizard steps override */
+.edit-wizard-steps {
+    margin: 0 0 1rem 0;
+    padding: 0 1.5rem;
+}
+.edit-step-indicator {
+    border-bottom: 1px solid #E0E0E0;
+    padding-bottom: 0.5rem;
+}
+.edit-step-right-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
 /* Wizard Step Content */
 .wizard-content {
     background: white;

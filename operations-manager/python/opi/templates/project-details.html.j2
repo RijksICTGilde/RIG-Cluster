@@ -1704,6 +1704,7 @@
             <c-icon icon="kruis" size="md" />
         </button>
     </div>
+    <div id="edit-step-indicator" class="edit-step-indicator" style="display: none;"></div>
     <div id="edit-section-error" class="edit-section-error" style="display: none;"></div>
     <div id="edit-section-content" class="edit-section-content">
         <div class="edit-section-loading">
@@ -4249,10 +4250,12 @@
     let editSectionId = null;
     let isEditSubmitting = false;
     let editPollTimer = null;
+    var editStepState = null;  // null when not in wizard step mode
 
     function openEditModal(sectionId, title) {
         editSectionId = sectionId;
         isEditSubmitting = false;
+        editStepState = null;
         if (editPollTimer) { clearInterval(editPollTimer); editPollTimer = null; }
 
         // Store section ID on modal element so wizard.js can find it
@@ -4262,9 +4265,10 @@
         var titleEl = document.getElementById('edit-section-title');
         titleEl.innerHTML = '<c-icon icon="bewerken" size="lg" color="donkerblauw" />' + title;
 
-        // Hide error
+        // Hide error and step indicator
         var errorEl = document.getElementById('edit-section-error');
         errorEl.style.display = 'none';
+        document.getElementById('edit-step-indicator').style.display = 'none';
 
         // Show loading state in content area
         var contentEl = document.getElementById('edit-section-content');
@@ -4295,13 +4299,159 @@
         });
     }
 
+    /* -- Wizard step state management ----------------------------------- */
+
+    function initEditSteps(sections) {
+        // sections: [{id, title, icon}, ...] — first one is already completed (services-edit)
+        editStepState = {
+            sections: sections,
+            currentIndex: 1,  // start at first config section; 0 is services-edit (completed)
+            completed: new Set([sections[0].id])
+        };
+    }
+
+    function getEditSteps() {
+        if (!editStepState) return null;
+        var s = editStepState;
+        return {
+            all: s.sections.map(function(sec) { return sec.id; }),
+            current: s.sections[s.currentIndex].id,
+            titles: Object.fromEntries(s.sections.map(function(sec) { return [sec.id, sec.title]; })),
+            icons: Object.fromEntries(s.sections.map(function(sec) { return [sec.id, sec.icon]; })),
+            completed: Array.from(s.completed),
+            isFirst: s.currentIndex === 0,
+            isLast: s.currentIndex === s.sections.length - 1,
+            progressPct: Math.round(s.completed.size / s.sections.length * 100)
+        };
+    }
+
+    function renderEditStepIndicator() {
+        var steps = getEditSteps();
+        if (!steps) return '';
+
+        var html = '<nav aria-label="Configuratie voortgang" class="wizard-steps edit-wizard-steps">' +
+            '<ol class="wizard-steps__list">';
+
+        steps.all.forEach(function(sectionId, idx) {
+            var isCurrent = sectionId === steps.current;
+            var isCompleted = steps.completed.indexOf(sectionId) !== -1;
+            var stepNum = idx + 1;
+            var cls = 'wizard-steps__item';
+            if (isCurrent) cls += ' wizard-steps__item--active';
+            if (isCompleted) cls += ' wizard-steps__item--completed';
+
+            html += '<li class="' + cls + '"' + (isCurrent ? ' aria-current="step"' : '') + '>';
+
+            if (isCompleted && !isCurrent) {
+                html += '<a href="#" onclick="navigateEditStep(\'' + sectionId + '\'); return false;" class="wizard-steps__link">' +
+                    '<span class="wizard-steps__number"><c-icon icon="vinkje" size="sm" /></span>' +
+                    '<span class="wizard-steps__label">' + steps.titles[sectionId] + '</span></a>';
+            } else {
+                html += '<span class="wizard-steps__link' + (!isCurrent ? ' wizard-steps__link--disabled' : '') + '">' +
+                    '<span class="wizard-steps__number">' + stepNum + '</span>' +
+                    '<span class="wizard-steps__label">' + steps.titles[sectionId] + '</span></span>';
+            }
+
+            html += '</li>';
+        });
+
+        html += '</ol><div class="wizard-steps__progress">' +
+            '<div class="wizard-steps__progress-bar" style="width: ' + steps.progressPct + '%"></div>' +
+            '</div></nav>';
+
+        return html;
+    }
+
+    function navigateEditStep(sectionId) {
+        if (!editStepState) return;
+        var idx = editStepState.sections.findIndex(function(s) { return s.id === sectionId; });
+        if (idx === -1) return;
+        if (!editStepState.completed.has(sectionId)) return;
+        editStepState.currentIndex = idx;
+        var sec = editStepState.sections[idx];
+        loadEditStepContent(sec.id, sec.title);
+    }
+
+    function loadEditStepContent(sectionId, title) {
+        editSectionId = sectionId;
+
+        // Update title
+        var titleEl = document.getElementById('edit-section-title');
+        titleEl.innerHTML = '<c-icon icon="bewerken" size="lg" color="donkerblauw" />' + title;
+
+        // Update step indicator
+        var indicatorEl = document.getElementById('edit-step-indicator');
+        indicatorEl.innerHTML = renderEditStepIndicator();
+        indicatorEl.style.display = '';
+
+        // Hide error
+        var errorEl = document.getElementById('edit-section-error');
+        errorEl.style.display = 'none';
+
+        // Update action buttons for step mode
+        updateEditStepActions();
+
+        // Fetch section form
+        var contentEl = document.getElementById('edit-section-content');
+        contentEl.innerHTML = '<div class="edit-section-loading"><p>Laden...</p></div>';
+
+        fetch('/projects/{{ project.name }}/edit/' + sectionId, { credentials: 'same-origin' })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van het formulier');
+            return response.text();
+        })
+        .then(function(html) {
+            contentEl.innerHTML = html;
+            if (typeof initKvEditors === 'function') initKvEditors(contentEl);
+        })
+        .catch(function(err) {
+            contentEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    }
+
+    function updateEditStepActions() {
+        var actionsEl = document.getElementById('edit-section-actions');
+        var steps = getEditSteps();
+        if (!steps) return;
+
+        actionsEl.style.justifyContent = 'space-between';
+        var html = '';
+
+        // Left side: Vorige button (if not first and previous is completed)
+        if (!steps.isFirst && editStepState.currentIndex > 0) {
+            var prevSec = editStepState.sections[editStepState.currentIndex - 1];
+            html += '<button type="button" class="rvo-button rvo-button--secondary" ' +
+                'onclick="navigateEditStep(\'' + prevSec.id + '\')">' +
+                'Vorige</button>';
+        } else {
+            html += '<span></span>';
+        }
+
+        // Right side: Opslaan or Opslaan & volgende
+        if (steps.isLast) {
+            html += '<button type="button" class="rvo-button rvo-button--primary" ' +
+                'onclick="submitEditModal()">Opslaan</button>';
+        } else {
+            html += '<div class="edit-step-right-actions">' +
+                '<button type="button" class="rvo-button rvo-button--tertiary" ' +
+                'onclick="editStepState = null; closeEditModalAndReload()">Later configureren</button>' +
+                '<button type="button" class="rvo-button rvo-button--primary" ' +
+                'onclick="submitEditModal()">Opslaan & volgende</button></div>';
+        }
+
+        actionsEl.innerHTML = html;
+        actionsEl.style.display = '';
+    }
+
     function closeEditModal() {
         if (isEditSubmitting) return;
         if (editPollTimer) { clearInterval(editPollTimer); editPollTimer = null; }
         document.getElementById('edit-section-backdrop').classList.remove('is-open');
         document.getElementById('edit-section-modal').classList.remove('is-open');
+        document.getElementById('edit-step-indicator').style.display = 'none';
         document.body.style.overflow = '';
         editSectionId = null;
+        editStepState = null;
     }
 
     function closeEditModalAndReload() {
@@ -4309,8 +4459,10 @@
         isEditSubmitting = false;
         document.getElementById('edit-section-backdrop').classList.remove('is-open');
         document.getElementById('edit-section-modal').classList.remove('is-open');
+        document.getElementById('edit-step-indicator').style.display = 'none';
         document.body.style.overflow = '';
         editSectionId = null;
+        editStepState = null;
         window.location.reload();
     }
 
@@ -4427,10 +4579,7 @@
 
     /* -- In-modal progress view ---------------------------------------- */
 
-    var editNextSections = []; // Queue of config sections to chain through
-
-    function showModalProgress(taskId, nextSections) {
-        editNextSections = nextSections ? nextSections.split(',') : [];
+    function showModalProgress(taskId) {
         var contentEl = document.getElementById('edit-section-content');
         var actionsEl = document.getElementById('edit-section-actions');
 
@@ -4497,29 +4646,23 @@
                 if (stepEl) stepEl.textContent = 'Wijzigingen succesvol verwerkt!';
                 if (bar) bar.style.width = '100%';
 
-                // Auto-chain or show close button
+                // Auto-chain config steps or show close button
                 var actionsEl = document.getElementById('edit-progress-actions');
-                if (editNextSections.length > 0) {
-                    var nextSection = editNextSections.shift();
-                    var sectionTitle = {
-                        'keycloak-config': 'Keycloak configuratie',
-                        'postgresql-config': 'Database configuratie',
-                        'auth-wall-config': 'Authorization wall configuratie'
-                    }[nextSection] || nextSection;
-
-                    if (stepEl) stepEl.textContent = 'Volgende stap: ' + sectionTitle;
+                if (editStepState && editStepState.sections.length > 1) {
+                    var sec = editStepState.sections[editStepState.currentIndex];
+                    if (stepEl) stepEl.textContent = 'Volgende stap: ' + sec.title;
 
                     if (actionsEl) {
                         actionsEl.innerHTML =
                             '<button type="button" class="rvo-button rvo-button--tertiary" ' +
-                                'onclick="editNextSections = []; closeEditModalAndReload()">Later configureren</button>';
+                                'onclick="editStepState = null; closeEditModalAndReload()">Later configureren</button>';
                         actionsEl.style.display = '';
                     }
 
                     setTimeout(function() {
                         var modal = document.getElementById('edit-section-modal');
                         if (modal && modal.classList.contains('is-open')) {
-                            openEditModal(nextSection, sectionTitle);
+                            loadEditStepContent(sec.id, sec.title);
                         }
                     }, 800);
                 } else if (actionsEl) {
@@ -4575,8 +4718,18 @@
             body: JSON.stringify(formData),
         })
         .then(function(response) {
-            var nextSection = response.headers.get('X-Next-Section');
+            var nextSectionsHeader = response.headers.get('X-Next-Sections');
             var taskId = response.headers.get('X-Task-Id');
+
+            // Initialize step state from header metadata
+            if (nextSectionsHeader) {
+                try {
+                    var sections = JSON.parse(nextSectionsHeader);
+                    if (sections.length > 0) {
+                        initEditSteps(sections);
+                    }
+                } catch(e) { /* ignore parse errors */ }
+            }
 
             if (response.status === 422) {
                 return response.text().then(function(html) {
@@ -4592,32 +4745,35 @@
 
             // Determine flow based on response headers
             if (taskId) {
-                // process_project: show progress in modal (pass nextSection for chaining)
-                showModalProgress(taskId, nextSection);
+                // process_project: show progress in modal
+                showModalProgress(taskId);
             } else {
-                // save_only: show brief success, then chain or reload
+                // save_only: show brief success, then advance step or reload
                 isEditSubmitting = false;
                 contentEl.innerHTML =
                     '<div class="edit-section-success">' +
                         '<c-icon icon="vinkje" size="xl" color="groen" />' +
                         '<p>Wijzigingen opgeslagen</p>' +
                     '</div>';
-                document.getElementById('edit-section-actions').style.display = 'none';
 
-                if (editNextSections.length > 0) {
-                    var nextSection = editNextSections.shift();
-                    var sectionTitle = {
-                        'keycloak-config': 'Keycloak configuratie',
-                        'postgresql-config': 'Database configuratie',
-                        'auth-wall-config': 'Authorization wall configuratie'
-                    }[nextSection] || nextSection;
-                    setTimeout(function() {
-                        openEditModal(nextSection, sectionTitle);
-                    }, 800);
+                if (editStepState) {
+                    // Mark current step completed and advance
+                    var current = editStepState.sections[editStepState.currentIndex];
+                    editStepState.completed.add(current.id);
+
+                    if (editStepState.currentIndex < editStepState.sections.length - 1) {
+                        editStepState.currentIndex++;
+                        var next = editStepState.sections[editStepState.currentIndex];
+                        setTimeout(function() { loadEditStepContent(next.id, next.title); }, 800);
+                    } else {
+                        // Last step done — close and reload
+                        editStepState = null;
+                        document.getElementById('edit-section-actions').style.display = 'none';
+                        setTimeout(function() { closeEditModalAndReload(); }, 1200);
+                    }
                 } else {
-                    setTimeout(function() {
-                        closeEditModalAndReload();
-                    }, 1200);
+                    document.getElementById('edit-section-actions').style.display = 'none';
+                    setTimeout(function() { closeEditModalAndReload(); }, 1200);
                 }
             }
         })

@@ -21,6 +21,7 @@ from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.visualizers.wizard_sections import (
     EDIT_SECTIONS,
     SERVICE_CONFIG_SECTIONS,
+    SERVICES_EDIT_SECTION,
     _extract_services,
 )
 from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
@@ -30,9 +31,7 @@ logger = logging.getLogger(__name__)
 detail_edit_router = APIRouter(prefix="/projects", tags=["detail-edit"])
 
 
-async def _commit_to_git(
-    project_name: str, project_data: dict[str, Any], section_id: str
-) -> None:
+async def _commit_to_git(project_name: str, project_data: dict[str, Any], section_id: str) -> None:
     """Commit and push a project file change to git without deployment.
 
     Reuses ``_commit_project_yaml`` from the resource API which handles
@@ -43,7 +42,9 @@ async def _commit_to_git(
     try:
         filename = f"{project_name}.yaml"
         await _commit_project_yaml(
-            project_name, filename, project_data,
+            project_name,
+            filename,
+            project_data,
             f"Update {project_name} ({section_id})",
         )
     except Exception:
@@ -256,9 +257,7 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
     if section.post_save_action == "save_only":
         logger.info("Section '%s' is save_only, committing to git without deployment", section_id)
         response = HTMLResponse(content="", status_code=200)
-        response.background = BackgroundTask(
-            _commit_to_git, project_name, result_yaml, section_id
-        )
+        response.background = BackgroundTask(_commit_to_git, project_name, result_yaml, section_id)
         return response
 
     # --- process_project: git commit+push + full deployment pipeline ---
@@ -271,16 +270,21 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
     yaml_content = yaml_output.getvalue()
 
     # Determine which config sections are needed for newly added services
-    config_sections_needed: list[str] = []
+    config_sections_meta: list[dict[str, str]] = []
     if section_id == "services-edit":
         old_services = set(_extract_services(project_data))
         new_services = set(_extract_services(result_yaml))
         added_services = new_services - old_services
-        config_sections_needed.extend(
-            SERVICE_CONFIG_SECTIONS[svc_name].section_id
-            for svc_name in added_services
-            if svc_name in SERVICE_CONFIG_SECTIONS
-        )
+        for svc_name in added_services:
+            if svc_name in SERVICE_CONFIG_SECTIONS:
+                sec = SERVICE_CONFIG_SECTIONS[svc_name]
+                config_sections_meta.append(
+                    {
+                        "id": sec.section_id,
+                        "title": sec.title,
+                        "icon": sec.icon,
+                    }
+                )
 
     display_name = result_yaml.get("display-name", project_name)
     task_id = create_task(display_name)
@@ -293,8 +297,19 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
 
     response = HTMLResponse(content="", status_code=200)
 
-    if config_sections_needed:
-        response.headers["X-Next-Section"] = ",".join(config_sections_needed)
+    if config_sections_meta:
+        import json
+
+        # Include services-edit as the already-completed first step
+        all_steps = [
+            {
+                "id": SERVICES_EDIT_SECTION.section_id,
+                "title": SERVICES_EDIT_SECTION.title,
+                "icon": SERVICES_EDIT_SECTION.icon,
+            },
+            *config_sections_meta,
+        ]
+        response.headers["X-Next-Sections"] = json.dumps(all_steps)
 
     response.headers["X-Task-Id"] = task_id
     response.background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)

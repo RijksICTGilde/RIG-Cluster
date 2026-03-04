@@ -615,7 +615,16 @@ class TestSubmitEditSectionEndpoint:
 
             response = await submit_edit_section(request, "test-project", "services-edit")
             assert response.status_code == 200
-            assert response.headers.get("X-Next-Section") == "keycloak-config"
+            import json
+
+            sections = json.loads(response.headers.get("X-Next-Sections"))
+            section_ids = [s["id"] for s in sections]
+            assert "services-edit" in section_ids
+            assert "keycloak-config" in section_ids
+            # Each section should have title and icon metadata
+            for sec in sections:
+                assert "title" in sec
+                assert "icon" in sec
 
 
 class TestSequenceActionEndpoint:
