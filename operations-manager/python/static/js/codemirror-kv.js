@@ -31,6 +31,52 @@
     }
 
     /**
+     * Create a CodeMirror editor for a single .kv-editor container.
+     * Extracted to its own function so closure variables are correctly
+     * scoped per editor (avoids the var-in-for-loop capture bug).
+     */
+    function _initSingleEditor(editorDiv) {
+        var textarea = editorDiv.querySelector("textarea[data-cm-kv]");
+        if (!textarea) return;
+
+        var editorId = editorDiv.id;
+        var format = editorDiv.dataset.format || "env";
+        var langCompartment = new Compartment();
+
+        var view = new EditorView({
+            doc: textarea.value,
+            extensions: [
+                basicSetup,
+                langCompartment.of(langExtension(format)),
+                EditorView.updateListener.of(function (update) {
+                    if (update.docChanged) {
+                        textarea.value = update.state.doc.toString();
+                        if (typeof kvValidate === "function") {
+                            kvValidate(editorId);
+                        }
+                    }
+                }),
+                EditorView.theme({
+                    "&": { minHeight: "7.5rem" },
+                    ".cm-scroller": { overflow: "auto" },
+                }),
+            ],
+        });
+
+        var wrapper = document.createElement("div");
+        wrapper.className = "cm-kv-wrapper";
+        wrapper.appendChild(view.dom);
+        textarea.parentNode.insertBefore(wrapper, textarea.nextSibling);
+        textarea.style.display = "none";
+
+        _instances[editorId] = {
+            view: view,
+            langCompartment: langCompartment,
+        };
+        editorDiv.dataset.cmInitialized = "1";
+    }
+
+    /**
      * Initialize CodeMirror editors for all .kv-editor containers within
      * the given root element. Safe to call repeatedly — already-initialized
      * editors are skipped.
@@ -40,53 +86,17 @@
         var editors = container.querySelectorAll(".kv-editor");
 
         for (var i = 0; i < editors.length; i++) {
-            var editorDiv = editors[i];
-            if (editorDiv.dataset.cmInitialized) continue;
-
-            var textarea = editorDiv.querySelector("textarea[data-cm-kv]");
-            if (!textarea) continue;
-
-            var editorId = editorDiv.id;
-            var format = editorDiv.dataset.format || "env";
-            var langCompartment = new Compartment();
-
-            var view = new EditorView({
-                doc: textarea.value,
-                extensions: [
-                    basicSetup,
-                    langCompartment.of(langExtension(format)),
-                    EditorView.updateListener.of(function (update) {
-                        if (update.docChanged) {
-                            textarea.value = update.state.doc.toString();
-                            if (typeof kvValidate === "function") {
-                                kvValidate(editorId);
-                            }
-                        }
-                    }),
-                    EditorView.theme({
-                        "&": { minHeight: "7.5rem" },
-                        ".cm-scroller": { overflow: "auto" },
-                    }),
-                ],
-            });
-
-            var wrapper = document.createElement("div");
-            wrapper.className = "cm-kv-wrapper";
-            wrapper.appendChild(view.dom);
-            textarea.parentNode.insertBefore(wrapper, textarea.nextSibling);
-            textarea.style.display = "none";
-
-            _instances[editorId] = {
-                view: view,
-                langCompartment: langCompartment,
-            };
-            editorDiv.dataset.cmInitialized = "1";
+            if (editors[i].dataset.cmInitialized) continue;
+            _initSingleEditor(editors[i]);
         }
     }
 
     /**
-     * Switch the language mode for an existing CodeMirror KV editor.
-     * Called after kvToggleFormat has already converted the textarea value.
+     * Switch the language mode for an existing CodeMirror KV editor and
+     * sync the (already-converted) textarea content into the CM doc.
+     *
+     * Called after kvToggleFormat has converted the textarea value and
+     * updated data-format on the container.
      */
     function switchKvLanguage(editorId, newFormat) {
         var inst = _instances[editorId];
@@ -94,20 +104,18 @@
 
         var editorDiv = document.getElementById(editorId);
         var textarea = editorDiv ? editorDiv.querySelector("textarea[data-cm-kv]") : null;
+        if (!textarea) return;
 
+        // Single dispatch: reconfigure language AND replace document content
+        // so the updateListener fires only once with the final state.
         inst.view.dispatch({
             effects: inst.langCompartment.reconfigure(langExtension(newFormat)),
+            changes: {
+                from: 0,
+                to: inst.view.state.doc.length,
+                insert: textarea.value,
+            },
         });
-
-        if (textarea) {
-            inst.view.dispatch({
-                changes: {
-                    from: 0,
-                    to: inst.view.state.doc.length,
-                    insert: textarea.value,
-                },
-            });
-        }
     }
 
     /**
