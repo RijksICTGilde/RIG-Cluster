@@ -502,12 +502,15 @@ class TestSubmitEditSectionEndpoint:
             saved_data = mock_save.call_args[0][1]
             assert saved_data["description"] == "new description"
 
-            # No background task was created
+            # No deployment task was created (save_only skips deployment)
             mock_create_task.assert_not_called()
 
-            # No task-related headers
+            # No task-related headers (no progress modal for save_only)
             assert "X-Task-Id" not in response.headers
             assert "HX-Redirect" not in response.headers
+
+            # Git commit is scheduled as a background task
+            assert response.background is not None
 
     @pytest.mark.asyncio
     async def test_process_project_section_triggers_background_task(self):
@@ -582,9 +585,10 @@ class TestSubmitEditSectionEndpoint:
             assert len(saved_data["users"]) == 2
             assert saved_data["users"][1]["email"] == "bob@example.com"
 
-            # Team is save_only — no background task
+            # Team is save_only — no deployment task, but git commit is scheduled
             mock_create_task.assert_not_called()
             assert "X-Task-Id" not in response.headers
+            assert response.background is not None
 
     @pytest.mark.asyncio
     async def test_new_service_triggers_next_section_header(self):

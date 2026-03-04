@@ -30,6 +30,26 @@ logger = logging.getLogger(__name__)
 detail_edit_router = APIRouter(prefix="/projects", tags=["detail-edit"])
 
 
+async def _commit_to_git(
+    project_name: str, project_data: dict[str, Any], section_id: str
+) -> None:
+    """Commit and push a project file change to git without deployment.
+
+    Reuses ``_commit_project_yaml`` from the resource API which handles
+    git connector lifecycle and YAML serialization.
+    """
+    from opi.api.resource_router import _commit_project_yaml
+
+    try:
+        filename = f"{project_name}.yaml"
+        await _commit_project_yaml(
+            project_name, filename, project_data,
+            f"Update {project_name} ({section_id})",
+        )
+    except Exception:
+        logger.exception("Failed to commit %s to git", project_name)
+
+
 def _create_renderer() -> FormRenderer:
     return FormRenderer(
         widget_adapter=ROOSWidgetAdapter(),
@@ -232,12 +252,23 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
     project_service.load_project_from_data(result_yaml, project.filename)
     logger.info("Project %s section '%s' updated by %s", project_name, section_id, user_email)
 
-    # --- save_only: just save the file, no background processing ---
+    # --- save_only: git commit+push only, no deployment ---
     if section.post_save_action == "save_only":
-        logger.info("Section '%s' is save_only, skipping background processing", section_id)
-        return HTMLResponse(content="", status_code=200)
+        logger.info("Section '%s' is save_only, committing to git without deployment", section_id)
+        response = HTMLResponse(content="", status_code=200)
+        response.background = BackgroundTask(
+            _commit_to_git, project_name, result_yaml, section_id
+        )
+        return response
 
-    # --- process_project: trigger background deployment pipeline ---
+    # --- process_project: git commit+push + full deployment pipeline ---
+
+    yaml_instance = YAML()
+    yaml_instance.preserve_quotes = True
+    yaml_instance.width = 4096
+    yaml_output = StringIO()
+    yaml_instance.dump(result_yaml, yaml_output)
+    yaml_content = yaml_output.getvalue()
 
     # Determine which config sections are needed for newly added services
     config_sections_needed: list[str] = []
@@ -250,13 +281,6 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
             for svc_name in added_services
             if svc_name in SERVICE_CONFIG_SECTIONS
         )
-
-    yaml_instance = YAML()
-    yaml_instance.preserve_quotes = True
-    yaml_instance.width = 4096
-    yaml_output = StringIO()
-    yaml_instance.dump(result_yaml, yaml_output)
-    yaml_content = yaml_output.getvalue()
 
     display_name = result_yaml.get("display-name", project_name)
     task_id = create_task(display_name)
