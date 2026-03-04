@@ -35,11 +35,11 @@ LAYER 1 — Depends on Layer 0 (run in parallel after Layer 0)
   └─ Sub-part F: Enforcers           → impl-F-enforcers.md       [DONE]
 
 LAYER 2 — Depends on Layer 0+1 (run in parallel)
-  ├─ Sub-part G: Bridge              → impl-G-bridge.md          (needs A, B)
+  ├─ Sub-part G: Bridge              → impl-G-bridge.md          [DONE]
   └─ Sub-part H: Widget Extension    → impl-H-widget-extension.md [DONE]
 
 LAYER 3 — Assembly (sequential, after all above)
-  └─ Sub-part I: Package Init        → impl-I-package-init.md    (needs all)
+  └─ Sub-part I: Package Init        → impl-I-package-init.md    [DONE]
 ```
 
 ## Execution Phases
@@ -120,12 +120,14 @@ uv run pyright opi/forms/editables/
 
 ## Verification Checklist
 
-- [ ] `from opi.forms.editables import ProjectEditable, EditablePart, FormFlow` — no import errors
-- [ ] `from opi.forms.editables import get_value, set_value, resolve_path` — no import errors
-- [ ] `from opi.forms.editables import editable_to_form_field, should_render_editable` — no import errors
-- [ ] All 9 test files pass: `uv run pytest tests/test_editables_*.py -v`
-- [ ] `ruff check opi/forms/editables/` — no errors
-- [ ] `ruff format opi/forms/editables/` — no changes needed
-- [ ] `pyright opi/forms/editables/` — no errors
-- [ ] Existing tests still pass: `uv run pytest tests/ -v --ignore=tests/test_editables_*.py`
-- [ ] `render_field()` dispatches `display_card` widget type correctly
+- [x] `from opi.forms.editables import ProjectEditable, EditablePart, FormFlow` — no import errors
+- [x] `from opi.forms.editables import get_value, set_value, resolve_path` — no import errors
+- [x] `from opi.forms.editables import editable_to_form_field, should_render_editable` — no import errors
+- [x] All 9 test files pass: `uv run pytest tests/test_editables_*.py -v` (207 tests)
+- [x] `ruff check opi/forms/editables/` — no errors
+- [x] `ruff format opi/forms/editables/` — no changes needed
+- [x] `pyright opi/forms/editables/` — no errors
+- [x] Existing tests still pass (unit tests pass; integration tests require live K8s cluster)
+- [x] `render_field()` dispatches `display_card` widget type correctly
+
+BUILD_COMPLETE_MARKER

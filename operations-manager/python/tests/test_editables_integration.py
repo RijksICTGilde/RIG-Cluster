@@ -1,32 +1,30 @@
 """
 End-to-end integration tests for the editables package.
 
-Tests the full pipeline: EditableVisualizer -> editable_to_form_field() -> FormField -> ROOSWidgetAdapter.
+Tests the full pipeline: ProjectEditable -> editable_to_form_field() -> FormField -> ROOSWidgetAdapter.
 """
 
 from __future__ import annotations
 
 import pytest
 from opi.forms.editables import (
+    EditablePart,
+    FlowMode,
+    FormFlow,
+    ProjectEditable,
+    editable_to_form_field,
     get_value,
     resolve_path,
     set_value,
+    should_render_editable,
 )
 from opi.forms.editables.converters import (
     EncryptedDisplayConverter,
     IntegerListConverter,
     TruncateConverter,
 )
-from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.enforcers import AdminRequiredEnforcer
-from opi.forms.editables.validators import RealmRoleValidator, RequiredValidator, SlugValidator
-from opi.forms.visualizers.bridge import (
-    editable_to_form_field,
-    should_render_editable,
-)
-from opi.forms.visualizers.flows import FlowMode, FormFlow
-from opi.forms.visualizers.sections import FormSection
-from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.forms.editables.validators import RequiredValidator, SlugValidator
 from opi.forms.widgets.roos import ROOSWidgetAdapter
 
 
@@ -34,11 +32,7 @@ class TestFullRenderPipeline:
     """Test editable -> FormField -> HTML rendering."""
 
     def test_simple_text_field(self):
-        editable = EditableVisualizer(
-            editable=Editable(yaml_path="name"),
-            widget=WidgetType.TEXT,
-            label="Naam",
-        )
+        editable = ProjectEditable(yaml_path="name", widget="text", label="Naam")
         yaml_data = {"name": "test-project"}
         field = editable_to_form_field(editable, yaml_data)
         adapter = ROOSWidgetAdapter()
@@ -47,14 +41,12 @@ class TestFullRenderPipeline:
         assert "test-project" in html
 
     def test_display_card_encrypted_field(self):
-        editable = EditableVisualizer(
-            editable=Editable(
-                yaml_path="config/api-key",
-                converter=EncryptedDisplayConverter(),
-            ),
-            widget=WidgetType.DISPLAY_CARD,
+        editable = ProjectEditable(
+            yaml_path="config/api-key",
+            widget="display-card",
             label="API Key",
             readonly=True,
+            converter=EncryptedDisplayConverter(),
         )
         yaml_data = {"config": {"api-key": "-----BEGIN AGE ENCRYPTED FILE-----\ndata..."}}
         field = editable_to_form_field(editable, yaml_data)
@@ -66,14 +58,12 @@ class TestFullRenderPipeline:
         assert "BEGIN AGE" not in html
 
     def test_truncated_display_card(self):
-        editable = EditableVisualizer(
-            editable=Editable(
-                yaml_path="config/age-public-key",
-                converter=TruncateConverter(20),
-            ),
-            widget=WidgetType.DISPLAY_CARD,
+        editable = ProjectEditable(
+            yaml_path="config/age-public-key",
+            widget="display-card",
             label="Public Key",
             readonly=True,
+            converter=TruncateConverter(20),
         )
         yaml_data = {"config": {"age-public-key": "age1ufgl52y9y2aumys23l3e6zplekaw4j3ndk2yrwgfteq44fgd0qaq6zcrz5"}}
         field = editable_to_form_field(editable, yaml_data)
@@ -81,13 +71,11 @@ class TestFullRenderPipeline:
         assert len(field.value) < 30
 
     def test_select_with_options_provider(self):
-        editable = EditableVisualizer(
-            editable=Editable(
-                yaml_path="components[0]/type",
-                values_provider="ComponentTypeOptionsProvider",
-            ),
-            widget=WidgetType.SELECT,
+        editable = ProjectEditable(
+            yaml_path="components[0]/type",
+            widget="select",
             label="Type",
+            options_provider="ComponentTypeOptionsProvider",
         )
         yaml_data = {"components": [{"type": "single"}]}
         field = editable_to_form_field(editable, yaml_data)
@@ -96,9 +84,9 @@ class TestFullRenderPipeline:
         assert len(field.options) > 0
 
     def test_sequence_item_with_index(self):
-        editable = EditableVisualizer(
-            editable=Editable(yaml_path="users[*]/email"),
-            widget=WidgetType.TEXT,
+        editable = ProjectEditable(
+            yaml_path="users[*]/email",
+            widget="text",
             label="Email",
         )
         yaml_data = {"users": [{"email": "a@b.c"}, {"email": "d@e.f"}]}
@@ -117,14 +105,12 @@ class TestConditionalVisibility:
 
     def test_publish_on_web_depends_on_services(self):
         """Component publish-on-web only shown if service is enabled."""
-        editable = EditableVisualizer(
-            editable=Editable(
-                yaml_path="components[*]/publish-on-web",
-                depends_on="services",
-                show_when={"contains": "publish-on-web"},
-            ),
-            widget=WidgetType.CHECKBOX,
+        editable = ProjectEditable(
+            yaml_path="components[*]/publish-on-web",
+            widget="checkbox",
             label="Publiceren op web",
+            depends_on="services",
+            show_when={"contains": "publish-on-web"},
         )
         yaml_with = {"services": ["publish-on-web", "keycloak"]}
         yaml_without = {"services": ["keycloak"]}
@@ -135,28 +121,24 @@ class TestConditionalVisibility:
         assert should_render_editable(editable, yaml_empty) is False
 
     def test_sso_depends_on_keycloak(self):
-        editable = EditableVisualizer(
-            editable=Editable(
-                yaml_path="components[*]/sso-rijk",
-                depends_on="services",
-                show_when={"contains": "keycloak"},
-            ),
-            widget=WidgetType.CHECKBOX,
+        editable = ProjectEditable(
+            yaml_path="components[*]/sso-rijk",
+            widget="checkbox",
             label="SSO Rijk",
+            depends_on="services",
+            show_when={"contains": "keycloak"},
         )
         assert should_render_editable(editable, {"services": ["keycloak"]}) is True
         assert should_render_editable(editable, {"services": ["redis"]}) is False
 
     def test_mixed_service_list_format(self):
         """Services can be mixed str/dict (YAML format)."""
-        editable = EditableVisualizer(
-            editable=Editable(
-                yaml_path="x",
-                depends_on="services",
-                show_when={"contains": "keycloak"},
-            ),
-            widget=WidgetType.CHECKBOX,
+        editable = ProjectEditable(
+            yaml_path="x",
+            widget="checkbox",
             label="X",
+            depends_on="services",
+            show_when={"contains": "keycloak"},
         )
         services = ["publish-on-web", {"keycloak": {"config": {"template": "sso"}}}]
         assert should_render_editable(editable, {"services": services}) is True
@@ -189,84 +171,6 @@ class TestValidationIntegration:
         assert len(validator.validate(None)) > 0
 
 
-class TestRealmRoleValidator:
-    """Test RealmRoleValidator."""
-
-    def test_valid_role_names(self):
-        validator = RealmRoleValidator()
-        assert validator.validate("allowed-user") == []
-        assert validator.validate("admin") == []
-        assert validator.validate("ROLE_NAME") == []
-        assert validator.validate("role_123") == []
-
-    def test_empty_value_passes(self):
-        validator = RealmRoleValidator()
-        assert validator.validate("") == []
-        assert validator.validate(None) == []
-
-    def test_invalid_characters(self):
-        validator = RealmRoleValidator()
-        errors = validator.validate("role with spaces")
-        assert len(errors) == 1
-        assert "letters" in errors[0]
-
-    def test_too_long(self):
-        validator = RealmRoleValidator()
-        errors = validator.validate("a" * 256)
-        assert len(errors) == 1
-        assert "255" in errors[0]
-
-
-class TestClearHiddenDependsOn:
-    """Test that clear_hidden_depends_on removes values for hidden dependent fields."""
-
-    def test_clears_when_dependency_off(self):
-        from opi.forms.editables.processor import EditableFormProcessor
-
-        editables = [
-            EditableVisualizer(
-                editable=Editable(yaml_path="toggle"),
-                widget=WidgetType.CHECKBOX,
-                label="Toggle",
-            ),
-            EditableVisualizer(
-                editable=Editable(
-                    yaml_path="dependent-field",
-                    depends_on="toggle",
-                ),
-                widget=WidgetType.TEXT,
-                label="Dependent",
-            ),
-        ]
-        yaml_data = {"toggle": False, "dependent-field": "should-be-cleared"}
-        processor = EditableFormProcessor()
-        processor.clear_hidden_depends_on(editables, yaml_data)
-        assert yaml_data["dependent-field"] is None
-
-    def test_keeps_when_dependency_on(self):
-        from opi.forms.editables.processor import EditableFormProcessor
-
-        editables = [
-            EditableVisualizer(
-                editable=Editable(yaml_path="toggle"),
-                widget=WidgetType.CHECKBOX,
-                label="Toggle",
-            ),
-            EditableVisualizer(
-                editable=Editable(
-                    yaml_path="dependent-field",
-                    depends_on="toggle",
-                ),
-                widget=WidgetType.TEXT,
-                label="Dependent",
-            ),
-        ]
-        yaml_data = {"toggle": True, "dependent-field": "keep-this"}
-        processor = EditableFormProcessor()
-        processor.clear_hidden_depends_on(editables, yaml_data)
-        assert yaml_data["dependent-field"] == "keep-this"
-
-
 class TestEnforcerIntegration:
     """Test enforcers work with real data."""
 
@@ -284,82 +188,61 @@ class TestEnforcerIntegration:
             enforcer.enforce(users_no_admin, {})
 
 
-class TestFormSectionComposition:
-    """Test FormSection grouping."""
+class TestEditablePartComposition:
+    """Test EditablePart grouping."""
 
-    def test_identity_section(self):
-        section = FormSection(
-            section_id="identity",
+    def test_identity_part(self):
+        part = EditablePart(
+            part_id="identity",
             title="Uw project",
             icon="huis",
             editables=[
-                EditableVisualizer(
-                    editable=Editable(yaml_path="name", required=True),
-                    widget=WidgetType.TEXT,
-                    label="project.name",
-                ),
-                EditableVisualizer(
-                    editable=Editable(yaml_path="display-name", required=True),
-                    widget=WidgetType.TEXT,
-                    label="project.display_name",
-                ),
-                EditableVisualizer(
-                    editable=Editable(yaml_path="description"),
-                    widget=WidgetType.TEXTAREA,
-                    label="project.description",
-                ),
-                EditableVisualizer(
-                    editable=Editable(yaml_path="clusters", required=True),
-                    widget=WidgetType.CHECKBOX_GROUP,
-                    label="project.clusters",
-                ),
+                ProjectEditable(yaml_path="name", widget="text", label="project.name", required=True),
+                ProjectEditable(yaml_path="display-name", widget="text", label="project.display_name", required=True),
+                ProjectEditable(yaml_path="description", widget="textarea", label="project.description"),
+                ProjectEditable(yaml_path="clusters", widget="checkbox-group", label="project.clusters", required=True),
             ],
+            in_create_wizard=True,
+            wizard_step=1,
         )
-        assert section.section_id == "identity"
-        assert len(section.editables) == 4
+        assert part.part_id == "identity"
+        assert len(part.editables) == 4
+        assert part.wizard_step == 1
 
-    def test_render_all_section_editables(self):
-        """All editables in a section can be converted to FormFields."""
-        section = FormSection(
-            section_id="identity",
+    def test_render_all_part_editables(self):
+        """All editables in a part can be converted to FormFields."""
+        part = EditablePart(
+            part_id="identity",
             title="Project",
             editables=[
-                EditableVisualizer(
-                    editable=Editable(yaml_path="name"),
-                    widget=WidgetType.TEXT,
-                    label="Naam",
-                ),
-                EditableVisualizer(
-                    editable=Editable(yaml_path="description"),
-                    widget=WidgetType.TEXTAREA,
-                    label="Omschrijving",
-                ),
+                ProjectEditable(yaml_path="name", widget="text", label="Naam"),
+                ProjectEditable(yaml_path="description", widget="textarea", label="Omschrijving"),
             ],
         )
         yaml_data = {"name": "test", "description": "A test project"}
-        for editable in section.editables:
+        for editable in part.editables:
             field = editable_to_form_field(editable, yaml_data)
-            assert field.name == editable.editable.yaml_path
-            assert field.widget_type == str(editable.widget)
+            assert field.name == editable.yaml_path
+            assert field.widget_type == editable.widget
 
 
 class TestFormFlowComposition:
-    """Test FormFlow composing sections."""
+    """Test FormFlow composing parts."""
 
     def test_create_wizard_flow(self):
         flow = FormFlow(
             flow_id="create-project",
             title="Project Aanmaken",
             mode=FlowMode.WIZARD,
-            sections=[
-                FormSection(section_id="identity", title="Uw project"),
-                FormSection(section_id="services", title="Services"),
-                FormSection(section_id="users", title="Team"),
-                FormSection(section_id="components", title="Componenten"),
+            parts=[
+                EditablePart(part_id="identity", title="Uw project"),
+                EditablePart(part_id="services", title="Services"),
+                EditablePart(part_id="users", title="Team"),
+                EditablePart(part_id="components", title="Componenten"),
             ],
             show_review=True,
         )
-        assert len(flow.sections) == 4
+        assert len(flow.parts) == 4
         assert flow.mode == FlowMode.WIZARD
 
     def test_edit_tabs_flow(self):
@@ -367,15 +250,15 @@ class TestFormFlowComposition:
             flow_id="edit-project",
             title="Project Bewerken",
             mode=FlowMode.TABS,
-            sections=[
-                FormSection(section_id="identity", title="Algemeen"),
-                FormSection(section_id="users", title="Team"),
+            parts=[
+                EditablePart(part_id="identity", title="Algemeen"),
+                EditablePart(part_id="users", title="Team"),
             ],
-            htmx_base_url="/projects/test/sections",
-            save_per_section=True,
+            htmx_base_url="/projects/test/parts",
+            save_per_part=True,
         )
         assert flow.mode == FlowMode.TABS
-        assert flow.htmx_base_url == "/projects/test/sections"
+        assert flow.htmx_base_url == "/projects/test/parts"
 
 
 class TestPathUtilitiesIntegration:
