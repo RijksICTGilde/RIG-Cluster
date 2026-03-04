@@ -12,11 +12,14 @@ from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.visualizers.wizard_sections import (
     AUTH_WALL_CONFIG_SECTION,
+    COMPONENTS_EDIT_SECTION,
+    COMPONENTS_SECTION,
     EDIT_SECTIONS,
     IDENTITY_EDIT_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
     SERVICES_EDIT_SECTION,
+    TEAM_SECTION,
     _extract_services,
 )
 from opi.web.router_detail_edit import (
@@ -33,9 +36,11 @@ class TestEditSectionDefinitions:
     def test_identity_edit_section_id(self):
         assert IDENTITY_EDIT_SECTION.section_id == "identity-edit"
 
-    def test_identity_edit_has_only_description(self):
-        assert len(IDENTITY_EDIT_SECTION.editables) == 1
-        assert IDENTITY_EDIT_SECTION.editables[0].editable.yaml_path == "description"
+    def test_identity_edit_has_display_name_and_description(self):
+        assert len(IDENTITY_EDIT_SECTION.editables) == 2
+        paths = [e.editable.yaml_path for e in IDENTITY_EDIT_SECTION.editables]
+        assert "display-name" in paths
+        assert "description" in paths
 
     def test_identity_edit_post_save_action(self):
         assert IDENTITY_EDIT_SECTION.post_save_action == "save_only"
@@ -49,9 +54,35 @@ class TestEditSectionDefinitions:
     def test_services_edit_post_save_action(self):
         assert SERVICES_EDIT_SECTION.post_save_action == "process_project"
 
+    def test_components_edit_section_id(self):
+        assert COMPONENTS_EDIT_SECTION.section_id == "components-edit"
+
+    def test_components_edit_post_save_action(self):
+        assert COMPONENTS_EDIT_SECTION.post_save_action == "process_project"
+
+    def test_components_edit_reuses_components_section_editables(self):
+        assert COMPONENTS_EDIT_SECTION.editables is COMPONENTS_SECTION.editables
+
+    def test_components_edit_reuses_components_section_layout(self):
+        assert COMPONENTS_EDIT_SECTION.layout is COMPONENTS_SECTION.layout
+
+    def test_team_edit_is_save_only(self):
+        """Team section uses default post_save_action (save_only)."""
+        assert TEAM_SECTION.post_save_action == "save_only"
+
     def test_edit_sections_registry_contains_edit_sections(self):
         assert "identity-edit" in EDIT_SECTIONS
         assert "services-edit" in EDIT_SECTIONS
+
+    def test_edit_sections_registry_contains_team_and_components(self):
+        assert "team-edit" in EDIT_SECTIONS
+        assert "components-edit" in EDIT_SECTIONS
+
+    def test_team_edit_reuses_team_section(self):
+        assert EDIT_SECTIONS["team-edit"] is TEAM_SECTION
+
+    def test_components_edit_uses_dedicated_section(self):
+        assert EDIT_SECTIONS["components-edit"] is COMPONENTS_EDIT_SECTION
 
     def test_edit_sections_registry_contains_config_sections(self):
         assert "keycloak-config" in EDIT_SECTIONS
@@ -59,7 +90,7 @@ class TestEditSectionDefinitions:
         assert "auth-wall-config" in EDIT_SECTIONS
 
     def test_edit_sections_registry_count(self):
-        assert len(EDIT_SECTIONS) == 5
+        assert len(EDIT_SECTIONS) == 7
 
     def test_edit_sections_reference_same_config_section_objects(self):
         assert EDIT_SECTIONS["keycloak-config"] is KEYCLOAK_CONFIG_SECTION
@@ -95,6 +126,14 @@ class TestGetEditSection:
     def test_returns_config_section(self):
         section = _get_edit_section("keycloak-config")
         assert section is KEYCLOAK_CONFIG_SECTION
+
+    def test_returns_team_edit_section(self):
+        section = _get_edit_section("team-edit")
+        assert section is TEAM_SECTION
+
+    def test_returns_components_edit_section(self):
+        section = _get_edit_section("components-edit")
+        assert section is COMPONENTS_EDIT_SECTION
 
 
 class TestRenderSectionHtml:
@@ -133,6 +172,43 @@ class TestRenderSectionHtml:
         errors = {"description": ["Dit veld is verplicht"]}
         html = _render_section_html(section, yaml_data={}, errors=errors)
         assert html  # Should render even with errors
+
+    def test_renders_team_edit_section(self):
+        yaml_data = {
+            "users": [
+                {"email": "alice@example.com", "role": "owner"},
+                {"email": "bob@example.com", "role": "member"},
+            ],
+        }
+        html = _render_section_html(TEAM_SECTION, yaml_data=yaml_data)
+        assert html
+        assert "<c-" not in html, f"Unprocessed component tags in team-edit HTML: {html[:500]}"
+
+    def test_renders_components_edit_section(self):
+        yaml_data = {
+            "components": [
+                {"name": "frontend", "image": "nginx:latest"},
+            ],
+            "services": [],
+        }
+        html = _render_section_html(COMPONENTS_EDIT_SECTION, yaml_data=yaml_data)
+        assert html
+        assert "<c-" not in html, f"Unprocessed component tags in components-edit HTML: {html[:500]}"
+
+    def test_renders_identity_edit_section_no_unprocessed_tags(self):
+        yaml_data = {"display-name": "My Project", "description": "A test project"}
+        html = _render_section_html(IDENTITY_EDIT_SECTION, yaml_data=yaml_data)
+        assert html
+        assert "<c-" not in html, f"Unprocessed component tags in identity-edit HTML: {html[:500]}"
+
+    def test_identity_edit_renders_both_fields(self):
+        yaml_data = {"display-name": "My Project", "description": "A test project"}
+        html = _render_section_html(IDENTITY_EDIT_SECTION, yaml_data=yaml_data)
+        # Both field inputs should be present in the rendered output
+        assert 'name="display-name"' in html
+        assert 'name="description"' in html
+        # Display name value should appear in the text input
+        assert "My Project" in html
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +417,8 @@ class TestSubmitEditSectionEndpoint:
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_successful_edit_triggers_processing(self):
+    async def test_save_only_section_does_not_trigger_processing(self):
+        """Identity-edit is save_only: should save but NOT create a background task."""
         project_data = {
             "name": "test-project",
             "display-name": "Test",
@@ -351,28 +428,63 @@ class TestSubmitEditSectionEndpoint:
         svc = _mock_project_service(project=project)
 
         request = MagicMock()
-        request.json = AsyncMock(return_value={"description": "new description"})
+        request.json = AsyncMock(return_value={"display-name": "Test", "description": "new description"})
 
         with (
             patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
             patch("opi.services.project_service.get_project_service", return_value=svc),
             patch("opi.handlers.project_file_handler.save_project_file") as mock_save,
-            patch("opi.core.task_manager.create_task", return_value="task-123"),
-            patch("opi.core.simple_background.process_project_yaml_background"),
+            patch("opi.core.task_manager.create_task") as mock_create_task,
         ):
             from opi.web.router_detail_edit import submit_edit_section
 
             response = await submit_edit_section(request, "test-project", "identity-edit")
             assert response.status_code == 200
 
-            # Verify save was called
+            # Save was called
             mock_save.assert_called_once()
             saved_data = mock_save.call_args[0][1]
             assert saved_data["description"] == "new description"
 
-            # Verify redirect to progress page
-            assert "HX-Redirect" in response.headers
-            assert "progress/task-123" in response.headers["HX-Redirect"]
+            # No background task was created
+            mock_create_task.assert_not_called()
+
+            # No task-related headers
+            assert "X-Task-Id" not in response.headers
+            assert "HX-Redirect" not in response.headers
+
+    @pytest.mark.asyncio
+    async def test_process_project_section_triggers_background_task(self):
+        """Services-edit is process_project: should create task and return X-Task-Id."""
+        project_data = {
+            "name": "test-project",
+            "display-name": "Test",
+            "description": "test",
+            "services": ["keycloak"],
+        }
+        project = MockProjectInfo("test-project", data=project_data, filename="/tmp/test-project.yaml")
+        svc = _mock_project_service(project=project)
+
+        request = MagicMock()
+        request.json = AsyncMock(return_value={"services": ["keycloak", "redis"]})
+
+        with (
+            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.handlers.project_file_handler.save_project_file"),
+            patch("opi.core.task_manager.create_task", return_value="task-789"),
+            patch("opi.core.simple_background.process_project_yaml_background"),
+        ):
+            from opi.web.router_detail_edit import submit_edit_section
+
+            response = await submit_edit_section(request, "test-project", "services-edit")
+            assert response.status_code == 200
+
+            # Background task was created
+            assert response.headers.get("X-Task-Id") == "task-789"
+
+            # No HX-Redirect (we show progress in modal now)
+            assert "HX-Redirect" not in response.headers
 
     @pytest.mark.asyncio
     async def test_new_service_triggers_next_section_header(self):

@@ -292,10 +292,21 @@ IDENTITY_EDIT_SECTION = FormSection(
     section_id="identity-edit",
     title="Projectgegevens bewerken",
     icon="document-blanco",
-    description="Wijzig de projectomschrijving",
-    editables=[DESCRIPTION],
-    layout=["description"],
+    description="Wijzig de weergavenaam en projectomschrijving",
+    editables=[DISPLAY_NAME, DESCRIPTION],
+    layout=["display-name", "description"],
     post_save_action="save_only",
+)
+
+COMPONENTS_EDIT_SECTION = FormSection(
+    section_id="components-edit",
+    title="Components beheren",
+    icon="puzzel",
+    description="Wijzig de applicatiecomponenten",
+    enforcer=ComponentServicesEnforcer(),
+    editables=COMPONENTS_SECTION.editables,
+    layout=COMPONENTS_SECTION.layout,
+    post_save_action="process_project",
 )
 
 SERVICES_EDIT_SECTION = FormSection(
@@ -312,6 +323,8 @@ SERVICES_EDIT_SECTION = FormSection(
 # Includes edit-specific sections AND existing config sections.
 EDIT_SECTIONS: dict[str, FormSection] = {
     "identity-edit": IDENTITY_EDIT_SECTION,
+    "team-edit": TEAM_SECTION,
+    "components-edit": COMPONENTS_EDIT_SECTION,
     "services-edit": SERVICES_EDIT_SECTION,
     "keycloak-config": KEYCLOAK_CONFIG_SECTION,
     "postgresql-config": POSTGRESQL_CONFIG_SECTION,

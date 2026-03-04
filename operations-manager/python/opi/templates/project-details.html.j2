@@ -719,7 +719,15 @@
     {# Team Section #}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
+                {% if user_role in ["admin", "owner"] %}
+                <button type="button" class="edit-section-btn" onclick="openEditModal('team-edit', 'Projectleden beheren')" title="Leden bewerken">
+                    <c-icon icon="bewerken" size="sm" color="hemelblauw" />
+                    <span>Bewerken</span>
+                </button>
+                {% endif %}
+            </div>
             <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>
 
             <c-grid columns="three" gap="md">
@@ -1222,7 +1230,15 @@
     {# Components Section #}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
+                {% if user_role in ["admin", "owner"] %}
+                <button type="button" class="edit-section-btn" onclick="openEditModal('components-edit', 'Components beheren')" title="Components bewerken">
+                    <c-icon icon="bewerken" size="sm" color="donkerblauw" />
+                    <span>Bewerken</span>
+                </button>
+                {% endif %}
+            </div>
             <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
 
             {% if project.components %}
@@ -1688,7 +1704,7 @@
             <p>Laden...</p>
         </div>
     </div>
-    <div class="edit-section-actions">
+    <div class="edit-section-actions" id="edit-section-actions">
         <c-button type="button" label="Annuleren" kind="tertiary" @click="closeEditModal()" />
         <c-button type="button" label="Opslaan" kind="primary" id="edit-section-submit" @click="submitEditModal()" />
     </div>
@@ -1776,6 +1792,7 @@
 {% endblock %}
 
 {% block additional_styles %}
+<link rel="stylesheet" href="/static/css/wizard.css">
 <style>
     /* Project Badge */
     .project-badge {
@@ -3065,7 +3082,7 @@
         border-radius: var(--rvo-border-radius-lg);
         box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         width: 90%;
-        max-width: 640px;
+        max-width: 760px;
         max-height: 90vh;
         overflow-y: auto;
         z-index: 1000;
@@ -3122,6 +3139,76 @@
         padding: var(--rvo-space-md);
         border-radius: 4px;
         margin-bottom: var(--rvo-space-md);
+    }
+
+    .edit-section-success {
+        text-align: center;
+        padding: var(--rvo-space-xl) var(--rvo-space-lg);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--rvo-space-md);
+    }
+
+    .edit-section-success p {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--rvo-color-groen);
+        margin: 0;
+    }
+
+    /* In-modal progress view */
+    .edit-progress-view {
+        padding: var(--rvo-space-md) 0;
+    }
+
+    .edit-progress-bar-wrapper {
+        width: 100%;
+        height: 8px;
+        background: var(--rvo-color-grijs-200);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: var(--rvo-space-md);
+    }
+
+    .edit-progress-bar {
+        height: 100%;
+        background: var(--rvo-color-hemelblauw);
+        border-radius: 4px;
+        transition: width 0.5s ease;
+    }
+
+    .edit-progress-step {
+        font-size: 0.9375rem;
+        color: var(--rvo-color-grijs-700);
+        margin: 0 0 var(--rvo-space-md) 0;
+    }
+
+    .edit-progress-step.edit-progress-error {
+        color: var(--rvo-color-rood-700);
+    }
+
+    .edit-progress-tasks {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-xs);
+        margin-bottom: var(--rvo-space-lg);
+    }
+
+    .edit-progress-task-item {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-sm);
+        font-size: 0.875rem;
+        color: var(--rvo-color-grijs-700);
+    }
+
+    .edit-progress-actions {
+        display: flex;
+        gap: var(--rvo-space-md);
+        justify-content: flex-end;
+        padding-top: var(--rvo-space-md);
+        border-top: 1px solid var(--rvo-color-grijs-200);
     }
 
     .edit-section-actions {
@@ -4152,22 +4239,27 @@
      * --------------------------------------------------------------- */
     let editSectionId = null;
     let isEditSubmitting = false;
+    let editPollTimer = null;
 
     function openEditModal(sectionId, title) {
         editSectionId = sectionId;
         isEditSubmitting = false;
+        if (editPollTimer) { clearInterval(editPollTimer); editPollTimer = null; }
 
         // Set title
-        const titleEl = document.getElementById('edit-section-title');
+        var titleEl = document.getElementById('edit-section-title');
         titleEl.innerHTML = '<c-icon icon="bewerken" size="lg" color="donkerblauw" />' + title;
 
         // Hide error
-        const errorEl = document.getElementById('edit-section-error');
+        var errorEl = document.getElementById('edit-section-error');
         errorEl.style.display = 'none';
 
-        // Show loading state
-        const contentEl = document.getElementById('edit-section-content');
+        // Show loading state in content area
+        var contentEl = document.getElementById('edit-section-content');
         contentEl.innerHTML = '<div class="edit-section-loading"><p>Laden...</p></div>';
+
+        // Show action buttons (they may have been hidden by progress view)
+        document.getElementById('edit-section-actions').style.display = '';
 
         // Show modal
         document.getElementById('edit-section-backdrop').classList.add('is-open');
@@ -4192,10 +4284,21 @@
 
     function closeEditModal() {
         if (isEditSubmitting) return;
+        if (editPollTimer) { clearInterval(editPollTimer); editPollTimer = null; }
         document.getElementById('edit-section-backdrop').classList.remove('is-open');
         document.getElementById('edit-section-modal').classList.remove('is-open');
         document.body.style.overflow = '';
         editSectionId = null;
+    }
+
+    function closeEditModalAndReload() {
+        if (editPollTimer) { clearInterval(editPollTimer); editPollTimer = null; }
+        isEditSubmitting = false;
+        document.getElementById('edit-section-backdrop').classList.remove('is-open');
+        document.getElementById('edit-section-modal').classList.remove('is-open');
+        document.body.style.overflow = '';
+        editSectionId = null;
+        window.location.reload();
     }
 
     function handleEditBackdropClick() {
@@ -4206,13 +4309,11 @@
 
     function collectFormData(container) {
         var data = {};
-        // Collect all input, select, textarea values
         container.querySelectorAll('input, select, textarea').forEach(function(el) {
             var name = el.getAttribute('name');
             if (!name) return;
 
             if (el.type === 'checkbox') {
-                // Handle checkbox groups (name ends with [])
                 if (name.endsWith('[]')) {
                     var key = name.slice(0, -2);
                     if (!data[key]) data[key] = [];
@@ -4223,12 +4324,103 @@
             } else if (el.type === 'radio') {
                 if (el.checked) data[name] = el.value;
             } else {
-                // Handle nested paths (e.g., services/keycloak/config/template)
                 data[name] = el.value;
             }
         });
         return data;
     }
+
+    /* -- In-modal progress view ---------------------------------------- */
+
+    function showModalProgress(taskId) {
+        var contentEl = document.getElementById('edit-section-content');
+        var actionsEl = document.getElementById('edit-section-actions');
+
+        // Hide the form action buttons (Annuleren / Opslaan)
+        actionsEl.style.display = 'none';
+
+        // Build progress UI inside the modal content area
+        contentEl.innerHTML =
+            '<div class="edit-progress-view">' +
+                '<div class="edit-progress-bar-wrapper">' +
+                    '<div class="edit-progress-bar" id="edit-progress-bar" style="width: 0%"></div>' +
+                '</div>' +
+                '<p class="edit-progress-step" id="edit-progress-step">Verwerking gestart...</p>' +
+                '<div class="edit-progress-tasks" id="edit-progress-tasks"></div>' +
+                '<div class="edit-progress-actions" id="edit-progress-actions" style="display: none;">' +
+                    '<button type="button" class="rvo-button rvo-button--primary" onclick="closeEditModalAndReload()">Sluiten</button>' +
+                    '<a href="/projects/progress/' + taskId + '" class="rvo-button rvo-button--tertiary" target="_blank" rel="noopener">Bekijk volledige voortgang</a>' +
+                '</div>' +
+            '</div>';
+
+        // Start polling
+        editPollTimer = setInterval(function() { pollEditProgress(taskId); }, 2000);
+        setTimeout(function() { pollEditProgress(taskId); }, 300);
+    }
+
+    function pollEditProgress(taskId) {
+        fetch('/api/tasks/' + taskId + '/status', { credentials: 'same-origin' })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Kon voortgang niet ophalen');
+            return response.json();
+        })
+        .then(function(data) {
+            // Update progress bar
+            var bar = document.getElementById('edit-progress-bar');
+            if (bar) bar.style.width = data.progress + '%';
+
+            // Update current step text
+            var stepEl = document.getElementById('edit-progress-step');
+            if (stepEl && data.current_step) {
+                stepEl.textContent = data.current_step;
+            }
+
+            // Render task list
+            var tasksEl = document.getElementById('edit-progress-tasks');
+            if (tasksEl && data.tasks) {
+                var html = '';
+                data.tasks.forEach(function(task) {
+                    var icon = task.status === 'completed' ? 'vinkje' :
+                               task.status === 'failed' ? 'kruis' :
+                               task.status === 'running' ? 'delta' : 'klok';
+                    var color = task.status === 'completed' ? 'groen' :
+                                task.status === 'failed' ? 'rood' :
+                                task.status === 'running' ? 'hemelblauw' : 'grijs-600';
+                    html += '<div class="edit-progress-task-item">' +
+                                '<c-icon icon="' + icon + '" size="sm" color="' + color + '" />' +
+                                '<span>' + task.name + '</span>' +
+                            '</div>';
+                });
+                tasksEl.innerHTML = html;
+            }
+
+            // Handle completion / failure
+            if (data.status === 'completed') {
+                clearInterval(editPollTimer);
+                editPollTimer = null;
+                isEditSubmitting = false;
+                if (stepEl) stepEl.textContent = 'Wijzigingen succesvol verwerkt!';
+                if (bar) bar.style.width = '100%';
+                var actionsEl = document.getElementById('edit-progress-actions');
+                if (actionsEl) actionsEl.style.display = '';
+            } else if (data.status === 'failed') {
+                clearInterval(editPollTimer);
+                editPollTimer = null;
+                isEditSubmitting = false;
+                if (stepEl) {
+                    stepEl.textContent = 'Verwerking mislukt: ' + (data.error || 'Onbekende fout');
+                    stepEl.classList.add('edit-progress-error');
+                }
+                var actionsEl = document.getElementById('edit-progress-actions');
+                if (actionsEl) actionsEl.style.display = '';
+            }
+        })
+        .catch(function(err) {
+            console.error('Edit progress poll error:', err);
+        });
+    }
+
+    /* -- Submit handler ------------------------------------------------ */
 
     function submitEditModal() {
         if (isEditSubmitting || !editSectionId) return;
@@ -4248,10 +4440,9 @@
         })
         .then(function(response) {
             var nextSection = response.headers.get('X-Next-Section');
-            var redirectUrl = response.headers.get('HX-Redirect');
+            var taskId = response.headers.get('X-Task-Id');
 
             if (response.status === 422) {
-                // Validation errors - re-render with errors
                 return response.text().then(function(html) {
                     contentEl.innerHTML = html;
                     isEditSubmitting = false;
@@ -4262,12 +4453,22 @@
                 throw new Error('Opslaan mislukt');
             }
 
-            // Success - redirect to progress page or reload
-            isEditSubmitting = false;
-            if (redirectUrl) {
-                window.location.href = redirectUrl;
+            // Determine flow based on response headers
+            if (taskId) {
+                // process_project: show progress in modal
+                showModalProgress(taskId);
             } else {
-                window.location.reload();
+                // save_only: show brief success, then reload
+                isEditSubmitting = false;
+                contentEl.innerHTML =
+                    '<div class="edit-section-success">' +
+                        '<c-icon icon="vinkje" size="xl" color="groen" />' +
+                        '<p>Wijzigingen opgeslagen</p>' +
+                    '</div>';
+                document.getElementById('edit-section-actions').style.display = 'none';
+                setTimeout(function() {
+                    closeEditModalAndReload();
+                }, 1200);
             }
         })
         .catch(function(err) {

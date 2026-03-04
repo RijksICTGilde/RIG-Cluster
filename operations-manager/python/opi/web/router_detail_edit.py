@@ -159,6 +159,13 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
     project_service.load_project_from_data(result_yaml, project.filename)
     logger.info("Project %s section '%s' updated by %s", project_name, section_id, user_email)
 
+    # --- save_only: just save the file, no background processing ---
+    if section.post_save_action == "save_only":
+        logger.info("Section '%s' is save_only, skipping background processing", section_id)
+        return HTMLResponse(content="", status_code=200)
+
+    # --- process_project: trigger background deployment pipeline ---
+
     # Determine which config sections are needed for newly added services
     config_sections_needed: list[str] = []
     if section_id == "services-edit":
@@ -171,7 +178,6 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
             if svc_name in SERVICE_CONFIG_SECTIONS
         )
 
-    # Always run process_project for now (as per plan)
     yaml_instance = YAML()
     yaml_instance.preserve_quotes = True
     yaml_instance.width = 4096
@@ -191,10 +197,8 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
     response = HTMLResponse(content="", status_code=200)
 
     if config_sections_needed:
-        # Tell the frontend to open the next config section modal
         response.headers["X-Next-Section"] = config_sections_needed[0]
 
     response.headers["X-Task-Id"] = task_id
-    response.headers["HX-Redirect"] = f"/projects/progress/{task_id}"
     response.background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
     return response
