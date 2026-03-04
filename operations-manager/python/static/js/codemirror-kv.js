@@ -145,8 +145,19 @@
      */
     function initKvEditors(container) {
         container = container || document;
-        var editors = container.querySelectorAll(".kv-editor");
 
+        // Clean up stale instances whose DOM was replaced (e.g. HTMX swap)
+        for (var id in _instances) {
+            if (!_instances.hasOwnProperty(id)) continue;
+            var existing = document.getElementById(id);
+            if (!existing || !existing.dataset.cmInitialized) {
+                // DOM gone or replaced — destroy the old CM view
+                _instances[id].view.destroy();
+                delete _instances[id];
+            }
+        }
+
+        var editors = container.querySelectorAll(".kv-editor");
         for (var i = 0; i < editors.length; i++) {
             if (editors[i].dataset.cmInitialized) continue;
             _initSingleEditor(editors[i]);
