@@ -17,7 +17,14 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--rvo-space-md);">
             <div>
                 <c-heading type="h1" textContent="{{ project.display_name }}" />
-                <p class="rvo-text--lg">{{ project.description }}</p>
+                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                    <p class="rvo-text--lg" style="margin: 0;">{{ project.description }}</p>
+                    {% if user_role in ["admin", "owner"] %}
+                    <button type="button" class="edit-section-btn" onclick="openEditModal('identity-edit', 'Projectgegevens bewerken')" title="Beschrijving bewerken">
+                        <c-icon icon="bewerken" size="sm" color="hemelblauw" />
+                    </button>
+                    {% endif %}
+                </div>
                 <div style="margin-top: var(--rvo-space-sm);">
                     <span class="project-badge">{{ project.name }}</span>
                 </div>
@@ -924,7 +931,15 @@
     {# Services Section #}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Services & Integraties</c-heading>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Services & Integraties</c-heading>
+                {% if user_role in ["admin", "owner"] %}
+                <button type="button" class="edit-section-btn" onclick="openEditModal('services-edit', 'Services beheren')" title="Services bewerken">
+                    <c-icon icon="bewerken" size="sm" color="hemelblauw" />
+                    <span>Bewerken</span>
+                </button>
+                {% endif %}
+            </div>
             <p class="rvo-text--subtle">Geactiveerde services voor dit project</p>
 
             {% if project.services %}
@@ -1656,6 +1671,27 @@
             </div>
         </c-layout-flow>
     </form>
+</div>
+
+{# Generic Edit Section Modal #}
+<div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
+<div id="edit-section-modal" class="edit-section-modal" role="dialog" aria-modal="true" aria-labelledby="edit-section-title">
+    <div class="edit-section-header">
+        <c-heading type="h2" id="edit-section-title"><c-icon icon="bewerken" size="lg" color="donkerblauw" /></c-heading>
+        <button type="button" class="edit-modal-close-btn" onclick="closeEditModal()" title="Sluiten">
+            <c-icon icon="kruis" size="md" />
+        </button>
+    </div>
+    <div id="edit-section-error" class="edit-section-error" style="display: none;"></div>
+    <div id="edit-section-content" class="edit-section-content">
+        <div class="edit-section-loading">
+            <p>Laden...</p>
+        </div>
+    </div>
+    <div class="edit-section-actions">
+        <c-button type="button" label="Annuleren" kind="tertiary" @click="closeEditModal()" />
+        <c-button type="button" label="Opslaan" kind="primary" id="edit-section-submit" @click="submitEditModal()" />
+    </div>
 </div>
 
 {# Log Viewer Slide-Out Panel #}
@@ -3001,6 +3037,119 @@
         border: 1px solid var(--rvo-color-rood-300);
     }
 
+    /* Edit Section Modal */
+    .edit-section-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 999;
+        display: none;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .edit-section-backdrop.is-open {
+        display: block;
+        opacity: 1;
+    }
+
+    .edit-section-modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.95);
+        background: var(--rvo-color-wit);
+        border-radius: var(--rvo-border-radius-lg);
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        width: 90%;
+        max-width: 640px;
+        max-height: 90vh;
+        overflow-y: auto;
+        z-index: 1000;
+        display: none;
+        opacity: 0;
+        transition: opacity 0.3s ease, transform 0.3s ease;
+        padding: var(--rvo-space-xl);
+    }
+
+    .edit-section-modal.is-open {
+        display: block;
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+
+    .edit-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--rvo-space-md);
+        margin-bottom: var(--rvo-space-xl);
+        padding-bottom: var(--rvo-space-md);
+        border-bottom: 1px solid var(--rvo-color-grijs-200);
+    }
+
+    .edit-modal-close-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: var(--rvo-space-xs);
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+    }
+
+    .edit-modal-close-btn:hover {
+        background: var(--rvo-color-grijs-100);
+    }
+
+    .edit-section-content {
+        margin-bottom: var(--rvo-space-lg);
+    }
+
+    .edit-section-loading {
+        text-align: center;
+        padding: var(--rvo-space-xl);
+        color: var(--rvo-color-grijs-500);
+    }
+
+    .edit-section-error {
+        background: var(--rvo-color-rood-100);
+        color: var(--rvo-color-rood-800);
+        border: 1px solid var(--rvo-color-rood-300);
+        padding: var(--rvo-space-md);
+        border-radius: 4px;
+        margin-bottom: var(--rvo-space-md);
+    }
+
+    .edit-section-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--rvo-space-md);
+        padding-top: var(--rvo-space-md);
+        border-top: 1px solid var(--rvo-color-grijs-200);
+    }
+
+    .edit-section-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--rvo-space-xs);
+        background: none;
+        border: 1px solid var(--rvo-color-hemelblauw);
+        color: var(--rvo-color-hemelblauw);
+        cursor: pointer;
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 4px;
+        font-size: 0.8125rem;
+        transition: background 0.15s ease;
+    }
+
+    .edit-section-btn:hover {
+        background: var(--rvo-color-hemelblauw-100);
+    }
+
     .domain-badge {
         background: var(--rvo-color-hemelblauw-100);
         color: var(--rvo-color-hemelblauw-700);
@@ -3997,6 +4146,146 @@
             }
         });
     })();
+
+    /* ---------------------------------------------------------------
+     * Edit Section Modal
+     * --------------------------------------------------------------- */
+    let editSectionId = null;
+    let isEditSubmitting = false;
+
+    function openEditModal(sectionId, title) {
+        editSectionId = sectionId;
+        isEditSubmitting = false;
+
+        // Set title
+        const titleEl = document.getElementById('edit-section-title');
+        titleEl.innerHTML = '<c-icon icon="bewerken" size="lg" color="donkerblauw" />' + title;
+
+        // Hide error
+        const errorEl = document.getElementById('edit-section-error');
+        errorEl.style.display = 'none';
+
+        // Show loading state
+        const contentEl = document.getElementById('edit-section-content');
+        contentEl.innerHTML = '<div class="edit-section-loading"><p>Laden...</p></div>';
+
+        // Show modal
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        // Fetch section form HTML
+        fetch('/projects/{{ project.name }}/edit/' + sectionId, {
+            credentials: 'same-origin',
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van het formulier');
+            return response.text();
+        })
+        .then(function(html) {
+            contentEl.innerHTML = html;
+        })
+        .catch(function(err) {
+            contentEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    }
+
+    function closeEditModal() {
+        if (isEditSubmitting) return;
+        document.getElementById('edit-section-backdrop').classList.remove('is-open');
+        document.getElementById('edit-section-modal').classList.remove('is-open');
+        document.body.style.overflow = '';
+        editSectionId = null;
+    }
+
+    function handleEditBackdropClick() {
+        if (!isEditSubmitting) {
+            closeEditModal();
+        }
+    }
+
+    function collectFormData(container) {
+        var data = {};
+        // Collect all input, select, textarea values
+        container.querySelectorAll('input, select, textarea').forEach(function(el) {
+            var name = el.getAttribute('name');
+            if (!name) return;
+
+            if (el.type === 'checkbox') {
+                // Handle checkbox groups (name ends with [])
+                if (name.endsWith('[]')) {
+                    var key = name.slice(0, -2);
+                    if (!data[key]) data[key] = [];
+                    if (el.checked) data[key].push(el.value);
+                } else {
+                    data[name] = el.checked;
+                }
+            } else if (el.type === 'radio') {
+                if (el.checked) data[name] = el.value;
+            } else {
+                // Handle nested paths (e.g., services/keycloak/config/template)
+                data[name] = el.value;
+            }
+        });
+        return data;
+    }
+
+    function submitEditModal() {
+        if (isEditSubmitting || !editSectionId) return;
+        isEditSubmitting = true;
+
+        var errorEl = document.getElementById('edit-section-error');
+        errorEl.style.display = 'none';
+
+        var contentEl = document.getElementById('edit-section-content');
+        var formData = collectFormData(contentEl);
+
+        fetch('/projects/{{ project.name }}/edit/' + editSectionId, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData),
+        })
+        .then(function(response) {
+            var nextSection = response.headers.get('X-Next-Section');
+            var redirectUrl = response.headers.get('HX-Redirect');
+
+            if (response.status === 422) {
+                // Validation errors - re-render with errors
+                return response.text().then(function(html) {
+                    contentEl.innerHTML = html;
+                    isEditSubmitting = false;
+                });
+            }
+
+            if (!response.ok) {
+                throw new Error('Opslaan mislukt');
+            }
+
+            // Success - redirect to progress page or reload
+            isEditSubmitting = false;
+            if (redirectUrl) {
+                window.location.href = redirectUrl;
+            } else {
+                window.location.reload();
+            }
+        })
+        .catch(function(err) {
+            errorEl.textContent = err.message;
+            errorEl.style.display = 'block';
+            isEditSubmitting = false;
+        });
+    }
+
+    // Escape key closes edit modal too
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && !isEditSubmitting) {
+            var modal = document.getElementById('edit-section-modal');
+            if (modal.classList.contains('is-open')) {
+                closeEditModal();
+            }
+        }
+    });
 </script>
 {% endblock %}
 

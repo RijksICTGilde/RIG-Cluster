@@ -30,3 +30,4 @@ class FormSection:
     is_readonly: bool = False
     summary_fn: Callable[[dict[str, Any]], str] | None = None
     enforcer: EditableEnforcer | None = None
+    post_save_action: str = "save_only"  # "save_only" or "process_project"

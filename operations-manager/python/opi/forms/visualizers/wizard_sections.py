@@ -297,6 +297,44 @@ SERVICE_CONFIG_SECTIONS: dict[str, FormSection] = {
 # All sections for easy iteration
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Detail edit sections (for inline editing from project details page)
+# ---------------------------------------------------------------------------
+
+IDENTITY_EDIT_SECTION = FormSection(
+    section_id="identity-edit",
+    title="Projectgegevens bewerken",
+    icon="document-blanco",
+    description="Wijzig de projectomschrijving",
+    editables=[DESCRIPTION],
+    layout=["description"],
+    post_save_action="save_only",
+)
+
+SERVICES_EDIT_SECTION = FormSection(
+    section_id="services-edit",
+    title="Services beheren",
+    icon="applicatie",
+    description="Voeg services toe aan uw project",
+    editables=[SERVICES],
+    layout=["services"],
+    post_save_action="process_project",
+)
+
+# Registry of sections available for detail-page editing.
+# Includes edit-specific sections AND existing config sections.
+EDIT_SECTIONS: dict[str, FormSection] = {
+    "identity-edit": IDENTITY_EDIT_SECTION,
+    "services-edit": SERVICES_EDIT_SECTION,
+    "keycloak-config": KEYCLOAK_CONFIG_SECTION,
+    "postgresql-config": POSTGRESQL_CONFIG_SECTION,
+    "auth-wall-config": AUTH_WALL_CONFIG_SECTION,
+}
+
+# ---------------------------------------------------------------------------
+# All sections for easy iteration
+# ---------------------------------------------------------------------------
+
 ALL_SECTIONS: list[FormSection] = [
     IDENTITY_SECTION,
     SERVICES_SECTION,
