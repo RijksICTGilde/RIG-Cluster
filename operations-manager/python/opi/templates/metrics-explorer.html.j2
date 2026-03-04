@@ -134,12 +134,9 @@
 {% block additional_scripts %}
 <script>
     const PROMETHEUS_URL = "{{ prometheus_url }}";
-    const SERVICE_INFO = {
+    const SERVICE_DESCRIPTIONS = {
         {% for service in services %}
-            "{{ service.id }}": {
-                "description": "{{ service.description }}",
-                "range": "{{ service.range }}"
-            }{% if not loop.last %},{% endif %}
+            "{{ service.id }}": "{{ service.description }}"{% if not loop.last %},{% endif %}
         {% endfor %}
     };
 
@@ -168,7 +165,7 @@
         allMetrics = [];
 
         // Update description
-        serviceDescription.textContent = serviceId ? (SERVICE_INFO[serviceId] || {}).description || "" : "";
+        serviceDescription.textContent = serviceId ? SERVICE_DESCRIPTIONS[serviceId] || "" : "";
 
         if (!serviceId) {
             metricSelect.innerHTML = '<option value="">-- Selecteer eerst een service --</option>';
@@ -229,15 +226,11 @@
         const metric = metricSelect.value;
         if (!metric) return;
 
-        // Use the service's default range (e.g. 7d for 2h-scrape jobs, 1h for real-time)
-        const serviceId = serviceSelect.value;
-        const range = (SERVICE_INFO[serviceId] || {}).range || "1h";
-
         // Build the Prometheus graph URL with the metric as expression
         const params = new URLSearchParams({
             "g0.expr": metric,
             "g0.tab": "0",        // Graph tab
-            "g0.range_input": range
+            "g0.range_input": "1h"
         });
 
         const graphUrl = `${PROMETHEUS_URL}/graph?${params.toString()}`;

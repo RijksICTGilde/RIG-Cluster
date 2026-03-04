@@ -43,14 +43,13 @@ data:
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
 
-    ALLOWED_EMAILS=ravi.meijer@rijksoverheid.nl,maurits.mink@rijksoverheid.nl,sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
+    ALLOWED_EMAILS=sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
     GRAFANA_DATASOURCE_UID=mimir-prd
     ENABLE_TRACEMALLOC=false
     ARGOCD_MANAGER=rig-prd-operations
 
     # Container registry (image upload proxy)
     REGISTRY_URL=rcr.rijksapps.nl
-    REGISTRY_ORG=rig/zad
+    REGISTRY_ORG=rig
     REGISTRY_USERNAME=rig+zad
-    REGISTRY_VERIFY_TLS=True
-    IMAGE_UPLOAD_MAX_SIZE_MB=1024
+    IMAGE_UPLOAD_MAX_SIZE_MB=5120

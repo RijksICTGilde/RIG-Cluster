@@ -187,7 +187,7 @@ class KubectlConnector:
                 async with track_subprocess_memory("kubectl"):
                     stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             except TimeoutError:
-                logger.error(f"kubectl command timed out after {timeout}s")
+                logger.error(f"kubectl command timed out after {timeout}s: {cmd_str}")
                 process.kill()
                 await process.wait()
                 return "", f"Command timed out after {timeout}s", 1
@@ -196,7 +196,7 @@ class KubectlConnector:
             cmd = ["kubectl"]
             cmd.extend(args)
 
-            logger.debug("Running kubectl command")
+            logger.debug(f"Running kubectl command: {cmd_str}")
 
             # Create process
             process = await asyncio.create_subprocess_exec(
@@ -208,7 +208,7 @@ class KubectlConnector:
                 async with track_subprocess_memory("kubectl"):
                     stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             except TimeoutError:
-                logger.error(f"kubectl command timed out after {timeout}s")
+                logger.error(f"kubectl command timed out after {timeout}s: {cmd_str}")
                 process.kill()
                 await process.wait()
                 return "", f"Command timed out after {timeout}s", 1
@@ -226,7 +226,7 @@ class KubectlConnector:
                 logger.error(error_msg)
                 raise KubectlConnectionError(error_msg)
         else:
-            logger.debug("kubectl command succeeded")
+            logger.debug(f"kubectl command succeeded: {cmd_str}")
 
         return stdout_str, stderr_str, process.returncode or 0
 
