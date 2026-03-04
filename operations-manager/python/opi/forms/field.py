@@ -76,7 +76,6 @@ class FormField:
     description: str | None = None
     placeholder: str | None = None
     value: Any = None
-    default: Any = None
     options: list[dict[str, Any]] | None = None
     errors: list[str] = field(default_factory=list)
     children: list["FormField"] = field(default_factory=list)
@@ -89,9 +88,6 @@ class FormField:
     min_items: int = 0
     max_items: int | None = None
     htmx_attrs: dict[str, str] = field(default_factory=dict)
-    help_text: str | None = None
-    help_template: str | None = None
-    examples: list[str] | None = None
 
     def has_errors(self) -> bool:
         """Check if this field or any children have errors."""

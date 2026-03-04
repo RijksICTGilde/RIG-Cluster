@@ -47,7 +47,11 @@ class FormState:
 
     def get_changed_fields(self) -> list[str]:
         """Get list of field names that have changed."""
-        return [key for key in set(self.data.keys()) | set(self.original_data.keys()) if self.has_changed(key)]
+        changed = []
+        for key in set(self.data.keys()) | set(self.original_data.keys()):
+            if self.has_changed(key):
+                changed.append(key)
+        return changed
 
     def add_error(self, field_name: str, message: str) -> None:
         """Add an error message to a field."""

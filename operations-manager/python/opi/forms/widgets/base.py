@@ -76,14 +76,6 @@ class WidgetAdapter(ABC):
         """Render service options as selectable cards with icons and descriptions."""
 
     @abstractmethod
-    def render_display_card(self, field: "FormField") -> str:
-        """Render a read-only display card for status/encrypted fields."""
-
-    @abstractmethod
-    def render_key_value_editor(self, field: "FormField") -> str:
-        """Render a key-value editor with YAML/ENV format toggle."""
-
-    @abstractmethod
     def render_nested(self, field: "FormField", children_html: list[str]) -> str:
         """
         Render a nested model's fields grouped together.
@@ -217,18 +209,6 @@ class WidgetAdapter(ABC):
             children_html = [self.render_field(child) for child in field.children]
             return self.render_nested(field, children_html)
 
-        # Handle sequence fields (including nested sequences within sequence items)
-        if widget_type == "sequence":
-            items_html = []
-            for i, child_field in enumerate(field.children or []):
-                if child_field.children:
-                    child_fields_html = [self.render_field(cf) for cf in child_field.children]
-                    item_html = "\n".join(child_fields_html)
-                else:
-                    item_html = ""
-                items_html.append(self.render_sequence_item(field, i, item_html))
-            return self.render_sequence(field, items_html)
-
         render_methods = {
             "text": self.render_text,
             "textarea": self.render_textarea,
@@ -243,8 +223,6 @@ class WidgetAdapter(ABC):
             "hidden": self.render_hidden,
             "password": self.render_text,  # Password uses text input with type override
             "service_cards": self.render_service_cards,
-            "display_card": self.render_display_card,
-            "key_value_editor": self.render_key_value_editor,
         }
 
         render_method = render_methods.get(widget_type)
@@ -258,7 +236,14 @@ class WidgetAdapter(ABC):
         """Escape HTML special characters."""
         if text is None:
             return ""
-        return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        return (
+            str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#x27;")
+        )
 
     def render_html_attributes(self, attrs: dict[str, str]) -> str:
         """Render a dict of HTML attributes to a string."""

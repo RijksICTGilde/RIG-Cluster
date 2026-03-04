@@ -18,7 +18,7 @@ Example:
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Union
+from typing import Union
 
 
 @dataclass
@@ -152,7 +152,7 @@ class Sequence(LayoutElement):
     """
 
     field_name: str = ""
-    child_layout: "LayoutElement | list[LayoutChild] | None" = None
+    child_layout: LayoutElement | None = None
     min_items: int = 0
     max_items: int | None = None
     add_label: str = "common.add"
@@ -194,27 +194,6 @@ class HTML(LayoutElement):
     """
 
     content: str = ""
-
-
-@dataclass
-class TemplatePartial(LayoutElement):
-    """
-    Render a Jinja2 template partial into the form layout.
-
-    Use this instead of ``HTML`` for non-trivial content blocks that are
-    easier to maintain as template files.
-
-    Attributes:
-        template: Path relative to the templates directory
-            (e.g. ``wizard/partials/domain_info.html.j2``)
-        context: Optional extra template context variables
-
-    Example:
-        TemplatePartial(template="wizard/partials/domain_info.html.j2")
-    """
-
-    template: str = ""
-    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
