@@ -27,6 +27,7 @@ from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
 from opi.api.task_router import task_router
+from opi.api.v2.router import v2_router
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
@@ -238,6 +239,17 @@ def create_app() -> FastAPI:
                     if isinstance(method, dict) and "operationId" in method:
                         method["security"] = [{"APIKeyHeader": []}]
 
+        # Sort paths: V2 first, then v1, for clarity in docs
+        paths = openapi_schema.get("paths", {})
+        sorted_paths = dict(sorted(paths.items(), key=lambda p: (not p[0].startswith("/api/v2"), p[0])))
+        openapi_schema["paths"] = sorted_paths
+
+        # Add API version info
+        openapi_schema["info"]["x-api-info"] = {
+            "v1_status": "deprecated - use /api/v2 endpoints",
+            "v2_status": "current - recommended",
+        }
+
         app.openapi_schema = openapi_schema
         return app.openapi_schema
 
@@ -269,6 +281,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_websocket_router, include_in_schema=False)  # WebSocket for log streaming
     app.include_router(resource_router, include_in_schema=True)  # Resource tuning & sanitization
+    app.include_router(v2_router, include_in_schema=True)  # V2 async API endpoints
     app.include_router(task_router, include_in_schema=True)  # Async task status API
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint

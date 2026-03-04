@@ -184,7 +184,7 @@ class TestUpsertDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/:upsert-deployment",
+                "/api/projects/test-project/:upsert-deployment?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "deploymentName": "production",
@@ -212,7 +212,7 @@ class TestUpsertDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/:upsert-deployment",
+                "/api/projects/test-project/:upsert-deployment?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "deploymentName": "main",
@@ -235,7 +235,7 @@ class TestUpsertDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/:upsert-deployment",
+                "/api/projects/test-project/:upsert-deployment?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "deploymentName": "staging",
@@ -254,7 +254,7 @@ class TestUpsertDeploymentEndpoint:
     ) -> None:
         """Test upsert deployment with invalid deployment name."""
         response = test_client.post(
-            "/api/projects/test-project/:upsert-deployment",
+            "/api/projects/test-project/:upsert-deployment?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "deploymentName": "INVALID_NAME!",  # Invalid chars
@@ -273,7 +273,7 @@ class TestUpsertDeploymentEndpoint:
     ) -> None:
         """Test upsert deployment with empty components list."""
         response = test_client.post(
-            "/api/projects/test-project/:upsert-deployment",
+            "/api/projects/test-project/:upsert-deployment?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "deploymentName": "main",
@@ -292,7 +292,7 @@ class TestUpsertDeploymentEndpoint:
     ) -> None:
         """Test upsert deployment with missing component fields."""
         response = test_client.post(
-            "/api/projects/test-project/:upsert-deployment",
+            "/api/projects/test-project/:upsert-deployment?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "deploymentName": "main",
@@ -318,7 +318,7 @@ class TestUpsertDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/:upsert-deployment",
+                "/api/projects/test-project/:upsert-deployment?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "deploymentName": "main",
@@ -346,7 +346,7 @@ class TestUpdateImageEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.put(
-                "/api/projects/test-project/deployments/main/image",
+                "/api/projects/test-project/deployments/main/image?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "componentName": "web",
@@ -369,7 +369,7 @@ class TestUpdateImageEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.put(
-                "/api/projects/test-project/deployments/staging/image",
+                "/api/projects/test-project/deployments/staging/image?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "componentName": "web",
@@ -387,7 +387,7 @@ class TestUpdateImageEndpoint:
     ) -> None:
         """Test update image with missing component name."""
         response = test_client.put(
-            "/api/projects/test-project/deployments/main/image",
+            "/api/projects/test-project/deployments/main/image?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "newImageUrl": "nginx:1.22",
@@ -403,7 +403,7 @@ class TestUpdateImageEndpoint:
     ) -> None:
         """Test update image with missing image URL."""
         response = test_client.put(
-            "/api/projects/test-project/deployments/main/image",
+            "/api/projects/test-project/deployments/main/image?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "componentName": "web",
@@ -431,7 +431,7 @@ class TestRefreshProjectEndpoint:
             patch("opi.api.router.validate_project_name", return_value=True),
         ):
             response = test_client.get(
-                "/api/projects/test-project/:refresh",
+                "/api/projects/test-project/:refresh?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
             )
 
@@ -454,7 +454,7 @@ class TestRefreshProjectEndpoint:
             patch("opi.api.router.validate_project_name", return_value=True),
         ):
             response = test_client.get(
-                "/api/projects/test-project/:refresh?force_clone=true",
+                "/api/projects/test-project/:refresh?sync=true&force_clone=true",
                 headers={"X-API-Key": "test-api-key-12345"},
             )
 
@@ -489,7 +489,7 @@ class TestRefreshProjectEndpoint:
             patch("opi.api.router.validate_project_name", return_value=True),
         ):
             response = test_client.get(
-                "/api/projects/test-project/:refresh",
+                "/api/projects/test-project/:refresh?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
             )
 
@@ -516,7 +516,7 @@ class TestRefreshDeploymentEndpoint:
             patch("opi.api.router.validate_project_name", return_value=True),
         ):
             response = test_client.get(
-                "/api/projects/test-project/deployments/staging/:refresh",
+                "/api/projects/test-project/deployments/staging/:refresh?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
             )
 
@@ -540,7 +540,7 @@ class TestRefreshDeploymentEndpoint:
             patch("opi.api.router.validate_project_name", return_value=True),
         ):
             response = test_client.get(
-                "/api/projects/test-project/deployments/staging/:refresh?force_clone=true",
+                "/api/projects/test-project/deployments/staging/:refresh?sync=true&force_clone=true",
                 headers={"X-API-Key": "test-api-key-12345"},
             )
 
@@ -560,7 +560,7 @@ class TestRefreshDeploymentEndpoint:
             patch("opi.api.router.validate_project_name", return_value=True),
         ):
             response = test_client.get(
-                "/api/projects/test-project/deployments/staging/:refresh",
+                "/api/projects/test-project/deployments/staging/:refresh?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
             )
 
@@ -682,7 +682,7 @@ class TestDeleteDeploymentEndpoint:
 
         with patch("opi.api.router.create_project_manager", return_value=mock_pm):
             response = test_client.delete(
-                "/api/projects/test-project/staging",
+                "/api/projects/test-project/staging?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
             )
 
@@ -701,7 +701,7 @@ class TestDeleteDeploymentEndpoint:
 
         with patch("opi.api.router.create_project_manager", return_value=mock_pm):
             response = test_client.delete(
-                "/api/projects/test-project/staging",
+                "/api/projects/test-project/staging?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
             )
 
@@ -817,7 +817,7 @@ class TestProjectApiInputValidation:
     ) -> None:
         """Test deployment name exceeding maximum length."""
         response = test_client.post(
-            "/api/projects/test-project/:upsert-deployment",
+            "/api/projects/test-project/:upsert-deployment?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "deploymentName": "a" * 64,  # Very long name
@@ -849,7 +849,7 @@ class TestProjectApiInputValidation:
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             for image in valid_images:
                 response = test_client.post(
-                    "/api/projects/test-project/:upsert-deployment",
+                    "/api/projects/test-project/:upsert-deployment?sync=true",
                     headers={"X-API-Key": "test-api-key-12345"},
                     json={
                         "deploymentName": "test",

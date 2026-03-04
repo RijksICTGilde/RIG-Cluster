@@ -17,6 +17,7 @@ from opi.connectors.subdomain import (
     validate_subdomain,
 )
 from opi.core.config import settings
+from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
 from opi.utils.naming import sanitize_kubernetes_name
@@ -876,46 +877,9 @@ class SelfServiceProjectRequest(BaseModel):
     components: list[SelfServiceComponent] | None = None
 
 
-async def _create_task_with_federation(
-    request: Request,
-    task_type: str,
-    project_name: str,
-    deployment_name: str | None,
-    payload: dict,
-) -> dict:
-    """Create an async task, routing through federation when available.
-
-    In standalone mode (no federation_service), creates the task locally.
-    In master mode, resolves the target cluster from the project YAML and
-    forwards to the appropriate slave OPI instance.
-    """
-    task_service = getattr(request.app.state, "task_service", None)
-    if task_service is None:
-        raise HTTPException(status_code=503, detail="Task service not available")
-
-    federation_service = getattr(request.app.state, "federation_service", None)
-    if federation_service:
-        target_cluster = await federation_service.resolve_cluster(project_name, deployment_name)
-        return await federation_service.create_task(
-            task_type=task_type,
-            project_name=project_name,
-            deployment_name=deployment_name,
-            target_cluster=target_cluster,
-            payload=payload,
-        )
-
-    return await task_service.create_task(
-        task_type=task_type,
-        project_name=project_name,
-        deployment_name=deployment_name,
-        cluster=settings.CLUSTER_MANAGER,
-        payload=payload,
-    )
-
-
 api_router: APIRouter = APIRouter(
     prefix="/api",
-    tags=["projects"],
+    tags=["v1 (deprecated)"],
     responses={404: {"description": "Not found"}},
     default_response_class=JSONResponse,
 )
@@ -977,9 +941,9 @@ async def upsert_deployment(
             detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
 
-    # Async path (default)
+    # Async path (default) - deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
     if not sync:
-        task = await _create_task_with_federation(
+        task = await create_async_task(
             request=request,
             task_type="upsert_deployment",
             project_name=project_name,
@@ -992,14 +956,9 @@ async def upsert_deployment(
                 "forceClone": deployment_data.forceClone,
             },
         )
-        task_id = task["task_id"]
+        task_id = str(task["task_id"])
         return JSONResponse(
-            content={
-                "status": "accepted",
-                "task_id": task_id,
-                "task_type": "upsert_deployment",
-                "poll_url": f"/api/tasks/{task_id}",
-            },
+            content=build_accepted_response(task_id, "upsert_deployment"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
@@ -1507,7 +1466,7 @@ async def update_deployment_image(
                 service_type: service_ref.model_dump() for service_type, service_ref in image_data.services.items()
             }
 
-        task = await _create_task_with_federation(
+        task = await create_async_task(
             request=request,
             task_type="update_image",
             project_name=project_name,
@@ -1521,14 +1480,9 @@ async def update_deployment_image(
                 "registry": image_data.registry,
             },
         )
-        task_id = task["task_id"]
+        task_id = str(task["task_id"])
         return JSONResponse(
-            content={
-                "status": "accepted",
-                "task_id": task_id,
-                "task_type": "update_image",
-                "poll_url": f"/api/tasks/{task_id}",
-            },
+            content=build_accepted_response(task_id, "update_image"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
@@ -1738,9 +1692,9 @@ async def refresh_deployment(
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-    # Async path (default)
+    # Async path (default) - deprecated, use /api/v2/projects/{project_name}/deployments/{deployment_name}/:refresh
     if not sync:
-        task = await _create_task_with_federation(
+        task = await create_async_task(
             request=request,
             task_type="refresh_deployment",
             project_name=project_name,
@@ -1751,14 +1705,9 @@ async def refresh_deployment(
                 "force_clone": force_clone,
             },
         )
-        task_id = task["task_id"]
+        task_id = str(task["task_id"])
         return JSONResponse(
-            content={
-                "status": "accepted",
-                "task_id": task_id,
-                "task_type": "refresh_deployment",
-                "poll_url": f"/api/tasks/{task_id}",
-            },
+            content=build_accepted_response(task_id, "refresh_deployment"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
@@ -1951,9 +1900,9 @@ async def delete_project_deployment(
     Returns:
         JSON response with detailed deletion results
     """
-    # Async path (default)
+    # Async path (default) - deprecated, use /api/v2/projects/{project_name}/{deployment_name}
     if not sync:
-        task = await _create_task_with_federation(
+        task = await create_async_task(
             request=request,
             task_type="delete_deployment",
             project_name=project_name,
@@ -1963,14 +1912,9 @@ async def delete_project_deployment(
                 "deployment_name": deployment_name,
             },
         )
-        task_id = task["task_id"]
+        task_id = str(task["task_id"])
         return JSONResponse(
-            content={
-                "status": "accepted",
-                "task_id": task_id,
-                "task_type": "delete_deployment",
-                "poll_url": f"/api/tasks/{task_id}",
-            },
+            content=build_accepted_response(task_id, "delete_deployment"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
@@ -2069,9 +2013,9 @@ async def clone_database_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
-    # Async path (default)
+    # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-database
     if not sync:
-        task = await _create_task_with_federation(
+        task = await create_async_task(
             request=request,
             task_type="clone_database",
             project_name=project_name,
@@ -2082,14 +2026,9 @@ async def clone_database_from_external(
                 **clone_data.model_dump(),
             },
         )
-        task_id = task["task_id"]
+        task_id = str(task["task_id"])
         return JSONResponse(
-            content={
-                "status": "accepted",
-                "task_id": task_id,
-                "task_type": "clone_database",
-                "poll_url": f"/api/tasks/{task_id}",
-            },
+            content=build_accepted_response(task_id, "clone_database"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
@@ -2237,9 +2176,9 @@ async def clone_bucket_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
-    # Async path (default)
+    # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-bucket
     if not sync:
-        task = await _create_task_with_federation(
+        task = await create_async_task(
             request=request,
             task_type="clone_bucket",
             project_name=project_name,
@@ -2250,14 +2189,9 @@ async def clone_bucket_from_external(
                 **clone_data.model_dump(),
             },
         )
-        task_id = task["task_id"]
+        task_id = str(task["task_id"])
         return JSONResponse(
-            content={
-                "status": "accepted",
-                "task_id": task_id,
-                "task_type": "clone_bucket",
-                "poll_url": f"/api/tasks/{task_id}",
-            },
+            content=build_accepted_response(task_id, "clone_bucket"),
             status_code=202,
             headers={"Location": f"/api/tasks/{task_id}"},
         )
