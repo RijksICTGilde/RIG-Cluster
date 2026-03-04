@@ -64,6 +64,12 @@ def editable_to_form_field(
     if converter:
         display_value = converter.view(raw_value)
 
+    # 3b. Auto-detect KV format from stored value so the toggle matches
+    if converter and hasattr(converter, "detect_format") and raw_value is not None:
+        detected_fmt = converter.detect_format(raw_value)
+        attributes = dict(attributes or {})
+        attributes["kv_format"] = detected_fmt
+
     # 4. Resolve options
     options = _resolve_options(options_provider_name, provider_context)
 

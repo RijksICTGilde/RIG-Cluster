@@ -192,6 +192,12 @@ class KeyValueConverter:
         """Check if any values are non-scalar (lists, dicts)."""
         return any(isinstance(v, (list, dict)) for v in data.values())
 
+    def detect_format(self, value: Any) -> str:
+        """Detect which format was used based on the stored value."""
+        if isinstance(value, dict) and self._has_complex_values(value):
+            return "yaml"
+        return self.fmt
+
     def read(self, value: Any) -> str:
         """Convert structured data back to editable text."""
         if isinstance(value, dict):
