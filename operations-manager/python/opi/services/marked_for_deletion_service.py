@@ -134,26 +134,39 @@ class MarkedForDeletionService:
         finally:
             await self._pool.release(conn)
 
-    async def get_expired_marks(self, grace_period_days: int) -> list[dict]:
-        """Get all marks that have passed the grace period.
+    async def get_expired_marks(self, grace_period_days: int, project_name: str | None = None) -> list[dict]:
+        """Get marks that have passed the grace period.
 
         Args:
             grace_period_days: Number of days after marking before a resource
                 is eligible for purging.
+            project_name: If provided, only return marks for this project.
 
         Returns:
             List of mark dicts that are past the grace period.
         """
         conn = await self._pool.acquire()
         try:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM marked_for_deletion
-                WHERE marked_at < NOW() - make_interval(days => $1)
-                ORDER BY marked_at ASC
-                """,
-                grace_period_days,
-            )
+            if project_name is not None:
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM marked_for_deletion
+                    WHERE marked_at < NOW() - make_interval(days => $1)
+                      AND project_name = $2
+                    ORDER BY marked_at ASC
+                    """,
+                    grace_period_days,
+                    project_name,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM marked_for_deletion
+                    WHERE marked_at < NOW() - make_interval(days => $1)
+                    ORDER BY marked_at ASC
+                    """,
+                    grace_period_days,
+                )
             return [_row_to_dict(row) for row in rows]
         finally:
             await self._pool.release(conn)

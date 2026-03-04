@@ -115,8 +115,7 @@ async def cleanup_project(
 
     service = MarkedForDeletionService(pool)
 
-    all_expired = await service.get_expired_marks(grace_period_days)
-    project_expired = [m for m in all_expired if m["project_name"] == project_name]
+    project_expired = await service.get_expired_marks(grace_period_days, project_name=project_name)
 
     results: dict[str, Any] = {
         "project_name": project_name,
@@ -443,13 +442,11 @@ async def _purge_backup_data(
     if not all([s3_bucket, s3_prefix, s3_endpoint, kopia_password]):
         error_msg = (
             f"Incomplete backup metadata for '{resource_name}' - "
-            "cannot connect to Kopia repository (manual cleanup required)"
+            "cannot connect to Kopia repository (manual cleanup required). "
+            f"Mark '{mark['id']}' retained for visibility in admin API."
         )
         logger.warning(error_msg)
         results["errors"].append(error_msg)
-        # Remove the mark since we can't act on it
-        if not dry_run:
-            await service.delete_mark(mark["id"])
         return
 
     try:

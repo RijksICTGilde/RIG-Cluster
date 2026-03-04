@@ -1559,6 +1559,13 @@ class DeleteProjectManager:
         """
         deployment_name = deployment_data.get("name", "unknown")
         cluster = deployment_data.get("cluster", "")
+        base_namespace = deployment_data.get("namespace")
+        namespace_used_by_others = any(
+            other_dep.get("name") != deployment_name
+            and other_dep.get("cluster") == cluster
+            and other_dep.get("namespace") == base_namespace
+            for other_dep in project_data.get("deployments", [])
+        )
 
         deletion_results: dict[str, Any] = {
             "project": project_name,
@@ -1615,13 +1622,6 @@ class DeleteProjectManager:
                 )
 
             # Delete AppProject if namespace no longer used by other deployments
-            base_namespace = deployment_data.get("namespace")
-            namespace_used_by_others = any(
-                other_dep.get("name") != deployment_name
-                and other_dep.get("cluster") == cluster
-                and other_dep.get("namespace") == base_namespace
-                for other_dep in project_data.get("deployments", [])
-            )
             if not namespace_used_by_others and base_namespace:
                 appproject_name = generate_argocd_appproject_prefix(project_name, base_namespace)
                 appproject_filename = get_output_filename_from_template("argocd-appproject.yaml.jinja", appproject_name)
