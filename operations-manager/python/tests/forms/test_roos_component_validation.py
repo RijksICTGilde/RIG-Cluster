@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import pytest
 from opi.core.templates import _component_ext
-from opi.forms.i18n import get_default_nl_translator
-from opi.forms.renderer import FormRenderer
-from opi.forms.visualizers.wizard_sections import (
+from opi.forms.editables.wizard_sections import (
     ALL_SECTIONS,
     AUTH_WALL_CONFIG_SECTION,
     COMPONENTS_SECTION,
@@ -27,6 +25,8 @@ from opi.forms.visualizers.wizard_sections import (
     TEAM_SECTION,
     WIZARD_DEPLOYMENT_SECTION,
 )
+from opi.forms.i18n import get_default_nl_translator
+from opi.forms.renderer import FormRenderer
 from opi.forms.widgets.roos import ROOSWidgetAdapter
 
 
@@ -220,7 +220,7 @@ class TestROOSComponentValidation:
 
     def test_full_form_renders_valid_html(self) -> None:
         """The full project form with all data should produce valid ROOS HTML."""
-        from opi.forms.visualizers.project_registry import get_all_project_editables, get_project_form_layout
+        from opi.forms.editables.project_registry import get_all_project_editables, get_project_form_layout
 
         all_data = {
             **_IDENTITY_DATA,

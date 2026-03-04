@@ -6,16 +6,15 @@
         <c-layout-flow gap="lg">
             <div>
                 <c-p><strong>1. Component-specifiek (standaard)</strong></c-p>
-                <c-p>Elk component krijgt zijn eigen unieke URL zoals:<br/>
-                    <code>componentnaam-deploymentnaam-projectnaam.domein.nl</code></br>
-                    en<br/>
-                    <code>andercomponentnaam-deploymentnaam-projectnaam.domein.nl</code>.</c-p>
+                <c-p>Elk component krijgt zijn eigen unieke URL zoals
+                    <code>frontend-prod-myapp.example.com</code> en
+                    <code>backend-prod-myapp.example.com</code>.</c-p>
             </div>
 
             <div>
                 <c-p><strong>2. Deployment-naam (gedeeld domein)</strong></c-p>
                 <c-p>Alle componenten delen dezelfde domeinnaam gebaseerd op de
-                    deployment-naam, bijvoorbeeld <code>deploymentnaam-projectnaam.domein.nl</code>,
+                    deployment-naam (bijvoorbeeld <code>prod-myapp.example.com</code>),
                     maar verschillen in pad zoals <code>/</code> en <code>/api</code>.</c-p>
                 <c-p class="rvo-text--sm rvo-text--subtle">Dit voorkomt CORS-problemen
                     tussen componenten.</c-p>
@@ -24,7 +23,9 @@
             <div>
                 <c-p><strong>3. Aangepast subdomein</strong></c-p>
                 <c-p>Alle componenten delen een door u opgegeven domeinnaam
-                    bijvoorbeeld <code>subdomein.domein.nl</code>, met verschillende paden.</c-p>
+                    (bijvoorbeeld <code>myapp.example.com</code>), met verschillende paden.</c-p>
+                <c-p class="rvo-text--sm rvo-text--subtle">Dit geeft u volledige controle
+                    over de URL-structuur.</c-p>
             </div>
 
             <div>

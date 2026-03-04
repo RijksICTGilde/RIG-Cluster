@@ -27,6 +27,7 @@ from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
 from .router_project_form import project_form_router
 from .router_self_service import check_subdomain_availability_web, self_service_portal
+from .router_wizard import wizard_router
 from .services_router import services_router
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ web_router = APIRouter()
 web_router.include_router(services_router)
 web_router.include_router(metrics_explorer_router)
 web_router.include_router(project_form_router)
+web_router.include_router(wizard_router)
 
 
 @web_router.get("/")

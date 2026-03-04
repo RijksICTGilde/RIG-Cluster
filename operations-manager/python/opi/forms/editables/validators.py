@@ -81,6 +81,78 @@ class RangeValidator:
         return errors
 
 
+class ComponentNameValidator:
+    """
+    Validates component names: lowercase letters and digits only, max 12 chars.
+
+    Pattern: ^[a-z][a-z0-9]{0,11}$
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        value_str = str(value)
+        if len(value_str) > 12:
+            return ["Componentnaam mag maximaal 12 tekens bevatten"]
+        if not re.match(r"^[a-z][a-z0-9]*$", value_str):
+            return ["Moet beginnen met een kleine letter en mag alleen kleine letters en cijfers bevatten"]
+        return []
+
+
+class ContainerImageValidator:
+    """Validates container image references are lowercase."""
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        value_str = str(value)
+        if value_str != value_str.lower():
+            return ["Container image moet volledig in kleine letters zijn"]
+        if " " in value_str:
+            return ["Container image mag geen spaties bevatten"]
+        return []
+
+
+class RealmRoleValidator:
+    """Validates Keycloak realm role names: alphanumeric, hyphens, underscores, max 255 chars."""
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        value_str = str(value)
+        if len(value_str) > 255:
+            return ["Rolnaam mag maximaal 255 tekens bevatten"]
+        if not re.match(r"^[a-zA-Z0-9_-]+$", value_str):
+            return ["Rolnaam mag alleen letters, cijfers, streepjes en underscores bevatten"]
+        return []
+
+
+class PathValidator:
+    """Validates publication path format: must start with / and contain no spaces."""
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        v = str(value)
+        if not v.startswith("/"):
+            return ["Pad moet beginnen met /"]
+        if " " in v:
+            return ["Pad mag geen spaties bevatten"]
+        return []
+
+
+class UrlValidator:
+    """Validates that a value is a valid HTTP(S) URL."""
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        v = str(value)
+        if not v.startswith("http://") and not v.startswith("https://"):
+            return ["Moet beginnen met http:// of https://"]
+        return []
+
+
 class RequiredValidator:
     """Validates that a field has a non-empty value."""
 
@@ -91,4 +163,18 @@ class RequiredValidator:
             return ["Dit veld is verplicht"]
         if isinstance(value, list) and len(value) == 0:
             return ["Dit veld is verplicht"]
+        return []
+
+
+class AllowedValuesValidator:
+    """Validates that a value is one of the allowed options."""
+
+    def __init__(self, allowed: list[str]) -> None:
+        self.allowed = allowed
+
+    def validate(self, value: Any) -> list[str]:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return []
+        if str(value) not in self.allowed:
+            return [f"Ongeldige waarde: {value}. Toegestaan: {', '.join(self.allowed)}"]
         return []

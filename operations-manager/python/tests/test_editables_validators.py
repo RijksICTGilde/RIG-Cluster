@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from opi.forms.editables.validators import (
+    ComponentNameValidator,
+    ContainerImageValidator,
     EmailValidator,
     MinMaxLengthValidator,
+    PathValidator,
     RangeValidator,
     RequiredValidator,
     SlugValidator,
@@ -168,3 +171,90 @@ class TestRequiredValidator:
     def test_zero_is_valid(self):
         """Zero is a valid value."""
         assert RequiredValidator().validate(0) == []
+
+
+class TestComponentNameValidator:
+    def test_valid_name(self):
+        assert ComponentNameValidator().validate("frontend") == []
+
+    def test_valid_short(self):
+        assert ComponentNameValidator().validate("api") == []
+
+    def test_valid_with_digits(self):
+        assert ComponentNameValidator().validate("app2") == []
+
+    def test_max_length_12(self):
+        assert ComponentNameValidator().validate("abcdefghijkl") == []  # 12 chars
+
+    def test_too_long(self):
+        errors = ComponentNameValidator().validate("abcdefghijklm")  # 13 chars
+        assert len(errors) == 1
+        assert "12" in errors[0]
+
+    def test_no_underscores(self):
+        errors = ComponentNameValidator().validate("my_app")
+        assert len(errors) == 1
+
+    def test_no_hyphens(self):
+        errors = ComponentNameValidator().validate("my-app")
+        assert len(errors) == 1
+
+    def test_no_spaces(self):
+        errors = ComponentNameValidator().validate("my app")
+        assert len(errors) == 1
+
+    def test_no_uppercase(self):
+        errors = ComponentNameValidator().validate("MyApp")
+        assert len(errors) == 1
+
+    def test_must_start_with_letter(self):
+        errors = ComponentNameValidator().validate("1app")
+        assert len(errors) == 1
+
+    def test_empty_returns_no_errors(self):
+        assert ComponentNameValidator().validate("") == []
+        assert ComponentNameValidator().validate(None) == []
+
+
+class TestPathValidator:
+    def test_valid_root_path(self):
+        assert PathValidator().validate("/") == []
+
+    def test_valid_nested_path(self):
+        assert PathValidator().validate("/api/v2") == []
+
+    def test_missing_leading_slash(self):
+        errors = PathValidator().validate("api")
+        assert len(errors) == 1
+        assert "beginnen met /" in errors[0]
+
+    def test_no_spaces(self):
+        errors = PathValidator().validate("/my path")
+        assert len(errors) == 1
+        assert "spaties" in errors[0]
+
+    def test_empty_returns_no_errors(self):
+        assert PathValidator().validate("") == []
+        assert PathValidator().validate(None) == []
+
+
+class TestContainerImageValidator:
+    def test_valid_image(self):
+        assert ContainerImageValidator().validate("nginx:latest") == []
+
+    def test_valid_with_registry(self):
+        assert ContainerImageValidator().validate("registry.example.com/app:v1.0") == []
+
+    def test_uppercase_rejected(self):
+        errors = ContainerImageValidator().validate("Nginx:latest")
+        assert len(errors) == 1
+        assert "kleine letters" in errors[0]
+
+    def test_spaces_rejected(self):
+        errors = ContainerImageValidator().validate("nginx: latest")
+        assert len(errors) == 1
+        assert "spaties" in errors[0]
+
+    def test_empty_returns_no_errors(self):
+        assert ContainerImageValidator().validate("") == []
+        assert ContainerImageValidator().validate(None) == []

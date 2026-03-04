@@ -12,8 +12,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
+from opi.forms.editables.flows import get_flow
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.visualizers.flows import get_flow
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -28,8 +28,8 @@ from opi.forms.wizard.session import (
 from opi.web.menu import get_menu_items
 
 if TYPE_CHECKING:
-    from opi.forms.visualizers.flows import FormFlow
-    from opi.forms.visualizers.sections import FormSection
+    from opi.forms.editables.flow import FormFlow
+    from opi.forms.editables.section import FormSection
 
 logger = logging.getLogger(__name__)
 
@@ -157,12 +157,12 @@ def _apply_locked_by_service(
 
     Mutates *yaml_data* in place.
     """
+    from opi.forms.editables.bridge import _is_service_active
     from opi.forms.editables.service_path import smart_set_value
-    from opi.forms.visualizers.bridge import _is_service_active
 
     for editable in editables:
         if editable.locked_by_service and _is_service_active(editable.locked_by_service, yaml_data):
-            smart_set_value(yaml_data, editable.editable.yaml_path, True)
+            smart_set_value(yaml_data, editable.yaml_path, True)
 
 
 def _detect_locked_presets(
@@ -178,13 +178,13 @@ def _detect_locked_presets(
     Returns:
         Map of preset_id -> hint text (e.g. "Vereist door: Authorization Wall").
     """
-    from opi.forms.visualizers.bridge import _is_service_active, _service_display_name
+    from opi.forms.editables.bridge import _is_service_active, _service_display_name
 
     # Build map: yaml_path -> service display name for active locked fields
     locked_paths: dict[str, str] = {}
     for editable in editables:
         if editable.locked_by_service and _is_service_active(editable.locked_by_service, yaml_data):
-            locked_paths[editable.editable.yaml_path] = _service_display_name(editable.locked_by_service)
+            locked_paths[editable.yaml_path] = _service_display_name(editable.locked_by_service)
 
     if not locked_paths:
         return {}
@@ -434,10 +434,10 @@ def _split_data_across_sections(
     for section in flow.sections:
         section_data: dict[str, Any] = {}
         for editable in section.editables:
-            value = smart_get_value(project_data, editable.editable.yaml_path)
+            value = smart_get_value(project_data, editable.yaml_path)
             if value is not None:
                 # Store using the top-level key from the yaml_path
-                top_key = editable.editable.yaml_path.split("/")[0].split("[")[0]
+                top_key = editable.yaml_path.split("/")[0].split("[")[0]
                 section_data[top_key] = project_data.get(top_key, value)
         if section_data:
             step_data[section.section_id] = section_data
@@ -575,7 +575,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     if is_rerender:
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
 
-        section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
+        section_keys = {e.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
         section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
         state.store_step_data(section_id, section_data)
         save_wizard_state(request, state)
@@ -610,7 +610,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
     # Store converted YAML-format data for this section
-    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
+    section_keys = {e.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
     section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
     state.store_step_data(section_id, section_data)
     state.mark_completed(section_id)
@@ -697,7 +697,7 @@ async def toggle_preset(
         _apply_preset(preset, yaml_data)
 
     # Store updated data back into wizard state
-    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
+    section_keys = {e.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
     section_data = {k: v for k, v in yaml_data.items() if k in section_keys}
     state.store_step_data(section_id, section_data)
     save_wizard_state(request, state)
@@ -854,7 +854,7 @@ async def _handle_sequence_action(
     smart_set_value(yaml_data, seq_path, items)
 
     # Persist the updated data
-    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
+    section_keys = {e.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
     section_data = {k: v for k, v in yaml_data.items() if k in section_keys}
     state.store_step_data(section_id, section_data)
     save_wizard_state(request, state)
@@ -960,12 +960,11 @@ def _find_sequence_editable(
     import re
 
     def _match(editable: Any) -> Any | None:
-        ed = editable.editable
-        if ed.yaml_path == path:
+        if editable.yaml_path == path:
             return editable
         # Check if the template path (with [*]) matches the concrete path (with [N])
-        if str(editable.widget) == "sequence":
-            pattern = re.escape(ed.yaml_path).replace(r"\[\*\]", r"\[\d+\]")
+        if editable.widget == "sequence":
+            pattern = re.escape(editable.yaml_path).replace(r"\[\*\]", r"\[\d+\]")
             if re.fullmatch(pattern, path):
                 return editable
         # Recurse into children
@@ -994,28 +993,27 @@ def _empty_sequence_item(editable: Any | None) -> Any:
     """
     if not editable or not editable.children:
         return ""
-    has_complex = len(editable.children) > 1 or any(str(c.widget) == "sequence" for c in editable.children)
+    has_complex = len(editable.children) > 1 or any(c.widget == "sequence" for c in editable.children)
     if not has_complex:
         return ""
 
     item: dict[str, Any] = {}
     for child in editable.children:
-        child_ed = child.editable
-        if str(child.widget) == "sequence" and child_ed.min_items:
+        if child.widget == "sequence" and child.min_items:
             # Seed nested sequences with min_items empty entries
-            parts = child_ed.yaml_path.replace("[*]", "").split("/")
+            parts = child.yaml_path.replace("[*]", "").split("/")
             current = item
             for part in parts[1:-1]:
                 current = current.setdefault(part, {})
-            current[parts[-1]] = ["" for _ in range(child_ed.min_items)]
-        elif child_ed.default is not None:
+            current[parts[-1]] = ["" for _ in range(child.min_items)]
+        elif child.default is not None:
             # Extract the field key from the yaml_path (last segment, without [*])
-            parts = child_ed.yaml_path.replace("[*]", "").split("/")
+            parts = child.yaml_path.replace("[*]", "").split("/")
             # Build nested dict for nested paths (e.g. "ports/inbound")
             current = item
             for part in parts[1:-1]:  # skip the sequence root and take intermediate parts
                 current = current.setdefault(part, {})
-            current[parts[-1]] = child_ed.default
+            current[parts[-1]] = child.default
     return item
 
 
@@ -1093,10 +1091,10 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
     parts: list[str] = []
 
     for editable in section.editables:
-        if str(editable.widget) == "sequence":
+        if editable.widget == "sequence":
             parts.append(_build_sequence_summary(editable, yaml_data))
         else:
-            value = smart_get_value(yaml_data, editable.editable.yaml_path)
+            value = smart_get_value(yaml_data, editable.yaml_path)
             display = _format_value(editable, value)
             if display is not None:
                 parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
@@ -1112,7 +1110,7 @@ def _build_sequence_summary(
     from opi.forms.editables.service_path import smart_get_value
 
     # Resolve the list from yaml_data
-    base_path = editable.editable.yaml_path  # e.g. "components" or "users"
+    base_path = editable.yaml_path  # e.g. "components" or "users"
     items = smart_get_value(yaml_data, base_path)
 
     if not items or not isinstance(items, list):
@@ -1131,9 +1129,9 @@ def _build_sequence_summary(
         item_parts: list[str] = []
 
         for child in children:
-            if str(child.widget) == "sequence":
+            if child.widget == "sequence":
                 # Nested sequence: summarize inline
-                child_key = child.editable.yaml_path.split("/")[-1].split("[")[0]
+                child_key = child.yaml_path.split("/")[-1].split("[")[0]
                 child_items = item.get(child_key, [])
                 if child_items and isinstance(child_items, list):
                     formatted = ", ".join(str(v) for v in child_items)
@@ -1175,7 +1173,7 @@ def _get_item_label(item: dict[str, Any], children: list[Any], index: int) -> st
             return str(item[key])
     # Try the first required child
     for child in children:
-        if child.editable.required:
+        if child.required:
             child_key = _child_key(child)
             val = _nested_get(item, child_key)
             if val:
@@ -1188,7 +1186,7 @@ def _child_key(child: Any) -> str:
 
     E.g. ``components[*]/resources/cpu/request`` → ``resources/cpu/request``
     """
-    path = child.editable.yaml_path
+    path = child.yaml_path
     # Remove everything up to and including the first ]/
     if "[*]/" in path:
         path = path.split("[*]/", 1)[-1]
@@ -1216,18 +1214,8 @@ def _format_value(editable: Any, value: Any) -> str | None:
     if value is None or value == "" or value == []:
         return None
 
-    # Apply converter.view() for display if available (e.g. ServiceListConverter
-    # extracts service names from mixed str/dict lists)
-    if editable.editable.converter:
-        value = editable.editable.converter.view(value)
-
-    # Resolve option labels for select/radio/checkbox_group/service_cards fields
-    if editable.editable.values_provider and str(editable.widget) in (
-        "select",
-        "radio",
-        "checkbox_group",
-        "service_cards",
-    ):
+    # Resolve option labels for select/radio/checkbox_group fields
+    if editable.options_provider and editable.widget in ("select", "radio", "checkbox_group"):
         return _resolve_option_labels(editable, value)
 
     if isinstance(value, bool):
@@ -1245,7 +1233,7 @@ def _format_value(editable: Any, value: Any) -> str | None:
 
 def _resolve_option_labels(editable: Any, value: Any) -> str:
     """Look up display labels for select/radio/checkbox values."""
-    from opi.forms.visualizers.bridge import resolve_options_for_editable
+    from opi.forms.editables.bridge import resolve_options_for_editable
 
     try:
         options = resolve_options_for_editable(editable)
@@ -1289,9 +1277,9 @@ def _flatten_yaml_for_validation(
     Fields hidden via ``should_render_editable`` are excluded so they
     are not validated.
     """
+    from opi.forms.editables.bridge import should_render_editable
     from opi.forms.editables.path import resolve_path
     from opi.forms.editables.service_path import smart_get_value
-    from opi.forms.visualizers.bridge import should_render_editable
 
     flat: dict[str, Any] = {}
 
@@ -1299,30 +1287,30 @@ def _flatten_yaml_for_validation(
         if not should_render_editable(editable, yaml_data):
             continue
 
-        if str(editable.widget) == "sequence":
-            items = smart_get_value(yaml_data, editable.editable.yaml_path) or []
+        if editable.widget == "sequence":
+            items = smart_get_value(yaml_data, editable.yaml_path) or []
             if not isinstance(items, list):
                 continue
             for index in range(len(items)):
                 for child in editable.children or []:
                     if not should_render_editable(child, yaml_data):
                         continue
-                    if str(child.widget) == "sequence":
+                    if child.widget == "sequence":
                         # Nested sequence
-                        parent_path = resolve_path(child.editable.yaml_path, index)
+                        parent_path = resolve_path(child.yaml_path, index)
                         nested_items = smart_get_value(yaml_data, parent_path) or []
                         if not isinstance(nested_items, list):
                             continue
                         for ci in range(len(nested_items)):
                             for gc in child.children or []:
-                                gc_path = resolve_path(gc.editable.yaml_path, index)
+                                gc_path = resolve_path(gc.yaml_path, index)
                                 gc_path = resolve_path(gc_path, ci)
                                 flat[gc_path] = smart_get_value(yaml_data, gc_path)
                     else:
-                        concrete = resolve_path(child.editable.yaml_path, index)
+                        concrete = resolve_path(child.yaml_path, index)
                         flat[concrete] = smart_get_value(yaml_data, concrete)
         else:
-            flat[editable.editable.yaml_path] = smart_get_value(yaml_data, editable.editable.yaml_path)
+            flat[editable.yaml_path] = smart_get_value(yaml_data, editable.yaml_path)
 
     return flat
 
@@ -1382,7 +1370,7 @@ async def _do_submit(
         logger.warning("Final validation failed: %s", errors)
         error_section = active_sections[0]
         for section in active_sections:
-            section_paths = {e.editable.yaml_path for e in section.editables}
+            section_paths = {e.yaml_path for e in section.editables}
             if _section_has_errors(section_paths, errors):
                 error_section = section
                 break

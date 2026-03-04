@@ -8,7 +8,7 @@ produced by earlier ones.
 
 from __future__ import annotations
 
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import ProjectEditable
 from opi.forms.editables.generators import (
     AGEKeyPairGenerator,
     EncryptedAPIKeyGenerator,
@@ -16,31 +16,30 @@ from opi.forms.editables.generators import (
     ProjectNameGenerator,
 )
 
-# --- Pure Editable definitions (data logic only) ---
-
-PROJECT_NAME_EDITABLE = Editable(
-    yaml_path="name",
-    generator=ProjectNameGenerator(),
-)
-
-AGE_PUBLIC_KEY_GEN_EDITABLE = Editable(
-    yaml_path="config/age-public-key",
-    generator=AGEKeyPairGenerator(),
-)
-
-AGE_PRIVATE_KEY_GEN_EDITABLE = Editable(
-    yaml_path="config/age-private-key",
-    generator=EncryptedPrivateKeyGenerator(),
-)
-
-API_KEY_GEN_EDITABLE = Editable(
-    yaml_path="config/api-key",
-    generator=EncryptedAPIKeyGenerator(),
-)
-
-GENERATED_EDITABLES_PURE: list[Editable] = [
-    PROJECT_NAME_EDITABLE,
-    AGE_PUBLIC_KEY_GEN_EDITABLE,
-    AGE_PRIVATE_KEY_GEN_EDITABLE,
-    API_KEY_GEN_EDITABLE,
+# Order matters — each generator may depend on values from earlier ones.
+GENERATED_EDITABLES: list[ProjectEditable] = [
+    ProjectEditable(
+        yaml_path="name",
+        widget="hidden",
+        label="Projectnaam (technisch)",
+        generator=ProjectNameGenerator(),
+    ),
+    ProjectEditable(
+        yaml_path="config/age-public-key",
+        widget="hidden",
+        label="AGE publieke sleutel",
+        generator=AGEKeyPairGenerator(),
+    ),
+    ProjectEditable(
+        yaml_path="config/age-private-key",
+        widget="hidden",
+        label="AGE prive-sleutel (versleuteld)",
+        generator=EncryptedPrivateKeyGenerator(),
+    ),
+    ProjectEditable(
+        yaml_path="config/api-key",
+        widget="hidden",
+        label="API-sleutel (versleuteld)",
+        generator=EncryptedAPIKeyGenerator(),
+    ),
 ]

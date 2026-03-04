@@ -79,7 +79,7 @@ async def edit_project_form(request: Request, project_name: str) -> HTMLResponse
     )
 
 
-@project_form_router.post("/edit/{project_name}", response_class=HTMLResponse)
+@project_form_router.post("/edit/{project_name}", response_class=HTMLResponse, response_model=None)
 @requires_sso
 async def save_project_form(request: Request, project_name: str) -> HTMLResponse | RedirectResponse:
     """Handle project form submission: validate and save."""

@@ -109,20 +109,30 @@ class ServiceOptionsProvider:
         for service_type in ServiceType:
             definition = ServiceAdapter.get_service_definition(service_type)
 
+            # Skip hidden services
+            if definition.hidden:
+                continue
+
             # Filter by scope if specified
             if self.filter_scope and definition.scope != self.filter_scope:
                 continue
 
-            options.append(
-                {
-                    "value": service_type.value,
-                    "label": definition.name,
-                    "description": definition.description,
-                    "icon": definition.icon,
-                    "color": definition.color,
-                    "scope": definition.scope,
-                }
-            )
+            option: dict[str, Any] = {
+                "value": service_type.value,
+                "label": definition.name,
+                "description": definition.description,
+                "icon": definition.icon,
+                "color": definition.color,
+                "scope": definition.scope,
+            }
+
+            if definition.requires:
+                option["requires"] = definition.requires
+
+            if definition.help_template:
+                option["help_template"] = definition.help_template
+
+            options.append(option)
 
         return options
 
@@ -199,16 +209,38 @@ class UserRoleOptionsProvider:
         return options
 
 
+class CpuRequestOptionsProvider:
+    """Provides CPU request options for components."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get available CPU request options."""
+        return [
+            {"value": "50m", "label": "50m (minimaal)"},
+            {"value": "100m", "label": "100m"},
+            {"value": "250m", "label": "250m"},
+            {"value": "500m", "label": "500m"},
+        ]
+
+
 class CpuLimitOptionsProvider:
     """Provides CPU limit options for components."""
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available CPU limit options."""
         return [
+            {"value": "500m", "label": "500m"},
             {"value": "1", "label": "1 CPU"},
-            {"value": "2", "label": "2 CPU"},
-            {"value": "3", "label": "3 CPU"},
-            {"value": "4", "label": "4 CPU"},
+        ]
+
+
+class MemoryRequestOptionsProvider:
+    """Provides memory request options for components."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get available memory request options."""
+        return [
+            {"value": "256Mi", "label": "256 MB"},
+            {"value": "512Mi", "label": "512 MB"},
         ]
 
 
@@ -218,12 +250,9 @@ class MemoryLimitOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         """Get available memory limit options."""
         return [
-            {"value": "128Mi", "label": "128 MB"},
-            {"value": "256Mi", "label": "256 MB"},
             {"value": "512Mi", "label": "512 MB"},
             {"value": "768Mi", "label": "768 MB"},
             {"value": "1Gi", "label": "1 GB"},
-            {"value": "2Gi", "label": "2 GB"},
         ]
 
 
@@ -248,6 +277,30 @@ class DomainModeOptionsProvider:
                 "label": "Aangepast subdomein",
                 "description": "Specificeer een custom subdomein voor alle componenten",
             },
+            {
+                "value": "nice-url",
+                "label": "Eigen subdomein (nice URL)",
+                "description": "Punt-gescheiden URLs zoals frontend.mijnapp.rijks.app",
+            },
+        ]
+
+
+class StorageTypeOptionsProvider:
+    """Provides storage type options for container volumes."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get available storage type options."""
+        return [
+            {
+                "value": "persistent",
+                "label": "Persistent",
+                "description": "Data blijft bewaard bij herstart van de container",
+            },
+            {
+                "value": "ephemeral",
+                "label": "Tijdelijk (ephemeral)",
+                "description": "Data wordt gewist bij herstart van de container",
+            },
         ]
 
 
@@ -257,12 +310,11 @@ class StorageSizeOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         """Get available storage size options."""
         return [
+            {"value": "50Mi", "label": "50 MB"},
+            {"value": "100Mi", "label": "100 MB"},
+            {"value": "250Mi", "label": "250 MB"},
+            {"value": "500Mi", "label": "500 MB"},
             {"value": "1Gi", "label": "1 GB"},
-            {"value": "5Gi", "label": "5 GB"},
-            {"value": "10Gi", "label": "10 GB"},
-            {"value": "20Gi", "label": "20 GB"},
-            {"value": "50Gi", "label": "50 GB"},
-            {"value": "100Gi", "label": "100 GB"},
         ]
 
 
@@ -273,14 +325,12 @@ class KeycloakTemplateOptionsProvider:
         """Get available Keycloak template options."""
         return [
             {
-                "value": "sso-support",
-                "label": "SSO Support (standaard)",
-                "description": "Basis SSO configuratie voor applicaties",
+                "value": "sso-only",
+                "label": "Alleen authenticatie via SSO, geen gebruikersbeheer",
             },
             {
-                "value": "sso-support-with-users",
-                "label": "SSO Support met gebruikersbeheer",
-                "description": "SSO configuratie met lokaal gebruikersbeheer in Keycloak",
+                "value": "sso-support",
+                "label": "SSO met ondersteuning voor applicatie-specifieke configuratie (standaard)",
             },
         ]
 
@@ -306,6 +356,28 @@ class BaseDomainOptionsProvider:
             {"value": "", "label": "Standaard (clusternaam)"},
             {"value": "rijksapp.nl", "label": "rijksapp.nl"},
         ]
+
+
+class ClusterBaseDomainOptionsProvider:
+    """Provides base domain options based on the selected cluster.
+
+    Reads supported nice-URL domains from CLUSTER_CONFIG. When no cluster
+    is specified, returns all known domains across all clusters.
+    """
+
+    def __init__(self, cluster: str | None = None) -> None:
+        self.cluster = cluster
+
+    def get_options(self) -> list[dict[str, Any]]:
+        """Get base domain options, optionally filtered by cluster."""
+        if not self.cluster or self.cluster not in CLUSTER_CONFIG:
+            all_domains: set[str] = set()
+            for config in CLUSTER_CONFIG.values():
+                for d in config.get("nice_url", {}).get("supported_domains", []):
+                    all_domains.add(d)
+            return [{"value": d, "label": d} for d in sorted(all_domains)]
+        domains = CLUSTER_CONFIG[self.cluster].get("nice_url", {}).get("supported_domains", [])
+        return [{"value": d, "label": d} for d in domains]
 
 
 class FilteredServiceOptionsProvider:
@@ -374,13 +446,17 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ServiceOptionsProvider": ServiceOptionsProvider,
     "ComponentTypeOptionsProvider": ComponentTypeOptionsProvider,
     "UserRoleOptionsProvider": UserRoleOptionsProvider,
+    "CpuRequestOptionsProvider": CpuRequestOptionsProvider,
     "CpuLimitOptionsProvider": CpuLimitOptionsProvider,
+    "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
     "MemoryLimitOptionsProvider": MemoryLimitOptionsProvider,
     "DomainModeOptionsProvider": DomainModeOptionsProvider,
+    "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
     "PullPolicyOptionsProvider": PullPolicyOptionsProvider,
     "BaseDomainOptionsProvider": BaseDomainOptionsProvider,
+    "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,

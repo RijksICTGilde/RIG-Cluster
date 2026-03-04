@@ -12,7 +12,6 @@ from typing import Any
 import markupsafe
 from fastapi.templating import Jinja2Templates
 from jinja_roos_components import setup_components
-from jinja_roos_components.extension import ComponentExtension
 from starlette.requests import Request
 
 from opi.core.i18n import get_current_translation, get_requested_language
@@ -140,15 +139,17 @@ templates.env.filters["dutch_date"] = format_dutch_date
 # Register process_components filter for runtime-generated HTML that contains
 # component tags (e.g. form_html from render_from_editables). The extension's
 # preprocess only runs at template compile time, so runtime strings need this filter.
+from jinja_roos_components.extension import ComponentExtension
+
 _component_ext = templates.env.extensions.get("jinja_roos_components.extension.ComponentExtension")
 if not isinstance(_component_ext, ComponentExtension):
-    raise TypeError("ComponentExtension not registered — setup_components must run first")
+    raise RuntimeError("ComponentExtension not registered — setup_components must run first")
 
 
 def _process_components(html: str) -> markupsafe.Markup:
     preprocessed = _component_ext.preprocess(html, name="process_components_filter", filename=None)
     rendered = templates.env.from_string(preprocessed).render()
-    return markupsafe.Markup(rendered)  # noqa: S704
+    return markupsafe.Markup(rendered)
 
 
 templates.env.filters["process_components"] = _process_components

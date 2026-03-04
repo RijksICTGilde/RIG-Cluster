@@ -56,9 +56,15 @@ class ServiceListConverter:
         return ServiceAdapter.extract_service_names_from_project_services(value)
 
     def write(self, value: Any) -> list[str | dict]:
-        """Convert service names back to simple list (configs added separately)."""
+        """Convert service names back to simple list (configs added separately).
+
+        Handles both list input (multiple checkboxes) and single string
+        (one checkbox checked, json-enc passes a scalar instead of array).
+        """
         if isinstance(value, list):
             return value
+        if isinstance(value, str) and value:
+            return [value]
         return []
 
     def view(self, value: Any) -> list[str]:
@@ -83,6 +89,26 @@ class NewlineSeparatedListConverter:
         return self.read(value)
 
 
+class IntegerConverter:
+    """Converts a single integer to/from string for text input."""
+
+    def read(self, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    def write(self, value: Any) -> int | None:
+        if isinstance(value, int):
+            return value
+        val = str(value).strip()
+        if val.isdigit():
+            return int(val)
+        return None
+
+    def view(self, value: Any) -> str:
+        return self.read(value)
+
+
 class IntegerListConverter:
     """Converts list[int] to/from comma-separated string."""
 
@@ -100,11 +126,48 @@ class IntegerListConverter:
         return self.read(value)
 
 
+class ListSingleSelectConverter:
+    """Converts a YAML list to/from a single select value.
+
+    Use this when the YAML stores a list (e.g. clusters: [local]) but the
+    form should show a single-select dropdown.  Switching back to a
+    multi-select widget later only requires removing this converter.
+    """
+
+    def read(self, value: Any) -> str:
+        if isinstance(value, list) and value:
+            return str(value[0])
+        return ""
+
+    def write(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            return value
+        if value:
+            return [str(value)]
+        return []
+
+    def view(self, value: Any) -> str:
+        return self.read(value)
+
+
 class KeyValueConverter:
-    """Converts dict to/from KEY=VALUE text format."""
+    """Converts dict to/from KEY=VALUE or KEY: value text format.
+
+    Auto-detects the format on write:
+    - Lines with ``=`` are parsed as ENV format (``KEY=value``)
+    - Lines with ``: `` are parsed as YAML format (``KEY: value``)
+    - Empty lines and ``#`` comments are skipped
+
+    The ``format`` parameter controls which format ``read()`` outputs.
+    """
+
+    def __init__(self, fmt: str = "env") -> None:
+        self.fmt = fmt  # "env" or "yaml"
 
     def read(self, value: Any) -> str:
         if isinstance(value, dict):
+            if self.fmt == "yaml":
+                return "\n".join(f"{k}: {v}" for k, v in value.items())
             return "\n".join(f"{k}={v}" for k, v in value.items())
         return str(value or "")
 
@@ -114,10 +177,38 @@ class KeyValueConverter:
         result: dict[str, str] = {}
         for line in str(value).split("\n"):
             line = line.strip()
-            if "=" in line and not line.startswith("#"):
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line and ": " not in line.split("=", 1)[0]:
+                # ENV format: KEY=value
                 key, val = line.split("=", 1)
                 result[key.strip()] = val.strip()
+            elif ": " in line:
+                # YAML format: KEY: value
+                key, val = line.split(": ", 1)
+                result[key.strip()] = val.strip()
+            elif ":" in line:
+                # YAML with no space: KEY:value
+                key, val = line.split(":", 1)
+                result[key.strip()] = val.strip()
         return result
+
+    def view(self, value: Any) -> str:
+        return self.read(value)
+
+
+class ContainerImageConverter:
+    """Lowercases container image references on write."""
+
+    def read(self, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    def write(self, value: Any) -> str:
+        if not value:
+            return ""
+        return str(value).strip().lower()
 
     def view(self, value: Any) -> str:
         return self.read(value)

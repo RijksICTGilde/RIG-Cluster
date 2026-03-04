@@ -14,8 +14,9 @@ from opi.forms.editables.editable import (
     ProjectEditable,
 )
 from opi.forms.editables.flow import FlowMode, FormFlow
-from opi.forms.editables.part import EditablePart
+from opi.forms.editables.part import EditablePart  # backward compat
 from opi.forms.editables.path import get_value, resolve_path, set_value
+from opi.forms.editables.section import FormSection
 
 __all__ = [
     "EditableConverter",
@@ -24,6 +25,7 @@ __all__ = [
     "EditableValidator",
     "FlowMode",
     "FormFlow",
+    "FormSection",
     "ProjectEditable",
     "editable_to_form_field",
     "get_value",
