@@ -1,0 +1,16 @@
+{#
+  Modal Wizard Progress — shown when deployment is triggered.
+  JS picks up data-task-id and starts progress polling.
+
+  Required context:
+    - task_id: str
+    - project_name: str
+#}
+<div class="edit-progress-view" data-task-id="{{ task_id }}">
+    <div class="edit-progress-bar-wrapper">
+        <div class="edit-progress-bar" id="edit-progress-bar" style="width: 0%"></div>
+    </div>
+    <p class="edit-progress-step" id="edit-progress-step">Verwerking gestart...</p>
+    <div class="edit-progress-tasks" id="edit-progress-tasks"></div>
+    <div class="edit-progress-actions" id="edit-progress-actions" style="display: none;"></div>
+</div>

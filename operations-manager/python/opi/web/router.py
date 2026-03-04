@@ -1428,6 +1428,8 @@ async def project_details(request: Request, project_name: str):
 
         cluster_base_domains = get_cluster_base_domains_for_template()
 
+        from opi.forms.visualizers.flows import SERVICE_CONFIG_MODAL_FLOWS
+
         return templates.TemplateResponse(
             "project-details.html.j2",
             {
@@ -1449,6 +1451,7 @@ async def project_details(request: Request, project_name: str):
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
                 "csrf_token": csrf_token,
+                "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
             },
         )
 

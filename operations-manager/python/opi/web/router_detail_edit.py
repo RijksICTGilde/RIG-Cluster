@@ -1,44 +1,60 @@
 """Detail page inline editing via the editables system.
 
 Provides GET/POST endpoints for editing project sections from the
-details page modal.  Reuses the same ``FormRenderer``,
-``EditableFormProcessor``, and section definitions used by the wizard.
+details page modal.  Uses a server-side wizard engine (WizardState)
+to drive multi-step edit flows within the modal.
 """
 
 from __future__ import annotations
 
 import logging
+from io import StringIO
 from typing import Any
-from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from ruamel.yaml import YAML
 from starlette.background import BackgroundTask
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
+from opi.forms.visualizers.flows import get_flow
 from opi.forms.visualizers.wizard_sections import (
     EDIT_SECTIONS,
-    SERVICE_CONFIG_SECTIONS,
-    SERVICES_EDIT_SECTION,
     _extract_services,
 )
-from opi.forms.wizard.state import WizardSteps
-from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
+from opi.forms.wizard.resolver import (
+    get_section_metadata,
+    resolve_active_section_ids,
+    resolve_active_sections,
+)
+from opi.forms.wizard.session import (
+    clear_modal_wizard_state,
+    get_modal_wizard_state,
+    init_modal_wizard_state,
+    save_modal_wizard_state,
+)
+from opi.web.router_wizard import (
+    _empty_sequence_item,
+    _find_sequence_editable,
+    _split_data_across_sections,
+)
 
 logger = logging.getLogger(__name__)
 
 detail_edit_router = APIRouter(prefix="/projects", tags=["detail-edit"])
 
 
-async def _commit_to_git(project_name: str, project_data: dict[str, Any], section_id: str) -> None:
-    """Commit and push a project file change to git without deployment.
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    Reuses ``_commit_project_yaml`` from the resource API which handles
-    git connector lifecycle and YAML serialization.
-    """
+
+async def _commit_to_git(project_name: str, project_data: dict[str, Any], section_id: str) -> None:
+    """Commit and push a project file change to git without deployment."""
     from opi.api.resource_router import _commit_project_yaml
 
     try:
@@ -73,9 +89,7 @@ def _render_section_html(
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
 ) -> str:
-    """Render form fields for a section (same pattern as wizard _render_step_html)."""
-    from opi.core.templates import get_templates
-
+    """Render form fields for a section."""
     renderer = _create_renderer()
     if not section.layout:
         return ""
@@ -86,7 +100,6 @@ def _render_section_html(
         errors=errors,
         edit_mode=True,
     )
-    # Process Jinja component tags in runtime-generated HTML
     templates = get_templates()
     process_components_filter = templates.env.filters.get("process_components")
     if process_components_filter is not None:
@@ -94,51 +107,8 @@ def _render_section_html(
     return html
 
 
-def _build_edit_wizard_steps(
-    section_id: str,
-    steps_param: str | None,
-    completed_param: str | None,
-) -> WizardSteps | None:
-    """Build WizardSteps from query params, or None for single-section mode."""
-    if not steps_param:
-        return None
-    section_ids = [s.strip() for s in steps_param.split(",") if s.strip()]
-    if section_id not in section_ids:
-        return None
-    completed = {s.strip() for s in (completed_param or "").split(",") if s.strip()}
-    titles: dict[str, str] = {}
-    icons: dict[str, str | None] = {}
-    for sid in section_ids:
-        sec = EDIT_SECTIONS.get(sid)
-        if sec:
-            titles[sid] = sec.title
-            icons[sid] = sec.icon
-    return WizardSteps(
-        current=section_id,
-        all=section_ids,
-        titles=titles,
-        icons=icons,
-        completed=[s for s in section_ids if s in completed],
-    )
-
-
-def _build_step_query_params(wizard_steps: WizardSteps) -> str:
-    """Build the query string to preserve step state across navigation."""
-    steps_val = ",".join(wizard_steps.all)
-    completed_val = ",".join(wizard_steps.completed)
-    return f"?steps={quote(steps_val, safe=',')}&completed={quote(completed_val, safe=',')}"
-
-
-@detail_edit_router.get("/{project_name}/edit/{section_id}", response_class=HTMLResponse)
-@requires_sso
-async def get_edit_section(
-    request: Request,
-    project_name: str,
-    section_id: str,
-    steps: str | None = None,
-    completed: str | None = None,
-) -> HTMLResponse:
-    """Return rendered form HTML for a single edit section (loaded into modal)."""
+def _require_project_edit_access(request: Request, project_name: str):
+    """Check auth and return (project, user_email). Raises on failure."""
     from opi.services.project_service import get_project_service
 
     user = get_current_user(request)
@@ -156,65 +126,88 @@ async def get_edit_section(
     if user_role not in ("admin", "owner"):
         raise HTTPException(status_code=403, detail="Onvoldoende rechten om dit project te bewerken")
 
-    section = _get_edit_section(section_id)
-    project_data = project.data or {}
+    return project, user_email
 
-    # Check conditional visibility (e.g. keycloak-config requires keycloak service)
-    if callable(section.visible) and not section.visible(project_data):
-        raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar voor dit project")
-    if section.visible is False:
-        raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar")
 
-    fields_html = _render_section_html(section, project_data)
+def _determine_flow_action(flow, active_sections) -> str:
+    """Return 'process_project' if any active section needs deployment, else 'save_only'."""
+    for section in active_sections:
+        if section.post_save_action == "process_project":
+            return "process_project"
+    return "save_only"
 
-    # Multi-step mode: wrap fields in the full edit_step template
-    wizard_steps = _build_edit_wizard_steps(section_id, steps, completed)
-    if wizard_steps:
-        from opi.core.templates import get_templates
 
-        templates = get_templates()
-        step_base_url = f"/projects/{project_name}/edit/"
-        step_query_params = _build_step_query_params(wizard_steps)
-        context = {
-            "request": request,
-            "steps": wizard_steps,
-            "step_base_url": step_base_url,
-            "step_target": "#edit-section-inner",
-            "step_push_url": False,
-            "step_query_params": step_query_params,
-            "project_name": project_name,
-            "section": section,
-            "step_html": fields_html,
-        }
-        rendered = templates.get_template("wizard/edit_step.html.j2").render(context)
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
-        return HTMLResponse(content=rendered)
+def _render_modal_step(
+    request: Request,
+    flow_id: str,
+    section,
+    step_html: str,
+    project_name: str,
+    errors: dict[str, list[str]] | None = None,
+    global_errors: list[str] | None = None,
+) -> str:
+    """Render the modal wizard step template and return processed HTML."""
+    state = get_modal_wizard_state(request)
+    if not state:
+        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
 
-    return HTMLResponse(content=fields_html)
+    flow = get_flow(flow_id)
+    active_sections = resolve_active_sections(flow, state.step_data)
+    section_meta = get_section_metadata(active_sections)
+    steps = state.get_steps(section_meta)
+
+    templates = get_templates()
+    context = {
+        "request": request,
+        "steps": steps,
+        "flow_id": flow_id,
+        "section": section,
+        "step_html": step_html,
+        "project_name": project_name,
+        "errors": errors or {},
+        "global_errors": global_errors or [],
+        "step_base_url": f"/projects/{project_name}/modal-wizard/{flow_id}/step/",
+        "step_target": "#edit-section-inner",
+        "step_push_url": False,
+        "step_query_params": "",
+    }
+    rendered = templates.get_template("wizard/modal_wizard_step.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+    return rendered
+
+
+def _start_deployment(project_name: str, result_yaml: dict[str, Any]) -> tuple[str, BackgroundTask]:
+    """Create a background deployment task. Returns (task_id, background_task)."""
+    from opi.core.task_manager import create_task
+
+    yaml_instance = YAML()
+    yaml_instance.preserve_quotes = True
+    yaml_instance.width = 4096
+    yaml_output = StringIO()
+    yaml_instance.dump(result_yaml, yaml_output)
+    yaml_content = yaml_output.getvalue()
+
+    display_name = result_yaml.get("display-name", project_name)
+    task_id = create_task(display_name)
+
+    from opi.core.simple_background import process_project_yaml_background
+
+    bg_task = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
+    return task_id, bg_task
+
+
+# ---------------------------------------------------------------------------
+# Sequence endpoint (add/remove list items) — shared by both old and modal flows
+# ---------------------------------------------------------------------------
 
 
 @detail_edit_router.post("/{project_name}/edit/{section_id}/sequence", response_class=HTMLResponse)
 @requires_sso
 async def sequence_action(request: Request, project_name: str, section_id: str) -> HTMLResponse:
     """Handle add/remove sequence item and re-render the section form."""
-    from opi.services.project_service import get_project_service
-
-    user = get_current_user(request)
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
-
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
-
-    user_email = user.get("email", "").lower()
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = project_service.get_user_role_for_project(project_name, user_email)
-    if user_role not in ("admin", "owner"):
-        raise HTTPException(status_code=403, detail="Onvoldoende rechten om dit project te bewerken")
+    project, _user_email = _require_project_edit_access(request, project_name)
 
     section = _get_edit_section(section_id)
     project_data = project.data or {}
@@ -227,12 +220,15 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
     if action not in ("add", "remove") or not seq_path:
         raise HTTPException(status_code=400, detail="Ongeldige reeks-actie")
 
-    # Process submitted data to get current values merged with project data
+    # Prefer wizard state data if modal wizard is active
+    state = get_modal_wizard_state(request)
+    base_data = state.get_merged_data() if state else project_data
+
     processor = EditableFormProcessor()
     yaml_data, _errors = processor.process_json_submission(
         body,
         section.editables,
-        project_data,
+        base_data,
         edit_mode=True,
     )
 
@@ -254,131 +250,270 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
     return HTMLResponse(content=fields_html)
 
 
-@detail_edit_router.post("/{project_name}/edit/{section_id}", response_class=HTMLResponse)
+# ---------------------------------------------------------------------------
+# Modal wizard endpoints
+# ---------------------------------------------------------------------------
+
+
+@detail_edit_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
 @requires_sso
-async def submit_edit_section(request: Request, project_name: str, section_id: str) -> HTMLResponse:
-    """Process an edit submission for a single section."""
-    from io import StringIO
+async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
+    """Initialize modal wizard and return the first step HTML."""
+    project, _user_email = _require_project_edit_access(request, project_name)
 
-    from ruamel.yaml import YAML
-
-    from opi.core.task_manager import create_task
-    from opi.handlers.project_file_handler import save_project_file
-    from opi.services.project_service import get_project_service
-
-    user = get_current_user(request)
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
-
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
-
-    user_email = user.get("email", "").lower()
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = project_service.get_user_role_for_project(project_name, user_email)
-    if user_role not in ("admin", "owner"):
-        raise HTTPException(status_code=403, detail="Onvoldoende rechten om dit project te bewerken")
-
-    section = _get_edit_section(section_id)
+    flow = get_flow(flow_id)
     project_data = project.data or {}
 
-    # Check conditional visibility (e.g. keycloak-config requires keycloak service)
-    if callable(section.visible) and not section.visible(project_data):
-        raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar voor dit project")
-    if section.visible is False:
-        raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar")
+    # Pre-fill step data from existing project
+    step_data = _split_data_across_sections(flow, project_data)
+
+    # Resolve active sections with pre-filled data
+    active_section_ids = resolve_active_section_ids(flow, step_data)
+    if not active_section_ids:
+        raise HTTPException(status_code=500, detail="Geen stappen gevonden")
+
+    first_step = active_section_ids[0]
+
+    # Initialize modal wizard state
+    state = init_modal_wizard_state(
+        request,
+        flow_id=flow_id,
+        first_step=first_step,
+        active_sections=active_section_ids,
+        project_name=project_name,
+    )
+    state.step_data = step_data
+    # Mark all sections with data as completed (for step indicator)
+    for section_id in active_section_ids:
+        if step_data.get(section_id):
+            state.mark_completed(section_id)
+    save_modal_wizard_state(request, state)
+
+    # Render first step
+    section = _get_section_from_flow(flow, first_step)
+    yaml_data = state.get_merged_data()
+    step_html = _render_section_html(section, yaml_data)
+
+    rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+    return HTMLResponse(content=rendered)
+
+
+@detail_edit_router.get("/{project_name}/modal-wizard/{flow_id}/step/{section_id}", response_class=HTMLResponse)
+@requires_sso
+async def modal_wizard_load_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
+    """Load a step (for back-navigation)."""
+    _require_project_edit_access(request, project_name)
+
+    state = get_modal_wizard_state(request)
+    if not state or state.flow_id != flow_id:
+        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+
+    flow = get_flow(flow_id)
+    section = _get_section_from_flow(flow, section_id)
+
+    state.current_step = section_id
+    save_modal_wizard_state(request, state)
+
+    yaml_data = state.get_merged_data()
+    step_html = _render_section_html(section, yaml_data)
+
+    rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+    return HTMLResponse(content=rendered)
+
+
+@detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/step/{section_id}", response_class=HTMLResponse)
+@requires_sso
+async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
+    """Validate step data and advance to next step, or complete the flow."""
+    project, user_email = _require_project_edit_access(request, project_name)
+
+    state = get_modal_wizard_state(request)
+    if not state or state.flow_id != flow_id:
+        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+
+    flow = get_flow(flow_id)
+    section = _get_section_from_flow(flow, section_id)
 
     # Parse JSON body
-    submitted_data = await request.json()
+    body = await request.json()
 
-    # --- Service add-only enforcement (for services-edit section) ---
+    # Handle sequence actions inline
+    seq_action = body.pop("_seq_action", None)
+    seq_path = body.pop("_seq_path", None)
+    seq_index = body.pop("_seq_index", None)
+    body.pop("_rerender", None)
+
+    if seq_action in ("add", "remove"):
+        yaml_data = state.get_merged_data()
+        processor = EditableFormProcessor()
+        merged, _err = processor.process_json_submission(body, section.editables, yaml_data, edit_mode=True)
+
+        items = smart_get_value(merged, seq_path) if seq_path else []
+        if not isinstance(items, list):
+            items = []
+
+        if seq_action == "add":
+            editable = _find_sequence_editable(section, seq_path)
+            items.append(_empty_sequence_item(editable))
+        elif seq_action == "remove":
+            remove_index = int(seq_index) if seq_index not in (None, "") else -1
+            if 0 <= remove_index < len(items):
+                items.pop(remove_index)
+
+        smart_set_value(merged, str(seq_path), items)
+        step_html = _render_section_html(section, merged)
+        rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+        return HTMLResponse(content=rendered)
+
+    submitted_data = body
+
+    # Service add-only enforcement
     if section_id == "services-edit":
+        project_data = project.data or {}
         existing_services = set(_extract_services(project_data))
         submitted_services = set(_extract_services(submitted_data))
         removed = existing_services - submitted_services
         if removed:
             errors = {"services": [f"Services kunnen niet verwijderd worden: {', '.join(sorted(removed))}"]}
-            fields_html = _render_section_html(section, project_data, errors=errors)
-            return HTMLResponse(content=fields_html, status_code=422)
+            step_html = _render_section_html(section, project_data, errors=errors)
+            rendered = _render_modal_step(request, flow_id, section, step_html, project_name, errors=errors)
+            return HTMLResponse(content=rendered, status_code=422)
 
-    # Process the submission through the standard pipeline
+    # Validate
     processor = EditableFormProcessor()
-    result_yaml, errors = processor.process_json_submission(
-        submitted_data,
-        section.editables,
-        project_data,
-        edit_mode=True,
+    yaml_data = state.get_merged_data()
+    submitted_yaml, errors = processor.process_json_submission(
+        submitted_data, section.editables, yaml_data, edit_mode=True
     )
+
+    # Auto-add service dependencies
+    if section_id == "services-edit" and isinstance(submitted_yaml.get("services"), list):
+        from opi.services.services import ServiceAdapter
+
+        submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
 
     if errors:
-        fields_html = _render_section_html(section, project_data, errors=errors)
-        return HTMLResponse(content=fields_html, status_code=422)
+        step_html = _render_section_html(section, submitted_yaml, errors=errors)
+        rendered = _render_modal_step(request, flow_id, section, step_html, project_name, errors=errors)
+        return HTMLResponse(content=rendered, status_code=422)
 
-    # Save the updated project file
-    save_project_file(project.filename, result_yaml)
-    project_service.load_project_from_data(result_yaml, project.filename)
-    logger.info("Project %s section '%s' updated by %s", project_name, section_id, user_email)
+    # Store step data
+    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
+    section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
+    state.store_step_data(section_id, section_data)
+    state.mark_completed(section_id)
 
-    # --- save_only: git commit+push only, no deployment ---
-    if section.post_save_action == "save_only":
-        logger.info("Section '%s' is save_only, committing to git without deployment", section_id)
-        response = HTMLResponse(content="", status_code=200)
-        response.background = BackgroundTask(_commit_to_git, project_name, result_yaml, section_id)
+    # Re-resolve active sections (services may add/remove conditional steps)
+    active_section_ids = resolve_active_section_ids(flow, state.step_data)
+    state.active_sections = active_section_ids
+    state.stash_inactive_sections(active_section_ids)
+
+    # Determine next step
+    active_sections = resolve_active_sections(flow, state.step_data)
+    section_ids = [s.section_id for s in active_sections]
+
+    try:
+        current_idx = section_ids.index(section_id)
+    except ValueError:
+        current_idx = -1
+
+    if current_idx < len(active_sections) - 1:
+        # More steps to go
+        next_section = active_sections[current_idx + 1]
+        state.current_step = next_section.section_id
+        save_modal_wizard_state(request, state)
+
+        yaml_data = state.get_merged_data()
+        step_html = _render_section_html(next_section, yaml_data)
+        rendered = _render_modal_step(request, flow_id, next_section, step_html, project_name)
+        return HTMLResponse(content=rendered)
+
+    # Last step — do the final submit
+    save_modal_wizard_state(request, state)
+    return await _modal_do_submit(request, project_name, flow_id)
+
+
+@detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/skip", response_class=HTMLResponse)
+@requires_sso
+async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
+    """'Later configureren' — save accumulated data and trigger deployment."""
+    _require_project_edit_access(request, project_name)
+
+    state = get_modal_wizard_state(request)
+    if not state or state.flow_id != flow_id:
+        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+
+    return await _modal_do_submit(request, project_name, flow_id)
+
+
+async def _modal_do_submit(
+    request: Request,
+    project_name: str,
+    flow_id: str,
+) -> HTMLResponse:
+    """Execute the final modal wizard submission."""
+    from opi.handlers.project_file_handler import save_project_file
+    from opi.services.project_service import get_project_service
+
+    state = get_modal_wizard_state(request)
+    if not state:
+        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+
+    flow = get_flow(flow_id)
+    active_sections = resolve_active_sections(flow, state.step_data)
+
+    # Merge all step data
+    merged_data = state.get_merged_data()
+
+    # Merge with existing project data (preserve system-managed fields)
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
+
+    existing_data = project.data or {}
+    existing_data.update(merged_data)
+
+    # Save
+    save_project_file(project.filename, existing_data)
+    project_service.load_project_from_data(existing_data, project.filename)
+    logger.info("Project %s updated via modal wizard (flow=%s)", project_name, flow_id)
+
+    # Determine post-save action
+    action = _determine_flow_action(flow, active_sections)
+    templates = get_templates()
+
+    if action == "process_project":
+        task_id, bg_task = _start_deployment(project_name, existing_data)
+        logger.info("Starting background processing for %s (task=%s, flow=%s)", project_name, task_id, flow_id)
+
+        rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
+            {"task_id": task_id, "project_name": project_name}
+        )
+        process_components = templates.env.filters.get("process_components")
+        if process_components:
+            rendered = str(process_components(rendered))
+
+        clear_modal_wizard_state(request)
+        response = HTMLResponse(content=rendered)
+        response.background = bg_task
         return response
 
-    # --- process_project: git commit+push + full deployment pipeline ---
+    # save_only
+    clear_modal_wizard_state(request)
+    rendered = templates.get_template("wizard/modal_wizard_success.html.j2").render({})
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
 
-    yaml_instance = YAML()
-    yaml_instance.preserve_quotes = True
-    yaml_instance.width = 4096
-    yaml_output = StringIO()
-    yaml_instance.dump(result_yaml, yaml_output)
-    yaml_content = yaml_output.getvalue()
-
-    # Determine which config sections are needed for newly added services
-    config_sections_meta: list[dict[str, str]] = []
-    if section_id == "services-edit":
-        old_services = set(_extract_services(project_data))
-        new_services = set(_extract_services(result_yaml))
-        added_services = new_services - old_services
-        for svc_name in added_services:
-            if svc_name in SERVICE_CONFIG_SECTIONS:
-                sec = SERVICE_CONFIG_SECTIONS[svc_name]
-                config_sections_meta.append(
-                    {
-                        "id": sec.section_id,
-                        "title": sec.title,
-                        "icon": sec.icon,
-                    }
-                )
-
-    display_name = result_yaml.get("display-name", project_name)
-    task_id = create_task(display_name)
-
-    from opi.core.simple_background import process_project_yaml_background
-
-    logger.info(
-        "Starting background project processing for %s (task=%s, section=%s)", project_name, task_id, section_id
-    )
-
-    response = HTMLResponse(content="", status_code=200)
-
-    if config_sections_meta:
-        import json
-
-        # Include services-edit as the already-completed first step
-        all_steps = [
-            {
-                "id": SERVICES_EDIT_SECTION.section_id,
-                "title": SERVICES_EDIT_SECTION.title,
-                "icon": SERVICES_EDIT_SECTION.icon,
-            },
-            *config_sections_meta,
-        ]
-        response.headers["X-Next-Sections"] = json.dumps(all_steps)
-
-    response.headers["X-Task-Id"] = task_id
-    response.background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
+    response = HTMLResponse(content=rendered)
+    response.background = BackgroundTask(_commit_to_git, project_name, existing_data, flow_id)
     return response
+
+
+def _get_section_from_flow(flow, section_id: str):
+    """Look up a section by ID within a flow."""
+    for section in flow.sections:
+        if section.section_id == section_id:
+            return section
+    raise HTTPException(status_code=404, detail=f"Stap '{section_id}' niet gevonden in flow '{flow.flow_id}'")

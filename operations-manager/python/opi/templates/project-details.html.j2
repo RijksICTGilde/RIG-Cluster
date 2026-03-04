@@ -20,7 +20,7 @@
                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                     <p class="rvo-text--lg" style="margin: 0;">{{ project.description }}</p>
                     {% if user_role in ["admin", "owner"] %}
-                    <button type="button" class="edit-section-btn" onclick="openEditModal('identity-edit', 'Projectgegevens bewerken')" title="Beschrijving bewerken">
+                    <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" title="Beschrijving bewerken">
                         <c-icon icon="bewerken" size="sm" color="hemelblauw" />
                     </button>
                     {% endif %}
@@ -722,7 +722,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
                 {% if user_role in ["admin", "owner"] %}
-                <button type="button" class="edit-section-btn" onclick="openEditModal('team-edit', 'Projectleden beheren')" title="Leden bewerken">
+                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-team', 'Projectleden beheren')" title="Leden bewerken">
                     <c-icon icon="bewerken" size="sm" color="hemelblauw" />
                     <span>Bewerken</span>
                 </button>
@@ -942,7 +942,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Services & Integraties</c-heading>
                 {% if user_role in ["admin", "owner"] %}
-                <button type="button" class="edit-section-btn" onclick="openEditModal('services-edit', 'Services beheren')" title="Services bewerken">
+                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-services', 'Services beheren')" title="Services bewerken">
                     <c-icon icon="bewerken" size="sm" color="hemelblauw" />
                     <span>Bewerken</span>
                 </button>
@@ -1239,7 +1239,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
                 {% if user_role in ["admin", "owner"] %}
-                <button type="button" class="edit-section-btn" onclick="openEditModal('components-edit', 'Components beheren')" title="Components bewerken">
+                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-components', 'Components beheren')" title="Components bewerken">
                     <c-icon icon="bewerken" size="sm" color="donkerblauw" />
                     <span>Bewerken</span>
                 </button>
@@ -4246,21 +4246,14 @@
     })();
 
     /* ---------------------------------------------------------------
-     * Edit Section Modal
+     * Edit Section Modal — server-driven wizard via HTMX
      * --------------------------------------------------------------- */
-    let editSectionId = null;
     let isEditSubmitting = false;
     let editPollTimer = null;
-    var editStepTracker = null;  // null when not in wizard step mode
 
-    function openEditModal(sectionId, title) {
-        editSectionId = sectionId;
+    function openEditModal(flowId, title) {
         isEditSubmitting = false;
-        editStepTracker = null;
         if (editPollTimer) { clearInterval(editPollTimer); editPollTimer = null; }
-
-        // Store section ID on modal element so wizard.js can find it
-        document.getElementById('edit-section-modal').dataset.sectionId = sectionId;
 
         // Set title
         var titleEl = document.getElementById('edit-section-title');
@@ -4270,15 +4263,11 @@
         var errorEl = document.getElementById('edit-section-error');
         errorEl.style.display = 'none';
 
-        // Reset inner container to default single-section layout
+        // Show loading state
         var innerEl = document.getElementById('edit-section-inner');
         innerEl.innerHTML =
-            '<div id="edit-section-content" class="edit-section-content">' +
+            '<div class="edit-section-content">' +
                 '<div class="edit-section-loading"><p>Laden...</p></div>' +
-            '</div>' +
-            '<div class="edit-section-actions" id="edit-section-actions">' +
-                '<button type="button" class="rvo-button rvo-button--tertiary" onclick="closeEditModal()">Annuleren</button>' +
-                '<button type="button" class="rvo-button rvo-button--primary" onclick="submitEditModal()">Opslaan</button>' +
             '</div>';
 
         // Show modal
@@ -4286,9 +4275,8 @@
         document.getElementById('edit-section-modal').classList.add('is-open');
         document.body.style.overflow = 'hidden';
 
-        // Fetch section form HTML (single-section mode — no step params)
-        var contentEl = document.getElementById('edit-section-content');
-        fetch('/projects/{{ project.name }}/edit/' + sectionId, {
+        // Fetch first step from server-driven modal wizard
+        fetch('/projects/{{ project.name }}/modal-wizard/' + flowId, {
             credentials: 'same-origin',
         })
         .then(function(response) {
@@ -4296,48 +4284,11 @@
             return response.text();
         })
         .then(function(html) {
-            contentEl.innerHTML = html;
-            if (typeof initKvEditors === 'function') initKvEditors(contentEl);
-        })
-        .catch(function(err) {
-            contentEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
-        });
-    }
-
-    /* -- Wizard step tracker (minimal client-side state) ----------------- */
-
-    function initEditStepTracker(sections) {
-        // sections: [{id, title, icon}, ...] — first is already completed (services-edit)
-        editStepTracker = {
-            sections: sections,
-            completed: new Set([sections[0].id])
-        };
-    }
-
-    function buildStepQueryParams() {
-        if (!editStepTracker) return '';
-        var ids = editStepTracker.sections.map(function(s) { return s.id; });
-        var completed = Array.from(editStepTracker.completed);
-        return 'steps=' + encodeURIComponent(ids.join(',')) + '&completed=' + encodeURIComponent(completed.join(','));
-    }
-
-    function loadEditStep(sectionId) {
-        editSectionId = sectionId;
-        var innerEl = document.getElementById('edit-section-inner');
-        var params = buildStepQueryParams();
-        var url = '/projects/{{ project.name }}/edit/' + sectionId + (params ? '?' + params : '');
-
-        innerEl.innerHTML = '<div class="edit-section-content"><div class="edit-section-loading"><p>Laden...</p></div></div>';
-
-        fetch(url, { credentials: 'same-origin' })
-        .then(function(r) { if (!r.ok) throw new Error('Laden mislukt'); return r.text(); })
-        .then(function(html) {
             innerEl.innerHTML = html;
-            // Activate HTMX on server-rendered content (for "Vorige" button etc.)
+            // Activate HTMX on the new server-rendered content
             if (typeof htmx !== 'undefined') htmx.process(innerEl);
             // Initialize KV editors in the new content
-            var contentEl = document.getElementById('edit-section-content');
-            if (contentEl && typeof initKvEditors === 'function') initKvEditors(contentEl);
+            if (typeof initKvEditors === 'function') initKvEditors(innerEl);
         })
         .catch(function(err) {
             innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
@@ -4350,8 +4301,6 @@
         document.getElementById('edit-section-backdrop').classList.remove('is-open');
         document.getElementById('edit-section-modal').classList.remove('is-open');
         document.body.style.overflow = '';
-        editSectionId = null;
-        editStepTracker = null;
     }
 
     function closeEditModalAndReload() {
@@ -4360,8 +4309,6 @@
         document.getElementById('edit-section-backdrop').classList.remove('is-open');
         document.getElementById('edit-section-modal').classList.remove('is-open');
         document.body.style.overflow = '';
-        editSectionId = null;
-        editStepTracker = null;
         window.location.reload();
     }
 
@@ -4371,132 +4318,10 @@
         }
     }
 
-    /**
-     * Parse a flat field name (e.g. "users[0]/email") into path segments.
-     * Handles bracket indices and slash separators, same logic as json-enc.js.
-     */
-    function parseKeyToSegments(key) {
-        var segments = [];
-        var current = '';
-        var inBracket = false;
-        for (var i = 0; i < key.length; i++) {
-            var ch = key[i];
-            if (ch === '[') {
-                if (!inBracket) {
-                    // Empty brackets [] — strip them (array field marker)
-                    if (i + 1 < key.length && key[i + 1] === ']') {
-                        i++;
-                    } else {
-                        if (current) { segments.push(current); current = ''; }
-                        inBracket = true;
-                    }
-                } else { current += ch; }
-            } else if (ch === ']') {
-                if (inBracket) { segments.push(current); current = ''; inBracket = false; }
-                else { current += ch; }
-            } else if (ch === '/' && !inBracket) {
-                if (current) { segments.push(current); current = ''; }
-            } else { current += ch; }
-        }
-        if (current) segments.push(current);
-        return segments;
-    }
-
-    /**
-     * Set a value in a nested object at the path described by segments.
-     */
-    function setNestedValue(obj, segments, value) {
-        if (segments.length === 0) return;
-        var cur = obj;
-        for (var i = 0; i < segments.length - 1; i++) {
-            var seg = segments[i];
-            if (cur[seg] === undefined) cur[seg] = {};
-            cur = cur[seg];
-        }
-        cur[segments[segments.length - 1]] = value;
-    }
-
-    /**
-     * Convert objects with only numeric keys into real arrays (recursive).
-     */
-    function cleanArrays(obj) {
-        if (!obj || typeof obj !== 'object') return;
-        for (var key in obj) {
-            var val = obj[key];
-            if (val && typeof val === 'object' && !Array.isArray(val)) {
-                cleanArrays(val);
-                var keys = Object.keys(val);
-                var isArr = keys.length > 0;
-                for (var k = 0; k < keys.length; k++) {
-                    if (isNaN(parseInt(keys[k], 10))) { isArr = false; break; }
-                }
-                if (isArr) {
-                    var arr = [];
-                    keys.sort(function(a, b) { return parseInt(a,10) - parseInt(b,10); });
-                    for (var s = 0; s < keys.length; s++) arr.push(val[keys[s]]);
-                    obj[key] = arr;
-                }
-            }
-        }
-    }
-
-    /**
-     * Collect form data from a container and produce nested JSON.
-     * Converts flat path-based field names (e.g. "users[0]/email")
-     * into a nested object structure the backend processor expects.
-     */
-    function collectFormData(container) {
-        var flat = {};
-        container.querySelectorAll('input, select, textarea').forEach(function(el) {
-            var name = el.getAttribute('name');
-            if (!name) return;
-            if (el.type === 'checkbox') {
-                if (name.endsWith('[]')) {
-                    var key = name.slice(0, -2);
-                    if (!flat[key]) flat[key] = [];
-                    if (el.checked) flat[key].push(el.value);
-                } else {
-                    flat[name] = el.checked;
-                }
-            } else if (el.type === 'radio') {
-                if (el.checked) flat[name] = el.value;
-            } else {
-                flat[name] = el.value;
-            }
-        });
-        // Convert flat paths to nested JSON
-        var nested = {};
-        for (var key in flat) {
-            if (!flat.hasOwnProperty(key)) continue;
-            var segments = parseKeyToSegments(key);
-            if (segments.length === 0) { nested[key] = flat[key]; }
-            else { setNestedValue(nested, segments, flat[key]); }
-        }
-        cleanArrays(nested);
-        return nested;
-    }
-
-    /* -- In-modal progress view ---------------------------------------- */
+    /* -- In-modal progress polling ------------------------------------- */
 
     function showModalProgress(taskId) {
-        var contentEl = document.getElementById('edit-section-content');
-        var actionsEl = document.getElementById('edit-section-actions');
-
-        // Hide the form action buttons (Annuleren / Opslaan)
-        actionsEl.style.display = 'none';
-
-        // Build progress UI inside the modal content area
-        contentEl.innerHTML =
-            '<div class="edit-progress-view">' +
-                '<div class="edit-progress-bar-wrapper">' +
-                    '<div class="edit-progress-bar" id="edit-progress-bar" style="width: 0%"></div>' +
-                '</div>' +
-                '<p class="edit-progress-step" id="edit-progress-step">Verwerking gestart...</p>' +
-                '<div class="edit-progress-tasks" id="edit-progress-tasks"></div>' +
-                '<div class="edit-progress-actions" id="edit-progress-actions" style="display: none;"></div>' +
-            '</div>';
-
-        // Start polling
+        isEditSubmitting = true;
         editPollTimer = setInterval(function() { pollEditProgress(taskId); }, 2000);
         setTimeout(function() { pollEditProgress(taskId); }, 300);
     }
@@ -4508,17 +4333,14 @@
             return response.json();
         })
         .then(function(data) {
-            // Update progress bar
             var bar = document.getElementById('edit-progress-bar');
             if (bar) bar.style.width = data.progress + '%';
 
-            // Update current step text
             var stepEl = document.getElementById('edit-progress-step');
             if (stepEl && data.current_step) {
                 stepEl.textContent = data.current_step;
             }
 
-            // Render task list
             var tasksEl = document.getElementById('edit-progress-tasks');
             if (tasksEl && data.tasks) {
                 var html = '';
@@ -4537,7 +4359,6 @@
                 tasksEl.innerHTML = html;
             }
 
-            // Handle completion / failure
             if (data.status === 'completed') {
                 clearInterval(editPollTimer);
                 editPollTimer = null;
@@ -4545,42 +4366,8 @@
                 if (stepEl) stepEl.textContent = 'Wijzigingen succesvol verwerkt!';
                 if (bar) bar.style.width = '100%';
 
-                // Auto-chain config steps or show close button
                 var actionsEl = document.getElementById('edit-progress-actions');
-                if (editStepTracker && editStepTracker.sections.length > 1) {
-                    // Find the first non-completed section to navigate to
-                    var nextSec = null;
-                    for (var si = 0; si < editStepTracker.sections.length; si++) {
-                        var candidate = editStepTracker.sections[si];
-                        if (!editStepTracker.completed.has(candidate.id)) {
-                            nextSec = candidate;
-                            break;
-                        }
-                    }
-                    if (nextSec) {
-                        if (stepEl) stepEl.textContent = 'Volgende stap: ' + nextSec.title;
-
-                        if (actionsEl) {
-                            actionsEl.innerHTML =
-                                '<button type="button" class="rvo-button rvo-button--tertiary" ' +
-                                    'onclick="editStepTracker = null; closeEditModalAndReload()">Later configureren</button>';
-                            actionsEl.style.display = '';
-                        }
-
-                        setTimeout(function() {
-                            var modal = document.getElementById('edit-section-modal');
-                            if (modal && modal.classList.contains('is-open')) {
-                                loadEditStep(nextSec.id);
-                            }
-                        }, 800);
-                    } else if (actionsEl) {
-                        // All steps done
-                        actionsEl.innerHTML =
-                            '<button type="button" class="rvo-button rvo-button--primary" ' +
-                                'onclick="closeEditModalAndReload()">Sluiten</button>';
-                        actionsEl.style.display = '';
-                    }
-                } else if (actionsEl) {
+                if (actionsEl) {
                     actionsEl.innerHTML =
                         '<button type="button" class="rvo-button rvo-button--primary" ' +
                             'onclick="closeEditModalAndReload()">Sluiten</button>' +
@@ -4614,99 +4401,18 @@
         });
     }
 
-    /* -- Submit handler ------------------------------------------------ */
+    /* -- HTMX integration: detect progress HTML and activate polling --- */
 
-    function submitEditModal() {
-        if (isEditSubmitting || !editSectionId) return;
-        isEditSubmitting = true;
+    document.addEventListener('htmx:afterSwap', function(evt) {
+        var progressEl = evt.detail.target.querySelector('[data-task-id]');
+        if (progressEl) {
+            showModalProgress(progressEl.dataset.taskId);
+        }
+        // Initialize KV editors on newly swapped content
+        if (typeof initKvEditors === 'function') initKvEditors(evt.detail.target);
+    });
 
-        var errorEl = document.getElementById('edit-section-error');
-        errorEl.style.display = 'none';
-
-        var contentEl = document.getElementById('edit-section-content');
-        var formData = collectFormData(contentEl);
-
-        fetch('/projects/{{ project.name }}/edit/' + editSectionId, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(formData),
-        })
-        .then(function(response) {
-            var nextSectionsHeader = response.headers.get('X-Next-Sections');
-            var taskId = response.headers.get('X-Task-Id');
-
-            // Initialize step tracker from header metadata
-            if (nextSectionsHeader) {
-                try {
-                    var sections = JSON.parse(nextSectionsHeader);
-                    if (sections.length > 0) {
-                        initEditStepTracker(sections);
-                    }
-                } catch(e) { /* ignore parse errors */ }
-            }
-
-            if (response.status === 422) {
-                return response.text().then(function(html) {
-                    contentEl.innerHTML = html;
-                    if (typeof initKvEditors === 'function') initKvEditors(contentEl);
-                    isEditSubmitting = false;
-                });
-            }
-
-            if (!response.ok) {
-                throw new Error('Opslaan mislukt');
-            }
-
-            // Determine flow based on response headers
-            if (taskId) {
-                // process_project: show progress in modal
-                showModalProgress(taskId);
-            } else {
-                // save_only: show brief success, then advance step or reload
-                isEditSubmitting = false;
-                contentEl.innerHTML =
-                    '<div class="edit-section-success">' +
-                        '<c-icon icon="vinkje" size="xl" color="groen" />' +
-                        '<p>Wijzigingen opgeslagen</p>' +
-                    '</div>';
-
-                if (editStepTracker) {
-                    // Mark current step completed and advance to next
-                    editStepTracker.completed.add(editSectionId);
-
-                    // Find next uncompleted section
-                    var nextSec = null;
-                    for (var si = 0; si < editStepTracker.sections.length; si++) {
-                        var candidate = editStepTracker.sections[si];
-                        if (!editStepTracker.completed.has(candidate.id)) {
-                            nextSec = candidate;
-                            break;
-                        }
-                    }
-
-                    if (nextSec) {
-                        setTimeout(function() { loadEditStep(nextSec.id); }, 800);
-                    } else {
-                        // All steps done — close and reload
-                        editStepTracker = null;
-                        setTimeout(function() { closeEditModalAndReload(); }, 1200);
-                    }
-                } else {
-                    var actionsEl = document.getElementById('edit-section-actions');
-                    if (actionsEl) actionsEl.style.display = 'none';
-                    setTimeout(function() { closeEditModalAndReload(); }, 1200);
-                }
-            }
-        })
-        .catch(function(err) {
-            errorEl.textContent = err.message;
-            errorEl.style.display = 'block';
-            isEditSubmitting = false;
-        });
-    }
-
-    // Escape key closes edit modal too
+    // Escape key closes edit modal
     document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape' && !isEditSubmitting) {
             var modal = document.getElementById('edit-section-modal');

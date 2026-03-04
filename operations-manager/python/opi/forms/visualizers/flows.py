@@ -18,13 +18,16 @@ from typing import TYPE_CHECKING
 from opi.forms.editables.fields.config_generated import GENERATED_EDITABLES_PURE
 from opi.forms.visualizers.wizard_sections import (
     AUTH_WALL_CONFIG_SECTION,
+    COMPONENTS_EDIT_SECTION,
     COMPONENTS_SECTION,
     CONFIG_DISPLAY_SECTION,
     DEPLOYMENTS_SECTION,
     DOMAIN_SECTION,
+    IDENTITY_EDIT_SECTION,
     IDENTITY_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
+    SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
     TEAM_SECTION,
     WIZARD_DEPLOYMENT_SECTION,
@@ -95,9 +98,89 @@ EDIT_FLOW = FormFlow(
     htmx_base_url="/forms/wizard",
 )
 
+
+# ---------------------------------------------------------------------------
+# Modal edit flows — focused mini-wizards for the detail-page edit modal
+# ---------------------------------------------------------------------------
+
+MODAL_EDIT_IDENTITY_FLOW = FormFlow(
+    flow_id="modal-edit-identity",
+    title="Projectgegevens bewerken",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[IDENTITY_EDIT_SECTION],
+)
+
+MODAL_EDIT_TEAM_FLOW = FormFlow(
+    flow_id="modal-edit-team",
+    title="Projectleden beheren",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[TEAM_SECTION],
+)
+
+MODAL_EDIT_COMPONENTS_FLOW = FormFlow(
+    flow_id="modal-edit-components",
+    title="Components beheren",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[COMPONENTS_EDIT_SECTION],
+)
+
+MODAL_EDIT_SERVICES_FLOW = FormFlow(
+    flow_id="modal-edit-services",
+    title="Services beheren",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[
+        SERVICES_EDIT_SECTION,
+        KEYCLOAK_CONFIG_SECTION,
+        POSTGRESQL_CONFIG_SECTION,
+        AUTH_WALL_CONFIG_SECTION,
+    ],
+)
+
+MODAL_EDIT_KEYCLOAK_FLOW = FormFlow(
+    flow_id="modal-edit-keycloak-config",
+    title="Keycloak configuratie",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[KEYCLOAK_CONFIG_SECTION],
+)
+
+MODAL_EDIT_POSTGRESQL_FLOW = FormFlow(
+    flow_id="modal-edit-postgresql-config",
+    title="Database configuratie",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[POSTGRESQL_CONFIG_SECTION],
+)
+
+MODAL_EDIT_AUTH_WALL_FLOW = FormFlow(
+    flow_id="modal-edit-auth-wall-config",
+    title="Authorization wall configuratie",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[AUTH_WALL_CONFIG_SECTION],
+)
+
 FLOW_REGISTRY: dict[str, FormFlow] = {
     CREATE_FLOW.flow_id: CREATE_FLOW,
     EDIT_FLOW.flow_id: EDIT_FLOW,
+    MODAL_EDIT_IDENTITY_FLOW.flow_id: MODAL_EDIT_IDENTITY_FLOW,
+    MODAL_EDIT_TEAM_FLOW.flow_id: MODAL_EDIT_TEAM_FLOW,
+    MODAL_EDIT_COMPONENTS_FLOW.flow_id: MODAL_EDIT_COMPONENTS_FLOW,
+    MODAL_EDIT_SERVICES_FLOW.flow_id: MODAL_EDIT_SERVICES_FLOW,
+    MODAL_EDIT_KEYCLOAK_FLOW.flow_id: MODAL_EDIT_KEYCLOAK_FLOW,
+    MODAL_EDIT_POSTGRESQL_FLOW.flow_id: MODAL_EDIT_POSTGRESQL_FLOW,
+    MODAL_EDIT_AUTH_WALL_FLOW.flow_id: MODAL_EDIT_AUTH_WALL_FLOW,
+}
+
+# Lookup: service name → modal flow ID (for detail page config buttons)
+SERVICE_CONFIG_MODAL_FLOWS: dict[str, str] = {
+    "keycloak": MODAL_EDIT_KEYCLOAK_FLOW.flow_id,
+    "namespace-postgresql-database": MODAL_EDIT_POSTGRESQL_FLOW.flow_id,
+    "authorization-wall": MODAL_EDIT_AUTH_WALL_FLOW.flow_id,
 }
 
 

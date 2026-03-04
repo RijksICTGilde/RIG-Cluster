@@ -23,6 +23,7 @@ from opi.forms.visualizers.wizard_sections import (
     _extract_services,
 )
 from opi.web.router_detail_edit import (
+    _determine_flow_action,
     _get_edit_section,
     _render_section_html,
 )
@@ -284,23 +285,25 @@ def _mock_project_service(project: MockProjectInfo | None = None, user_role: str
     return svc
 
 
-class TestGetEditSectionEndpoint:
+class TestRequireProjectEditAccess:
     @pytest.mark.asyncio
     async def test_returns_404_for_unknown_project(self):
+        from opi.web.router_detail_edit import _require_project_edit_access
+
         svc = _mock_project_service(project=None)
         with (
             patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
             patch("opi.services.project_service.get_project_service", return_value=svc),
         ):
-            from opi.web.router_detail_edit import get_edit_section
-
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
-                await get_edit_section(request, "nonexistent", "identity-edit")
+                _require_project_edit_access(request, "nonexistent")
             assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
     async def test_returns_403_for_unauthorized_user(self):
+        from opi.web.router_detail_edit import _require_project_edit_access
+
         project = MockProjectInfo("test-project")
         svc = _mock_project_service(project=project)
         svc.is_user_authorized_for_project.return_value = False
@@ -308,323 +311,56 @@ class TestGetEditSectionEndpoint:
             patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
             patch("opi.services.project_service.get_project_service", return_value=svc),
         ):
-            from opi.web.router_detail_edit import get_edit_section
-
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
-                await get_edit_section(request, "test-project", "identity-edit")
+                _require_project_edit_access(request, "test-project")
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_returns_403_for_viewer_role(self):
+        from opi.web.router_detail_edit import _require_project_edit_access
+
         project = MockProjectInfo("test-project")
         svc = _mock_project_service(project=project, user_role="viewer")
         with (
             patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
             patch("opi.services.project_service.get_project_service", return_value=svc),
         ):
-            from opi.web.router_detail_edit import get_edit_section
-
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
-                await get_edit_section(request, "test-project", "identity-edit")
+                _require_project_edit_access(request, "test-project")
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_returns_404_for_unknown_section(self):
+    async def test_returns_project_for_owner(self):
+        from opi.web.router_detail_edit import _require_project_edit_access
+
         project = MockProjectInfo("test-project")
-        svc = _mock_project_service(project=project)
+        svc = _mock_project_service(project=project, user_role="owner")
         with (
             patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
             patch("opi.services.project_service.get_project_service", return_value=svc),
         ):
-            from opi.web.router_detail_edit import get_edit_section
-
             request = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                await get_edit_section(request, "test-project", "nonexistent-section")
-            assert exc_info.value.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_returns_html_for_valid_request(self):
-        project = MockProjectInfo("test-project", data={"name": "test-project", "description": "My project"})
-        svc = _mock_project_service(project=project)
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-        ):
-            from opi.web.router_detail_edit import get_edit_section
-
-            request = MagicMock()
-            response = await get_edit_section(request, "test-project", "identity-edit")
-            assert response.status_code == 200
-            assert response.body  # non-empty HTML
-
-    @pytest.mark.asyncio
-    async def test_returns_404_for_invisible_config_section(self):
-        """Keycloak-config should return 404 when project has no keycloak service."""
-        project_data = {"name": "test-project", "description": "test", "services": []}
-        project = MockProjectInfo("test-project", data=project_data)
-        svc = _mock_project_service(project=project)
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-        ):
-            from opi.web.router_detail_edit import get_edit_section
-
-            request = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                await get_edit_section(request, "test-project", "keycloak-config")
-            assert exc_info.value.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_returns_html_for_visible_config_section(self):
-        """Keycloak-config should render when project has keycloak service."""
-        project_data = {"name": "test-project", "description": "test", "services": ["keycloak"]}
-        project = MockProjectInfo("test-project", data=project_data)
-        svc = _mock_project_service(project=project)
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-        ):
-            from opi.web.router_detail_edit import get_edit_section
-
-            request = MagicMock()
-            response = await get_edit_section(request, "test-project", "keycloak-config")
-            assert response.status_code == 200
-            assert response.body
+            result_project, result_email = _require_project_edit_access(request, "test-project")
+            assert result_project is project
+            assert result_email == "a@b.nl"
 
 
-class TestSubmitEditSectionVisibility:
-    """Verify POST endpoint also checks section visibility."""
+class TestDetermineFlowAction:
+    def test_save_only_when_all_save_only(self):
+        sections = [
+            FormSection(section_id="a", title="A", post_save_action="save_only"),
+            FormSection(section_id="b", title="B", post_save_action="save_only"),
+        ]
+        assert _determine_flow_action(None, sections) == "save_only"
 
-    @pytest.mark.asyncio
-    async def test_post_returns_404_for_invisible_section(self):
-        """Cannot submit keycloak-config when project has no keycloak service."""
-        project_data = {"name": "test-project", "description": "test", "services": []}
-        project = MockProjectInfo("test-project", data=project_data)
-        svc = _mock_project_service(project=project)
-        request = MagicMock()
-        request.json = AsyncMock(return_value={})
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-        ):
-            from opi.web.router_detail_edit import submit_edit_section
-
-            with pytest.raises(HTTPException) as exc_info:
-                await submit_edit_section(request, "test-project", "keycloak-config")
-            assert exc_info.value.status_code == 404
-
-
-class TestSubmitEditSectionEndpoint:
-    @pytest.mark.asyncio
-    async def test_rejects_service_removal(self):
-        project_data = {
-            "name": "test-project",
-            "display-name": "Test",
-            "description": "test",
-            "services": ["keycloak", "redis"],
-        }
-        project = MockProjectInfo("test-project", data=project_data)
-        svc = _mock_project_service(project=project)
-
-        request = MagicMock()
-        request.json = AsyncMock(return_value={"services": ["keycloak"]})
-
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-        ):
-            from opi.web.router_detail_edit import submit_edit_section
-
-            response = await submit_edit_section(request, "test-project", "services-edit")
-            assert response.status_code == 422
-
-    @pytest.mark.asyncio
-    async def test_returns_404_for_unknown_project(self):
-        svc = _mock_project_service(project=None)
-        request = MagicMock()
-
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-        ):
-            from opi.web.router_detail_edit import submit_edit_section
-
-            with pytest.raises(HTTPException) as exc_info:
-                await submit_edit_section(request, "nonexistent", "identity-edit")
-            assert exc_info.value.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_returns_403_for_viewer(self):
-        project = MockProjectInfo("test-project")
-        svc = _mock_project_service(project=project, user_role="viewer")
-        request = MagicMock()
-
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-        ):
-            from opi.web.router_detail_edit import submit_edit_section
-
-            with pytest.raises(HTTPException) as exc_info:
-                await submit_edit_section(request, "test-project", "identity-edit")
-            assert exc_info.value.status_code == 403
-
-    @pytest.mark.asyncio
-    async def test_save_only_section_does_not_trigger_processing(self):
-        """Identity-edit is save_only: should save but NOT create a background task."""
-        project_data = {
-            "name": "test-project",
-            "display-name": "Test",
-            "description": "old description",
-        }
-        project = MockProjectInfo("test-project", data=project_data, filename="/tmp/test-project.yaml")
-        svc = _mock_project_service(project=project)
-
-        request = MagicMock()
-        request.json = AsyncMock(return_value={"display-name": "Test", "description": "new description"})
-
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-            patch("opi.handlers.project_file_handler.save_project_file") as mock_save,
-            patch("opi.core.task_manager.create_task") as mock_create_task,
-        ):
-            from opi.web.router_detail_edit import submit_edit_section
-
-            response = await submit_edit_section(request, "test-project", "identity-edit")
-            assert response.status_code == 200
-
-            # Save was called
-            mock_save.assert_called_once()
-            saved_data = mock_save.call_args[0][1]
-            assert saved_data["description"] == "new description"
-
-            # No deployment task was created (save_only skips deployment)
-            mock_create_task.assert_not_called()
-
-            # No task-related headers (no progress modal for save_only)
-            assert "X-Task-Id" not in response.headers
-            assert "HX-Redirect" not in response.headers
-
-            # Git commit is scheduled as a background task
-            assert response.background is not None
-
-    @pytest.mark.asyncio
-    async def test_process_project_section_triggers_background_task(self):
-        """Services-edit is process_project: should create task and return X-Task-Id."""
-        project_data = {
-            "name": "test-project",
-            "display-name": "Test",
-            "description": "test",
-            "services": ["keycloak"],
-        }
-        project = MockProjectInfo("test-project", data=project_data, filename="/tmp/test-project.yaml")
-        svc = _mock_project_service(project=project)
-
-        request = MagicMock()
-        request.json = AsyncMock(return_value={"services": ["keycloak", "redis"]})
-
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-            patch("opi.handlers.project_file_handler.save_project_file"),
-            patch("opi.core.task_manager.create_task", return_value="task-789"),
-            patch("opi.core.simple_background.process_project_yaml_background"),
-        ):
-            from opi.web.router_detail_edit import submit_edit_section
-
-            response = await submit_edit_section(request, "test-project", "services-edit")
-            assert response.status_code == 200
-
-            # Background task was created
-            assert response.headers.get("X-Task-Id") == "task-789"
-
-            # No HX-Redirect (we show progress in modal now)
-            assert "HX-Redirect" not in response.headers
-
-    @pytest.mark.asyncio
-    async def test_team_edit_saves_users(self):
-        """Team edit should save user changes (save_only, no background task)."""
-        project_data = {
-            "name": "test-project",
-            "display-name": "Test",
-            "description": "test",
-            "users": [{"email": "alice@example.com", "role": "owner"}],
-        }
-        project = MockProjectInfo("test-project", data=project_data, filename="/tmp/test-project.yaml")
-        svc = _mock_project_service(project=project)
-
-        # Simulate nested JSON that collectFormData now produces
-        request = MagicMock()
-        request.json = AsyncMock(
-            return_value={
-                "users": [
-                    {"email": "alice@example.com", "role": "owner"},
-                    {"email": "bob@example.com", "role": "administrator"},
-                ],
-            }
-        )
-
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-            patch("opi.handlers.project_file_handler.save_project_file") as mock_save,
-            patch("opi.core.task_manager.create_task") as mock_create_task,
-        ):
-            from opi.web.router_detail_edit import submit_edit_section
-
-            response = await submit_edit_section(request, "test-project", "team-edit")
-            assert response.status_code == 200
-
-            # Save was called with updated users
-            mock_save.assert_called_once()
-            saved_data = mock_save.call_args[0][1]
-            assert len(saved_data["users"]) == 2
-            assert saved_data["users"][1]["email"] == "bob@example.com"
-
-            # Team is save_only — no deployment task, but git commit is scheduled
-            mock_create_task.assert_not_called()
-            assert "X-Task-Id" not in response.headers
-            assert response.background is not None
-
-    @pytest.mark.asyncio
-    async def test_new_service_triggers_next_section_header(self):
-        project_data = {
-            "name": "test-project",
-            "display-name": "Test",
-            "description": "test",
-            "services": [],
-        }
-        project = MockProjectInfo("test-project", data=project_data, filename="/tmp/test-project.yaml")
-        svc = _mock_project_service(project=project)
-
-        request = MagicMock()
-        request.json = AsyncMock(return_value={"services": ["keycloak"]})
-
-        with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
-            patch("opi.handlers.project_file_handler.save_project_file"),
-            patch("opi.core.task_manager.create_task", return_value="task-456"),
-            patch("opi.core.simple_background.process_project_yaml_background"),
-        ):
-            from opi.web.router_detail_edit import submit_edit_section
-
-            response = await submit_edit_section(request, "test-project", "services-edit")
-            assert response.status_code == 200
-            import json
-
-            sections = json.loads(response.headers.get("X-Next-Sections"))
-            section_ids = [s["id"] for s in sections]
-            assert "services-edit" in section_ids
-            assert "keycloak-config" in section_ids
-            # Each section should have title and icon metadata
-            for sec in sections:
-                assert "title" in sec
-                assert "icon" in sec
+    def test_process_project_when_any_requires_it(self):
+        sections = [
+            FormSection(section_id="a", title="A", post_save_action="save_only"),
+            FormSection(section_id="b", title="B", post_save_action="process_project"),
+        ]
+        assert _determine_flow_action(None, sections) == "process_project"
 
 
 class TestSequenceActionEndpoint:
@@ -641,12 +377,15 @@ class TestSequenceActionEndpoint:
         svc = _mock_project_service(project=project)
 
         request = MagicMock()
-        request.json = AsyncMock(return_value={
-            "users": [{"email": "a@b.nl", "role": "owner"}],
-            "_seq_action": "add",
-            "_seq_path": "users",
-            "_seq_index": "",
-        })
+        request.session = {}
+        request.json = AsyncMock(
+            return_value={
+                "users": [{"email": "a@b.nl", "role": "owner"}],
+                "_seq_action": "add",
+                "_seq_path": "users",
+                "_seq_index": "",
+            }
+        )
 
         with (
             patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
@@ -666,11 +405,14 @@ class TestSequenceActionEndpoint:
         svc = _mock_project_service(project=project)
 
         request = MagicMock()
-        request.json = AsyncMock(return_value={
-            "_seq_action": "invalid",
-            "_seq_path": "users",
-            "_seq_index": "",
-        })
+        request.session = {}
+        request.json = AsyncMock(
+            return_value={
+                "_seq_action": "invalid",
+                "_seq_path": "users",
+                "_seq_index": "",
+            }
+        )
 
         with (
             patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
@@ -690,11 +432,14 @@ class TestSequenceActionEndpoint:
         svc = _mock_project_service(project=project, user_role="viewer")
 
         request = MagicMock()
-        request.json = AsyncMock(return_value={
-            "_seq_action": "add",
-            "_seq_path": "users",
-            "_seq_index": "",
-        })
+        request.session = {}
+        request.json = AsyncMock(
+            return_value={
+                "_seq_action": "add",
+                "_seq_path": "users",
+                "_seq_index": "",
+            }
+        )
 
         with (
             patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),

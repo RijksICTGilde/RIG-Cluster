@@ -1,0 +1,97 @@
+{#
+  Modal Wizard Step Fragment — server-driven wizard inside the edit modal.
+
+  Required context:
+    - steps: WizardSteps object
+    - flow_id: FormFlow ID
+    - section: FormSection for the current step
+    - step_html: Pre-rendered form field HTML
+    - project_name: str
+    - errors: dict of field errors
+    - global_errors: list of global error messages
+    - step_base_url: URL prefix for step navigation
+    - step_target: HTMX target selector
+    - step_push_url: Whether to push URL on nav
+    - step_query_params: Query string for step URLs
+#}
+
+{# Step indicator (only for multi-step flows) #}
+{% if steps.count > 1 %}
+<div class="edit-step-indicator" id="modal-wizard-steps">
+    {% include "wizard/wizard_steps_indicator.html.j2" %}
+</div>
+{% endif %}
+
+{# Step content #}
+<div class="wizard-step" id="modal-wizard-step-inner">
+    <div class="wizard-step__header">
+        <c-heading type="h2">
+            {% if section.icon %}<c-icon icon="{{ section.icon }}" size="xl" />{% endif %}
+            {{ section.title }}
+        </c-heading>
+        {% if section.description %}
+        <p class="wizard-step__description">{{ section.description }}</p>
+        {% endif %}
+    </div>
+
+    {% if global_errors %}
+    <c-alert kind="error" heading="Fouten">
+        <ul>
+            {% for err in global_errors %}
+            <li>{{ err }}</li>
+            {% endfor %}
+        </ul>
+    </c-alert>
+    {% endif %}
+
+    <form id="modal-wizard-form"
+          autocomplete="off"
+          hx-ext="json-enc"
+          hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ section.section_id }}"
+          hx-target="#edit-section-inner"
+          hx-swap="innerHTML">
+
+        <div class="wizard-step__fields" id="edit-section-content">
+            {{ step_html | safe }}
+        </div>
+
+        <div class="wizard-step__actions" id="edit-section-actions">
+            {% if not steps.is_first %}
+            <c-button kind="secondary" showIcon="before" icon="delta-naar-links"
+                      hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ steps.prev }}"
+                      hx-target="#edit-section-inner" hx-swap="innerHTML">
+                Vorige
+            </c-button>
+            {% else %}
+            <c-button kind="tertiary" @click="closeEditModal()">Annuleren</c-button>
+            {% endif %}
+
+            <div class="wizard-step__actions-right">
+                {% if not steps.is_last and steps.count > 1 %}
+                <c-button kind="tertiary"
+                          hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/skip"
+                          hx-target="#edit-section-inner" hx-swap="innerHTML">
+                    Later configureren
+                </c-button>
+                {% endif %}
+
+                {% if steps.is_last %}
+                <c-button type="submit" kind="primary" showIcon="before" icon="publicatie">
+                    Opslaan
+                </c-button>
+                {% else %}
+                <c-button type="submit" kind="primary" showIcon="after" icon="delta-naar-rechts">
+                    Volgende
+                </c-button>
+                {% endif %}
+            </div>
+        </div>
+    </form>
+</div>
+
+{# OOB swap for step indicator (on HTMX step transitions) #}
+{% if steps.count > 1 %}
+<div id="modal-wizard-steps" hx-swap-oob="outerHTML">
+    {% include "wizard/wizard_steps_indicator.html.j2" %}
+</div>
+{% endif %}
