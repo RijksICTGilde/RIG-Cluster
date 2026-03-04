@@ -128,9 +128,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             git_connector_for_project_files=git_connector_for_project_files,
         )
         try:
-            processing_result = await project_manager.process_project_from_git(
-                project_file_path, progress
-            )
+            processing_result = await project_manager.process_project_from_git(project_file_path, progress)
             logger.info("Project processing completed, result: %s", processing_result)
         finally:
             await project_manager.close()
@@ -146,9 +144,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             )
 
             progress.complete_task(deploy_task)
-            progress.update_current_step(
-                f"Project {project_name} succesvol geimplementeerd - monitoring actief"
-            )
+            progress.update_current_step(f"Project {project_name} succesvol geimplementeerd - monitoring actief")
 
             elapsed_time = time.time() - start_time
             result: dict[str, Any] = {
@@ -245,10 +241,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # Build component dicts in the shape expected by project_manager
         from types import SimpleNamespace
 
-        component_objects = [
-            SimpleNamespace(reference=c["reference"], image=c["image"])
-            for c in components
-        ]
+        component_objects = [SimpleNamespace(reference=c["reference"], image=c["image"]) for c in components]
 
         result = await project_manager.upsert_deployment(
             deployment_name=deployment_name,
@@ -327,9 +320,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             "created": result.get("created", False),
             "urls": urls,
             "processing": {"status": "completed" if succeeded else "failed"},
-            "web_addresses": [
-                url for dep_urls in urls.values() for url in dep_urls.get("urls", {}).values()
-            ],
+            "web_addresses": [url for dep_urls in urls.values() for url in dep_urls.get("urls", {}).values()],
             "warnings": result.get("warnings", []),
         }
         return response

@@ -62,8 +62,7 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
         if tunnel:
             # Chisel tunnel-based connection
             logger.info(
-                "External database clone request via Chisel tunnel: %s/%s "
-                "<- %s:%s/%s (via %s)",
+                "External database clone request via Chisel tunnel: %s/%s <- %s:%s/%s (via %s)",
                 project_name,
                 deployment_name,
                 tunnel["remote_host"],
@@ -197,8 +196,7 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
         if tunnel:
             # Chisel tunnel-based connection
             logger.info(
-                "External bucket clone request via Chisel tunnel: %s/%s "
-                "<- %s:%s/%s (via %s)",
+                "External bucket clone request via Chisel tunnel: %s/%s <- %s:%s/%s (via %s)",
                 project_name,
                 deployment_name,
                 tunnel["remote_host"],

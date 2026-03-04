@@ -86,9 +86,7 @@ class PersistentTaskProgressManager:
                         await self._flush_to_db()
                         self._dirty = False
                     except Exception:
-                        logger.exception(
-                            "Failed to flush progress for task %s", self._task_id
-                        )
+                        logger.exception("Failed to flush progress for task %s", self._task_id)
         except asyncio.CancelledError:
             # Graceful shutdown -- do one final flush if dirty
             if self._dirty:
@@ -96,9 +94,7 @@ class PersistentTaskProgressManager:
                     await self._flush_to_db()
                     self._dirty = False
                 except Exception:
-                    logger.exception(
-                        "Failed final flush for task %s", self._task_id
-                    )
+                    logger.exception("Failed final flush for task %s", self._task_id)
             raise
 
     async def _flush_to_db(self) -> None:
@@ -140,9 +136,7 @@ class PersistentTaskProgressManager:
                 await self._flush_to_db()
                 self._dirty = False
             except Exception:
-                logger.exception(
-                    "Failed final flush during close for task %s", self._task_id
-                )
+                logger.exception("Failed final flush during close for task %s", self._task_id)
 
     # ------------------------------------------------------------------
     # Legacy compat helpers
@@ -172,9 +166,7 @@ class PersistentTaskProgressManager:
             "error": None,
             "parent_id": None,
         }
-        logger.info(
-            "Task %s: Added task: %s (%s)", self._task_id, name, task_id
-        )
+        logger.info("Task %s: Added task: %s (%s)", self._task_id, name, task_id)
         self.update_current_step(name)
         return task_id
 
@@ -276,9 +268,7 @@ class PersistentTaskProgressManager:
                 self._dirty = False
             await self._task_service.complete_task(self._task_id, result=None)
         except Exception:
-            logger.exception(
-                "Failed to mark task %s as completed in DB", self._task_id
-            )
+            logger.exception("Failed to mark task %s as completed in DB", self._task_id)
 
     def fail_project(self, error: str) -> None:
         """Mark the entire project as failed.
@@ -316,9 +306,7 @@ class PersistentTaskProgressManager:
                 max_attempts=1,
             )
         except Exception:
-            logger.exception(
-                "Failed to mark task %s as failed in DB", self._task_id
-            )
+            logger.exception("Failed to mark task %s as failed in DB", self._task_id)
 
     def set_namespace(self, namespace: str) -> None:
         """Set the namespace for the project."""
@@ -379,8 +367,7 @@ class PersistentTaskProgressManager:
         (e.g. by a dedicated monitoring worker or the task runner itself).
         """
         logger.debug(
-            "start_monitoring() called on PersistentTaskProgressManager for task %s "
-            "(no-op in persistent mode)",
+            "start_monitoring() called on PersistentTaskProgressManager for task %s (no-op in persistent mode)",
             self._task_id,
         )
 

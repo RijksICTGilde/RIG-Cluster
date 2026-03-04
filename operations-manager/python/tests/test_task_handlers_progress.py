@@ -30,6 +30,7 @@ def _make_progress():
 # handle_update_image
 # ---------------------------------------------------------------------------
 
+
 class TestHandleUpdateImage:
     @pytest.fixture
     def payload(self):
@@ -47,9 +48,7 @@ class TestHandleUpdateImage:
         progress = _make_progress()
 
         mock_pm = AsyncMock()
-        mock_pm.update_image_and_regenerate = AsyncMock(
-            return_value={"updates": {"previous_image": "web:v1"}}
-        )
+        mock_pm.update_image_and_regenerate = AsyncMock(return_value={"updates": {"previous_image": "web:v1"}})
         mock_pm.close = AsyncMock()
 
         with patch(PM_PATH, return_value=mock_pm):
@@ -68,14 +67,10 @@ class TestHandleUpdateImage:
         progress = _make_progress()
 
         mock_pm = AsyncMock()
-        mock_pm.update_image_and_regenerate = AsyncMock(
-            side_effect=RuntimeError("image pull failed")
-        )
+        mock_pm.update_image_and_regenerate = AsyncMock(side_effect=RuntimeError("image pull failed"))
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(
-            RuntimeError, match="image pull failed"
-        ):
+        with patch(PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="image pull failed"):
             await handle_update_image(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -85,6 +80,7 @@ class TestHandleUpdateImage:
 # ---------------------------------------------------------------------------
 # handle_delete_deployment
 # ---------------------------------------------------------------------------
+
 
 class TestHandleDeleteDeployment:
     @pytest.fixture
@@ -101,9 +97,7 @@ class TestHandleDeleteDeployment:
         progress = _make_progress()
 
         mock_pm = AsyncMock()
-        mock_pm.delete_deployment = AsyncMock(
-            return_value={"success": True, "namespace": {"success": True}}
-        )
+        mock_pm.delete_deployment = AsyncMock(return_value={"success": True, "namespace": {"success": True}})
         mock_pm.close = AsyncMock()
 
         with patch(CREATE_PM_PATH, return_value=mock_pm):
@@ -137,14 +131,10 @@ class TestHandleDeleteDeployment:
         progress = _make_progress()
 
         mock_pm = AsyncMock()
-        mock_pm.delete_deployment = AsyncMock(
-            side_effect=RuntimeError("k8s unreachable")
-        )
+        mock_pm.delete_deployment = AsyncMock(side_effect=RuntimeError("k8s unreachable"))
         mock_pm.close = AsyncMock()
 
-        with patch(CREATE_PM_PATH, return_value=mock_pm), pytest.raises(
-            RuntimeError, match="k8s unreachable"
-        ):
+        with patch(CREATE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="k8s unreachable"):
             await handle_delete_deployment(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -154,6 +144,7 @@ class TestHandleDeleteDeployment:
 # ---------------------------------------------------------------------------
 # handle_clone_database
 # ---------------------------------------------------------------------------
+
 
 class TestHandleCloneDatabase:
     @pytest.fixture
@@ -202,14 +193,10 @@ class TestHandleCloneDatabase:
         progress = _make_progress()
 
         mock_pm = AsyncMock()
-        mock_pm.clone_database_from_external_direct = AsyncMock(
-            return_value={"success": False, "errors": ["timeout"]}
-        )
+        mock_pm.clone_database_from_external_direct = AsyncMock(return_value={"success": False, "errors": ["timeout"]})
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(
-            RuntimeError, match="Database clone failed"
-        ):
+        with patch(PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Database clone failed"):
             await handle_clone_database(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -232,9 +219,7 @@ class TestHandleCloneDatabase:
         mock_pm = AsyncMock()
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(
-            ValueError, match="source_host and source_port"
-        ):
+        with patch(PM_PATH, return_value=mock_pm), pytest.raises(ValueError, match="source_host and source_port"):
             await handle_clone_database(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -276,6 +261,7 @@ class TestHandleCloneDatabase:
 # ---------------------------------------------------------------------------
 # handle_clone_bucket
 # ---------------------------------------------------------------------------
+
 
 class TestHandleCloneBucket:
     @pytest.fixture
@@ -328,9 +314,7 @@ class TestHandleCloneBucket:
         )
         mock_pm.close = AsyncMock()
 
-        with patch(PM_PATH, return_value=mock_pm), pytest.raises(
-            RuntimeError, match="Bucket clone failed"
-        ):
+        with patch(PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="Bucket clone failed"):
             await handle_clone_bucket(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -340,6 +324,7 @@ class TestHandleCloneBucket:
 # ---------------------------------------------------------------------------
 # handle_refresh_deployment
 # ---------------------------------------------------------------------------
+
 
 class TestHandleRefreshDeployment:
     @pytest.fixture
@@ -364,9 +349,7 @@ class TestHandleRefreshDeployment:
 
         mock_pm = AsyncMock()
         mock_pm.process_project_from_git = AsyncMock(return_value=True)
-        mock_pm.get_deployment_results = MagicMock(
-            return_value={"dev": mock_dep_result}
-        )
+        mock_pm.get_deployment_results = MagicMock(return_value={"dev": mock_dep_result})
         mock_pm.close = AsyncMock()
 
         mock_project_service = MagicMock()
@@ -399,9 +382,7 @@ class TestHandleRefreshDeployment:
         assert progress.complete_task.call_count == 2
 
         # Web addresses reported
-        progress.update_component_web_address.assert_called_once_with(
-            "web", "https://web.example.com"
-        )
+        progress.update_component_web_address.assert_called_once_with("web", "https://web.example.com")
 
         assert result["deployment_name"] == "dev"
 
@@ -414,13 +395,17 @@ class TestHandleRefreshDeployment:
         mock_project_service = MagicMock()
         mock_project_service.get_project.return_value = None
 
-        with patch(
-            "opi.utils.project_utils.validate_project_name",
-            return_value=True,
-        ), patch(
-            "opi.services.project_service.get_project_service",
-            return_value=mock_project_service,
-        ), pytest.raises(ValueError, match="not found"):
+        with (
+            patch(
+                "opi.utils.project_utils.validate_project_name",
+                return_value=True,
+            ),
+            patch(
+                "opi.services.project_service.get_project_service",
+                return_value=mock_project_service,
+            ),
+            pytest.raises(ValueError, match="not found"),
+        ):
             await handle_refresh_deployment(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -442,15 +427,18 @@ class TestHandleRefreshDeployment:
         mock_project_service = MagicMock()
         mock_project_service.get_project.return_value = mock_project
 
-        with patch(
-            "opi.utils.project_utils.validate_project_name",
-            return_value=True,
-        ), patch(
-            "opi.services.project_service.get_project_service",
-            return_value=mock_project_service,
-        ), patch(
-            CREATE_PM_PATH, return_value=mock_pm
-        ), pytest.raises(RuntimeError, match="Failed to process"):
+        with (
+            patch(
+                "opi.utils.project_utils.validate_project_name",
+                return_value=True,
+            ),
+            patch(
+                "opi.services.project_service.get_project_service",
+                return_value=mock_project_service,
+            ),
+            patch(CREATE_PM_PATH, return_value=mock_pm),
+            pytest.raises(RuntimeError, match="Failed to process"),
+        ):
             await handle_refresh_deployment(payload, progress)
 
         progress.fail_task.assert_called_once()
@@ -466,10 +454,13 @@ class TestHandleRefreshDeployment:
         }
         progress = _make_progress()
 
-        with patch(
-            "opi.utils.project_utils.validate_project_name",
-            return_value=False,
-        ), pytest.raises(ValueError, match="Invalid project name"):
+        with (
+            patch(
+                "opi.utils.project_utils.validate_project_name",
+                return_value=False,
+            ),
+            pytest.raises(ValueError, match="Invalid project name"),
+        ):
             await handle_refresh_deployment(payload, progress)
 
         progress.fail_project.assert_called_once()
@@ -478,6 +469,7 @@ class TestHandleRefreshDeployment:
 # ---------------------------------------------------------------------------
 # handle_upsert_deployment
 # ---------------------------------------------------------------------------
+
 
 class TestHandleUpsertDeployment:
     @pytest.fixture
@@ -499,13 +491,9 @@ class TestHandleUpsertDeployment:
         mock_dep_result.urls = {"web": "https://web.example.com"}
 
         mock_pm = AsyncMock()
-        mock_pm.upsert_deployment = AsyncMock(
-            return_value={"success": True, "created": True}
-        )
+        mock_pm.upsert_deployment = AsyncMock(return_value={"success": True, "created": True})
         mock_pm.process_project_from_git = AsyncMock(return_value=True)
-        mock_pm.get_deployment_results = MagicMock(
-            return_value={"dev": mock_dep_result}
-        )
+        mock_pm.get_deployment_results = MagicMock(return_value={"dev": mock_dep_result})
         mock_pm.close = AsyncMock()
 
         with (
@@ -534,9 +522,7 @@ class TestHandleUpsertDeployment:
         )
 
         # Web addresses reported
-        progress.update_component_web_address.assert_called_once_with(
-            "web", "https://web.example.com"
-        )
+        progress.update_component_web_address.assert_called_once_with("web", "https://web.example.com")
 
         assert result["status"] == "success"
 
@@ -547,9 +533,7 @@ class TestHandleUpsertDeployment:
         progress = _make_progress()
 
         mock_pm = AsyncMock()
-        mock_pm.upsert_deployment = AsyncMock(
-            return_value={"success": True, "created": True}
-        )
+        mock_pm.upsert_deployment = AsyncMock(return_value={"success": True, "created": True})
         mock_pm.process_project_from_git = AsyncMock(return_value=False)
         mock_pm.get_deployment_results = MagicMock(return_value={})
         mock_pm.close = AsyncMock()
@@ -579,6 +563,7 @@ class TestHandleUpsertDeployment:
 # ---------------------------------------------------------------------------
 # PersistentTaskProgressManager.update_task
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateTaskMethod:
     def test_persistent_update_task(self):

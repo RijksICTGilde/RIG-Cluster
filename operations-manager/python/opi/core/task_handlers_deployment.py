@@ -33,8 +33,7 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
     registry: str | None = payload.get("registry")
 
     logger.info(
-        f"Task: updating image for component '{component_name}' "
-        f"in {project_name}/{deployment_name} to '{image}'"
+        f"Task: updating image for component '{component_name}' in {project_name}/{deployment_name} to '{image}'"
     )
 
     # Task 1: Initialize project
@@ -42,9 +41,7 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
 
     from opi.manager.project_manager import ProjectManager
 
-    project_manager = ProjectManager(
-        project_file_relative_path=f"projects/{project_name}.yaml"
-    )
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     progress.complete_task(init_task)
 
     # Task 2: Update component image
@@ -64,9 +61,7 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
             previous_image = updates.get("previous_image", "")
 
         progress.complete_task(update_task)
-        logger.info(
-            f"Task: image update completed for {project_name}/{deployment_name}/{component_name}"
-        )
+        logger.info(f"Task: image update completed for {project_name}/{deployment_name}/{component_name}")
 
         return {
             "deployment_name": deployment_name,
@@ -95,9 +90,7 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
 
-    logger.info(
-        f"Task: deleting deployment {project_name}/{deployment_name}"
-    )
+    logger.info(f"Task: deleting deployment {project_name}/{deployment_name}")
 
     # Task 1: Initialize project manager
     init_task = progress.add_task("Initializing project manager")
@@ -110,9 +103,7 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     # Task 2: Delete deployment resources
     delete_task = progress.add_task("Deleting deployment resources")
     try:
-        deletion_results = await project_manager.delete_deployment(
-            project_name, deployment_name
-        )
+        deletion_results = await project_manager.delete_deployment(project_name, deployment_name)
 
         resources_removed: list[str] = []
         if isinstance(deletion_results, dict):
@@ -130,10 +121,7 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
             progress.fail_task(delete_task, "Deletion completed with some errors")
 
         status_msg = "completed successfully" if success else "completed with some errors"
-        logger.info(
-            f"Task: deployment deletion {status_msg} for "
-            f"{project_name}/{deployment_name}"
-        )
+        logger.info(f"Task: deployment deletion {status_msg} for {project_name}/{deployment_name}")
 
         return {
             "deployment_name": deployment_name,
