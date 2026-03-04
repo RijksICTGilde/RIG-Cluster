@@ -188,10 +188,16 @@ class KeyValueConverter:
     def __init__(self, fmt: str = "env") -> None:
         self.fmt = fmt  # "env" or "yaml"
 
+    def _has_complex_values(self, data: dict) -> bool:
+        """Check if any values are non-scalar (lists, dicts)."""
+        return any(isinstance(v, (list, dict)) for v in data.values())
+
     def read(self, value: Any) -> str:
         """Convert structured data back to editable text."""
         if isinstance(value, dict):
-            if self.fmt == "yaml":
+            # Use YAML format when values contain lists/dicts (ENV can't
+            # represent those) or when the configured format is YAML.
+            if self.fmt == "yaml" or self._has_complex_values(value):
                 return yaml.dump(
                     value, default_flow_style=False, allow_unicode=True
                 ).rstrip("\n")
