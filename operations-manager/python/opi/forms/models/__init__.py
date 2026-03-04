@@ -26,17 +26,17 @@ from opi.forms.models.project_file import (
 __all__ = [
     # Self-service form models
     "ComponentFormModel",
-    "ProjectFormModel",
-    "UserFormModel",
-    "get_project_form_layout",
+    "ComponentModel",
+    "DeploymentComponentModel",
+    "DeploymentModel",
+    "PortsModel",
     # Project file models (matching YAML structure)
     "ProjectFileModel",
+    "ProjectFormModel",
     "ProjectUserModel",
-    "ComponentModel",
-    "PortsModel",
-    "ResourcesModel",
-    "DeploymentModel",
-    "DeploymentComponentModel",
     "RepositoryModel",
+    "ResourcesModel",
+    "UserFormModel",
     "get_project_file_form_layout",
+    "get_project_form_layout",
 ]

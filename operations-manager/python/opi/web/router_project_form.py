@@ -11,7 +11,7 @@ from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.project_registry import (
+from opi.forms.visualizers.project_registry import (
     get_all_project_editables,
     get_project_form_layout,
 )

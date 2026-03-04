@@ -29,7 +29,7 @@ from opi.forms.layout import (
 )
 
 if TYPE_CHECKING:
-    from opi.forms.editables.editable import ProjectEditable
+    from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.forms.widgets.base import WidgetAdapter
 
 
@@ -250,7 +250,7 @@ class FormRenderer:
 
     def render_from_editables(
         self,
-        editables: list[ProjectEditable],
+        editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
         layout: LayoutElement | list,
         errors: dict[str, list[str]] | None = None,
@@ -277,7 +277,7 @@ class FormRenderer:
 
     def render_fields_from_editables(
         self,
-        editables: list[ProjectEditable],
+        editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
         layout: LayoutElement | list,
         errors: dict[str, list[str]] | None = None,
@@ -295,18 +295,18 @@ class FormRenderer:
 
     def _build_fields_from_editables(
         self,
-        editables: list[ProjectEditable],
+        editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
     ) -> dict[str, FormField]:
         """Convert editables to FormField dict for the layout pipeline."""
-        from opi.forms.editables.bridge import (
+        from opi.forms.editables.service_path import smart_set_value
+        from opi.forms.visualizers.bridge import (
             _is_service_active,
             editable_to_form_field,
             should_render_editable,
         )
-        from opi.forms.editables.service_path import smart_set_value
 
         errors = errors or {}
         fields_by_name: dict[str, FormField] = {}
@@ -316,15 +316,15 @@ class FormRenderer:
         # fields (depends_on) can see the forced value in yaml_data.
         for editable in editables:
             if editable.locked_by_service and _is_service_active(editable.locked_by_service, yaml_data):
-                smart_set_value(yaml_data, editable.yaml_path, True)
+                smart_set_value(yaml_data, editable.editable.yaml_path, True)
 
         for editable in editables:
             if not should_render_editable(editable, yaml_data):
                 continue
 
-            if editable.widget == "sequence":
+            if str(editable.widget) == "sequence":
                 seq_field = self._build_sequence_field(editable, yaml_data, errors, edit_mode, provider_context)
-                fields_by_name[editable.yaml_path] = seq_field
+                fields_by_name[editable.editable.yaml_path] = seq_field
             else:
                 form_field = editable_to_form_field(
                     editable,
@@ -384,33 +384,34 @@ class FormRenderer:
 
     def _build_sequence_field(
         self,
-        editable: ProjectEditable,
+        editable: EditableVisualizer,
         yaml_data: dict[str, Any],
         errors: dict[str, list[str]],
         edit_mode: bool,
         provider_context: dict[str, Any] | None = None,
     ) -> FormField:
         """Build a FormField for a sequence editable with item children."""
-        from opi.forms.editables.bridge import editable_to_form_field, should_render_editable
         from opi.forms.editables.service_path import smart_get_value
+        from opi.forms.visualizers.bridge import editable_to_form_field, should_render_editable
 
-        items = smart_get_value(yaml_data, editable.yaml_path) or []
+        ed = editable.editable
+        items = smart_get_value(yaml_data, ed.yaml_path) or []
         if not isinstance(items, list):
             items = []
 
         # Ensure min_items are present so the UI shows at least that many rows
-        while len(items) < editable.min_items:
+        while len(items) < ed.min_items:
             items.append({})
 
         seq_field = FormField(
-            name=editable.yaml_path,
-            path=editable.yaml_path,
+            name=ed.yaml_path,
+            path=ed.yaml_path,
             schema_type=list,
             widget_type="sequence",
             label=editable.label or "",
             description=editable.description,
-            min_items=editable.min_items,
-            max_items=editable.max_items,
+            min_items=ed.min_items,
+            max_items=ed.max_items,
         )
 
         children: list[FormField] = []
@@ -419,7 +420,7 @@ class FormRenderer:
             for child_editable in editable.children or []:
                 if not should_render_editable(child_editable, yaml_data):
                     continue
-                if child_editable.widget == "sequence":
+                if str(child_editable.widget) == "sequence":
                     nested_seq = self._build_nested_sequence_field(
                         child_editable,
                         yaml_data,
@@ -441,8 +442,8 @@ class FormRenderer:
                     item_children.append(child_field)
 
             item_field = FormField(
-                name=f"{editable.yaml_path}[{index}]",
-                path=f"{editable.yaml_path}[{index}]",
+                name=f"{ed.yaml_path}[{index}]",
+                path=f"{ed.yaml_path}[{index}]",
                 schema_type=dict,
                 widget_type="sequence_item",
                 label=f"Item {index + 1}",
@@ -456,7 +457,7 @@ class FormRenderer:
 
     def _build_nested_sequence_field(
         self,
-        editable: ProjectEditable,
+        editable: EditableVisualizer,
         yaml_data: dict[str, Any],
         errors: dict[str, list[str]],
         edit_mode: bool,
@@ -464,17 +465,18 @@ class FormRenderer:
         provider_context: dict[str, Any] | None = None,
     ) -> FormField:
         """Build a nested sequence (e.g., deployments[0]/components)."""
-        from opi.forms.editables.bridge import editable_to_form_field
         from opi.forms.editables.path import resolve_path
         from opi.forms.editables.service_path import smart_get_value
+        from opi.forms.visualizers.bridge import editable_to_form_field
 
-        concrete_path = resolve_path(editable.yaml_path, parent_index)
+        ed = editable.editable
+        concrete_path = resolve_path(ed.yaml_path, parent_index)
         items = smart_get_value(yaml_data, concrete_path) or []
         if not isinstance(items, list):
             items = []
 
         # Ensure min_items are present so the UI shows at least that many rows
-        while len(items) < editable.min_items:
+        while len(items) < ed.min_items:
             items.append({})
 
         nested_field = FormField(
@@ -483,8 +485,8 @@ class FormRenderer:
             schema_type=list,
             widget_type="sequence",
             label=editable.label or "",
-            min_items=editable.min_items,
-            max_items=editable.max_items,
+            min_items=ed.min_items,
+            max_items=ed.max_items,
         )
 
         children: list[FormField] = []
@@ -494,7 +496,9 @@ class FormRenderer:
                 # Pre-resolve the parent [*] so editable_to_form_field
                 # only needs to resolve the child [*].
                 resolved_editable = copy.copy(child_editable)
-                resolved_editable.yaml_path = resolve_path(child_editable.yaml_path, parent_index)
+                resolved_ed = copy.copy(child_editable.editable)
+                resolved_ed.yaml_path = resolve_path(child_editable.editable.yaml_path, parent_index)
+                resolved_editable.editable = resolved_ed
                 child_field = editable_to_form_field(
                     resolved_editable,
                     yaml_data,

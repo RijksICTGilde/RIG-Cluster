@@ -3,28 +3,21 @@
 from __future__ import annotations
 
 from opi.forms.editables.converters import EncryptedDisplayConverter, TruncateConverter
-from opi.forms.editables.editable import ProjectEditable
+from opi.forms.editables.editable import Editable
 
-AGE_PUBLIC_KEY = ProjectEditable(
+# --- Pure Editable definitions (data logic only) ---
+
+AGE_PUBLIC_KEY_EDITABLE = Editable(
     yaml_path="config/age-public-key",
-    widget="display_card",
-    label="AGE publieke sleutel",
-    readonly=True,
     converter=TruncateConverter(20),
 )
 
-AGE_PRIVATE_KEY = ProjectEditable(
+AGE_PRIVATE_KEY_EDITABLE = Editable(
     yaml_path="config/age-private-key",
-    widget="display_card",
-    label="AGE privé sleutel",
-    readonly=True,
     converter=EncryptedDisplayConverter(),
 )
 
-API_KEY = ProjectEditable(
+API_KEY_EDITABLE = Editable(
     yaml_path="config/api-key",
-    widget="display_card",
-    label="API sleutel",
-    readonly=True,
     converter=EncryptedDisplayConverter(),
 )

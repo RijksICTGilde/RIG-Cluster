@@ -5,8 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from opi.forms.editables.section import FormSection
+from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.layout import Fieldset
+from opi.forms.visualizers.sections import FormSection
+from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.wizard.state import WizardState
 from opi.web.router_wizard import (
     _build_section_summary,
@@ -36,11 +38,9 @@ class TestGetSectionFromFlow:
 
 class TestRenderStepHtml:
     def test_renders_section_with_layout(self):
-        from opi.forms.editables.editable import ProjectEditable
-
-        editable = ProjectEditable(
-            yaml_path="name",
-            widget="text",
+        editable = EditableVisualizer(
+            editable=Editable(yaml_path="name"),
+            widget=WidgetType.TEXT,
             label="Naam",
         )
         section = FormSection(
@@ -64,14 +64,14 @@ class TestRenderStepHtml:
 
 class TestBuildSectionSummary:
     def test_summary_with_simple_fields(self):
-        from opi.forms.editables.editable import ProjectEditable
-
         section = FormSection(
             section_id="test",
             title="Test",
             editables=[
-                ProjectEditable(yaml_path="name", widget="text", label="Naam"),
-                ProjectEditable(yaml_path="description", widget="textarea", label="Omschrijving"),
+                EditableVisualizer(editable=Editable(yaml_path="name"), widget=WidgetType.TEXT, label="Naam"),
+                EditableVisualizer(
+                    editable=Editable(yaml_path="description"), widget=WidgetType.TEXTAREA, label="Omschrijving"
+                ),
             ],
         )
         yaml_data = {"name": "test-project", "description": "A test"}
@@ -82,55 +82,53 @@ class TestBuildSectionSummary:
         assert "Omschrijving" in html
 
     def test_summary_with_none_value(self):
-        from opi.forms.editables.editable import ProjectEditable
-
         section = FormSection(
             section_id="test",
             title="Test",
             editables=[
-                ProjectEditable(yaml_path="missing", widget="text", label="Missing"),
+                EditableVisualizer(editable=Editable(yaml_path="missing"), widget=WidgetType.TEXT, label="Missing"),
             ],
         )
         html = _build_section_summary(section, {})
         assert "Geen gegevens ingevuld" in html
 
     def test_summary_with_list_value(self):
-        from opi.forms.editables.editable import ProjectEditable
-
         section = FormSection(
             section_id="test",
             title="Test",
             editables=[
-                ProjectEditable(yaml_path="clusters", widget="checkbox_group", label="Clusters"),
+                EditableVisualizer(
+                    editable=Editable(yaml_path="clusters"), widget=WidgetType.CHECKBOX_GROUP, label="Clusters"
+                ),
             ],
         )
         html = _build_section_summary(section, {"clusters": ["local", "production"]})
         assert "local, production" in html
 
     def test_summary_with_bool_value(self):
-        from opi.forms.editables.editable import ProjectEditable
-
         section = FormSection(
             section_id="test",
             title="Test",
             editables=[
-                ProjectEditable(yaml_path="enabled", widget="checkbox", label="Actief"),
+                EditableVisualizer(editable=Editable(yaml_path="enabled"), widget=WidgetType.CHECKBOX, label="Actief"),
             ],
         )
         html = _build_section_summary(section, {"enabled": True})
         assert "Ja" in html
 
     def test_summary_renders_sequences(self):
-        from opi.forms.editables.editable import ProjectEditable
-
-        child = ProjectEditable(yaml_path="items[*]/name", widget="text", label="Naam")
+        child = EditableVisualizer(
+            editable=Editable(yaml_path="items[*]/name"),
+            widget=WidgetType.TEXT,
+            label="Naam",
+        )
         section = FormSection(
             section_id="test",
             title="Test",
             editables=[
-                ProjectEditable(
-                    yaml_path="items",
-                    widget="sequence",
+                EditableVisualizer(
+                    editable=Editable(yaml_path="items"),
+                    widget=WidgetType.SEQUENCE,
                     label="Items",
                     children=[child],
                 ),
@@ -155,36 +153,47 @@ class TestFlattenYamlForValidation:
     """Test flattening structured YAML into flat form-style keys."""
 
     def test_flattens_simple_fields(self):
-        from opi.forms.editables.editable import ProjectEditable
-
         editables = [
-            ProjectEditable(yaml_path="name", widget="text", label="Naam"),
-            ProjectEditable(yaml_path="description", widget="textarea", label="Omschrijving"),
+            EditableVisualizer(editable=Editable(yaml_path="name"), widget=WidgetType.TEXT, label="Naam"),
+            EditableVisualizer(
+                editable=Editable(yaml_path="description"), widget=WidgetType.TEXTAREA, label="Omschrijving"
+            ),
         ]
         yaml_data = {"name": "test-proj", "description": "A test"}
         flat = _flatten_yaml_for_validation(editables, yaml_data)
         assert flat == {"name": "test-proj", "description": "A test"}
 
     def test_flattens_sequence_children(self):
-        from opi.forms.editables.editable import ProjectEditable
-
-        child = ProjectEditable(yaml_path="users[*]/email", widget="text", label="Email", required=True)
-        seq = ProjectEditable(yaml_path="users", widget="sequence", label="Team", children=[child])
+        child = EditableVisualizer(
+            editable=Editable(yaml_path="users[*]/email", required=True),
+            widget=WidgetType.TEXT,
+            label="Email",
+        )
+        seq = EditableVisualizer(
+            editable=Editable(yaml_path="users"),
+            widget=WidgetType.SEQUENCE,
+            label="Team",
+            children=[child],
+        )
         yaml_data = {"users": [{"email": "a@b.com"}, {"email": "c@d.com"}]}
         flat = _flatten_yaml_for_validation([seq], yaml_data)
         assert flat["users[0]/email"] == "a@b.com"
         assert flat["users[1]/email"] == "c@d.com"
 
     def test_skips_hidden_editables(self):
-        from opi.forms.editables.editable import ProjectEditable
-
-        visible = ProjectEditable(yaml_path="name", widget="text", label="Naam")
-        hidden = ProjectEditable(
-            yaml_path="subdomain",
-            widget="text",
+        visible = EditableVisualizer(
+            editable=Editable(yaml_path="name"),
+            widget=WidgetType.TEXT,
+            label="Naam",
+        )
+        hidden = EditableVisualizer(
+            editable=Editable(
+                yaml_path="subdomain",
+                depends_on="mode",
+                show_when={"value": "custom"},
+            ),
+            widget=WidgetType.TEXT,
             label="Subdomein",
-            depends_on="mode",
-            show_when={"value": "custom"},
         )
         yaml_data = {"name": "test", "mode": "default", "subdomain": "old"}
         flat = _flatten_yaml_for_validation([visible, hidden], yaml_data)
@@ -216,7 +225,7 @@ class TestRenderStepHtmlWithRealSections:
     """Test rendering with the actual wizard section definitions."""
 
     def test_identity_section_renders_all_fields(self):
-        from opi.forms.editables.wizard_sections import IDENTITY_SECTION
+        from opi.forms.visualizers.wizard_sections import IDENTITY_SECTION
 
         html = _render_step_html(IDENTITY_SECTION, yaml_data={})
         assert html, "Identity section should produce non-empty HTML"
@@ -226,7 +235,7 @@ class TestRenderStepHtmlWithRealSections:
         assert "clusters" in html
 
     def test_identity_section_renders_with_data(self):
-        from opi.forms.editables.wizard_sections import IDENTITY_SECTION
+        from opi.forms.visualizers.wizard_sections import IDENTITY_SECTION
 
         data = {
             "name": "test-proj",
@@ -239,19 +248,19 @@ class TestRenderStepHtmlWithRealSections:
         assert "A description" in html
 
     def test_services_section_renders(self):
-        from opi.forms.editables.wizard_sections import SERVICES_SECTION
+        from opi.forms.visualizers.wizard_sections import SERVICES_SECTION
 
         html = _render_step_html(SERVICES_SECTION, yaml_data={})
         assert html, "Services section should produce non-empty HTML"
 
     def test_team_section_renders(self):
-        from opi.forms.editables.wizard_sections import TEAM_SECTION
+        from opi.forms.visualizers.wizard_sections import TEAM_SECTION
 
         html = _render_step_html(TEAM_SECTION, yaml_data={})
         assert html, "Team section should produce non-empty HTML"
 
     def test_components_section_renders(self):
-        from opi.forms.editables.wizard_sections import COMPONENTS_SECTION
+        from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
 
         html = _render_step_html(COMPONENTS_SECTION, yaml_data={})
         assert html, "Components section should produce non-empty HTML"
@@ -288,12 +297,12 @@ class TestWizardStateIntegration:
     """Integration tests for wizard state with real flows."""
 
     def test_create_flow_has_identity_first(self):
-        from opi.forms.editables.flows import CREATE_FLOW
+        from opi.forms.visualizers.flows import CREATE_FLOW
 
         assert CREATE_FLOW.sections[0].section_id == "identity"
 
     def test_wizard_state_with_create_flow(self):
-        from opi.forms.editables.flows import CREATE_FLOW
+        from opi.forms.visualizers.flows import CREATE_FLOW
         from opi.forms.wizard.resolver import (
             resolve_active_sections,
         )
@@ -311,7 +320,7 @@ class TestWizardStateIntegration:
         assert "keycloak-config" not in active_ids
 
     def test_wizard_state_with_services_selected(self):
-        from opi.forms.editables.flows import CREATE_FLOW
+        from opi.forms.visualizers.flows import CREATE_FLOW
         from opi.forms.wizard.resolver import resolve_active_sections
 
         state = WizardState(

@@ -44,6 +44,28 @@ class TruncateConverter:
         return value_str
 
 
+class EnsureListConverter:
+    """Coerces any scalar or None value to a list.
+
+    Use on any editable whose YAML value is always a list but whose form
+    transport may deliver a single string (e.g. HTMX checkbox_group with
+    one item checked) or None (no items checked).
+    """
+
+    def read(self, value: Any) -> Any:
+        return value
+
+    def write(self, value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        return [value]
+
+    def view(self, value: Any) -> Any:
+        return value
+
+
 class ServiceListConverter:
     """Converts mixed str/dict service list to/from structured format."""
 
@@ -273,3 +295,61 @@ class KeycloakRealmsDisplayConverter:
             for kc in value
             if isinstance(kc, dict)
         ]
+
+
+class AGEEncryptConverter:
+    """Encrypts/decrypts field values using AGE encryption.
+
+    Uses the system AGE public key for encryption and the AGE private key
+    for decryption. Displays masked values in view mode.
+
+    Wraps ``opi.utils.age.encrypt_age_content_sync`` and
+    ``opi.utils.age.decrypt_age_content`` for the converter protocol.
+    """
+
+    def __init__(self, public_key: str | None = None) -> None:
+        self._public_key = public_key
+
+    def _get_public_key(self) -> str:
+        if self._public_key:
+            return self._public_key
+        from opi.core.config import settings
+
+        return settings.SOPS_AGE_PUBLIC_KEY
+
+    def read(self, value: Any) -> str:
+        """Decrypt AGE-encrypted value for form editing."""
+        if not value or not isinstance(value, str):
+            return ""
+        if "BEGIN AGE ENCRYPTED FILE" not in value:
+            return value
+        try:
+            from opi.utils.age import decrypt_age_content
+
+            return decrypt_age_content(value)
+        except Exception:
+            return ""
+
+    def write(self, value: Any) -> str:
+        """Encrypt value with AGE before YAML storage."""
+        if not value:
+            return ""
+        value_str = str(value).strip()
+        if not value_str:
+            return ""
+        if "BEGIN AGE ENCRYPTED FILE" in value_str:
+            return value_str
+        try:
+            from opi.utils.age import encrypt_age_content_sync
+
+            return encrypt_age_content_sync(value_str, self._get_public_key())
+        except Exception:
+            return value_str
+
+    def view(self, value: Any) -> str:
+        """Masked display — never show encrypted content in UI."""
+        if not value:
+            return "Niet geconfigureerd"
+        if isinstance(value, str) and "BEGIN AGE ENCRYPTED FILE" in value:
+            return "********"
+        return "********"

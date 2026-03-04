@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from opi.forms.editables.flows import CREATE_FLOW, EDIT_FLOW, FLOW_REGISTRY, get_flow
-from opi.forms.editables.wizard_sections import (
+from opi.forms.visualizers.flows import CREATE_FLOW, EDIT_FLOW, FLOW_REGISTRY, get_flow
+from opi.forms.visualizers.wizard_sections import (
     ALL_SECTIONS,
     AUTH_WALL_CONFIG_SECTION,
     COMPONENTS_SECTION,

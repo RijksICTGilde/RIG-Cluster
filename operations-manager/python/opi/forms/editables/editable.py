@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -52,39 +53,47 @@ class EditableGenerator(Protocol):
         ...
 
 
-@dataclass
-class ProjectEditable:
-    """
-    Declarative mapping from a YAML path to a form widget.
+class WidgetType(StrEnum):
+    """Enumeration of available widget types — no magic strings."""
 
-    Replaces per-field Pydantic model + FormMeta annotations.
-    The YAML dict IS the schema — no model boilerplate needed.
+    TEXT = "text"
+    TEXTAREA = "textarea"
+    SELECT = "select"
+    CHECKBOX = "checkbox"
+    CHECKBOX_GROUP = "checkbox_group"
+    RADIO = "radio"
+    NUMBER = "number"
+    DATE = "date"
+    DATETIME = "datetime"
+    FILE = "file"
+    HIDDEN = "hidden"
+    SERVICE_CARDS = "service_cards"
+    DISPLAY_CARD = "display_card"
+    KEY_VALUE = "key_value"
+    MULTI_SELECT = "multi_select"
+    SEQUENCE = "sequence"
+
+
+@dataclass
+class Editable:
+    """Reusable field logic — pure data, no UI concerns.
+
+    Defines *what* the data is: where it lives in YAML, how to validate,
+    convert, enforce, and generate values. Extractable to a standalone
+    package with zero UI dependencies.
     """
 
     yaml_path: str
-    widget: str
-    label: str
-    description: str | None = None
-    placeholder: str | None = None
-    options_provider: str | None = None
-    converter: EditableConverter | None = None
     validator: EditableValidator | None = None
+    converter: EditableConverter | None = None
     enforcer: EditableEnforcer | None = None
     generator: EditableGenerator | None = None
-    readonly: bool = False
-    readonly_on_edit: bool = False
+    values_provider: str | None = None
     required: bool = False
     default: Any = None
-    children: list[ProjectEditable] | None = None
-    depends_on: str | None = None
-    show_when: dict[str, Any] | None = None
-    htmx_trigger: str | None = None
-    htmx_target: str | None = None
-    htmx_swap: str | None = None
+    children: list[Editable] | None = None
     min_items: int = 0
     max_items: int | None = None
-    help_text: str | None = None
-    help_template: str | None = None
-    examples: list[str] | None = None
-    attributes: dict[str, str] | None = None
-    locked_by_service: str | None = None
+    depends_on: str | None = None
+    show_when: dict[str, Any] | None = None
+    hooks: dict[str, Any] | None = field(default=None, repr=False)
