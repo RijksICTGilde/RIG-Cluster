@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -14,6 +16,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from opi.api.auth_routes import auth_router
 from opi.api.backup_router import backup_router
+from opi.api.federation_router import federation_router
 from opi.api.image_router import image_router
 from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
@@ -23,6 +26,7 @@ from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
+from opi.api.task_router import task_router
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
@@ -73,7 +77,87 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Start periodic task cleanup
     start_periodic_cleanup()
 
+    # Start async task worker if enabled (combined mode)
+    _worker_instance = None
+    _worker_asyncio_task = None
+    if settings.TASK_WORKER_ENABLED:
+        try:
+            from opi.core.async_task_service import AsyncTaskService, TaskType
+            from opi.core.database_pools import get_database_pool
+            from opi.core.task_worker import TaskWorker
+
+            pool = get_database_pool("main")
+            task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+            app.state.task_service = task_service
+
+            _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
+
+            # Register handlers (imported locally to avoid circular imports)
+            from opi.core.task_handlers_deployment import (
+                handle_delete_deployment,
+                handle_update_image,
+            )
+            from opi.core.task_handlers_operations import (
+                handle_clone_bucket,
+                handle_clone_database,
+                handle_refresh_deployment,
+            )
+            from opi.core.task_handlers_project import (
+                handle_create_project,
+                handle_upsert_deployment,
+            )
+
+            _worker_instance.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
+            _worker_instance.register_handler(TaskType.UPSERT_DEPLOYMENT, handle_upsert_deployment)
+            _worker_instance.register_handler(TaskType.UPDATE_IMAGE, handle_update_image)
+            _worker_instance.register_handler(TaskType.DELETE_DEPLOYMENT, handle_delete_deployment)
+            _worker_instance.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
+            _worker_instance.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
+            _worker_instance.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+
+            _worker_asyncio_task = asyncio.create_task(_worker_instance.run())
+            logger.info("Task worker started in combined mode")
+        except Exception as e:
+            logger.error(f"Failed to start task worker: {e}")
+    else:
+        # Frontend-only mode: still create task_service for API endpoints
+        try:
+            from opi.core.async_task_service import AsyncTaskService
+            from opi.core.database_pools import get_database_pool
+
+            pool = get_database_pool("main")
+            task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+            app.state.task_service = task_service
+            logger.info("Task service initialized (worker disabled)")
+        except Exception as e:
+            logger.warning(f"Failed to initialize task service: {e}")
+
+    # Initialize federation service if configured as master
+    if settings.FEDERATION_ROLE == "master" and settings.FEDERATION_PEERS:
+        try:
+            from opi.core.federation_config import FederationRegistry
+            from opi.core.federation_service import FederationService
+
+            registry = FederationRegistry.from_settings(settings.FEDERATION_PEERS, settings.CLUSTER_MANAGER)
+            fed_task_service = getattr(app.state, "task_service", None)
+            if fed_task_service and registry.is_enabled():
+                app.state.federation_service = FederationService(registry, fed_task_service)
+                logger.info("Federation service initialized (master mode, %d peers)", len(registry.get_all_peers()))
+            else:
+                logger.warning("Federation peers configured but task_service not available or no peers")
+        except Exception as e:
+            logger.error(f"Failed to initialize federation service: {e}")
+
     yield
+
+    # Stop task worker
+    if _worker_instance is not None:
+        await _worker_instance.stop()
+    if _worker_asyncio_task is not None:
+        _worker_asyncio_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _worker_asyncio_task
+        logger.info("Task worker stopped")
 
     # Stop peak memory tracking
     from opi.core.metrics import stop_peak_memory_tracking
@@ -185,6 +269,8 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_websocket_router, include_in_schema=False)  # WebSocket for log streaming
     app.include_router(resource_router, include_in_schema=True)  # Resource tuning & sanitization
+    app.include_router(task_router, include_in_schema=True)  # Async task status API
+    app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint
     app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs

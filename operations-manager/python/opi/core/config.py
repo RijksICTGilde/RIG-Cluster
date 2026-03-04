@@ -263,6 +263,14 @@ class Settings(BaseSettings):
     DATABASE_ADMIN_NAME: str = "postgres"
     DATABASE_ADMIN_PASSWORD: str = "changeMe123!"
 
+    # Async task worker settings
+    TASK_WORKER_ENABLED: bool = True
+    TASK_WORKER_POLL_INTERVAL: float = 2.0
+    TASK_WORKER_HEARTBEAT_INTERVAL: float = 30.0
+    TASK_WORKER_STALE_THRESHOLD: int = 120
+    TASK_WORKER_MAX_ATTEMPTS: int = 3
+    TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 72
+
     # MinIO configuration
     MINIO_HOST: str = "minio.kind:9000"
     MINIO_ADMIN_ACCESS_KEY: str = "admin"
@@ -301,6 +309,11 @@ class Settings(BaseSettings):
 
     # Deployment sanitization configuration
     SANITIZE_RESTART_THRESHOLD: int = 10  # Restarts above this = broken
+
+    # Federation settings
+    FEDERATION_ROLE: str = "standalone"  # standalone | master | slave
+    FEDERATION_PEERS: str = ""  # JSON: [{"cluster":"local","url":"...","api_key":"..."}]
+    FEDERATION_REQUEST_TIMEOUT: int = 30
 
     # Backup configuration
     BACKUP_S3_ENDPOINT: str = "minio.rig-backup-destination.svc:9000"

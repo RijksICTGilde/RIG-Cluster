@@ -4,7 +4,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import GitConnector
@@ -876,6 +876,43 @@ class SelfServiceProjectRequest(BaseModel):
     components: list[SelfServiceComponent] | None = None
 
 
+async def _create_task_with_federation(
+    request: Request,
+    task_type: str,
+    project_name: str,
+    deployment_name: str | None,
+    payload: dict,
+) -> dict:
+    """Create an async task, routing through federation when available.
+
+    In standalone mode (no federation_service), creates the task locally.
+    In master mode, resolves the target cluster from the project YAML and
+    forwards to the appropriate slave OPI instance.
+    """
+    task_service = getattr(request.app.state, "task_service", None)
+    if task_service is None:
+        raise HTTPException(status_code=503, detail="Task service not available")
+
+    federation_service = getattr(request.app.state, "federation_service", None)
+    if federation_service:
+        target_cluster = await federation_service.resolve_cluster(project_name, deployment_name)
+        return await federation_service.create_task(
+            task_type=task_type,
+            project_name=project_name,
+            deployment_name=deployment_name,
+            target_cluster=target_cluster,
+            payload=payload,
+        )
+
+    return await task_service.create_task(
+        task_type=task_type,
+        project_name=project_name,
+        deployment_name=deployment_name,
+        cluster=settings.CLUSTER_MANAGER,
+        payload=payload,
+    )
+
+
 api_router: APIRouter = APIRouter(
     prefix="/api",
     tags=["projects"],
@@ -893,7 +930,10 @@ api_router: APIRouter = APIRouter(
 )
 @validate_api_token
 async def upsert_deployment(
-    request: Request, project_name: str, deployment_data: UpsertDeploymentRequest = Body(...)
+    request: Request,
+    project_name: str,
+    deployment_data: UpsertDeploymentRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Create or update a deployment in an existing project.
@@ -920,25 +960,53 @@ async def upsert_deployment(
       }'
     ```
     """
+    logger.info(f"Upserting deployment '{deployment_data.deploymentName}' to project: {project_name}")
+
+    # Validate project name format
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    # Validate deployment name using naming utilities
+    sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
+    if sanitized_name != deployment_data.deploymentName.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
+
+    # Async path (default)
+    if not sync:
+        task = await _create_task_with_federation(
+            request=request,
+            task_type="upsert_deployment",
+            project_name=project_name,
+            deployment_name=deployment_data.deploymentName,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_data.deploymentName,
+                "components": [c.model_dump() for c in deployment_data.components],
+                "cloneFrom": deployment_data.cloneFrom,
+                "forceClone": deployment_data.forceClone,
+            },
+        )
+        task_id = task["task_id"]
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "task_id": task_id,
+                "task_type": "upsert_deployment",
+                "poll_url": f"/api/tasks/{task_id}",
+            },
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
-        logger.info(f"Upserting deployment '{deployment_data.deploymentName}' to project: {project_name}")
-
-        # Validate project name format
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
-
-        # Validate deployment name using naming utilities
-        sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
-        if sanitized_name != deployment_data.deploymentName.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-            )
-
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
@@ -1373,7 +1441,11 @@ async def add_service(request: Request, project_name: str, service_data: AddServ
 @api_router.put("/projects/{project_name}/deployments/{deployment_name}/image")
 @validate_api_token
 async def update_deployment_image(
-    request: Request, project_name: str, deployment_name: str, image_data: UpdateImageRequest = Body(...)
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    image_data: UpdateImageRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Update the container image for a specific component in a deployment.
@@ -1426,6 +1498,42 @@ async def update_deployment_image(
       }'
     ```
     """
+    # Async path (default)
+    if not sync:
+        # Serialize service actions for payload
+        service_actions = None
+        if image_data.services:
+            service_actions = {
+                service_type: service_ref.model_dump() for service_type, service_ref in image_data.services.items()
+            }
+
+        task = await _create_task_with_federation(
+            request=request,
+            task_type="update_image",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "component_name": image_data.componentName,
+                "image": image_data.newImageUrl,
+                "service_actions": service_actions,
+                "registry": image_data.registry,
+            },
+        )
+        task_id = task["task_id"]
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "task_id": task_id,
+                "task_type": "update_image",
+                "poll_url": f"/api/tasks/{task_id}",
+            },
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
         logger.info(f"Updating image for component '{image_data.componentName}' in {project_name}/{deployment_name}")
@@ -1602,7 +1710,11 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
 )
 @validate_api_token
 async def refresh_deployment(
-    request: Request, project_name: str, deployment_name: str, force_clone: bool = False
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    force_clone: bool = False,
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Refresh a single deployment by reprocessing it from the project YAML file.
@@ -1612,21 +1724,48 @@ async def refresh_deployment(
 
     Query Parameters:
         force_clone: Force clone even if target resources exist (default: False)
+        sync: Run synchronously (blocking) (default: False)
 
     Example:
     curl -X GET "http://localhost:9595/api/projects/example-name/deployments/staging/:refresh" \\
       -H "X-API-Key: d68d6aebd694d636e5eb4784a952b9c3"
     """
+    logger.info(f"Deployment refresh request for: {project_name}/{deployment_name} (force_clone={force_clone})")
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    # Async path (default)
+    if not sync:
+        task = await _create_task_with_federation(
+            request=request,
+            task_type="refresh_deployment",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "force_clone": force_clone,
+            },
+        )
+        task_id = task["task_id"]
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "task_id": task_id,
+                "task_type": "refresh_deployment",
+                "poll_url": f"/api/tasks/{task_id}",
+            },
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
-        logger.info(f"Deployment refresh request for: {project_name}/{deployment_name} (force_clone={force_clone})")
-
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
-
         project_service = get_project_service()
         project = project_service.get_project(project_name)
 
@@ -1781,7 +1920,12 @@ async def delete_project(
 
 @api_router.delete("/projects/{project_name}/{deployment_name}")
 @validate_api_token
-async def delete_project_deployment(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+async def delete_project_deployment(
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
+) -> JSONResponse:
     """
     Delete a specific deployment within a project.
 
@@ -1807,6 +1951,31 @@ async def delete_project_deployment(request: Request, project_name: str, deploym
     Returns:
         JSON response with detailed deletion results
     """
+    # Async path (default)
+    if not sync:
+        task = await _create_task_with_federation(
+            request=request,
+            task_type="delete_deployment",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+            },
+        )
+        task_id = task["task_id"]
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "task_id": task_id,
+                "task_type": "delete_deployment",
+                "poll_url": f"/api/tasks/{task_id}",
+            },
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
         logger.info(f"Deployment deletion request for: {project_name}/{deployment_name} (project_id: {project_name})")
@@ -1853,7 +2022,11 @@ async def delete_project_deployment(request: Request, project_name: str, deploym
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external")
 @validate_api_token
 async def clone_database_from_external(
-    request: Request, project_name: str, deployment_name: str, clone_data: CloneDatabaseFromExternalRequest = Body(...)
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    clone_data: CloneDatabaseFromExternalRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Clone a database from an external source (e.g., another cluster via port-forward) into a deployment.
@@ -1896,6 +2069,32 @@ async def clone_database_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
+    # Async path (default)
+    if not sync:
+        task = await _create_task_with_federation(
+            request=request,
+            task_type="clone_database",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                **clone_data.model_dump(),
+            },
+        )
+        task_id = task["task_id"]
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "task_id": task_id,
+                "task_type": "clone_database",
+                "poll_url": f"/api/tasks/{task_id}",
+            },
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
         # TODO: we need a method to create a project manager from a given project_name
@@ -1991,7 +2190,11 @@ async def clone_database_from_external(
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external")
 @validate_api_token
 async def clone_bucket_from_external(
-    request: Request, project_name: str, deployment_name: str, clone_data: CloneBucketFromExternalRequest = Body(...)
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    clone_data: CloneBucketFromExternalRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Clone a MinIO bucket from an external source (e.g., another cluster via port-forward) into a deployment.
@@ -2034,6 +2237,32 @@ async def clone_bucket_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
+    # Async path (default)
+    if not sync:
+        task = await _create_task_with_federation(
+            request=request,
+            task_type="clone_bucket",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                **clone_data.model_dump(),
+            },
+        )
+        task_id = task["task_id"]
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "task_id": task_id,
+                "task_type": "clone_bucket",
+                "poll_url": f"/api/tasks/{task_id}",
+            },
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
         # Create project manager for the target project
