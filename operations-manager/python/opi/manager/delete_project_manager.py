@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
@@ -14,13 +14,20 @@ from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services.project_service import get_project_service
+
+if TYPE_CHECKING:
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
+    generate_bucket_name,
+    generate_database_name,
     generate_deployment_manifest_path,
     generate_gitops_argocd_application_path,
     generate_infrastructure_application_name,
     generate_infrastructure_argocd_folder_path,
+    generate_minio_policy_name,
+    generate_minio_username,
     get_output_filename_from_template,
 )
 
@@ -1520,3 +1527,384 @@ class DeleteProjectManager:
                 logger.warning("Force mode: returning results with critical error instead of raising")
                 return deletion_results
             raise HTTPException(status_code=500, detail=f"Critical error during deployment deletion: {e!s}")
+
+    async def delete_deployment_from_yaml_change(
+        self,
+        project_name: str,
+        deployment_data: dict[str, Any],
+        project_data: dict[str, Any],
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
+    ) -> dict[str, Any]:
+        """Delete deployment resources detected as removed from project YAML.
+
+        Unlike ``delete_deployment()``, this method:
+        - Receives the deployment data directly (since it no longer exists in current YAML).
+        - Marks persistent data resources (databases, buckets) for deferred deletion
+          instead of deleting them immediately (when a service is provided).
+        - Skips removing the deployment from the project file (already done by the user).
+
+        Ephemeral/infrastructure resources (ArgoCD apps, keycloak clients, secrets,
+        manifests, subdomain registrations) are deleted immediately.
+
+        Args:
+            project_name: Name of the project.
+            deployment_data: The deployment dict from the *previous* YAML.
+            project_data: The *current* project YAML (deployment already removed).
+            marked_for_deletion_service: Service for marking persistent resources.
+                If None, persistent resources are deleted immediately (legacy behavior).
+
+        Returns:
+            Dictionary containing deletion results and status.
+        """
+        deployment_name = deployment_data.get("name", "unknown")
+        cluster = deployment_data.get("cluster", "")
+
+        deletion_results: dict[str, Any] = {
+            "project": project_name,
+            "deployment": deployment_name,
+            "trigger": "yaml_change",
+            "operations": [],
+            "success": True,
+            "errors": [],
+            "service_results": {},
+        }
+
+        logger.info(
+            "Processing YAML-detected deployment removal: %s/%s (cluster=%s)",
+            project_name,
+            deployment_name,
+            cluster,
+        )
+
+        # --- Ephemeral resource cleanup (immediate) ---
+
+        # 1. Delete ArgoCD application file from GitOps
+        try:
+            gitops_connector = await self.project_manager.get_git_connector_for_argocd()
+            argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
+            await gitops_connector.ensure_repo_cloned()
+            file_full_path = os.path.join(await gitops_connector.get_working_dir(), argocd_app_file_path)
+
+            if os.path.exists(file_full_path):
+                os.remove(file_full_path)
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_application_file_deletion",
+                        "target": argocd_app_file_path,
+                        "status": "success",
+                    }
+                )
+                logger.info("Deleted ArgoCD application file: %s", argocd_app_file_path)
+            else:
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_application_file_deletion",
+                        "target": argocd_app_file_path,
+                        "status": "not_found",
+                    }
+                )
+
+            # Rebuild kustomization
+            working_dir = await gitops_connector.get_working_dir()
+            project_dir = os.path.join(working_dir, cluster, project_name)
+            if os.path.isdir(project_dir):
+                self.project_manager._manifest_generator.create_kustomization_files(
+                    output_dir=project_dir,
+                    namespace=get_argo_namespace(cluster),
+                )
+
+            # Delete AppProject if namespace no longer used by other deployments
+            base_namespace = deployment_data.get("namespace")
+            namespace_used_by_others = any(
+                other_dep.get("name") != deployment_name
+                and other_dep.get("cluster") == cluster
+                and other_dep.get("namespace") == base_namespace
+                for other_dep in project_data.get("deployments", [])
+            )
+            if not namespace_used_by_others and base_namespace:
+                appproject_name = generate_argocd_appproject_prefix(project_name, base_namespace)
+                appproject_filename = get_output_filename_from_template("argocd-appproject.yaml.jinja", appproject_name)
+                appproject_path = os.path.join(working_dir, cluster, project_name, appproject_filename)
+                if os.path.exists(appproject_path):
+                    os.remove(appproject_path)
+                    logger.info("Deleted AppProject file: %s", appproject_filename)
+
+            # Delete repository secret files if not shared
+            repository_name = deployment_data.get("repository")
+            if repository_name:
+                repo_used_by_others = any(
+                    other_dep.get("name") != deployment_name and other_dep.get("repository") == repository_name
+                    for other_dep in project_data.get("deployments", [])
+                )
+                if not repo_used_by_others:
+                    unique_repo_name = f"{project_name}-{repository_name}"
+                    for template in ["argo-repository-https.yaml.jinja", "argo-repository.yaml.jinja"]:
+                        filename = get_output_filename_from_template(template, unique_repo_name)
+                        file_path = os.path.join(working_dir, cluster, project_name, filename)
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            logger.info("Deleted repository file: %s", filename)
+
+            # Commit GitOps changes
+            commit_message = (
+                f"Remove ArgoCD resources for deleted deployment '{deployment_name}' from project '{project_name}'"
+            )
+            await gitops_connector.commit_and_push(commit_message)
+            deletion_results["operations"].append(
+                {
+                    "type": "gitops_commit",
+                    "status": "success",
+                    "message": commit_message,
+                }
+            )
+
+        except Exception as e:
+            deletion_results["errors"].append(f"Error cleaning up ArgoCD resources: {e}")
+            deletion_results["operations"].append(
+                {
+                    "type": "argocd_cleanup",
+                    "status": "error",
+                    "error": str(e),
+                }
+            )
+            logger.exception("Error cleaning up ArgoCD resources for %s/%s", project_name, deployment_name)
+
+        # 2. Wait for ArgoCD application deletion, then handle namespace
+        try:
+            argo_connector = create_argo_connector()
+            app_name = generate_argocd_application_name(project_name, deployment_name)
+            app_exists = await argo_connector.application_exists(app_name)
+
+            if app_exists:
+                await argo_connector.refresh_application("user-applications")
+                argocd_app_deleted = await argo_connector.wait_for_application_deletion(
+                    app_name, max_retries=40, retry_delay=5
+                )
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_app_deletion_wait",
+                        "target": app_name,
+                        "status": "success" if argocd_app_deleted else "timeout",
+                    }
+                )
+            else:
+                argocd_app_deleted = True
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_app_deletion_wait",
+                        "target": app_name,
+                        "status": "not_found",
+                    }
+                )
+        except Exception as e:
+            argocd_app_deleted = False
+            deletion_results["errors"].append(f"Error waiting for ArgoCD app deletion: {e}")
+            logger.exception("Error waiting for ArgoCD app deletion: %s", app_name)
+
+        # 3. Delete Keycloak resources (ephemeral)
+        try:
+            keycloak_results = await self.project_manager._keycloak_manager.delete_resources_for_deployment(
+                project_data, deployment_data
+            )
+            deletion_results["service_results"]["keycloak"] = keycloak_results
+            deletion_results["operations"].extend(keycloak_results.get("operations", []))
+            if keycloak_results.get("errors"):
+                deletion_results["errors"].extend(keycloak_results["errors"])
+        except Exception as e:
+            deletion_results["errors"].append(f"Error deleting Keycloak resources: {e}")
+            logger.exception("Error deleting Keycloak resources for %s/%s", project_name, deployment_name)
+
+        # --- Persistent data resources ---
+        services = deployment_data.get("services", [])
+        has_database = any(s.get("reference") in ("database", "postgresql") for s in services if isinstance(s, dict))
+        has_minio = any(
+            s.get("reference") in ("minio", "minio-storage", "object-storage") for s in services if isinstance(s, dict)
+        )
+
+        if marked_for_deletion_service is not None:
+            # Mark persistent resources for deferred deletion
+            if has_database:
+                db_name = generate_database_name(project_name, deployment_name)
+                await marked_for_deletion_service.mark_resource(
+                    resource_type="postgresql_database",
+                    resource_name=db_name,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    metadata={"server": settings.DATABASE_HOST},
+                )
+                await marked_for_deletion_service.mark_resource(
+                    resource_type="postgresql_user",
+                    resource_name=db_name,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    metadata={"server": settings.DATABASE_HOST},
+                )
+                deletion_results["operations"].append(
+                    {
+                        "type": "mark_for_deletion",
+                        "resource_type": "postgresql_database",
+                        "resource_name": db_name,
+                        "status": "marked",
+                    }
+                )
+
+            if has_minio:
+                bucket_name = generate_bucket_name(project_name, deployment_name)
+                minio_user = generate_minio_username(project_name, deployment_name)
+                minio_policy = generate_minio_policy_name(project_name, deployment_name)
+
+                for rtype, rname in [
+                    ("minio_bucket", bucket_name),
+                    ("minio_user", minio_user),
+                    ("minio_policy", minio_policy),
+                ]:
+                    await marked_for_deletion_service.mark_resource(
+                        resource_type=rtype,
+                        resource_name=rname,
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        cluster=cluster,
+                        metadata={"server_alias": "minio"},
+                    )
+
+                deletion_results["operations"].append(
+                    {
+                        "type": "mark_for_deletion",
+                        "resource_type": "minio_bucket",
+                        "resource_name": bucket_name,
+                        "status": "marked",
+                    }
+                )
+
+            # Handle namespace: mark instead of deleting if it has persistent resources
+            if base_namespace and not namespace_used_by_others:
+                namespace = get_prefixed_namespace(cluster, base_namespace)
+                if has_database or has_minio:
+                    await marked_for_deletion_service.mark_resource(
+                        resource_type="namespace",
+                        resource_name=namespace,
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        cluster=cluster,
+                        metadata={"has_marked_pvcs": has_database or has_minio},
+                    )
+                    deletion_results["operations"].append(
+                        {
+                            "type": "mark_for_deletion",
+                            "resource_type": "namespace",
+                            "resource_name": namespace,
+                            "status": "marked",
+                        }
+                    )
+                elif argocd_app_deleted:
+                    ns_deleted = await self.project_manager._kubectl_connector.delete_namespace(namespace)
+                    deletion_results["operations"].append(
+                        {
+                            "type": "namespace_deletion",
+                            "target": namespace,
+                            "status": "success" if ns_deleted else "not_found",
+                        }
+                    )
+        else:
+            # No marking service: delete persistent resources immediately (legacy)
+            try:
+                db_manager = await self.project_manager._ensure_database_manager()
+                database_results = await db_manager.delete_resources_for_deployment(project_data, deployment_data)
+                deletion_results["service_results"]["database"] = database_results
+                deletion_results["operations"].extend(database_results.get("operations", []))
+            except Exception as e:
+                deletion_results["errors"].append(f"Error deleting database resources: {e}")
+                logger.exception("Error deleting database resources")
+
+            minio_results = await self.project_manager._minio_manager.delete_resources_for_deployment(
+                project_data, deployment_data
+            )
+            deletion_results["service_results"]["minio"] = minio_results
+            deletion_results["operations"].extend(minio_results.get("operations", []))
+
+            # Delete namespace if safe
+            if base_namespace and not namespace_used_by_others and argocd_app_deleted:
+                namespace = get_prefixed_namespace(cluster, base_namespace)
+                ns_deleted = await self.project_manager._kubectl_connector.delete_namespace(namespace)
+                deletion_results["operations"].append(
+                    {
+                        "type": "namespace_deletion",
+                        "target": namespace,
+                        "status": "success" if ns_deleted else "not_found",
+                    }
+                )
+
+        # 4. Delete deployment manifests from git
+        if repository_name and cluster:
+            try:
+                repositories = project_data.get("repositories", [])
+                # Also check previous project data repositories
+                prev_repositories = deployment_data.get("_project_repositories", repositories)
+                repo_config = None
+                for repo in repositories or prev_repositories:
+                    if repo.get("name") == repository_name:
+                        repo_config = repo
+                        break
+
+                if repo_config:
+                    manifest_connector = await self.project_manager.get_git_connector_for_deployment(
+                        repository_name, repo_config
+                    )
+                    repo_path = repo_config.get("path", "")
+                    deployment_folder_path = generate_deployment_manifest_path(
+                        cluster, project_name, deployment_name, repo_path
+                    )
+                    await manifest_connector.ensure_repo_cloned()
+                    folder_full_path = os.path.join(await manifest_connector.get_working_dir(), deployment_folder_path)
+
+                    if os.path.exists(folder_full_path):
+                        shutil.rmtree(folder_full_path)
+                        commit_message = f"Delete deployment '{deployment_name}' from project '{project_name}'"
+                        await manifest_connector.commit_and_push_changes(commit_message)
+                        deletion_results["operations"].append(
+                            {
+                                "type": "deployment_folder_deletion",
+                                "target": deployment_folder_path,
+                                "status": "success",
+                            }
+                        )
+                    else:
+                        deletion_results["operations"].append(
+                            {
+                                "type": "deployment_folder_deletion",
+                                "target": deployment_folder_path,
+                                "status": "not_found",
+                            }
+                        )
+            except Exception as e:
+                deletion_results["errors"].append(f"Error deleting deployment manifests: {e}")
+                logger.exception("Error deleting deployment manifests")
+
+        # 5. Clean up subdomain registrations
+        try:
+            subdomain_connector = SubdomainConnector()
+            deleted_subdomains = await subdomain_connector.delete_by_deployment(project_name, deployment_name)
+            if deleted_subdomains:
+                deletion_results["operations"].append(
+                    {
+                        "type": "subdomain_cleanup",
+                        "status": "success",
+                        "count": deleted_subdomains,
+                    }
+                )
+        except Exception as e:
+            deletion_results["errors"].append(f"Error cleaning up subdomain registrations: {e}")
+            logger.warning("Error cleaning up subdomain registrations: %s", e)
+
+        deletion_results["success"] = len(deletion_results["errors"]) == 0
+
+        logger.info(
+            "YAML-detected deployment deletion completed for %s/%s - Success: %s, Errors: %d",
+            project_name,
+            deployment_name,
+            deletion_results["success"],
+            len(deletion_results["errors"]),
+        )
+        return deletion_results

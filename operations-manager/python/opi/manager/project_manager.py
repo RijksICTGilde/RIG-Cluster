@@ -2188,11 +2188,40 @@ class ProjectManager:
             # directly by DatabaseManager and MinioManager during their create_resources_for_deployment
             # methods. The clone-from configuration is read from the deployment and processed inline.
 
+            # Step 1.6: Process deployment removals BEFORE creations
+            if previous_yaml is not None and deployment_changes["deleted"]:
+                logger.info("Processing %d deleted deployment(s)", len(deployment_changes["deleted"]))
+                project_name = current_yaml.get("name", "unknown")
+
+                # Build a marked-for-deletion service if database pool is available
+                marked_service = None
+                try:
+                    from opi.core.database_pools import get_database_pool
+                    from opi.services.marked_for_deletion_service import MarkedForDeletionService
+
+                    pool = get_database_pool("main")
+                    marked_service = MarkedForDeletionService(pool)
+                except (KeyError, ValueError):
+                    logger.warning("Database pool not available - persistent resources will be deleted immediately")
+
+                for value in deployment_changes["deleted"].values():
+                    if isinstance(value, dict) and "name" in value:
+                        dep_name = value["name"]
+                        logger.info("Deleting resources for removed deployment: %s", dep_name)
+                        try:
+                            await self._delete_project_manager.delete_deployment_from_yaml_change(
+                                project_name=project_name,
+                                deployment_data=value,
+                                project_data=current_yaml,
+                                marked_for_deletion_service=marked_service,
+                            )
+                        except Exception as e:
+                            logger.exception("Failed to delete resources for deployment %s: %s", dep_name, e)
+                            critical_failures.append(f"Failed to delete removed deployment '{dep_name}': {e}")
+
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")
 
-            # For now, still process the entire project but with change context available
-            # TODO: In future iterations, we can use the changes to process only what's needed
             process_success = await self.process_project(deployment_name, force_clone)
             if not process_success:
                 critical_failures.append("Project processing failed - check logs for details")

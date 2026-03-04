@@ -263,6 +263,9 @@ class Settings(BaseSettings):
     DATABASE_ADMIN_NAME: str = "postgres"
     DATABASE_ADMIN_PASSWORD: str = "changeMe123!"
 
+    # Deletion grace period (days before marked resources are purged by reconciliation)
+    DELETION_GRACE_PERIOD_DAYS: int = 7
+
     # Async task worker settings
     TASK_WORKER_ENABLED: bool = True
     TASK_WORKER_POLL_INTERVAL: float = 2.0

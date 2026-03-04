@@ -351,6 +351,8 @@ class ProjectFileHandler:
         clean_path = path.removeprefix("root")
         # Convert ['key'] to .key, handling nested brackets
         clean_path = re.sub(r"\['([^']+)']", r".\1", clean_path)
+        # Convert bare numeric indices [0] to .0
+        clean_path = re.sub(r"\[(\d+)]", r".\1", clean_path)
         # Remove leading dot
         clean_path = clean_path.lstrip(".")
 
