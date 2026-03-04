@@ -1,9 +1,8 @@
 # Federation Routing (Cross-Cluster Task Delegation)
 
-**Status**: Planned (not yet implemented)
+**Status**: Implemented
 **Date**: 2026-03-01
-**Priority**: Medium (after [Async Task System](./async-task-system.md))
-**Depends on**: Async Task System must be implemented first
+**Depends on**: [Async Task System](./async-task-system.md)
 
 ## Problem
 

@@ -1,8 +1,7 @@
 # Async Task System
 
-**Status**: Planned (not yet implemented)
+**Status**: Implemented
 **Date**: 2026-03-01
-**Priority**: High
 **Related**: [Federation Routing](./federation-routing.md) (builds on top of this)
 
 ## Problem
