@@ -182,6 +182,9 @@ class ProjectManager:
         # Runtime force_clone override from API (used by PVC manager and other nested calls)
         self._force_clone_override: bool = False
 
+        # Last processing error message (set when process_project fails)
+        self._processing_error: str | None = None
+
         self._closed = False
 
         # Service managers for handling service-specific operations
@@ -352,6 +355,15 @@ class ProjectManager:
                 return {deployment_name: self._deployment_results[deployment_name]}
             return {}
         return self._deployment_results
+
+    def get_processing_error(self) -> str | None:
+        """
+        Get the last processing error message.
+
+        Returns the error message from the most recent process_project() failure,
+        or None if processing succeeded.
+        """
+        return self._processing_error
 
     async def get_repositories(self) -> list[dict[str, Any]]:
         """
@@ -3681,9 +3693,11 @@ class ProjectManager:
             if progress_manager and creation_task:
                 self.get_progress_manager().complete_task(creation_task)
 
+            self._processing_error = None
             return True
         except Exception as e:
             logger.exception(f"Error processing project: {e}")
+            self._processing_error = str(e)
             return False
         finally:
             pass

@@ -162,7 +162,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             )
             return result
         else:
-            error_msg = "Project processing failed"
+            error_msg = project_manager.get_processing_error() or "Project processing failed"
             progress.fail_task(deploy_task, error_msg)
             progress.fail_project(error_msg)
             return {"project_name": project_name, "status": "failed", "error": error_msg}
@@ -293,8 +293,9 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         if processing_result:
             progress.complete_task(deploy_task)
         else:
-            progress.fail_task(deploy_task, "Deployment processing failed")
-            progress.fail_project("Deployment processing failed")
+            processing_error = project_manager.get_processing_error() or "Deployment processing failed"
+            progress.fail_task(deploy_task, processing_error)
+            progress.fail_project(processing_error)
 
         # ------------------------------------------------------------------
         # Build response
@@ -305,7 +306,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             "message": (
                 f"Deployment '{deployment_name}' {action} successfully"
                 if succeeded
-                else f"Deployment '{deployment_name}' processing failed"
+                else (project_manager.get_processing_error() or f"Deployment '{deployment_name}' processing failed")
             ),
             "deployment_name": deployment_name,
             "project": project_name,
@@ -319,7 +320,10 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             "force_clone": force_clone,
             "created": result.get("created", False),
             "urls": urls,
-            "processing": {"status": "completed" if succeeded else "failed"},
+            "processing": {
+                "status": "completed" if succeeded else "failed",
+                **({"error": project_manager.get_processing_error()} if not succeeded and project_manager.get_processing_error() else {}),
+            },
             "web_addresses": [url for dep_urls in urls.values() for url in dep_urls.get("urls", {}).values()],
             "warnings": result.get("warnings", []),
         }

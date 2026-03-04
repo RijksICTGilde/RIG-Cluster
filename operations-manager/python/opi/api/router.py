@@ -1012,7 +1012,10 @@ async def upsert_deployment(
                     "created": result.get("created", False),
                 },
                 "urls": urls,
-                "processing": {"status": "completed" if processing_result else "failed"},
+                "processing": {
+                    "status": "completed" if processing_result else "failed",
+                    **({"error": project_manager.get_processing_error()} if not processing_result and project_manager.get_processing_error() else {}),
+                },
             }
             if result.get("warnings"):
                 content["warnings"] = result["warnings"]
@@ -1143,7 +1146,10 @@ async def add_component(
                 "component": result["component"],
                 "deployments_updated": result.get("deployments_updated", []),
                 "urls": urls,
-                "processing": {"status": "completed" if processing_success else "failed"},
+                "processing": {
+                    "status": "completed" if processing_success else "failed",
+                    **({"error": project_manager.get_processing_error()} if not processing_success and project_manager.get_processing_error() else {}),
+                },
             }
             if result.get("warnings"):
                 content["warnings"] = result["warnings"]
@@ -1262,7 +1268,10 @@ async def add_component_to_deployment(
                 "deployment": deployment_name,
                 "component_reference": result["component_reference"],
                 "urls": urls,
-                "processing": {"status": "completed" if processing_success else "failed"},
+                "processing": {
+                    "status": "completed" if processing_success else "failed",
+                    **({"error": project_manager.get_processing_error()} if not processing_success and project_manager.get_processing_error() else {}),
+                },
             }
             if result.get("warnings"):
                 content["warnings"] = result["warnings"]
@@ -1637,13 +1646,14 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
         else:
             logger.warning(f"Project refresh failed: {project_name}")
 
+            processing_error = project_manager.get_processing_error()
             content = {
                 "status": "failed",
                 "message": f"Project '{project_name}' refresh failed",
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
-                    "message": "Failed to process project resources",
+                    "message": processing_error or "Failed to process project resources",
                     "result": processing_result,
                 },
             }
@@ -1754,13 +1764,14 @@ async def refresh_deployment(
         else:
             logger.warning(f"Deployment refresh failed: {project_name}/{deployment_name}")
 
+            processing_error = project_manager.get_processing_error()
             content = {
                 "status": "failed",
                 "message": f"Deployment '{deployment_name}' in project '{project_name}' refresh failed",
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
-                    "message": f"Failed to process deployment '{deployment_name}'",
+                    "message": processing_error or f"Failed to process deployment '{deployment_name}'",
                     "result": processing_result,
                 },
             }
@@ -2562,13 +2573,14 @@ async def create_self_service_project(
                 f"Self-service project creation partially completed: {project_data.project_name} (took {elapsed_time:.2f} seconds)"
             )
 
+            processing_error = project_manager.get_processing_error()
             content = {
                 "status": "partial_success",
                 "message": f"Self-service project '{project_data.project_name}' created but processing failed",
                 "project": {"name": project_data.project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
-                    "message": "Failed to process project resources",
+                    "message": processing_error or "Failed to process project resources",
                     "elapsed_time": f"{elapsed_time:.2f} seconds",
                 },
             }
@@ -2885,7 +2897,10 @@ async def add_registry_by_secret(
                     "message": f"Registry '{registry_data.name}' {'added' if result['created'] else 'updated'} successfully",
                     "registry": result["registry"],
                     "created": result["created"],
-                    "processing": {"status": "completed" if processing_result else "failed"},
+                    "processing": {
+                        "status": "completed" if processing_result else "failed",
+                        **({"error": project_manager.get_processing_error()} if not processing_result and project_manager.get_processing_error() else {}),
+                    },
                 },
                 status_code=status_code,
             )
@@ -2976,7 +2991,10 @@ async def add_registry_by_credentials(
                     "message": f"Registry '{registry_data.name}' {'added' if result['created'] else 'updated'} successfully",
                     "registry": result["registry"],
                     "created": result["created"],
-                    "processing": {"status": "completed" if processing_result else "failed"},
+                    "processing": {
+                        "status": "completed" if processing_result else "failed",
+                        **({"error": project_manager.get_processing_error()} if not processing_result and project_manager.get_processing_error() else {}),
+                    },
                 },
                 status_code=status_code,
             )
