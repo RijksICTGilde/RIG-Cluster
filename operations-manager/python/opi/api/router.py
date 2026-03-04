@@ -1093,15 +1093,12 @@ async def add_component(
         )
 
         if result["success"]:
-            # Process the project to create K8s resources for affected deployments
-            processing_success = True
-            for dep_name in result.get("deployments_updated", []):
-                dep_result = await project_manager.process_project_from_git(
-                    f"projects/{project_name}.yaml",
-                    deployment_name=dep_name,
-                )
-                if not dep_result:
-                    processing_success = False
+            # Process the project to create K8s resources for all cluster deployments
+            processing_success = await project_manager.process_project_from_git(
+                f"projects/{project_name}.yaml",
+            )
+            if not processing_success:
+                logger.error(f"Project processing failed for project '{sanitize_for_log(project_name)}'")
 
             # Collect URLs from deployment results
             urls: dict[str, dict[str, Any]] = {}
@@ -1329,20 +1326,11 @@ async def add_service(request: Request, project_name: str, service_data: AddServ
             # Process deployments only when new services were actually added
             processing_status = "skipped"
             if result.get("services_added"):
-                processing_success = True
-                project_data = await project_manager.get_contents()
-                for deployment in project_data.get("deployments", []):
-                    dep_name = deployment.get("name")
-                    if dep_name:
-                        dep_result = await project_manager.process_project_from_git(
-                            f"projects/{project_name}.yaml",
-                            deployment_name=dep_name,
-                        )
-                        if not dep_result:
-                            logger.error(
-                                f"Deployment processing failed for deployment '{dep_name}' in project '{sanitize_for_log(project_name)}'"
-                            )
-                            processing_success = False
+                processing_success = await project_manager.process_project_from_git(
+                    f"projects/{project_name}.yaml",
+                )
+                if not processing_success:
+                    logger.error(f"Project processing failed for project '{sanitize_for_log(project_name)}'")
                 processing_status = "completed" if processing_success else "failed"
 
             content: dict[str, Any] = {
