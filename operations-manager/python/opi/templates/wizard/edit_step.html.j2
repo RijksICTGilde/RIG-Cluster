@@ -1,0 +1,63 @@
+{#
+  Edit Modal Step Fragment - returned by GET /projects/{name}/edit/{section_id}
+  when in multi-step mode.
+
+  Required context:
+    - steps: WizardSteps object (same as wizard)
+    - project_name: str
+    - section: FormSection for the current step
+    - step_html: Pre-rendered form field HTML
+    - step_base_url: URL prefix for step navigation
+    - step_target: HTMX target selector
+    - step_push_url: Whether to push URL on nav
+    - step_query_params: Query string for step URLs
+#}
+
+{# Step indicator - reuses the shared wizard indicator template #}
+<div class="edit-step-indicator">
+    {% include "wizard/wizard_steps_indicator.html.j2" %}
+</div>
+
+{# Step header + form fields #}
+<div class="wizard-step" id="edit-step-form-content">
+    <div class="wizard-step__header">
+        <c-heading type="h2">
+            {% if section.icon %}<c-icon icon="{{ section.icon }}" size="xl" />{% endif %}
+            {{ section.title }}
+        </c-heading>
+        {% if section.description %}
+        <p class="wizard-step__description">{{ section.description }}</p>
+        {% endif %}
+    </div>
+
+    <div class="wizard-step__fields" id="edit-section-content">
+        {{ step_html | safe }}
+    </div>
+</div>
+
+{# Step-aware action buttons #}
+<div class="wizard-step__actions" id="edit-section-actions">
+    {% if not steps.is_first %}
+    <c-button kind="secondary" showIcon="before" icon="delta-naar-links"
+              hx-get="{{ step_base_url }}{{ steps.prev }}{{ step_query_params }}"
+              hx-target="{{ step_target }}"
+              hx-swap="innerHTML">
+        Vorige
+    </c-button>
+    {% else %}
+    <span></span>
+    {% endif %}
+
+    <div class="edit-step-right-actions">
+        {% if not steps.is_last %}
+        <button type="button" class="rvo-button rvo-button--tertiary"
+                onclick="editStepTracker = null; closeEditModalAndReload()">
+            Later configureren
+        </button>
+        {% endif %}
+        <button type="button" class="rvo-button rvo-button--primary"
+                onclick="submitEditModal()">
+            {% if steps.is_last %}Opslaan{% else %}Opslaan & volgende{% endif %}
+        </button>
+    </div>
+</div>

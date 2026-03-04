@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -24,6 +25,7 @@ from opi.forms.visualizers.wizard_sections import (
     SERVICES_EDIT_SECTION,
     _extract_services,
 )
+from opi.forms.wizard.state import WizardSteps
 from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
 
 logger = logging.getLogger(__name__)
@@ -92,9 +94,50 @@ def _render_section_html(
     return html
 
 
+def _build_edit_wizard_steps(
+    section_id: str,
+    steps_param: str | None,
+    completed_param: str | None,
+) -> WizardSteps | None:
+    """Build WizardSteps from query params, or None for single-section mode."""
+    if not steps_param:
+        return None
+    section_ids = [s.strip() for s in steps_param.split(",") if s.strip()]
+    if section_id not in section_ids:
+        return None
+    completed = {s.strip() for s in (completed_param or "").split(",") if s.strip()}
+    titles: dict[str, str] = {}
+    icons: dict[str, str | None] = {}
+    for sid in section_ids:
+        sec = EDIT_SECTIONS.get(sid)
+        if sec:
+            titles[sid] = sec.title
+            icons[sid] = sec.icon
+    return WizardSteps(
+        current=section_id,
+        all=section_ids,
+        titles=titles,
+        icons=icons,
+        completed=[s for s in section_ids if s in completed],
+    )
+
+
+def _build_step_query_params(wizard_steps: WizardSteps) -> str:
+    """Build the query string to preserve step state across navigation."""
+    steps_val = ",".join(wizard_steps.all)
+    completed_val = ",".join(wizard_steps.completed)
+    return f"?steps={quote(steps_val, safe=',')}&completed={quote(completed_val, safe=',')}"
+
+
 @detail_edit_router.get("/{project_name}/edit/{section_id}", response_class=HTMLResponse)
 @requires_sso
-async def get_edit_section(request: Request, project_name: str, section_id: str) -> HTMLResponse:
+async def get_edit_section(
+    request: Request,
+    project_name: str,
+    section_id: str,
+    steps: str | None = None,
+    completed: str | None = None,
+) -> HTMLResponse:
     """Return rendered form HTML for a single edit section (loaded into modal)."""
     from opi.services.project_service import get_project_service
 
@@ -123,6 +166,31 @@ async def get_edit_section(request: Request, project_name: str, section_id: str)
         raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar")
 
     fields_html = _render_section_html(section, project_data)
+
+    # Multi-step mode: wrap fields in the full edit_step template
+    wizard_steps = _build_edit_wizard_steps(section_id, steps, completed)
+    if wizard_steps:
+        from opi.core.templates import get_templates
+
+        templates = get_templates()
+        step_base_url = f"/projects/{project_name}/edit/"
+        step_query_params = _build_step_query_params(wizard_steps)
+        context = {
+            "request": request,
+            "steps": wizard_steps,
+            "step_base_url": step_base_url,
+            "step_target": "#edit-section-inner",
+            "step_push_url": False,
+            "step_query_params": step_query_params,
+            "project_name": project_name,
+            "section": section,
+            "step_html": fields_html,
+        }
+        rendered = templates.get_template("wizard/edit_step.html.j2").render(context)
+        process_components = templates.env.filters.get("process_components")
+        if process_components:
+            rendered = str(process_components(rendered))
+        return HTMLResponse(content=rendered)
 
     return HTMLResponse(content=fields_html)
 
