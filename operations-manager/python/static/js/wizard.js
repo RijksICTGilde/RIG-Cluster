@@ -138,37 +138,6 @@ function kvToggleFormat(editorId, newFormat) {
             : 'kv-toggle__btn';
     }
     if (typeof switchKvLanguage === 'function') switchKvLanguage(editorId, newFormat);
-    kvValidate(editorId);
-}
-
-function kvValidate(editorId) {
-    var editor = document.getElementById(editorId);
-    if (!editor) return;
-    var textarea = editor.querySelector('textarea');
-    var status = document.getElementById(editorId + '-status');
-    if (!textarea || !status) return;
-
-    var fmt = editor.dataset.format;
-    var lines = textarea.value.split('\n');
-    var errors = [];
-    var count = 0;
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (!line || line.charAt(0) === '#') continue;
-        count++;
-        if (fmt === 'env' && line.indexOf('=') === -1) {
-            errors.push('Regel ' + (i+1) + ': verwacht KEY=value');
-        } else if (fmt === 'yaml' && line.indexOf(': ') === -1 && line.indexOf(':') === -1) {
-            errors.push('Regel ' + (i+1) + ': verwacht KEY: value');
-        }
-    }
-    if (errors.length > 0) {
-        status.className = 'kv-editor__status kv-editor__status--error';
-        status.textContent = errors[0];
-    } else {
-        status.className = 'kv-editor__status kv-editor__status--ok';
-        status.textContent = count > 0 ? count + ' variabele(n)' : '';
-    }
 }
 
 /* ========================================================================
@@ -443,11 +412,6 @@ document.addEventListener('htmx:afterSwap', function(event) {
     initWizardWidgets(event.detail.target);
 });
 
-/* Validate key-value editors on input */
-document.addEventListener('input', function(e) {
-    var editor = e.target.closest('.kv-editor');
-    if (editor) kvValidate(editor.id);
-});
 
 /* Re-render the current step when a [data-rerender] field changes */
 document.addEventListener('change', function(e) {

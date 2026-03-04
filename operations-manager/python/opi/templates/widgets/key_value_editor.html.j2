@@ -18,7 +18,6 @@
         {{ optional_attr("placeholder", "KEY=value" if initial_format == "env" else "KEY: value") }}
         {{ bool_attr("disabled", field.readonly) }}
     >{{ (field.value|string if field.value else '')|e }}</textarea>
-    <div class="kv-editor__status" id="{{ editor_id|e }}-status"></div>
     {{ render_examples(field) }}
     {{ render_errors(field.errors) }}
 </div>
