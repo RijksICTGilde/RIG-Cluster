@@ -1,6 +1,6 @@
 # Configurable Deployment Resources
 
-**Status**: Planned
+**Status**: Partially Implemented
 **Priority**: High
 **Created**: 2026-02-02
 

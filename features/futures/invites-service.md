@@ -1,5 +1,7 @@
 # Invites as a Service
 
+**Status**: Planned
+
 ## What It Is
 
 Migration of the invite system from a standalone top-level `invites:` YAML key to a proper service under the `services:` list. This aligns invites with how all other project features (keycloak, auth-wall, postgresql, etc.) are modeled — selectable via service cards, configured in a wizard step, stored under `services/invites/config/...`.

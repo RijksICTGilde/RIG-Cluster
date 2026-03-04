@@ -1,5 +1,7 @@
 # Forgejo on ODCN with Keycloak SSO
 
+**Status**: Planned
+
 ## Overview
 
 Deploy Forgejo as an in-cluster git server on the ODCN production cluster, authenticated via the existing Keycloak instance using OpenID Connect (OIDC). This gives developers a web-based git platform for browsing repositories while also serving as a git backend for ArgoCD and the Operations Manager.

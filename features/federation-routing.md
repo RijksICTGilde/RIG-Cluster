@@ -136,8 +136,8 @@ Uses the existing `HttpConnector` pattern. Sends `X-API-Key` header (matches the
 class OpiConnector:
     def __init__(self, peer: PeerConfig): ...
 
-    async def health_check(self) -> bool
-        """GET /readyz on the peer."""
+    async def health_check(self) -> dict
+        """GET /health on the peer. Returns health status dict."""
 
     async def create_task(self, task_type: str, project_name: str,
                           deployment_name: str | None, payload: dict) -> dict
@@ -145,6 +145,9 @@ class OpiConnector:
 
     async def get_task_status(self, task_id: str) -> dict
         """GET /api/tasks/{task_id} on the peer. Returns the response as-is."""
+
+    async def cancel_task(self, task_id: str) -> dict
+        """POST /api/tasks/{task_id}/:cancel on the peer."""
 ```
 
 ### 3. Federation Service (Routing Layer)
@@ -172,8 +175,15 @@ class FederationService:
         Returns the task status response.
         """
 
-    def _resolve_cluster(self, project_name: str, deployment_name: str) -> str:
-        """Read project YAML -> find deployment -> return its cluster field."""
+    async def cancel_task(self, task_id: str) -> dict | None:
+        """
+        Cancel a task. Checks local DB first, then proxies to slave if needed.
+        Only cancels tasks with status 'pending'.
+        """
+
+    async def resolve_cluster(self, project_name: str, deployment_name: str) -> str:
+        """Read project YAML -> find deployment -> return its cluster field.
+        Falls back to settings.CLUSTER_MANAGER on error."""
 ```
 
 ### 4. Route Table
@@ -209,7 +219,7 @@ GET /api/federation/health   -- Peer health status (master only)
 GET /api/federation/peers    -- Peer list (cluster names, URLs, health -- no secrets)
 ```
 
-Health checks can be periodic (every 30s ping `/readyz` on each peer) or on-demand (check when routing).
+Health checks can be periodic (every 30s ping `/health` on each peer) or on-demand (check when routing).
 
 ---
 

@@ -1,5 +1,7 @@
 # RegistryProxy CRD
 
+**Status**: Planned
+
 Kubernetes nodes op het Community Cluster kunnen niet direct bij externe registries (ghcr.io, docker.io, etc). Alle images moeten via RCR. De `RegistryProxy` CRD automatiseert het aanmaken van proxy caches in RCR.
 
 ## Object

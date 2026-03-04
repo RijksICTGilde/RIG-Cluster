@@ -650,11 +650,11 @@ The implementation is structured so that multiple agents can work in parallel. D
 
 | Unit | File(s) | Depends on | Description |
 |------|---------|------------|-------------|
-| **3A** | `opi/core/task_handlers.py` (create_project, upsert_deployment) | 2A | Extract handler logic from simple_background.py and router.py |
-| **3B** | `opi/core/task_handlers.py` (update_image, delete_deployment) | 2A | Extract handler logic from router.py |
-| **3C** | `opi/core/task_handlers.py` (clone_database, clone_bucket, refresh) | 2A | Extract handler logic from router.py |
+| **3A** | `opi/core/task_handlers_project.py` (create_project, upsert_deployment) | 2A | Extract handler logic from simple_background.py and router.py |
+| **3B** | `opi/core/task_handlers_deployment.py` (update_image, delete_deployment) | 2A | Extract handler logic from router.py |
+| **3C** | `opi/core/task_handlers_operations.py` (clone_database, clone_bucket, refresh) | 2A | Extract handler logic from router.py |
 
-**3A, 3B, 3C can all be built in parallel.** Each extracts different endpoint handlers. They can be in the same file or split into separate files -- as long as each handler function receives `(payload: dict, progress: PersistentTaskProgressManager)` and calls the existing `ProjectManager` methods.
+**3A, 3B, 3C can all be built in parallel.** Each extracts different endpoint handlers into separate files. Each handler function receives `(payload: dict, progress: PersistentTaskProgressManager)` and calls the existing `ProjectManager` methods.
 
 ### Wave 4: Integration (depends on Waves 2-3)
 
@@ -704,7 +704,9 @@ Minimum sequential waves: 4 (Wave 1 -> 2 -> 3+4 -> 5D)
 | `opi/core/async_task_service.py` | Task queue service layer + enums | 1B |
 | `opi/core/persistent_task_progress.py` | PostgreSQL-backed progress manager | 2A |
 | `opi/core/task_worker.py` | Worker loop + routing (no FastAPI dependency) | 2B |
-| `opi/core/task_handlers.py` | Extracted handler functions per task type | 3A-C |
+| `opi/core/task_handlers_project.py` | Handlers for create_project, upsert_deployment | 3A |
+| `opi/core/task_handlers_deployment.py` | Handlers for update_image, delete_deployment | 3B |
+| `opi/core/task_handlers_operations.py` | Handlers for clone_database, clone_bucket, refresh | 3C |
 | `opi/api/task_router.py` | Task status API + Pydantic models | 1D |
 | `opi/worker_main.py` | Standalone worker entry point (Phase 2) | 4A |
 | `tests/test_async_task_service.py` | Service unit tests | 5A |

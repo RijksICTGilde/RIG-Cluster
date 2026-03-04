@@ -1,5 +1,7 @@
 # Image Upload Proxy - PoC (Level 1)
 
+**Status**: Implemented
+
 ## Context
 
 A customer needs to push private Docker images to Red Hat Quay (`rcr.rijksapps.nl`) which is behind a VPN. The Operations Manager pod in ODCN production **can** reach the registry (verified: auth token flow works). The customer cannot access Quay directly.
