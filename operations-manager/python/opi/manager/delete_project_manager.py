@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
+    generate_backup_prefix,
     generate_bucket_name,
     generate_database_name,
     generate_deployment_manifest_path,
@@ -1774,6 +1775,58 @@ class DeleteProjectManager:
                         "type": "mark_for_deletion",
                         "resource_type": "minio_bucket",
                         "resource_name": bucket_name,
+                        "status": "marked",
+                    }
+                )
+
+            # Mark backup data for deferred deletion
+            if base_namespace:
+                from opi.manager.backup.base import BackupConfig, get_backup_bucket_name
+
+                namespace = get_prefixed_namespace(cluster, base_namespace)
+                backup_bucket = get_backup_bucket_name(project_name, cluster)
+                backup_prefix = generate_backup_prefix(cluster, namespace)
+                backup_resource_name = f"{backup_bucket}/{backup_prefix}"
+
+                # Derive the Kopia password now while the namespace still exists.
+                # Store it in metadata so the reconciliation job can connect to the
+                # Kopia repository later, even after the namespace has been deleted.
+                backup_config = BackupConfig.from_settings()
+                from opi.manager.backup.base import BaseBackupManager
+
+                backup_mgr = BaseBackupManager(config=backup_config)
+                try:
+                    kopia_password = await backup_mgr._derive_backup_key(namespace)
+                except Exception as e:
+                    logger.warning(
+                        "Could not derive Kopia password for %s (backups may require manual cleanup): %s",
+                        namespace,
+                        e,
+                    )
+                    kopia_password = None
+
+                await marked_for_deletion_service.mark_resource(
+                    resource_type="backup_data",
+                    resource_name=backup_resource_name,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    metadata={
+                        "s3_bucket": backup_bucket,
+                        "s3_prefix": backup_prefix,
+                        "s3_endpoint": settings.BACKUP_S3_ENDPOINT,
+                        "s3_access_key": settings.BACKUP_S3_ACCESS_KEY,
+                        "s3_secret_key": settings.BACKUP_S3_SECRET_KEY,
+                        "s3_use_tls": settings.BACKUP_S3_USE_TLS,
+                        "kopia_password": kopia_password,
+                        "namespace": namespace,
+                    },
+                )
+                deletion_results["operations"].append(
+                    {
+                        "type": "mark_for_deletion",
+                        "resource_type": "backup_data",
+                        "resource_name": backup_resource_name,
                         "status": "marked",
                     }
                 )

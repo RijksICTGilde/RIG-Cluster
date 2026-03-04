@@ -7,8 +7,9 @@ orphaned AND marked past the configurable grace period are purged.
 Deletion ordering:
 1. PostgreSQL databases and users (external to cluster)
 2. MinIO buckets, users, and policies (external to cluster)
-3. PVCs (require namespace to still exist)
-4. Namespaces (only when all conditions are met)
+3. Backup data (S3 prefixes/buckets on backup destination)
+4. PVCs (require namespace to still exist)
+5. Namespaces (only when all conditions are met)
 """
 
 import logging
@@ -20,6 +21,7 @@ from opi.core.config import settings
 from opi.core.database_pool import DatabasePool
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.utils.naming import (
+    generate_backup_prefix,
     generate_bucket_name,
     generate_database_name,
     generate_minio_policy_name,
@@ -44,12 +46,15 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
         "minio_bucket": set(),
         "minio_user": set(),
         "minio_policy": set(),
+        "backup_data": set(),
     }
 
     for project in project_yamls:
         project_name = project.get("name", "")
         for deployment in project.get("deployments", []):
             deployment_name = deployment.get("name", "")
+            cluster = deployment.get("cluster", "")
+            base_namespace = deployment.get("namespace", "")
             services = deployment.get("services", [])
             if not isinstance(services, list):
                 continue
@@ -68,6 +73,16 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
                     expected["minio_bucket"].add(generate_bucket_name(project_name, deployment_name))
                     expected["minio_user"].add(generate_minio_username(project_name, deployment_name))
                     expected["minio_policy"].add(generate_minio_policy_name(project_name, deployment_name))
+
+            # Build expected backup_data resource name (matches marking format)
+            if base_namespace and cluster:
+                from opi.core.cluster_config import get_prefixed_namespace
+                from opi.manager.backup.base import get_backup_bucket_name
+
+                namespace = get_prefixed_namespace(cluster, base_namespace)
+                backup_bucket = get_backup_bucket_name(project_name, cluster)
+                backup_prefix = generate_backup_prefix(cluster, namespace)
+                expected["backup_data"].add(f"{backup_bucket}/{backup_prefix}")
 
     return expected
 
@@ -138,6 +153,7 @@ async def reconcile(
     minio_user_marks = [m for m in expired_marks if m["resource_type"] == "minio_user"]
     minio_policy_marks = [m for m in expired_marks if m["resource_type"] == "minio_policy"]
     namespace_marks = [m for m in expired_marks if m["resource_type"] == "namespace"]
+    backup_marks = [m for m in expired_marks if m["resource_type"] == "backup_data"]
 
     # 2a. Purge PostgreSQL databases and users
     if db_marks or db_user_marks:
@@ -182,7 +198,11 @@ async def reconcile(
             logger.exception(error_msg)
             results["errors"].append(error_msg)
 
-    # 2c. Purge namespaces (only when ALL conditions met)
+    # 2c. Purge backup data (Kopia snapshots)
+    for mark in backup_marks:
+        await _purge_backup_data(mark, service, results, dry_run)
+
+    # 2d. Purge namespaces (only when ALL conditions met)
     for mark in namespace_marks:
         await _purge_namespace(mark, service, pool, results, dry_run)
 
@@ -318,6 +338,120 @@ async def _purge_minio_policy(
         results["purged"].append({"type": "minio_policy", "name": policy_name})
     except Exception as e:
         error_msg = f"Failed to purge MinIO policy '{policy_name}': {e}"
+        logger.exception(error_msg)
+        results["errors"].append(error_msg)
+
+
+async def _purge_backup_data(
+    mark: dict,
+    service: MarkedForDeletionService,
+    results: dict[str, list],
+    dry_run: bool,
+) -> None:
+    """Purge backup data (Kopia snapshots) for a deleted deployment.
+
+    Lists all snapshots in the Kopia repository and deletes them individually.
+    The Kopia connection details (bucket, prefix, password) are stored in the
+    mark metadata at the time the resource was marked for deletion.
+    """
+    resource_name = mark["resource_name"]
+    metadata = mark.get("metadata", {})
+    if isinstance(metadata, str):
+        import json
+
+        metadata = json.loads(metadata)
+
+    s3_bucket = metadata.get("s3_bucket")
+    s3_prefix = metadata.get("s3_prefix")
+    s3_endpoint = metadata.get("s3_endpoint")
+    s3_access_key = metadata.get("s3_access_key")
+    s3_secret_key = metadata.get("s3_secret_key")
+    s3_use_tls = metadata.get("s3_use_tls", False)
+    kopia_password = metadata.get("kopia_password")
+
+    if not all([s3_bucket, s3_prefix, s3_endpoint, kopia_password]):
+        error_msg = (
+            f"Incomplete backup metadata for '{resource_name}' - "
+            "cannot connect to Kopia repository (manual cleanup required)"
+        )
+        logger.warning(error_msg)
+        results["errors"].append(error_msg)
+        # Remove the mark since we can't act on it
+        if not dry_run:
+            await service.delete_mark(mark["id"])
+        return
+
+    try:
+        from opi.connectors.kopia import KopiaConnector, KopiaRepositoryConfig
+
+        if not KopiaConnector.is_kopia_available:
+            error_msg = f"Kopia CLI not available - cannot purge backup data for '{resource_name}'"
+            logger.warning(error_msg)
+            results["errors"].append(error_msg)
+            return
+
+        repo_config = KopiaRepositoryConfig(
+            s3_endpoint=s3_endpoint,
+            s3_bucket=s3_bucket,
+            s3_access_key=s3_access_key,
+            s3_secret_key=s3_secret_key,
+            s3_prefix=s3_prefix,
+            password=kopia_password,
+            use_tls=s3_use_tls,
+        )
+
+        kopia = KopiaConnector()
+        snapshots = await kopia.list_snapshots(repo_config)
+
+        if not snapshots:
+            logger.info("No snapshots found for '%s' - marking as purged", resource_name)
+            if not dry_run:
+                await service.delete_mark(mark["id"])
+            results["purged"].append({"type": "backup_data", "name": resource_name, "snapshots_deleted": 0})
+            return
+
+        if dry_run:
+            logger.info(
+                "[DRY RUN] Would purge %d backup snapshot(s) for '%s'",
+                len(snapshots),
+                resource_name,
+            )
+            results["purged"].append(
+                {"type": "backup_data", "name": resource_name, "snapshots_deleted": len(snapshots)}
+            )
+            return
+
+        deleted_count = 0
+        for snapshot in snapshots:
+            try:
+                success = await kopia.delete_snapshot(repo_config, snapshot.snapshot_id)
+                if success:
+                    deleted_count += 1
+                else:
+                    logger.warning(
+                        "Failed to delete snapshot %s for '%s'",
+                        snapshot.snapshot_id,
+                        resource_name,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Error deleting snapshot %s for '%s': %s",
+                    snapshot.snapshot_id,
+                    resource_name,
+                    e,
+                )
+
+        await service.delete_mark(mark["id"])
+        logger.info(
+            "Purged %d/%d backup snapshot(s) for '%s'",
+            deleted_count,
+            len(snapshots),
+            resource_name,
+        )
+        results["purged"].append({"type": "backup_data", "name": resource_name, "snapshots_deleted": deleted_count})
+
+    except Exception as e:
+        error_msg = f"Failed to purge backup data for '{resource_name}': {e}"
         logger.exception(error_msg)
         results["errors"].append(error_msg)
 

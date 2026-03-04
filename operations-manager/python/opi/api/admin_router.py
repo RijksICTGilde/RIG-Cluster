@@ -124,6 +124,7 @@ async def trigger_cleanup(
 
     # Import reconciliation purge helpers to reuse the same logic
     from opi.jobs.reconciliation import (
+        _purge_backup_data,
         _purge_minio_bucket,
         _purge_minio_policy,
         _purge_minio_user,
@@ -140,6 +141,7 @@ async def trigger_cleanup(
     bucket_marks = [m for m in project_expired if m["resource_type"] == "minio_bucket"]
     minio_user_marks = [m for m in project_expired if m["resource_type"] == "minio_user"]
     minio_policy_marks = [m for m in project_expired if m["resource_type"] == "minio_policy"]
+    backup_marks = [m for m in project_expired if m["resource_type"] == "backup_data"]
     namespace_marks = [m for m in project_expired if m["resource_type"] == "namespace"]
 
     # Purge PostgreSQL resources
@@ -186,6 +188,10 @@ async def trigger_cleanup(
             error_msg = f"Failed to initialize MinIO connector for cleanup: {e}"
             logger.exception(error_msg)
             results["errors"].append(error_msg)
+
+    # Purge backup data (Kopia snapshots)
+    for mark in backup_marks:
+        await _purge_backup_data(mark, service, results, dry_run)
 
     # Purge namespaces (only when all conditions met)
     for mark in namespace_marks:
