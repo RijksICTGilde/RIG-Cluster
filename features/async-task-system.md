@@ -1,56 +1,110 @@
-# Async Task System + Federation ("Hive") Architecture for ZAD
+# Async Task System
 
 **Status**: Planned (not yet implemented)
-**Date**: 2026-02-28
+**Date**: 2026-03-01
 **Priority**: High
+**Related**: [Federation Routing](./federation-routing.md) (builds on top of this)
 
-## Context
+## Problem
 
-Two connected problems need solving:
-
-1. **Sync API timeouts**: Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504s. The web portal has a working async pattern (BackgroundTasks + in-memory TaskProgressManager), but it's single-instance, in-memory, and not used by the REST API.
-
-2. **Multi-cluster coordination**: ZAD needs to run across multiple Kubernetes clusters (local, sandboxed-local, odcn-production) with multiple instances. There's no shared database between clusters -- only HTTP. Users want a single frontend (master OPI) that delegates work to per-cluster slave OPIs.
-
-**Key insight**: The async task API (`POST` -> `202` + task_id, `GET /api/tasks/{id}` to poll) becomes the inter-cluster communication protocol. The master delegates to slaves by calling their standard task API via HTTP.
-
-### Problem Summary
+Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts. The web portal has a working async pattern (`BackgroundTasks` + in-memory `TaskProgressManager`), but it is single-instance, in-memory, and not used by the REST API.
 
 | Endpoint | Method | Typical Duration |
 |----------|--------|-----------------|
 | `/api/projects/{name}/:upsert-deployment` | POST | 5-30 min |
 | `/api/projects/{name}/deployments/{dep}/image` | PUT | 3-15 min |
 | `/api/projects/{name}/{dep}` | DELETE | 5-15 min |
-| `/api/projects/{name}/deployments/{dep}/:clone-database-from-external` | POST | 10-60 min |
-| `/api/projects/{name}/deployments/{dep}/:clone-bucket-from-external` | POST | 10-30 min |
-| `/api/projects/{name}/deployments/{dep}/:refresh` | GET | 5-20 min |
-
-### Existing Patterns We Build On
-
-- `CLUSTER_MANAGER` setting -- each OPI already manages exactly one cluster (`config.py:142`)
-- `MASTER_API_KEY` + `validate_master_api_key` decorator -- admin auth already exists (`endpoint_util.py:82`)
-- `HttpConnector` -- HTTP client with Bearer/Basic/Keycloak auth (`connectors/http.py`)
-- `DatabasePool` -- asyncpg connection pool for PostgreSQL (`core/database_pool.py`)
-- Project YAML `cluster` field on deployments -- routing info already in data model (`projects/simple-example.yaml`)
-- Deployment filtering: `d.get("cluster") == settings.CLUSTER_MANAGER` throughout `project_manager.py`
+| `.../:clone-database-from-external` | POST | 10-60 min |
+| `.../:clone-bucket-from-external` | POST | 10-30 min |
+| `.../:refresh` | GET | 5-20 min |
 
 ### Current Limitations
 
 - **In-memory only** -- tasks lost on pod restart
-- **Single-process only** -- can't scale to multiple ZAD instances
+- **Single-process only** -- cannot scale to multiple OPI replicas
 - **No retry mechanism** -- failed tasks are not retried
 - **No persistence** -- no audit trail or recovery
 - **API endpoints block** -- only the web portal uses the background task pattern
 
+### Existing Patterns We Build On
+
+- `CLUSTER_MANAGER` setting -- each OPI manages exactly one cluster (`config.py`)
+- `MASTER_API_KEY` + `validate_master_api_key` -- admin auth already exists (`endpoint_util.py`)
+- `DatabasePool` -- asyncpg connection pool for PostgreSQL (`core/database_pool.py`)
+- `TaskProgressManager` -- in-memory task tracking with subtasks (`core/task_manager.py`)
+- `simple_background.py` -- existing background project processing
+- Project YAML `cluster` field on deployments -- routing info already in data model
+
 ---
 
-# Part 1: Async Task System (within a single cluster)
+## Architecture Overview
 
-## 1.1 Database Schema
+### Target Architecture: Frontend + Workers
 
-**File**: `opi/core/async_task_service.py` (new)
+The system separates into two roles that communicate exclusively through the PostgreSQL `async_tasks` table:
 
-Table created at startup via `CREATE TABLE IF NOT EXISTS` (same pattern as existing `SUBDOMAIN_REGISTRY_TABLE_SQL`). Uses the local rig-db PostgreSQL.
+```
+                          Shared PostgreSQL (rig-db, same cluster)
+                          +----------------------------------+
+                          |         async_tasks table        |
+                          +--^-----------+----------^--------+
+                             |           |          |
+                  INSERT task|    SELECT |   UPDATE |  progress/result
+                             |    status |          |
+                +------------+--+  +-----v---+  +--+----------+
+                |  Frontend OPI |  | Client   |  | Worker 1   |
+                |  (API server) |  | (polls)  |  | (executor) |
+                |               |  +----------+  |            |
+                | - Serves HTTP |                 | - Claims   |
+                | - Creates     |                 |   tasks    |
+                |   tasks       |  +----------+  | - Runs     |
+                | - Reads       |  | Worker 2 |  |   handlers |
+                |   status      |  | (executor)|  | - Writes   |
+                | - No task     |  |           |  |   progress |
+                |   execution   |  +-----------+  +------------+
+                +---------------+
+```
+
+**Frontend OPI** (API server): Receives HTTP requests, inserts tasks into the database, reads task status back for clients. Never executes tasks itself.
+
+**Worker(s)**: Separate process(es) that claim tasks via `SELECT ... FOR UPDATE SKIP LOCKED`, execute them (calling ProjectManager, connectors, etc.), and write progress + results back to the database. Scale by adding more worker pods.
+
+**PostgreSQL**: The shared communication channel. The frontend writes tasks, workers read and update them, clients poll status through the frontend.
+
+Since workers are separate processes that don't share memory with the frontend, all progress (current_step, subtasks, logs, etc.) must be written to the database. This is why the schema includes progress columns -- the frontend has no other way to know what a worker is doing.
+
+### Starting Point: Combined Mode
+
+For the initial implementation, the frontend and worker run in the **same process** (worker as an asyncio background task inside the FastAPI lifespan). This matches the current architecture and avoids requiring a separate deployment.
+
+```
+Combined OPI (current setup, single pod)
+  |
+  +-- FastAPI (serves HTTP, creates tasks, reads status)
+  +-- TaskWorker (asyncio loop, claims + executes tasks)
+  |
+  Shared PostgreSQL
+```
+
+The combined mode uses the exact same code paths. The only difference is that `TASK_WORKER_ENABLED=True` starts the worker loop inside the API server process. Setting it to `False` creates a frontend-only instance. Running the worker separately is a deployment change, not a code change.
+
+### Scaling Path
+
+```
+Phase 1 (now):     Combined OPI pod          -- single process, worker inside API server
+Phase 2 (scale):   1 Frontend + N Workers    -- separate pods, same DB, same cluster
+Phase 3 (future):  Federation routing        -- multiple clusters, HTTP between them
+```
+
+**Binary data (images) are NOT stored in the payload.** Image endpoints that need async handling should first store the image (e.g., to MinIO or a temp path) and put a reference in the payload instead.
+
+---
+
+## 1. Database Schema
+
+**File**: `opi/core/async_task_schema.py` (new)
+
+Table created at startup via `CREATE TABLE IF NOT EXISTS` (same pattern as existing `SUBDOMAIN_REGISTRY_TABLE_SQL` in `connectors/subdomain.py`). Uses the local rig-db PostgreSQL.
 
 ```sql
 CREATE TABLE IF NOT EXISTS async_tasks (
@@ -77,82 +131,89 @@ CREATE TABLE IF NOT EXISTS async_tasks (
     completed_at TIMESTAMPTZ,
     created_by VARCHAR(255),
     attempt_count SMALLINT NOT NULL DEFAULT 0,
-    max_attempts SMALLINT NOT NULL DEFAULT 3,
-    -- Federation proxy columns
-    is_proxy BOOLEAN NOT NULL DEFAULT FALSE,
-    remote_task_id UUID,
-    remote_opi_url VARCHAR(512),
-    cached_status JSONB,
-    cached_at TIMESTAMPTZ
+    max_attempts SMALLINT NOT NULL DEFAULT 3
 );
 
--- Index for the worker claim query (SELECT ... FOR UPDATE SKIP LOCKED)
 CREATE INDEX IF NOT EXISTS idx_async_tasks_pending
     ON async_tasks(status, created_at)
     WHERE status = 'pending';
 
--- Index for stale task recovery (heartbeat check)
 CREATE INDEX IF NOT EXISTS idx_async_tasks_heartbeat
     ON async_tasks(status, heartbeat_at)
     WHERE status IN ('claimed', 'running');
 
--- Index for querying tasks by project
 CREATE INDEX IF NOT EXISTS idx_async_tasks_project
     ON async_tasks(project_name, created_at DESC);
 
--- Index for querying tasks by project + deployment
 CREATE INDEX IF NOT EXISTS idx_async_tasks_deployment
     ON async_tasks(project_name, deployment_name, created_at DESC);
 
--- Index for proxy task refresh loop
-CREATE INDEX IF NOT EXISTS idx_async_tasks_proxy
-    ON async_tasks(is_proxy, status)
-    WHERE is_proxy = TRUE;
-
--- Index for cleanup of old completed tasks
 CREATE INDEX IF NOT EXISTS idx_async_tasks_completed
     ON async_tasks(status, completed_at)
     WHERE status IN ('completed', 'failed', 'cancelled');
 ```
 
-Key design decisions:
-- **JSONB for payload**: Each task type has different request parameters. Storing as JSONB avoids schema proliferation.
-- **subtasks as JSONB array**: Mirrors the existing `TaskProgressManager.tasks` dict but stored persistently.
-- **heartbeat_at**: Essential for stale task recovery when a pod dies mid-task.
-- **No separate subtasks table**: At most ~15 subtasks per operation; JSONB array is sufficient.
-- **Federation proxy columns**: `is_proxy`, `remote_task_id`, `remote_opi_url`, `cached_status`, `cached_at` support the master-slave delegation pattern without a separate table.
+### Design Decisions
 
-## 1.2 AsyncTaskService
+- **JSONB for payload**: Each task type has different request parameters. Storing as JSONB avoids schema proliferation.
+- **subtasks as JSONB array**: Mirrors the existing `TaskProgressManager.tasks` dict but stored persistently. At most ~15 subtasks per operation.
+- **heartbeat_at**: Essential for stale task recovery when a pod dies mid-task.
+- **cluster column**: Each task records which cluster it targets. Workers only claim tasks matching their own `CLUSTER_MANAGER`. This is also the foundation for federation routing later.
+- **No separate subtasks table**: The subtask count is small enough that a JSONB array is sufficient.
+
+---
+
+## 2. AsyncTaskService
 
 **File**: `opi/core/async_task_service.py` (new)
 
-Key methods using the existing `DatabasePool` (from `opi/core/database_pool.py`):
+Service layer using the existing `DatabasePool` (from `opi/core/database_pool.py`). All database operations go through this service.
 
-| Method | SQL Pattern |
-|--------|-------------|
-| `create_task()` | INSERT + dedup check (same project+deployment+type already pending/running -> return existing) |
-| `claim_next_task()` | `SELECT ... FOR UPDATE SKIP LOCKED` where `status='pending' AND is_proxy=FALSE` |
-| `start_task()` | UPDATE status=running, started_at |
-| `update_progress()` | UPDATE current_step, progress_percent, subtasks, heartbeat_at |
-| `send_heartbeat()` | UPDATE heartbeat_at only |
-| `complete_task()` | UPDATE status=completed, result, completed_at |
-| `fail_task()` | Re-queue if attempt_count < max_attempts, else status=failed |
-| `get_task()` / `list_tasks()` | SELECT with filters |
-| `recover_stale_tasks()` | Reset tasks with heartbeat_at > 120s old |
-| `cleanup_old_tasks()` | DELETE completed tasks older than 72h |
-| `create_proxy_task()` | INSERT with is_proxy=TRUE, remote_task_id, remote_opi_url |
-| `update_proxy_status()` | UPDATE cached_status, cached_at for proxy tasks |
+### Enums
 
-Enums: `TaskType` (upsert_deployment, update_image, delete_deployment, clone_database, clone_bucket, refresh_deployment, create_project), `AsyncTaskStatus` (pending, claimed, running, completed, failed, cancelled).
+```python
+class TaskType(str, Enum):
+    UPSERT_DEPLOYMENT = "upsert_deployment"
+    UPDATE_IMAGE = "update_image"
+    DELETE_DEPLOYMENT = "delete_deployment"
+    CLONE_DATABASE = "clone_database"
+    CLONE_BUCKET = "clone_bucket"
+    REFRESH_DEPLOYMENT = "refresh_deployment"
+    CREATE_PROJECT = "create_project"
 
-### Multi-Instance Coordination
+class AsyncTaskStatus(str, Enum):
+    PENDING = "pending"
+    CLAIMED = "claimed"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+```
 
-**Task claiming** uses `SELECT ... FOR UPDATE SKIP LOCKED`:
+### Key Methods
+
+| Method | SQL Pattern | Description |
+|--------|-------------|-------------|
+| `create_task()` | INSERT + dedup check | Create a task. If same project+deployment+type is already pending/running, return existing task ID |
+| `claim_next_task()` | `SELECT ... FOR UPDATE SKIP LOCKED` | Claim next pending task for this cluster |
+| `start_task()` | UPDATE status=running | Mark task as started |
+| `update_progress()` | UPDATE current_step, progress_percent, subtasks, heartbeat_at | Update task progress |
+| `send_heartbeat()` | UPDATE heartbeat_at | Keep-alive signal from worker |
+| `complete_task()` | UPDATE status=completed, result, completed_at | Mark task as done with result |
+| `fail_task()` | Re-queue or status=failed | Re-queue if attempts < max, else mark failed |
+| `get_task()` | SELECT by id | Get single task status |
+| `list_tasks()` | SELECT with filters | List tasks filtered by project, deployment, status |
+| `recover_stale_tasks()` | UPDATE WHERE heartbeat stale | Reset tasks from dead workers |
+| `cleanup_old_tasks()` | DELETE WHERE completed > retention | Remove old completed/failed tasks |
+
+### Task Claiming (Multi-Instance Safe)
+
 ```sql
 BEGIN;
 SELECT id, task_type, payload, ...
 FROM async_tasks
-WHERE status = 'pending' AND is_proxy = FALSE
+WHERE status = 'pending'
+  AND cluster = $cluster_manager
 ORDER BY created_at ASC
 LIMIT 1
 FOR UPDATE SKIP LOCKED;
@@ -163,111 +224,180 @@ WHERE id = $task_id;
 COMMIT;
 ```
 
-`SKIP LOCKED` ensures no deadlocks or contention between instances.
+`SKIP LOCKED` ensures no deadlocks or contention between multiple OPI replicas sharing the same database.
 
-**Stale task recovery** (every 60s):
+### Stale Task Recovery (every 60s)
+
 ```sql
--- Re-queue tasks from dead workers
 UPDATE async_tasks
 SET status = 'pending', claimed_by = NULL, claimed_at = NULL,
     heartbeat_at = NULL, attempt_count = attempt_count + 1
 WHERE status IN ('claimed', 'running')
-AND heartbeat_at < NOW() - INTERVAL '120 seconds'
-AND attempt_count < max_attempts;
+  AND heartbeat_at < NOW() - INTERVAL '120 seconds'
+  AND attempt_count < max_attempts;
 
--- Fail tasks that exceeded max attempts
 UPDATE async_tasks
-SET status = 'failed', error_message = 'Worker died, max retries exceeded', completed_at = NOW()
+SET status = 'failed',
+    error_message = 'Worker died, max retries exceeded',
+    completed_at = NOW()
 WHERE status IN ('claimed', 'running')
-AND heartbeat_at < NOW() - INTERVAL '120 seconds'
-AND attempt_count >= max_attempts;
+  AND heartbeat_at < NOW() - INTERVAL '120 seconds'
+  AND attempt_count >= max_attempts;
 ```
 
-## 1.3 Task Worker
+### Deduplication
+
+When creating a task, check if one already exists for the same `(project_name, deployment_name, task_type)` with status in `('pending', 'claimed', 'running')`. If so, return the existing task ID instead of creating a duplicate.
+
+---
+
+## 3. Task Worker
 
 **File**: `opi/core/task_worker.py` (new)
 
-Runs as `asyncio.Task` in each OPI instance (started in FastAPI lifespan). 1 task at a time per instance -- scale by adding replicas.
+The worker is a standalone class that only needs a `DatabasePool` and the task handler functions. It has no dependency on FastAPI, HTTP, or the API layer. This is what makes it deployable both inside the API server process (combined mode) and as a separate worker process.
+
+### Running Modes
+
+**Combined mode** (Phase 1): Started as an `asyncio.Task` inside the FastAPI lifespan when `TASK_WORKER_ENABLED=True`. The worker shares the process with the API server.
+
+**Standalone worker** (Phase 2): Run as a separate process/pod. Entry point:
+```python
+# opi/worker_main.py (new, Phase 2)
+async def main():
+    pool = DatabasePool(...)
+    await pool.initialize()
+    task_service = AsyncTaskService(pool)
+    worker = TaskWorker(task_service)
+    await worker.run()  # blocks forever, processing tasks
+```
+
+Both modes use the exact same `TaskWorker` class. The only difference is who starts it.
+
+### Worker Loops
 
 ```
-Main Loop (every 2s):
-  claim_next_task() via SKIP LOCKED (WHERE is_proxy=FALSE)
-  -> start heartbeat coroutine (every 30s)
-  -> route to handler based on task_type
-  -> complete_task() or fail_task()
+Main Loop (every TASK_WORKER_POLL_INTERVAL seconds):
+    claim_next_task() via SKIP LOCKED
+    -> start heartbeat coroutine (every 30s)
+    -> route to handler based on task_type
+    -> complete_task() or fail_task()
 
 Stale Recovery Loop (every 60s):
-  recover_stale_tasks(threshold=120s)
+    recover_stale_tasks(threshold=120s)
 
 Cleanup Loop (every hour):
-  cleanup_old_tasks(retention=72h)
+    cleanup_old_tasks(retention=72h)
 ```
+
+Processes 1 task at a time per worker instance. Scale by adding more worker pods/processes -- they coordinate via `SKIP LOCKED` on the shared database.
 
 ### Task Handlers
 
-Each handler extracts the logic currently inline in `opi/api/router.py`:
+Each handler extracts the logic currently inline in `opi/api/router.py` and `opi/core/simple_background.py`:
 
-| Handler | Source | Router Line |
-|---------|--------|-------------|
-| `handle_upsert_deployment()` | `upsert_deployment()` | ~876-1008 |
-| `handle_update_image()` | `update_deployment_image()` | ~1263-1400 |
-| `handle_delete_deployment()` | `delete_project_deployment()` | ~1672-1741 |
-| `handle_clone_database()` | `clone_database_from_external()` | ~1743-1870 |
-| `handle_clone_bucket()` | `clone_bucket_from_external()` | ~1881-2017 |
+| Handler Function | Current Source | Router Line |
+|-----------------|----------------|-------------|
 | `handle_create_project()` | `simple_background.process_project_background()` | entire file |
+| `handle_upsert_deployment()` | `router.upsert_deployment()` | ~884 |
+| `handle_update_image()` | `router.update_deployment_image()` | ~1265 |
+| `handle_delete_deployment()` | `router.delete_project_deployment()` | ~1674 |
+| `handle_clone_database()` | `router.clone_database_from_external()` | ~1745 |
+| `handle_clone_bucket()` | `router.clone_bucket_from_external()` | ~1883 |
+| `handle_refresh_deployment()` | `router.refresh_deployment()` | ~1494 |
 
-Each handler receives the deserialized `payload` and a `PersistentTaskProgressManager`, then calls the appropriate `ProjectManager` methods.
+Each handler receives:
+- The deserialized `payload` dict (from the JSONB column)
+- A `PersistentTaskProgressManager` instance (writes progress to DB)
+
+Each handler calls the appropriate `ProjectManager` methods, exactly as the current inline code does, but through the persistent progress manager. Handlers have **no dependency on FastAPI or the Request object** -- they only use `ProjectManager`, connectors, and the progress manager.
 
 ### Instance Identification
 
-Use `os.environ.get("HOSTNAME", socket.gethostname())` -- in Kubernetes this is the pod name (e.g., `zad-operations-manager-7b8c5d-x4j2k`).
+```python
+import os
+import socket
+instance_id = os.environ.get("HOSTNAME", socket.gethostname())
+```
 
-## 1.4 PersistentTaskProgressManager
+In Kubernetes this is the pod name (e.g., `zad-operations-manager-7b8c5d-x4j2k`). Used in `claimed_by` to track which worker is processing a task.
+
+---
+
+## 4. PersistentTaskProgressManager
 
 **File**: `opi/core/persistent_task_progress.py` (new)
 
-Drop-in replacement for `TaskProgressManager` that:
-- Same interface (add_task, complete_task, fail_task, add_subtask, update_current_step, etc.)
-- Writes to PostgreSQL via AsyncTaskService
-- Also populates legacy `_projects` dict for web portal backward compat
-- Uses `asyncio.create_task()` for fire-and-forget DB updates
+Drop-in replacement for the existing `TaskProgressManager` (`core/task_manager.py`) that writes to PostgreSQL instead of in-memory dicts.
 
-## 1.5 Task Status API
+### Why DB-backed progress is needed
+
+In the target architecture, workers are **separate processes** from the frontend API server. They don't share memory. When a client asks "what's the progress of task X?", the frontend must read it from the database because the worker executing the task is a different process. This is the fundamental reason progress must be persisted.
+
+The write frequency is modest: ~10-20 writes over a 5-30 minute task (at step boundaries like "creating namespace", "deploying Helm chart", etc.), not continuous streaming.
+
+### Interface (matches existing TaskProgressManager)
+
+```python
+class PersistentTaskProgressManager:
+    def __init__(self, task_id: str, project_name: str, task_service: AsyncTaskService):
+        ...
+
+    def add_task(self, name: str) -> str
+    def add_subtask(self, parent_task_id: str, name: str) -> str
+    def complete_task(self, task_id: str) -> None
+    def fail_task(self, task_id: str, error: str) -> None
+    def update_current_step(self, step: str) -> None
+    def complete_project(self) -> None
+    def fail_project(self, error: str) -> None
+    def set_namespace(self, namespace: str) -> None
+    def add_logs(self, logs: list[str]) -> None
+    def add_events(self, events: list[dict[str, str]]) -> None
+    def update_component_web_address(self, component_name: str, web_address: str) -> None
+    def update_component_readiness(self, component_name: str, deployment_ready: str) -> None
+    def start_monitoring(self) -> None
+```
+
+### Key differences from in-memory version
+
+- Writes progress to PostgreSQL via `AsyncTaskService.update_progress()` using fire-and-forget `asyncio.create_task()` calls (non-blocking)
+- Also populates the legacy `_projects` dict for web portal backward compatibility when running in combined mode
+- Batches DB writes (coalesces rapid updates within a short window to avoid excessive DB round-trips)
+
+### Combined mode optimization
+
+When running in combined mode (worker inside the API server process), the `PersistentTaskProgressManager` also writes to the in-memory `_projects` dict. This means the web portal's existing progress page works without any changes -- it reads from memory for live updates, while the DB serves as the durable store. In standalone worker mode, only the DB path is used.
+
+---
+
+## 5. Task Status API
 
 **File**: `opi/api/task_router.py` (new)
+
+### Endpoints
 
 ```
 GET  /api/tasks/{task_id}          -- Full status, progress, subtasks, logs
 GET  /api/tasks                    -- List (filters: project_name, deployment_name, status)
 POST /api/tasks/{task_id}/:cancel  -- Cancel pending task
-POST /api/tasks                    -- Create task (used by federation master -> slave)
+POST /api/tasks                    -- Create task directly (used by federation, protected by MASTER_API_KEY)
 ```
 
-### Response Design: Typed Result Envelope
-
-Each task type produces a different result shape (e.g. upsert returns deployment info, clone returns row counts). Rather than creating separate status endpoints per task type or prefixing routes with `/tasks`, we use a single **generic envelope with a typed `result` field**, discriminated by `task_type`.
-
-**Why a single `/api/tasks/{id}` endpoint**:
-- Clients already know what result type to expect because they initiated the request
-- The `task_type` field in the response makes it explicit for generic consumers
-- Avoids duplicating every route (e.g. `POST /api/tasks/projects/{name}/:upsert-deployment`)
-- Avoids mixed response schemas on resource endpoints (e.g. `GET /deployments/{dep}` should always return a deployment, not sometimes a task status)
-- Cleanly handles multiple concurrent tasks for the same deployment
-
-**HTTP status codes on `GET /api/tasks/{task_id}`**:
+### HTTP Status Codes on `GET /api/tasks/{task_id}`
 
 | Task Status | HTTP Code | Meaning |
 |-------------|-----------|---------|
 | `pending`, `claimed`, `running` | `202 Accepted` | Task still in progress, keep polling |
 | `completed` | `200 OK` | Task finished, `result` field populated |
-| `failed` | `200 OK` | Task failed, `error_message` populated (status field distinguishes from success) |
+| `failed` | `200 OK` | Task failed, `error_message` populated |
 | `cancelled` | `200 OK` | Task was cancelled |
 | (not found) | `404 Not Found` | Unknown task ID |
 
-This lets clients use the HTTP status code alone to decide whether to keep polling: `202` means retry, `200` means done (check `status` field for success vs failure).
+Clients use the HTTP status code to decide whether to keep polling: `202` means retry, `200` means done (check `status` for success vs failure).
 
-**Task status response format** (in-progress, returns `202`):
+### Response Format
 
+**In-progress** (returns `202`):
 ```json
 {
   "task_id": "abc-123",
@@ -275,12 +405,14 @@ This lets clients use the HTTP status code alone to decide whether to keep polli
   "status": "running",
   "progress_percent": 45,
   "current_step": "Deploying Helm chart",
-  "result": null
+  "subtasks": [...],
+  "result": null,
+  "created_at": "2026-03-01T10:00:00Z",
+  "started_at": "2026-03-01T10:00:02Z"
 }
 ```
 
-**Task status response format** (completed, returns `200`):
-
+**Completed** (returns `200`):
 ```json
 {
   "task_id": "abc-123",
@@ -292,13 +424,14 @@ This lets clients use the HTTP status code alone to decide whether to keep polli
     "deployment_name": "my-app-acc",
     "web_addresses": ["https://my-app.acc.example.nl"],
     "warnings": []
-  }
+  },
+  "created_at": "2026-03-01T10:00:00Z",
+  "started_at": "2026-03-01T10:00:02Z",
+  "completed_at": "2026-03-01T10:15:30Z"
 }
 ```
 
-Clients use `progress_percent`, `current_step`, and `subtasks` for progress tracking while polling.
-
-**Typed result models** (for OpenAPI documentation and client validation):
+### Typed Result Models
 
 ```python
 class UpsertDeploymentResult(BaseModel):
@@ -329,16 +462,6 @@ class RefreshDeploymentResult(BaseModel):
     deployment_name: str
     changes_detected: list[str]
 
-# Discriminated union for OpenAPI docs
-TaskResult = (
-    UpsertDeploymentResult
-    | UpdateImageResult
-    | DeleteDeploymentResult
-    | CloneDatabaseResult
-    | CloneBucketResult
-    | RefreshDeploymentResult
-)
-
 class TaskResponse(BaseModel):
     task_id: UUID
     task_type: TaskType
@@ -346,29 +469,36 @@ class TaskResponse(BaseModel):
     progress_percent: int
     current_step: str
     subtasks: list[dict] | None = None
-    result: TaskResult | None = None
+    result: dict | None = None  # Typed per task_type
     error_message: str | None = None
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
 ```
 
-## 1.6 API Endpoint Conversion
+---
 
-Each blocking endpoint changes to return `202 Accepted` immediately. `?sync=true` query param preserves old behavior during migration. The 202 response includes a `Location` header (per RFC 7231) alongside the JSON body, enabling HTTP-aware clients and API gateways to follow it automatically.
+## 6. API Endpoint Conversion
+
+Each blocking endpoint changes to return `202 Accepted` immediately. The `?sync=true` query param preserves old behavior during migration.
+
+### Before (blocks 5-30 min)
 
 ```python
-# BEFORE (blocks 5-30 min):
 processing_result = await project_manager.process_project_from_git(...)
 return JSONResponse(content=result, status_code=200)
+```
 
-# AFTER (returns instantly):
+### After (returns instantly)
+
+```python
 task = await task_service.create_task(
     task_type=TaskType.UPSERT_DEPLOYMENT,
     project_name=project_name,
     deployment_name=deployment_data.deploymentName,
     cluster=settings.CLUSTER_MANAGER,
     payload=deployment_data.model_dump(),
+    created_by=get_request_user(request),
 )
 return JSONResponse(
     content={
@@ -382,240 +512,232 @@ return JSONResponse(
 )
 ```
 
-**Deduplication**: If a task for the same project/deployment/type is already pending or running, the existing task ID is returned instead of creating a duplicate.
+The `Location` header (per RFC 7231) enables HTTP-aware clients and API gateways to follow it automatically.
+
+### Endpoint to Task Type Mapping
 
 | Endpoint | Task Type |
 |----------|-----------|
-| `POST /api/projects/{name}/:upsert-deployment` | upsert_deployment |
-| `PUT /api/projects/{name}/deployments/{dep}/image` | update_image |
-| `DELETE /api/projects/{name}/{dep}` | delete_deployment |
-| `POST .../:clone-database-from-external` | clone_database |
-| `POST .../:clone-bucket-from-external` | clone_bucket |
-| `GET .../:refresh` | refresh_deployment |
+| `POST /api/projects/{name}/:upsert-deployment` | `upsert_deployment` |
+| `PUT /api/projects/{name}/deployments/{dep}/image` | `update_image` |
+| `DELETE /api/projects/{name}/{dep}` | `delete_deployment` |
+| `POST .../:clone-database-from-external` | `clone_database` |
+| `POST .../:clone-bucket-from-external` | `clone_bucket` |
+| `GET .../:refresh` | `refresh_deployment` |
+| Web portal project creation | `create_project` |
 
-## 1.7 Configuration
+---
 
-Add to `opi/core/config.py` Settings:
+## 7. Configuration
+
+**File**: `opi/core/config.py` (add to existing Settings class)
 
 ```python
-TASK_WORKER_ENABLED: bool = True
-TASK_WORKER_POLL_INTERVAL: float = 2.0
-TASK_WORKER_HEARTBEAT_INTERVAL: float = 30.0
-TASK_WORKER_STALE_THRESHOLD: int = 120
-TASK_WORKER_MAX_ATTEMPTS: int = 3
-TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 72
+# Async task system settings
+TASK_WORKER_ENABLED: bool = True          # Run worker loop inside this process (combined mode)
+TASK_WORKER_POLL_INTERVAL: float = 2.0    # Seconds between claim attempts
+TASK_WORKER_HEARTBEAT_INTERVAL: float = 30.0  # Seconds between heartbeat writes
+TASK_WORKER_STALE_THRESHOLD: int = 120    # Seconds before a task is considered abandoned
+TASK_WORKER_MAX_ATTEMPTS: int = 3         # Max retry attempts for failed tasks
+TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 72  # Hours to keep completed/failed tasks
+```
+
+### Deployment Configurations
+
+| Mode | `TASK_WORKER_ENABLED` | Use case |
+|------|----------------------|----------|
+| **Combined** (default) | `True` | Single pod handles both API and task execution. Current setup. |
+| **Frontend only** | `False` | API server only, no task execution. Pair with standalone workers. |
+| **Standalone worker** | N/A (separate entry point) | Worker process only, no HTTP. Uses `opi/worker_main.py`. |
+
+In combined mode, the frontend accepts requests AND processes tasks. In the scaled setup, set `TASK_WORKER_ENABLED=False` on the frontend and deploy separate worker pods that run `worker_main.py`.
+
+---
+
+## 8. Server Integration
+
+### Combined Mode: `opi/server.py` (modify existing)
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    # ... existing startup ...
+    await run_startup_tasks(app)  # This now also creates the async_tasks table
+
+    # Start task worker if enabled (combined mode)
+    if settings.TASK_WORKER_ENABLED:
+        task_worker = TaskWorker(task_service)
+        worker_task = asyncio.create_task(task_worker.run())
+
+    yield
+
+    # Shutdown worker
+    if settings.TASK_WORKER_ENABLED:
+        task_worker.stop()
+        await worker_task
+
+    # ... existing shutdown ...
+```
+
+Register the task status API router:
+
+```python
+app.include_router(task_router, include_in_schema=True)
+```
+
+### Standalone Worker: `opi/worker_main.py` (new, Phase 2)
+
+Separate entry point for running workers independently. Not needed for Phase 1 (combined mode) but designed from the start so the split is a deployment change, not a code change.
+
+```python
+"""Standalone task worker process.
+
+Run with: python -m opi.worker_main
+
+This process claims and executes tasks from the async_tasks table.
+It does not serve HTTP. Deploy alongside the frontend OPI for scaling.
+"""
+
+async def main():
+    # Initialize database pool (same config as API server)
+    pool = DatabasePool(
+        host=settings.DATABASE_HOST,
+        user=settings.DATABASE_ADMIN_NAME,
+        password=settings.DATABASE_ADMIN_PASSWORD,
+        database=settings.DATABASE_NAME,
+    )
+    await pool.initialize()
+
+    # Create service and worker
+    task_service = AsyncTaskService(pool)
+    worker = TaskWorker(task_service)
+
+    try:
+        await worker.run()  # Blocks forever, processing tasks
+    finally:
+        worker.stop()
+        await pool.close()
+```
+
+The worker uses the same `DatabasePool`, `AsyncTaskService`, `TaskWorker`, and handler code as the combined mode. No code duplication.
+
+---
+
+## Implementation Order (Parallelizable Work Units)
+
+The implementation is structured so that multiple agents can work in parallel. Dependencies are explicit.
+
+### Wave 1: Foundation (no dependencies, fully parallel)
+
+| Unit | File(s) | Description | Agent can start immediately |
+|------|---------|-------------|-|
+| **1A** | `opi/core/async_task_schema.py` | SQL schema string constant + table creation function | Yes |
+| **1B** | `opi/core/async_task_service.py` | AsyncTaskService class with all DB methods, TaskType and AsyncTaskStatus enums | Yes |
+| **1C** | `opi/core/config.py` | Add TASK_WORKER_* settings to existing Settings class | Yes |
+| **1D** | `opi/api/task_router.py` + result models | Task status API endpoints + Pydantic response models | Yes |
+
+**Note on 1B**: The service can be built against the schema defined in 1A, but since 1A is just a SQL string constant, an agent working on 1B can define the schema inline initially and extract it later.
+
+### Wave 2: Worker and Progress (depends on Wave 1)
+
+| Unit | File(s) | Depends on | Description |
+|------|---------|------------|-------------|
+| **2A** | `opi/core/persistent_task_progress.py` | 1B | PersistentTaskProgressManager (drop-in replacement for TaskProgressManager) |
+| **2B** | `opi/core/task_worker.py` | 1B, 1C | Worker loop: claim, heartbeat, route to handler, stale recovery, cleanup |
+
+**2A and 2B can be built in parallel** -- they both depend on 1B (AsyncTaskService) but not on each other. The worker calls handlers that use PersistentTaskProgressManager, but that interface is defined by the existing TaskProgressManager which is already known.
+
+### Wave 3: Handler Extraction (depends on Wave 2A)
+
+| Unit | File(s) | Depends on | Description |
+|------|---------|------------|-------------|
+| **3A** | `opi/core/task_handlers.py` (create_project, upsert_deployment) | 2A | Extract handler logic from simple_background.py and router.py |
+| **3B** | `opi/core/task_handlers.py` (update_image, delete_deployment) | 2A | Extract handler logic from router.py |
+| **3C** | `opi/core/task_handlers.py` (clone_database, clone_bucket, refresh) | 2A | Extract handler logic from router.py |
+
+**3A, 3B, 3C can all be built in parallel.** Each extracts different endpoint handlers. They can be in the same file or split into separate files -- as long as each handler function receives `(payload: dict, progress: PersistentTaskProgressManager)` and calls the existing `ProjectManager` methods.
+
+### Wave 4: Integration (depends on Waves 2-3)
+
+| Unit | File(s) | Depends on | Description |
+|------|---------|------------|-------------|
+| **4A** | `opi/server.py` | 2B, 1D | Start worker in lifespan, register task_router |
+| **4B** | `opi/core/startup.py` | 1A | Add async_tasks table creation to startup |
+| **4C** | `opi/api/router.py` | 1B, 1D | Convert 6 endpoints to return 202 + create task. Add `?sync=true` fallback |
+
+**4A and 4B can be parallel.** 4C can also be parallel but is the most sensitive change (modifies existing endpoints).
+
+### Wave 5: Tests
+
+| Unit | File(s) | Depends on | Description |
+|------|---------|------------|-------------|
+| **5A** | `tests/test_async_task_service.py` | 1B | Unit tests for service layer (mock DB) |
+| **5B** | `tests/test_task_worker.py` | 2B | Unit tests for worker (mock service) |
+| **5C** | `tests/test_task_router.py` | 1D | Unit tests for API endpoints |
+| **5D** | `tests/integration/test_async_tasks.py` | All | Integration test: create task via API, worker picks up, status updates |
+
+**5A, 5B, 5C can be parallel** and can even start alongside their respective waves.
+
+### Parallelism Summary
+
+```
+Time -->
+
+Wave 1:  [1A] [1B] [1C] [1D]        <-- 4 agents in parallel
+Wave 2:       [2A] [2B]              <-- 2 agents in parallel
+Wave 3:       [3A] [3B] [3C]        <-- 3 agents in parallel
+Wave 4:       [4A] [4B] [4C]        <-- 3 agents in parallel
+Wave 5:  [5A] [5B] [5C] [5D]        <-- 4 agents in parallel (5A-C can start with Wave 2+)
+
+Maximum useful parallelism: 4 agents
+Minimum sequential waves: 4 (Wave 1 -> 2 -> 3+4 -> 5D)
 ```
 
 ---
 
-# Part 2: Federation / Hive (across clusters)
+## Files Summary
 
-## 2.1 Architecture
+### New Files
 
-```
-                    Users / CI
-                       |
-                       v
-              +------------------+
-              |  Master OPI      |  (odcn-production or central)
-              |  - Full frontend |
-              |  - Federation    |
-              |  - Local worker  |
-              +--------+---------+
-                       |  HTTP (X-API-Key auth)
-              +--------+--------+
-              |                 |
-     +--------v------+  +------v---------+
-     | Slave OPI     |  | Slave OPI      |
-     | cluster=local |  | cluster=sandbox|  (standalone, no peers)
-     | - API only    |  | - Full standalone
-     | - Local worker|  | - Local worker |
-     +---------------+  +----------------+
-```
+| File | Purpose | Wave |
+|------|---------|------|
+| `opi/core/async_task_schema.py` | SQL schema constant + table creation | 1A |
+| `opi/core/async_task_service.py` | Task queue service layer + enums | 1B |
+| `opi/core/persistent_task_progress.py` | PostgreSQL-backed progress manager | 2A |
+| `opi/core/task_worker.py` | Worker loop + routing (no FastAPI dependency) | 2B |
+| `opi/core/task_handlers.py` | Extracted handler functions per task type | 3A-C |
+| `opi/api/task_router.py` | Task status API + Pydantic models | 1D |
+| `opi/worker_main.py` | Standalone worker entry point (Phase 2) | 4A |
+| `tests/test_async_task_service.py` | Service unit tests | 5A |
+| `tests/test_task_worker.py` | Worker unit tests | 5B |
+| `tests/test_task_router.py` | API endpoint tests | 5C |
+| `tests/integration/test_async_tasks.py` | End-to-end integration test | 5D |
 
-Each OPI has its own PostgreSQL. No shared DB. Communication is HTTP-only via the task API.
+### Modified Files
 
-## 2.2 Cluster Registry (Configuration)
-
-**File**: `opi/core/federation_config.py` (new)
-
-```python
-class PeerConfig(BaseModel):
-    cluster: str        # Must match remote OPI's CLUSTER_MANAGER
-    url: str            # e.g. "https://zad.rijksapp.nl"
-    api_key: str        # Remote OPI's MASTER_API_KEY
-    verify_tls: bool = True
-    timeout: int = 30
-
-class FederationRegistry:
-    """Loaded from FEDERATION_PEERS JSON setting. Indexed by cluster name."""
-    def get_peer(self, cluster: str) -> PeerConfig | None
-    def is_local_cluster(self, cluster: str) -> bool
-    def get_all_peers(self) -> list[PeerConfig]
-```
-
-New settings in `config.py`:
-
-```python
-FEDERATION_ROLE: str = "standalone"     # "standalone" | "master" | "slave"
-FEDERATION_PEERS: str = ""              # JSON: [{"cluster":"local","url":"...","api_key":"..."}]
-FEDERATION_HEALTH_INTERVAL: int = 30
-FEDERATION_STATUS_CACHE_TTL: int = 5
-FEDERATION_REQUEST_TIMEOUT: int = 30
-```
-
-**Standalone** (default): zero peers, everything local, no overhead. Sandbox uses this.
-**Slave**: serves API, task creation authorized by MASTER_API_KEY, no frontend.
-**Master**: full frontend, delegates to slaves via HTTP, proxy tasks for remote work.
-
-## 2.3 OPI Connector
-
-**File**: `opi/connectors/opi.py` (new)
-
-Uses existing `HttpConnector` pattern. Sends `X-API-Key` header (matches existing `validate_master_api_key` decorator on slave).
-
-```python
-class OpiConnector:
-    def __init__(self, peer: PeerConfig): ...
-    async def health_check(self) -> dict           # GET /readyz
-    async def create_task(self, ...) -> str         # POST /api/tasks -> remote task_id
-    async def get_task_status(self, id) -> dict     # GET /api/tasks/{id}
-    async def list_project_tasks(self, name) -> list  # GET /api/tasks?project_name=...
-```
-
-## 2.4 Federation Service (Task Routing)
-
-**File**: `opi/core/federation_service.py` (new)
-
-```python
-class FederationService:
-    async def delegate_task(self, task_type, project_name, deployment_name,
-                            target_cluster, payload, created_by) -> str:
-        """
-        If target_cluster is local: create task locally (existing flow).
-        If remote: call slave OPI's POST /api/tasks, create proxy task locally.
-        Returns local task_id.
-        """
-
-    async def get_task_status(self, local_task_id) -> dict:
-        """
-        Local task: read from DB.
-        Proxy task: fetch from slave (with TTL cache), return merged status.
-        Slave unreachable: return cached_status with remote_unreachable flag.
-        """
-
-    async def route_deployment_task(self, project_name, deployment_name,
-                                     task_type, payload) -> str:
-        """Read project YAML -> get deployment's cluster field -> delegate_task()"""
-```
-
-**How routing works**: The master reads the project YAML (via existing `ProjectManager.get_deployments(cluster_filter=False)`), finds the deployment, reads its `cluster` field, and delegates to that cluster's OPI.
-
-**Proxy task lifecycle**:
-1. Master creates proxy task locally: `is_proxy=TRUE`, `status='running'`, `remote_task_id`, `remote_opi_url`
-2. Background refresher polls slave for status, updates `cached_status`
-3. When remote task reaches terminal state, proxy status updated to match
-4. Local worker never touches proxy tasks (`WHERE is_proxy=FALSE` in claim query)
-
-## 2.5 Health Monitor + Proxy Refresher
-
-**File**: `opi/core/federation_health.py` (new)
-
-Two background loops (master only):
-
-**Health monitor** (every 30s): polls `GET /readyz` on each peer, tracks `PeerHealth` (healthy, last_check, response_time).
-
-**Proxy status refresher** (every 5s): finds all non-terminal proxy tasks, groups by cluster, fetches status from slaves, updates `cached_status`. Terminal proxy tasks are no longer polled.
-
-## 2.6 Federation API
-
-**File**: `opi/api/federation_router.py` (new)
-
-```
-GET /api/federation/health   -- Peer health status (master only)
-GET /api/federation/peers    -- Peer list (cluster names, URLs, health -- no secrets)
-```
-
-## 2.7 Security
-
-- **Master -> Slave auth**: `X-API-Key` header with the slave's `MASTER_API_KEY` (reuses existing decorator)
-- **Communication is unidirectional**: master polls slaves, slaves never call master
-- **TLS mandatory** for inter-cluster (enforced by `verify_tls=True` default)
-- **Per-peer API keys**: compromising one slave's key doesn't affect others
-- **Future enhancement**: Keycloak client credentials flow (HttpConnector already supports it)
-
-## 2.8 Failure Modes
-
-| Scenario | Behavior |
-|----------|----------|
-| Slave unreachable during task creation | Create proxy task with status=failed, error explains unreachable |
-| Slave unreachable during status poll | Return cached_status with `remote_unreachable: true` flag |
-| Slave pod dies mid-task | Slave's own stale recovery re-queues the task |
-| Entire slave cluster down | Proxy stays "running" with stale cache; configurable timeout marks as timed_out |
-| Master restarts | Proxy tasks persist in PostgreSQL; refresher resumes polling |
+| File | Change | Wave |
+|------|--------|------|
+| `opi/core/config.py` | Add TASK_WORKER_* settings | 1C |
+| `opi/core/startup.py` | Create async_tasks table at startup | 4B |
+| `opi/server.py` | Start worker in lifespan (combined mode), register task_router | 4A |
+| `opi/api/router.py` | Convert 6 endpoints to async task creation | 4C |
 
 ---
 
-# Implementation Order
+## Verification Checklist
 
-| Step | Files | Depends On |
-|------|-------|------------|
-| 1 | `opi/core/async_task_service.py` -- Schema + service layer | -- |
-| 2 | `opi/core/persistent_task_progress.py` -- Progress manager bridge | Step 1 |
-| 3 | `opi/core/task_worker.py` -- Worker loop + task handlers | Steps 1, 2 |
-| 4 | `opi/api/task_router.py` -- Task status API endpoints | Step 1 |
-| 5 | `opi/core/config.py` -- Add TASK_WORKER_* + FEDERATION_* settings | -- |
-| 6 | `opi/server.py` -- Start worker in lifespan, register router | Steps 1-5 |
-| 7 | `opi/api/router.py` -- Convert 6 endpoints to async | Steps 1, 4 |
-| 8 | `opi/core/federation_config.py` -- PeerConfig, Registry | Step 5 |
-| 9 | `opi/connectors/opi.py` -- OPI-to-OPI connector | Step 8 |
-| 10 | `opi/core/federation_service.py` -- Routing + proxy | Steps 1, 8, 9 |
-| 11 | `opi/core/federation_health.py` -- Health + proxy refresher | Steps 9, 10 |
-| 12 | `opi/api/federation_router.py` -- Federation health API | Step 11 |
-| 13 | `opi/server.py` -- Start federation in lifespan | Steps 10-12 |
-| 14 | Web templates -- Multi-cluster display | Step 12 |
+### Phase 1: Combined Mode
+1. **Single-instance async**: POST upsert-deployment returns 202; GET /api/tasks/{id} shows progress; task completes
+2. **Multi-replica**: Run 2 combined replicas, submit 4 tasks, each processes 2 (SKIP LOCKED)
+3. **Stale recovery**: Kill pod mid-task, other replica picks it up
+4. **Web portal**: `/projects/progress/{task_id}` still works via in-memory bridge in combined mode
+5. **Sync fallback**: `?sync=true` on API endpoints preserves blocking behavior
+6. **Deduplication**: Submitting same deployment twice returns existing task ID
+7. **Image payloads**: Endpoints with binary data store references, not inline data
 
-Steps 1-7 can be delivered and tested independently (single-cluster async). Steps 8-14 add federation on top.
-
----
-
-# Files Summary
-
-## New Files
-
-| File | Purpose |
-|------|---------|
-| `opi/core/async_task_service.py` | Task queue: schema, service, enums |
-| `opi/core/task_worker.py` | Worker loop + task handlers |
-| `opi/core/persistent_task_progress.py` | PostgreSQL-backed progress manager |
-| `opi/api/task_router.py` | Task status API |
-| `opi/core/federation_config.py` | Peer config model + registry |
-| `opi/connectors/opi.py` | OPI-to-OPI HTTP connector |
-| `opi/core/federation_service.py` | Task routing + proxy management |
-| `opi/core/federation_health.py` | Peer health + proxy status refresher |
-| `opi/api/federation_router.py` | Federation health/peers API |
-| `tests/test_async_task_service.py` | Task service tests |
-| `tests/test_federation.py` | Federation tests |
-
-## Modified Files
-
-| File | Change |
-|------|--------|
-| `opi/core/config.py` | TASK_WORKER_* + FEDERATION_* settings |
-| `opi/server.py` | Lifespan: start worker + federation, register routers |
-| `opi/api/router.py` | Convert 6 endpoints to async task creation |
-| `opi/core/startup.py` | Ensure async_tasks table at startup |
-| `bootstrap/.../deployment.yaml` | Allow multiple replicas |
-
----
-
-# Verification
-
-1. **Single-cluster async**: POST upsert-deployment returns 202; GET /api/tasks/{id} shows progress; task completes
-2. **Multi-instance**: Run 2 replicas, submit 4 tasks, each processes 2 (SKIP LOCKED)
-3. **Stale recovery**: Kill worker mid-task, another instance picks it up
-4. **Web portal**: `/projects/progress/{task_id}` still works (in-memory bridge)
-5. **Federation**: Master creates proxy task, polls slave, status propagates
-6. **Slave unreachable**: Proxy shows cached status with warning flag
-7. **Standalone mode**: No federation config = zero overhead, works as before
-8. **Sync fallback**: `?sync=true` on API endpoints preserves blocking behavior
+### Phase 2: Frontend + Workers
+8. **Frontend-only mode**: Set `TASK_WORKER_ENABLED=False`, verify API creates tasks but does not execute them
+9. **Standalone worker**: Run `worker_main.py` separately, verify it claims and executes tasks from the DB
+10. **Worker scaling**: Run 3 workers + 1 frontend, submit 6 tasks, workers distribute evenly
+11. **Progress via DB**: Frontend returns progress for tasks running on separate worker processes
+12. **Worker restart**: Kill a worker mid-task, another worker picks it up via stale recovery
