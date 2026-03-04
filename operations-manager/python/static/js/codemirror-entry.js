@@ -8,5 +8,7 @@
 export { EditorView, basicSetup } from "codemirror";
 export { StreamLanguage } from "@codemirror/language";
 export { Compartment } from "@codemirror/state";
+export { linter } from "@codemirror/lint";
 export { properties } from "@codemirror/legacy-modes/mode/properties";
 export { yaml } from "@codemirror/legacy-modes/mode/yaml";
+export { default as jsYaml } from "js-yaml";
