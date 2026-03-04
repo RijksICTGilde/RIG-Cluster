@@ -113,26 +113,56 @@ COMPONENT_USER_ENV_VARS_EDITABLE = Editable(
     validator=KeyValueValidator(),
 )
 
-STORAGE_NAME_EDITABLE = Editable(
-    yaml_path="components[*]/storage[*]/name",
+PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/name",
     required=True,
 )
 
-STORAGE_SIZE_EDITABLE = Editable(
-    yaml_path="components[*]/storage[*]/size",
+PERSISTENT_STORAGE_SIZE_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/size",
     values_provider="StorageSizeOptionsProvider",
 )
 
-STORAGE_MOUNT_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/storage[*]/mount-path",
+PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/mount-path",
     required=True,
 )
 
-COMPONENT_STORAGE_SEQUENCE_EDITABLE = Editable(
-    yaml_path="components[*]/storage",
+PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config",
     depends_on="services",
-    show_when={"contains_any": ["persistent-storage", "temp-storage"]},
-    children=[STORAGE_NAME_EDITABLE, STORAGE_SIZE_EDITABLE, STORAGE_MOUNT_PATH_EDITABLE],
+    show_when={"contains": "persistent-storage"},
+    children=[
+        PERSISTENT_STORAGE_NAME_EDITABLE,
+        PERSISTENT_STORAGE_SIZE_EDITABLE,
+        PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
+    ],
+)
+
+TEMP_STORAGE_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config[*]/name",
+    required=True,
+)
+
+TEMP_STORAGE_SIZE_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config[*]/size",
+    values_provider="StorageSizeOptionsProvider",
+)
+
+TEMP_STORAGE_MOUNT_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config[*]/mount-path",
+    required=True,
+)
+
+TEMP_STORAGE_SEQUENCE_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config",
+    depends_on="services",
+    show_when={"contains": "temp-storage"},
+    children=[
+        TEMP_STORAGE_NAME_EDITABLE,
+        TEMP_STORAGE_SIZE_EDITABLE,
+        TEMP_STORAGE_MOUNT_PATH_EDITABLE,
+    ],
 )
 
 COMPONENTS_SEQUENCE_EDITABLE = Editable(
@@ -152,6 +182,7 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_REWRITE_PATH_EDITABLE,
         COMPONENT_ALIASES_EDITABLE,
         COMPONENT_USER_ENV_VARS_EDITABLE,
-        COMPONENT_STORAGE_SEQUENCE_EDITABLE,
+        PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
+        TEMP_STORAGE_SEQUENCE_EDITABLE,
     ],
 )

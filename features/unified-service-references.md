@@ -88,22 +88,55 @@ Future migrations will increment this number and run in sequence (v2 → v3 → 
 - `opi/manager/project_manager.py` — Auto-migration hook in `process_project_from_git()`
 - `opi/handlers/project_file_handler.py` — Updated all read sites to use `component["services"]` format
 - `opi/utils/project_utils.py` — Updated write paths to produce v2 format
-- `opi/forms/editables/fields/components.py` — Updated editable paths and removed storage type field
-- `opi/forms/editables/enforcers.py` — Added `prepare()` method for storage extraction during form rendering
+- `opi/forms/editables/fields/components.py` — Updated editable paths using `{K}` filter syntax for storage
+- `opi/forms/editables/path.py` — Extended with `{K}` dict-key and `{F=V}` field-match filter syntax
 - Various managers and routers — Updated to read from new format
 
-## Form Layer
+## Path Filter Syntax
 
-The wizard and edit forms use a virtual `storage` key during editing:
+The path resolution system (`path.py`) was extended with two new filter expressions to navigate mixed string/dict lists natively:
 
-1. **Before rendering**: `ComponentServicesEnforcer.prepare()` extracts storage configs from service entries into a temporary `storage` key on each component
-2. **During editing**: Storage editables read/write to `components[*]/storage[*]/...` paths as before
-3. **After saving**: `ComponentServicesEnforcer.enforce()` merges storage items back into the appropriate service entries and removes the temporary `storage` key
+### `{K}` — Dict-key filter
+Finds a dict whose top-level key matches `K` in a mixed list and descends into `dict[K]`.
 
-This approach avoids complex path resolution changes while maintaining the clean v2 format in persisted YAML.
+```python
+# Data: services: ["publish-on-web", {"keycloak": {"config": {"template": "sso-only"}}}]
+get_value(data, "services{keycloak}/config/template")  # → "sso-only"
+```
+
+On write, promotes a matching string to `{K: {}}` or appends a new entry if not found.
+
+### `{F=V}` — Field-match filter
+Finds the first dict in a list where `dict[F] == V` and descends into that dict.
+
+```python
+# Data: config: [{"name": "data", "size": "250Mi"}, {"name": "uploads", "size": "1Gi"}]
+get_value(data, "config{name=data}/size")  # → "250Mi"
+```
+
+On write, appends `{F: V}` if no match exists.
+
+### Storage editables
+
+Storage editables use the `{K}` filter to navigate directly into the service entries:
+
+```python
+# Persistent storage
+PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/name",
+)
+
+# Temp storage
+TEMP_STORAGE_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config[*]/name",
+)
+```
+
+This eliminates the need for any prepare/enforce workaround — the form system reads and writes storage data directly in the v2 structure.
 
 ## Testing
 
 - `tests/test_schema_migration.py` — 21 tests covering detection, migration, edge cases
+- `tests/test_path_filters.py` — 33 tests covering `{K}` and `{F=V}` filter syntax
 - All existing form tests pass without regression
 - Verified against all 27 real project YAML files from the projects repository

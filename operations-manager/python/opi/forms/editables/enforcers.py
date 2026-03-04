@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any
 
 
 class AdminRequiredEnforcer:
@@ -80,51 +80,7 @@ def extract_service_names(services: list[Any]) -> list[str]:
 
 
 class ComponentServicesEnforcer:
-    """Section-level enforcer: validates component services and manages storage.
-
-    The form edits storage via a virtual ``storage`` key on each component.
-    ``prepare()`` extracts storage configs from v2 service entries into that
-    key before rendering.  ``enforce()`` validates services and merges
-    ``storage`` items back into the appropriate service entries afterward.
-    """
-
-    _STORAGE_TYPE_TO_SERVICE: ClassVar[dict[str, str]] = {
-        "persistent": "persistent-storage",
-        "ephemeral": "temp-storage",
-    }
-    _STORAGE_SERVICE_TO_TYPE: ClassVar[dict[str, str]] = {
-        "persistent-storage": "persistent",
-        "temp-storage": "ephemeral",
-    }
-
-    def prepare(self, yaml_data: dict[str, Any]) -> dict[str, Any]:
-        """Extract storage from component services into a ``storage`` key.
-
-        Called before form rendering so the storage editables (which use
-        ``components[*]/storage[*]/...`` paths) can read/display the data.
-        """
-        import copy
-
-        result = copy.deepcopy(yaml_data)
-        for comp in result.get("components", []):
-            if not isinstance(comp, dict):
-                continue
-            storage_items: list[dict[str, Any]] = []
-            for entry in comp.get("services", []):
-                if not isinstance(entry, dict):
-                    continue
-                for svc_name, svc_data in entry.items():
-                    if svc_name not in self._STORAGE_SERVICE_TO_TYPE:
-                        continue
-                    if not isinstance(svc_data, dict):
-                        continue
-                    for item in svc_data.get("config", []):
-                        cfg = dict(item)
-                        cfg["type"] = self._STORAGE_SERVICE_TO_TYPE[svc_name]
-                        storage_items.append(cfg)
-            if storage_items:
-                comp["storage"] = storage_items
-        return result
+    """Section-level enforcer: validates component services against project services."""
 
     def enforce(self, yaml_data: Any, context: dict[str, Any]) -> Any:
         services = extract_service_names(yaml_data.get("services", []))
@@ -148,43 +104,7 @@ class ComponentServicesEnforcer:
                     f"Beschikbare services: {', '.join(services)}"
                 )
 
-            # Merge storage items back into service entries
-            storage = comp.pop("storage", None)
-            if storage and isinstance(storage, list):
-                self._merge_storage_into_services(comp, storage)
-
         return yaml_data
-
-    def _merge_storage_into_services(self, comp: dict[str, Any], storage_items: list[dict[str, Any]]) -> None:
-        """Merge storage items from the virtual ``storage`` key into service entries."""
-        from collections import defaultdict
-
-        by_service: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for item in storage_items:
-            if not isinstance(item, dict):
-                continue
-            storage_type = item.pop("type", "persistent")
-            svc_name = self._STORAGE_TYPE_TO_SERVICE.get(storage_type, "persistent-storage")
-            by_service[svc_name].append(item)
-
-        services = comp.get("services", [])
-        for svc_name, configs in by_service.items():
-            # Find or create the service dict entry
-            found = False
-            for i, entry in enumerate(services):
-                if isinstance(entry, str) and entry == svc_name:
-                    # Promote string to dict with config
-                    services[i] = {svc_name: {"config": configs}}
-                    found = True
-                    break
-                if isinstance(entry, dict) and svc_name in entry:
-                    if not isinstance(entry[svc_name], dict):
-                        entry[svc_name] = {}
-                    entry[svc_name]["config"] = configs
-                    found = True
-                    break
-            if not found:
-                services.append({svc_name: {"config": configs}})
 
 
 class ServiceDependencyEnforcer:
