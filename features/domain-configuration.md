@@ -164,6 +164,8 @@ deployments:
 
 ### `root-component`
 
+> **TODO**: The `root: true` marker is a domain/routing concern living on a component reference alongside unrelated fields like `image` and `imagePullPolicy`. It only applies in one specific combination (nice-url mode + format with `{component}`). A cleaner approach would express this as an explicit ingress/path configuration rather than a boolean flag on the component reference. To be revisited when the domain model is refactored.
+
 In `nice-url` mode with formats that include `{component}` in the hostname, each component gets its own subdomain (e.g., `frontend.myapp.rijksapp.nl`). The root component additionally receives an ingress on the bare subdomain (e.g., `myapp.rijksapp.nl`).
 
 Specified as `root: true` on a deployment component reference:
