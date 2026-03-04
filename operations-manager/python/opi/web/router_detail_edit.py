@@ -93,6 +93,12 @@ async def get_edit_section(request: Request, project_name: str, section_id: str)
     section = _get_edit_section(section_id)
     project_data = project.data or {}
 
+    # Check conditional visibility (e.g. keycloak-config requires keycloak service)
+    if callable(section.visible) and not section.visible(project_data):
+        raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar voor dit project")
+    if section.visible is False:
+        raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar")
+
     fields_html = _render_section_html(section, project_data)
 
     return HTMLResponse(content=fields_html)
@@ -127,6 +133,12 @@ async def submit_edit_section(request: Request, project_name: str, section_id: s
 
     section = _get_edit_section(section_id)
     project_data = project.data or {}
+
+    # Check conditional visibility (e.g. keycloak-config requires keycloak service)
+    if callable(section.visible) and not section.visible(project_data):
+        raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar voor dit project")
+    if section.visible is False:
+        raise HTTPException(status_code=404, detail=f"Sectie '{section_id}' is niet beschikbaar")
 
     # Parse JSON body
     submitted_data = await request.json()

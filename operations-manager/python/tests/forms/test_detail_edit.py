@@ -360,6 +360,62 @@ class TestGetEditSectionEndpoint:
             assert response.status_code == 200
             assert response.body  # non-empty HTML
 
+    @pytest.mark.asyncio
+    async def test_returns_404_for_invisible_config_section(self):
+        """Keycloak-config should return 404 when project has no keycloak service."""
+        project_data = {"name": "test-project", "description": "test", "services": []}
+        project = MockProjectInfo("test-project", data=project_data)
+        svc = _mock_project_service(project=project)
+        with (
+            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.services.project_service.get_project_service", return_value=svc),
+        ):
+            from opi.web.router_detail_edit import get_edit_section
+
+            request = MagicMock()
+            with pytest.raises(HTTPException) as exc_info:
+                await get_edit_section(request, "test-project", "keycloak-config")
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_returns_html_for_visible_config_section(self):
+        """Keycloak-config should render when project has keycloak service."""
+        project_data = {"name": "test-project", "description": "test", "services": ["keycloak"]}
+        project = MockProjectInfo("test-project", data=project_data)
+        svc = _mock_project_service(project=project)
+        with (
+            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.services.project_service.get_project_service", return_value=svc),
+        ):
+            from opi.web.router_detail_edit import get_edit_section
+
+            request = MagicMock()
+            response = await get_edit_section(request, "test-project", "keycloak-config")
+            assert response.status_code == 200
+            assert response.body
+
+
+class TestSubmitEditSectionVisibility:
+    """Verify POST endpoint also checks section visibility."""
+
+    @pytest.mark.asyncio
+    async def test_post_returns_404_for_invisible_section(self):
+        """Cannot submit keycloak-config when project has no keycloak service."""
+        project_data = {"name": "test-project", "description": "test", "services": []}
+        project = MockProjectInfo("test-project", data=project_data)
+        svc = _mock_project_service(project=project)
+        request = MagicMock()
+        request.json = AsyncMock(return_value={})
+        with (
+            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.services.project_service.get_project_service", return_value=svc),
+        ):
+            from opi.web.router_detail_edit import submit_edit_section
+
+            with pytest.raises(HTTPException) as exc_info:
+                await submit_edit_section(request, "test-project", "keycloak-config")
+            assert exc_info.value.status_code == 404
+
 
 class TestSubmitEditSectionEndpoint:
     @pytest.mark.asyncio
