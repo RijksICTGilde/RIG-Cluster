@@ -200,3 +200,27 @@ class AllowedValuesValidator:
         if str(value) not in self.allowed:
             return [f"Ongeldige waarde: {value}. Toegestaan: {', '.join(self.allowed)}"]
         return []
+
+
+class SubdomainValidator:
+    """Validates subdomain format using the canonical validation from subdomain connector."""
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        from opi.connectors.subdomain import validate_subdomain
+
+        is_valid, error_msg = validate_subdomain(str(value))
+        return [error_msg] if not is_valid and error_msg else []
+
+
+class BaseDomainValidator:
+    """Validates that a base domain is in the supported domains list."""
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        from opi.connectors.subdomain import validate_base_domain
+
+        is_valid, error_msg = validate_base_domain(str(value))
+        return [error_msg] if not is_valid and error_msg else []

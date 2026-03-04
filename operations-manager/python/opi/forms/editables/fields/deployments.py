@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from opi.forms.editables.editable import Editable
+from opi.forms.editables.validators import BaseDomainValidator, SubdomainValidator
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -15,9 +16,9 @@ DEPLOYMENT_CLUSTER_EDITABLE = Editable(
 DEPLOYMENT_REPOSITORY_EDITABLE = Editable(
     yaml_path="deployments[*]/repository", values_provider="RepositoryOptionsProvider"
 )
-DEPLOYMENT_SUBDOMAIN_EDITABLE = Editable(yaml_path="deployments[*]/subdomain")
+DEPLOYMENT_SUBDOMAIN_EDITABLE = Editable(yaml_path="deployments[*]/subdomain", validator=SubdomainValidator())
 DEPLOYMENT_BASE_DOMAIN_EDITABLE = Editable(
-    yaml_path="deployments[*]/base-domain", values_provider="BaseDomainOptionsProvider"
+    yaml_path="deployments[*]/base-domain", values_provider="BaseDomainOptionsProvider", validator=BaseDomainValidator()
 )
 DEPLOYMENT_DOMAIN_MODE_EDITABLE = Editable(
     yaml_path="deployments[*]/domain-mode", values_provider="DomainModeOptionsProvider"

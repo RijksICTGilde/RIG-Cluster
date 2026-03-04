@@ -8,7 +8,7 @@ the wizard creates a single deployment.
 from __future__ import annotations
 
 from opi.forms.editables.editable import Editable
-from opi.forms.editables.validators import MinMaxLengthValidator
+from opi.forms.editables.validators import BaseDomainValidator, MinMaxLengthValidator, SubdomainValidator
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -24,6 +24,7 @@ DOMAIN_SUBDOMAIN_EDITABLE = Editable(
     yaml_path="deployments[0]/subdomain",
     depends_on="deployments[0]/domain-mode",
     show_when={"value": ["custom", "nice-url"]},
+    validator=SubdomainValidator(),
 )
 
 DOMAIN_BASE_DOMAIN_EDITABLE = Editable(
@@ -31,6 +32,7 @@ DOMAIN_BASE_DOMAIN_EDITABLE = Editable(
     values_provider="ClusterBaseDomainOptionsProvider",
     depends_on="deployments[0]/domain-mode",
     show_when={"value": "nice-url"},
+    validator=BaseDomainValidator(),
 )
 
 DOMAIN_ROOT_COMPONENT_EDITABLE = Editable(
