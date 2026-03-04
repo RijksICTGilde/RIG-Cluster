@@ -11,6 +11,7 @@ from opi.forms.editables.converters import (
     ServiceListConverter,
     TruncateConverter,
 )
+from opi.forms.editables.validators import KeyValueValidator
 
 
 class TestEncryptedDisplayConverter:
@@ -214,3 +215,34 @@ class TestKeycloakRealmsDisplayConverter:
     def test_view_empty(self):
         assert KeycloakRealmsDisplayConverter().view(None) == []
         assert KeycloakRealmsDisplayConverter().view([]) == []
+
+
+class TestKeyValueValidator:
+    def test_valid_env(self):
+        assert KeyValueValidator().validate("KEY=value\nOTHER=val2") == []
+
+    def test_valid_yaml(self):
+        assert KeyValueValidator().validate("KEY: value\nOTHER: val2") == []
+
+    def test_valid_yaml_with_numbers(self):
+        assert KeyValueValidator().validate("PORT: 8080\nDEBUG: true") == []
+
+    def test_empty_is_valid(self):
+        assert KeyValueValidator().validate("") == []
+        assert KeyValueValidator().validate(None) == []
+        assert KeyValueValidator().validate("  ") == []
+
+    def test_invalid_env_missing_equals(self):
+        errors = KeyValueValidator().validate("KEY=value\nBADLINE")
+        assert len(errors) == 1
+        assert "BADLINE" in errors[0]
+
+    def test_invalid_env_key_format(self):
+        errors = KeyValueValidator().validate("123BAD=value")
+        assert len(errors) == 1
+
+    def test_comments_are_valid(self):
+        assert KeyValueValidator().validate("# comment\nKEY=value") == []
+
+    def test_yaml_with_pipe_block(self):
+        assert KeyValueValidator().validate("CONFIG: |\n  line1\n  line2") == []

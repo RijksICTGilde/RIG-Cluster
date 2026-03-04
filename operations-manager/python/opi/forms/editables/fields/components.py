@@ -13,6 +13,7 @@ from opi.forms.editables.validators import (
     AllowedValuesValidator,
     ComponentNameValidator,
     ContainerImageValidator,
+    KeyValueValidator,
     PathValidator,
 )
 
@@ -103,11 +104,13 @@ COMPONENT_REWRITE_PATH_EDITABLE = Editable(
 COMPONENT_ALIASES_EDITABLE = Editable(
     yaml_path="components[*]/aliases",
     converter=KeyValueConverter(fmt="env"),
+    validator=KeyValueValidator(),
 )
 
 COMPONENT_USER_ENV_VARS_EDITABLE = Editable(
     yaml_path="components[*]/user-env-vars",
     converter=KeyValueConverter(fmt="env"),
+    validator=KeyValueValidator(),
 )
 
 STORAGE_NAME_EDITABLE = Editable(

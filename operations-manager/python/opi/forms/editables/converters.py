@@ -181,8 +181,8 @@ class KeyValueConverter:
     reordering.  The project manager's ``validate_and_parse_env_vars``
     handles actual parsing when the values are needed at deploy time.
 
-    ``write()`` validates the text is parseable (ENV or YAML) and
-    returns it unchanged.  ``read()`` / ``view()`` pass through.
+    ``write()`` returns the raw text unchanged (stripped).
+    ``read()`` / ``view()`` pass through.
     """
 
     def __init__(self, fmt: str = "env") -> None:
