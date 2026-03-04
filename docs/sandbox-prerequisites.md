@@ -62,7 +62,7 @@ PORT REQUIREMENTS
 REQUIRED TOOLS
 
   Install with brew:
-    brew install kind kubectl kustomize sops age pwgen
+    brew install kind kubectl kustomize sops age pwgen yq
 
   Also required (not in brew):
     - Docker Desktop (must be running)

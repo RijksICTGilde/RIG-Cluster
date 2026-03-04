@@ -14,7 +14,7 @@ A single Kind cluster running:
 | Forgejo (Git) | https://forgejo.sandbox.rijksapp.dev | rig-admin / admin1234 |
 | Keycloak (SSO) | https://keycloak.sandbox.rijksapp.dev | admin / admin1234 |
 | MinIO (S3) | https://minio.sandbox.rijksapp.dev | admin / admin1234 |
-| Operations Manager | https://zad.sandbox.rijksapp.dev | - |
+| Operations Manager | https://zad.sandbox.rijksapp.dev | admin / admin1234 (via Keycloak) |
 
 All services use real TLS certificates (`*.sandbox.rijksapp.dev`) and run entirely on your machine.
 
@@ -24,7 +24,7 @@ All services use real TLS certificates (`*.sandbox.rijksapp.dev`) and run entire
 
 ```bash
 # macOS (using Homebrew)
-brew install go-task kind kubectl kustomize sops age ksops pwgen jq rsync skaffold
+brew install go-task kind kubectl kustomize sops age ksops pwgen jq yq rsync skaffold
 
 # Verify installations
 task requirements-check
@@ -43,6 +43,7 @@ task requirements-check
 | ksops | Kustomize plugin for decrypting SOPS-encrypted resources |
 | pwgen | Generates random passwords during secret generation |
 | jq | JSON processing (used in setup scripts) |
+| yq | YAML processing (used in secret generation) |
 | rsync | File synchronization (used to sync to in-cluster Forgejo) |
 | skaffold | Hot-reload development for the Operations Manager |
 
@@ -113,6 +114,8 @@ kubectl get applications -n rig-system
 
 Open https://argo.sandbox.rijksapp.dev in your browser (admin / admin1234) to see ArgoCD syncing infrastructure.
 
+To access the Operations Manager, open https://zad.sandbox.rijksapp.dev. You will be redirected to the local Keycloak login page — log in with `admin` / `admin1234`. If you configured SSO during setup, use the local credentials (not the SSO button) unless your email has been added to the `ALLOWED_EMAILS` list in the Operations Manager ConfigMap.
+
 ## Daily Development Workflow
 
 ### Making Infrastructure Changes
@@ -129,6 +132,9 @@ Open https://argo.sandbox.rijksapp.dev in your browser (admin / admin1234) to se
 For hot-reload development (automatically syncs code changes to the running pod):
 
 ```bash
+# Create .env.local if it doesn't exist (required by the Docker build)
+touch operations-manager/python/.env.local
+
 task sandbox:skaffold-dev
 ```
 

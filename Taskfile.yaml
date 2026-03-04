@@ -94,6 +94,9 @@ tasks:
       - sh: command -v age-keygen
         msg: |
           🚨 age is not installed! Install with 'brew install age' on MacOS or 'apt-get install age' on Linux.
+      - sh: command -v yq
+        msg: |
+          🚨 yq is not installed! Install with 'brew install yq' on MacOS or 'apt-get install yq' on Linux.
     cmds:
       - echo -e "\n✅  All preconditions have been met.\n"
     silent: true

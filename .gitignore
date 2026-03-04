@@ -29,6 +29,8 @@ secrets-overview-*.yaml
 /operations-manager/python/.env.my-machine
 /keycloak-migration/custom-mapper/target/
 /infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/
+/bootstrap/rig-system/kustomize/overlays/sandboxed-local/*.sops.yaml
+/bootstrap/rig-system/kustomize/overlays/sandboxed-local/decrypt-sops.yaml
 /operations-manager/docs/interview.sh
 /operations-manager/docs/business-case-interview-prompt.md
 /operations-manager/docs/business-case-answers/
