@@ -396,3 +396,4 @@ c-fieldset c-fieldset {
 /* CodeMirror KV editor wrapper */
 .cm-kv-wrapper { border: 1px solid #ccc; border-radius: 4px; min-height: 7.5rem; }
 .cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid #007BC7; }
+.kv-editor--error .cm-kv-wrapper { border-color: #d52b1e; }

@@ -1,7 +1,7 @@
 {% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, bool_attr, optional_attr, htmx_attrs, extra_attrs %}
 {% set initial_format = field.attributes.get('kv_format', 'env') %}
 {% set editor_id = 'kv-editor-' ~ field.path %}
-<div class="rvo-form-group kv-editor" id="{{ editor_id|e }}" data-format="{{ initial_format }}">
+<div class="rvo-form-group kv-editor{% if field.errors %} kv-editor--error{% endif %}" id="{{ editor_id|e }}" data-format="{{ initial_format }}">
     <span class="utrecht-form-label">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     <div class="kv-toggle">
