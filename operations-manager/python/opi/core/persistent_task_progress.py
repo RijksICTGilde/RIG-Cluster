@@ -197,6 +197,18 @@ class PersistentTaskProgressManager:
         self.update_current_step(name)
         return subtask_id
 
+    def update_task(self, task_id: str, message: str) -> None:
+        """Update a task's name/description."""
+        if task_id in self._subtasks:
+            self._subtasks[task_id]["name"] = message
+            logger.info(
+                "Task %s: Updated task: %s (%s)",
+                self._task_id,
+                message,
+                task_id,
+            )
+            self.update_current_step(message)
+
     def complete_task(self, task_id: str) -> None:
         """Mark a task/subtask as completed."""
         if task_id in self._subtasks:

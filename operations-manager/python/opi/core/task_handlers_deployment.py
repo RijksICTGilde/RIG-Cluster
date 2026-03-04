@@ -36,15 +36,19 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
         f"Task: updating image for component '{component_name}' "
         f"in {project_name}/{deployment_name} to '{image}'"
     )
-    progress.update_current_step(
-        f"Updating image for {deployment_name}/{component_name}"
-    )
+
+    # Task 1: Initialize project
+    init_task = progress.add_task("Initializing project")
 
     from opi.manager.project_manager import ProjectManager
 
     project_manager = ProjectManager(
         project_file_relative_path=f"projects/{project_name}.yaml"
     )
+    progress.complete_task(init_task)
+
+    # Task 2: Update component image
+    update_task = progress.add_task("Updating component image")
     try:
         result = await project_manager.update_image_and_regenerate(
             deployment_name=deployment_name,
@@ -59,7 +63,7 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
         if isinstance(updates, dict):
             previous_image = updates.get("previous_image", "")
 
-        progress.update_current_step("Image updated successfully")
+        progress.complete_task(update_task)
         logger.info(
             f"Task: image update completed for {project_name}/{deployment_name}/{component_name}"
         )
@@ -69,6 +73,11 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
             "image": image,
             "previous_image": previous_image,
         }
+    except Exception as exc:
+        error_msg = f"Failed to update image: {exc}"
+        progress.fail_task(update_task, error_msg)
+        progress.fail_project(error_msg)
+        raise
     finally:
         await project_manager.close()
 
@@ -89,13 +98,17 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     logger.info(
         f"Task: deleting deployment {project_name}/{deployment_name}"
     )
-    progress.update_current_step(
-        f"Deleting deployment {deployment_name} from project {project_name}"
-    )
+
+    # Task 1: Initialize project manager
+    init_task = progress.add_task("Initializing project manager")
 
     from opi.manager.project_manager import create_project_manager
 
     project_manager = create_project_manager()
+    progress.complete_task(init_task)
+
+    # Task 2: Delete deployment resources
+    delete_task = progress.add_task("Deleting deployment resources")
     try:
         deletion_results = await project_manager.delete_deployment(
             project_name, deployment_name
@@ -111,8 +124,12 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
                     resources_removed.append(key)
 
         success = deletion_results.get("success", False) if isinstance(deletion_results, dict) else False
+        if success:
+            progress.complete_task(delete_task)
+        else:
+            progress.fail_task(delete_task, "Deletion completed with some errors")
+
         status_msg = "completed successfully" if success else "completed with some errors"
-        progress.update_current_step(f"Deployment deletion {status_msg}")
         logger.info(
             f"Task: deployment deletion {status_msg} for "
             f"{project_name}/{deployment_name}"
@@ -122,5 +139,10 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
             "deployment_name": deployment_name,
             "resources_removed": resources_removed,
         }
+    except Exception as exc:
+        error_msg = f"Failed to delete deployment: {exc}"
+        progress.fail_task(delete_task, error_msg)
+        progress.fail_project(error_msg)
+        raise
     finally:
         await project_manager.close()

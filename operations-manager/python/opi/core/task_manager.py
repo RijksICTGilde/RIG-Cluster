@@ -107,6 +107,13 @@ class TaskProgressManager:
         self.update_current_step(name)
         return subtask_id
 
+    def update_task(self, task_id: str, message: str) -> None:
+        """Update a task's name/description."""
+        if task_id in self.tasks:
+            self.tasks[task_id].name = message
+            logger.info(f"Project {self.project_id}: Updated task: {message} ({task_id})")
+            self.update_current_step(message)
+
     def complete_task(self, task_id: str) -> None:
         """Mark a task as completed."""
         if task_id in self.tasks:

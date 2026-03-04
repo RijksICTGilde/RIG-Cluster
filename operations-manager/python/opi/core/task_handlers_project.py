@@ -278,6 +278,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
 
         processing_result = await project_manager.process_project_from_git(
             project_file_relative_path,
+            task_progress_manager=progress,
             deployment_name=deployment_name,
             force_clone=force_clone,
         )
@@ -292,15 +293,27 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "cluster": dep_result.cluster,
                 "urls": dep_result.urls,
             }
+            # Report web addresses for each component URL
+            for url_name, url_value in (dep_result.urls or {}).items():
+                progress.update_component_web_address(url_name, url_value)
 
-        progress.complete_task(deploy_task)
+        if processing_result:
+            progress.complete_task(deploy_task)
+        else:
+            progress.fail_task(deploy_task, "Deployment processing failed")
+            progress.fail_project("Deployment processing failed")
 
         # ------------------------------------------------------------------
         # Build response
         # ------------------------------------------------------------------
+        succeeded = bool(processing_result)
         response: dict[str, Any] = {
-            "status": "success",
-            "message": f"Deployment '{deployment_name}' {action} successfully",
+            "status": "success" if succeeded else "failed",
+            "message": (
+                f"Deployment '{deployment_name}' {action} successfully"
+                if succeeded
+                else f"Deployment '{deployment_name}' processing failed"
+            ),
             "deployment_name": deployment_name,
             "project": project_name,
             "components": [
@@ -313,7 +326,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             "force_clone": force_clone,
             "created": result.get("created", False),
             "urls": urls,
-            "processing": {"status": "completed" if processing_result else "failed"},
+            "processing": {"status": "completed" if succeeded else "failed"},
             "web_addresses": [
                 url for dep_urls in urls.values() for url in dep_urls.get("urls", {}).values()
             ],

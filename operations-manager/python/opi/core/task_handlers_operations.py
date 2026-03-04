@@ -50,8 +50,14 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
 
     project_manager: ProjectManager | None = None
     try:
-        progress.update_current_step("Initializing project manager")
+        # Task 1: Initialize project manager
+        init_task = progress.add_task("Initializing project manager")
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+        progress.complete_task(init_task)
+
+        # Task 2: Clone database
+        clone_method = "via Chisel tunnel" if tunnel else "via direct connection"
+        clone_task = progress.add_task(f"Cloning database {clone_method}")
 
         if tunnel:
             # Chisel tunnel-based connection
@@ -66,7 +72,6 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
                 tunnel["server_url"],
             )
 
-            progress.update_current_step("Cloning database via Chisel tunnel")
             clone_result = await project_manager.clone_database_from_external_with_tunnel(
                 project_name=project_name,
                 deployment_name=deployment_name,
@@ -87,7 +92,10 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
             source_port: int | None = payload.get("source_port")
 
             if not source_host or not source_port:
-                raise ValueError("source_host and source_port are required when not using tunnel configuration")
+                error_msg = "source_host and source_port are required when not using tunnel configuration"
+                progress.fail_task(clone_task, error_msg)
+                progress.fail_project(error_msg)
+                raise ValueError(error_msg)
 
             logger.info(
                 "External database clone request (direct): %s/%s <- %s:%s/%s",
@@ -98,7 +106,6 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
                 source_database,
             )
 
-            progress.update_current_step("Cloning database via direct connection")
             clone_result = await project_manager.clone_database_from_external_direct(
                 project_name=project_name,
                 deployment_name=deployment_name,
@@ -113,9 +120,12 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
 
         if not clone_result["success"]:
             errors = ", ".join(clone_result.get("errors", []))
-            raise RuntimeError(f"Database clone failed: {errors}")
+            error_msg = f"Database clone failed: {errors}"
+            progress.fail_task(clone_task, error_msg)
+            progress.fail_project(error_msg)
+            raise RuntimeError(error_msg)
 
-        progress.update_current_step("Database clone completed")
+        progress.complete_task(clone_task)
         logger.info(
             "External database clone completed: %s/%s (success: %s)",
             project_name,
@@ -129,6 +139,11 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
             "rows_copied": clone_result.get("operations", {}).get("rows_copied"),
         }
 
+    except Exception as exc:
+        # Ensure fail_project is called for unexpected errors not already handled
+        if not isinstance(exc, (ValueError, RuntimeError)):
+            progress.fail_project(str(exc))
+        raise
     finally:
         if project_manager:
             await project_manager.close()
@@ -171,8 +186,13 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
 
     project_manager: ProjectManager | None = None
     try:
-        progress.update_current_step("Initializing project manager")
+        # Task 1: Initialize project manager
+        init_task = progress.add_task("Initializing project manager")
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+        progress.complete_task(init_task)
+
+        # Task 2: Clone bucket
+        clone_task = progress.add_task("Cloning bucket")
 
         if tunnel:
             # Chisel tunnel-based connection
@@ -187,7 +207,6 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
                 tunnel["server_url"],
             )
 
-            progress.update_current_step("Cloning bucket via Chisel tunnel")
             clone_result = await project_manager.clone_minio_bucket_from_external_with_tunnel(
                 project_name=project_name,
                 deployment_name=deployment_name,
@@ -208,7 +227,10 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
             source_port: int | None = payload.get("source_port")
 
             if not source_host or not source_port:
-                raise ValueError("source_host and source_port are required when not using tunnel configuration")
+                error_msg = "source_host and source_port are required when not using tunnel configuration"
+                progress.fail_task(clone_task, error_msg)
+                progress.fail_project(error_msg)
+                raise ValueError(error_msg)
 
             logger.info(
                 "External bucket clone request (direct): %s/%s <- %s:%s/%s",
@@ -219,7 +241,6 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
                 source_bucket,
             )
 
-            progress.update_current_step("Cloning bucket via direct connection")
             clone_result = await project_manager.clone_minio_bucket_from_external_direct(
                 project_name=project_name,
                 deployment_name=deployment_name,
@@ -234,9 +255,12 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
 
         if not clone_result["success"]:
             errors = ", ".join(clone_result.get("errors", []))
-            raise RuntimeError(f"Bucket clone failed: {errors}")
+            error_msg = f"Bucket clone failed: {errors}"
+            progress.fail_task(clone_task, error_msg)
+            progress.fail_project(error_msg)
+            raise RuntimeError(error_msg)
 
-        progress.update_current_step("Bucket clone completed")
+        progress.complete_task(clone_task)
         logger.info(
             "External bucket clone completed: %s/%s (success: %s)",
             project_name,
@@ -250,6 +274,10 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
             "objects_copied": clone_result.get("operations", {}).get("objects_copied"),
         }
 
+    except Exception as exc:
+        if not isinstance(exc, (ValueError, RuntimeError)):
+            progress.fail_project(str(exc))
+        raise
     finally:
         if project_manager:
             await project_manager.close()
@@ -280,14 +308,17 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     force_clone: bool = payload.get("force_clone", False)
 
     if not validate_project_name(project_name):
-        raise ValueError(
+        error_msg = (
             "Invalid project name format. Must start with lowercase letter, "
             "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
         )
+        progress.fail_project(error_msg)
+        raise ValueError(error_msg)
 
     project_manager = None
     try:
-        progress.update_current_step("Looking up project in registry")
+        # Task 1: Look up project
+        lookup_task = progress.add_task("Looking up project")
         logger.info(
             "Deployment refresh request for: %s/%s (force_clone=%s)",
             project_name,
@@ -299,15 +330,23 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
         project = project_service.get_project(project_name)
 
         if not project:
-            raise ValueError(f"Project '{project_name}' not found in project registry")
+            error_msg = f"Project '{project_name}' not found in project registry"
+            progress.fail_task(lookup_task, error_msg)
+            progress.fail_project(error_msg)
+            raise ValueError(error_msg)
 
-        progress.update_current_step("Initializing project manager")
+        progress.complete_task(lookup_task)
+
+        # Task 2: Process deployment
+        deploy_task = progress.add_task("Processing deployment")
         project_manager = create_project_manager()
         project_file_path = f"projects/{project.filename}"
 
-        progress.update_current_step(f"Processing deployment '{deployment_name}' from git")
         processing_result = await project_manager.process_project_from_git(
-            project_file_path, deployment_name=deployment_name, force_clone=force_clone
+            project_file_path,
+            task_progress_manager=progress,
+            deployment_name=deployment_name,
+            force_clone=force_clone,
         )
 
         if processing_result:
@@ -318,18 +357,26 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             deployment_results = project_manager.get_deployment_results()
             for dep_name, dep_result in deployment_results.items():
                 changes_detected.append(f"{dep_name}: cluster={dep_result.cluster}, urls={dep_result.urls}")
+                # Report web addresses from deployment results
+                for url_name, url_value in (dep_result.urls or {}).items():
+                    progress.update_component_web_address(url_name, url_value)
 
-            progress.update_current_step("Deployment refresh completed successfully")
+            progress.complete_task(deploy_task)
             return {
                 "deployment_name": deployment_name,
                 "changes_detected": changes_detected,
             }
         else:
+            error_msg = f"Failed to process deployment '{deployment_name}' in project '{project_name}'"
             logger.warning("Deployment refresh failed: %s/%s", project_name, deployment_name)
-            raise RuntimeError(
-                f"Failed to process deployment '{deployment_name}' in project '{project_name}'"
-            )
+            progress.fail_task(deploy_task, error_msg)
+            progress.fail_project(error_msg)
+            raise RuntimeError(error_msg)
 
+    except Exception as exc:
+        if not isinstance(exc, (ValueError, RuntimeError)):
+            progress.fail_project(str(exc))
+        raise
     finally:
         if project_manager:
             await project_manager.close()
