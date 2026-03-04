@@ -1006,8 +1006,9 @@ class GitConnector:
         # Ensure the repository is cloned
         await self.ensure_repo_cloned()
 
-        # Use git rm to remove and stage the deletion
-        rm_cmd = ["rm", self._get_full_path(file_path)]
+        # Use git rm -f to remove and stage the deletion (force needed because
+        # earlier steps in a workflow may have modified the file)
+        rm_cmd = ["rm", "-f", self._get_full_path(file_path)]
         stdout, stderr, code = await self._run_git_command(rm_cmd, cwd=self.__working_dir)
         self._check_git_command_result(code, stderr, f"delete file {file_path}")
 
@@ -1025,8 +1026,9 @@ class GitConnector:
         # Ensure the repository is cloned
         await self.ensure_repo_cloned()
 
-        # Use git rm -r to remove folder and stage all deletions
-        rm_cmd = ["rm", "-r", self._get_full_path(folder_path)]
+        # Use git rm -rf to remove folder and stage all deletions (force needed
+        # because earlier steps in a workflow may have modified files)
+        rm_cmd = ["rm", "-rf", self._get_full_path(folder_path)]
         stdout, stderr, code = await self._run_git_command(rm_cmd, cwd=self.__working_dir)
         self._check_git_command_result(code, stderr, f"delete folder {folder_path}")
 
