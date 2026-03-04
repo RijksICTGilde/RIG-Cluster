@@ -81,55 +81,86 @@ def _mb_to_k8s_memory(mb: float) -> str:
 
 def compute_memory_recommendation(
     max_observed_mb: float,
+    avg_observed_mb: float,
     current_limit_mb: float,
     current_request_mb: float,
     buffer_percent: int = 25,
     threshold_percent: int = 20,
     has_oom_kills: bool = False,
+    min_memory_mi: int = 12,
 ) -> tuple[str, str, str] | None:
     """
     Compute a memory recommendation based on observed usage.
 
+    Uses avg observed + buffer for requests (typical usage) and
+    max observed + buffer for limits (peak protection).
+
     Args:
         max_observed_mb: Maximum observed memory usage in MB
+        avg_observed_mb: Average observed memory usage in MB
         current_limit_mb: Current memory limit in MB
         current_request_mb: Current memory request in MB
-        buffer_percent: Percentage buffer to add above max observed
+        buffer_percent: Percentage buffer to add above observed values
         threshold_percent: Only recommend if change exceeds this percentage
         has_oom_kills: Whether OOM kills were detected (forces increase)
+        min_memory_mi: Minimum memory value in Mi enforced by the container runtime
 
     Returns:
         Tuple of (recommended_limit, recommended_request, reason) as K8s strings,
         or None if no change is needed (within threshold)
     """
-    recommended_limit_mb = max_observed_mb * (1 + buffer_percent / 100)
+    buffer_factor = 1 + buffer_percent / 100
+    recommended_limit_mb = max_observed_mb * buffer_factor
+    recommended_request_mb = avg_observed_mb * buffer_factor
+
+    # For apps using >= 100Mi, add a flat 25Mi buffer for request processing headroom
+    if max_observed_mb >= 100:
+        recommended_limit_mb += 25
+    if avg_observed_mb >= 100:
+        recommended_request_mb += 25
 
     # If OOM kills detected, the actual need is higher than what we observed
-    # (pod was killed before reaching true peak). Ensure we at least double
+    # (pod was killed before reaching true peak). Ensure we at least 1.5x
     # the current limit or use observed + buffer, whichever is higher.
     if has_oom_kills:
         oom_minimum = current_limit_mb * 1.5
         recommended_limit_mb = max(recommended_limit_mb, oom_minimum)
 
-    # Request = 50% of limit, but at least the current request
-    recommended_request_mb = max(recommended_limit_mb * 0.5, current_request_mb)
+    # Enforce cluster minimum
+    recommended_limit_mb = max(recommended_limit_mb, float(min_memory_mi))
+    recommended_request_mb = max(recommended_request_mb, float(min_memory_mi))
+
+    # Request should never exceed limit
+    recommended_request_mb = min(recommended_request_mb, recommended_limit_mb)
 
     # Check if the change is significant enough
     if not has_oom_kills:
-        change_percent = abs(recommended_limit_mb - current_limit_mb) / current_limit_mb * 100
-        if change_percent <= threshold_percent:
+        limit_change = abs(recommended_limit_mb - current_limit_mb) / current_limit_mb * 100
+        request_change = (
+            abs(recommended_request_mb - current_request_mb) / current_request_mb * 100
+            if current_request_mb > 0
+            else 100.0
+        )
+        if limit_change <= threshold_percent and request_change <= threshold_percent:
             return None
 
     recommended_limit = _mb_to_k8s_memory(recommended_limit_mb)
     recommended_request = _mb_to_k8s_memory(recommended_request_mb)
 
+    limit_extra = " + 25Mi headroom" if max_observed_mb >= 100 else ""
+    request_extra = " + 25Mi headroom" if avg_observed_mb >= 100 else ""
+
     if has_oom_kills:
         reason = (
-            f"OOM kills detected. Max observed {max_observed_mb:.0f}Mi "
-            f"+ {buffer_percent}% buffer = {recommended_limit_mb:.0f}Mi, "
-            f"with OOM safety minimum of {current_limit_mb * 1.5:.0f}Mi"
+            f"OOM kills detected. Limit: max {max_observed_mb:.0f}Mi "
+            f"+ {buffer_percent}%{limit_extra} = {recommended_limit_mb:.0f}Mi "
+            f"(OOM safety min {current_limit_mb * 1.5:.0f}Mi). "
+            f"Request: avg {avg_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} = {recommended_request_mb:.0f}Mi"
         )
     else:
-        reason = f"Max observed {max_observed_mb:.0f}Mi + {buffer_percent}% buffer = {recommended_limit_mb:.0f}Mi"
+        reason = (
+            f"Limit: max {max_observed_mb:.0f}Mi + {buffer_percent}%{limit_extra} = {recommended_limit_mb:.0f}Mi. "
+            f"Request: avg {avg_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} = {recommended_request_mb:.0f}Mi"
+        )
 
     return recommended_limit, recommended_request, reason

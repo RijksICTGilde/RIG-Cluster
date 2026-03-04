@@ -32,6 +32,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
         },
+        "min_memory_limit_mi": 12,
         "uses_capsule": False,
         "ca_certificate": {
             "enabled": True,
@@ -72,6 +73,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,
         },
+        "min_memory_limit_mi": 12,
         "uses_capsule": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -103,6 +105,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,  # Only generate HTTPS redirect URIs in production
         },
+        "min_memory_limit_mi": 12,
         "uses_capsule": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
@@ -547,6 +550,22 @@ def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) 
     infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
     project_clean = _sanitize_for_lowercase(project_name)
     return f"{project_clean}-db-rw.{infrastructure_namespace}.svc.cluster.local"
+
+
+def get_min_memory_limit_mi(cluster_name: str) -> int:
+    """
+    Get the minimum memory limit in Mi for a specific cluster.
+
+    This prevents setting memory limits below what the container runtime accepts.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Minimum memory limit in Mi
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("min_memory_limit_mi", 12)
 
 
 def uses_capsule(cluster_name: str) -> bool:

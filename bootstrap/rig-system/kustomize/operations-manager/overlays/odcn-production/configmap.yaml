@@ -50,6 +50,7 @@ data:
 
     # Container registry (image upload proxy)
     REGISTRY_URL=rcr.rijksapps.nl
-    REGISTRY_ORG=rig
+    REGISTRY_ORG=rig/zad
     REGISTRY_USERNAME=rig+zad
-    IMAGE_UPLOAD_MAX_SIZE_MB=5120
+    REGISTRY_VERIFY_TLS=True
+    IMAGE_UPLOAD_MAX_SIZE_MB=1024
