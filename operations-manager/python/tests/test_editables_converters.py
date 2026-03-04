@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from opi.forms.editables.converters import (
     CloneFromDisplayConverter,
-    ContainerImageConverter,
     DeploymentServicesDisplayConverter,
     EncryptedDisplayConverter,
     IntegerListConverter,
@@ -96,22 +95,13 @@ class TestIntegerListConverter:
 
 
 class TestKeyValueConverter:
-    def test_read_dict_to_env_string(self):
-        result = KeyValueConverter(fmt="env").read({"KEY": "value", "OTHER": "val2"})
+    def test_read_dict_to_string(self):
+        result = KeyValueConverter().read({"KEY": "value", "OTHER": "val2"})
         assert "KEY=value" in result
         assert "OTHER=val2" in result
 
-    def test_read_dict_to_yaml_string(self):
-        result = KeyValueConverter(fmt="yaml").read({"KEY": "value", "OTHER": "val2"})
-        assert "KEY: value" in result
-        assert "OTHER: val2" in result
-
-    def test_write_env_format(self):
+    def test_write_string_to_dict(self):
         result = KeyValueConverter().write("KEY=value\nOTHER=val2")
-        assert result == {"KEY": "value", "OTHER": "val2"}
-
-    def test_write_yaml_format(self):
-        result = KeyValueConverter().write("KEY: value\nOTHER: val2")
         assert result == {"KEY": "value", "OTHER": "val2"}
 
     def test_write_skips_comments(self):
@@ -125,32 +115,6 @@ class TestKeyValueConverter:
     def test_write_handles_equals_in_value(self):
         result = KeyValueConverter().write("KEY=val=ue")
         assert result == {"KEY": "val=ue"}
-
-    def test_write_handles_colon_in_value(self):
-        result = KeyValueConverter().write("URL: http://example.com")
-        assert result == {"URL": "http://example.com"}
-
-    def test_default_format_is_env(self):
-        conv = KeyValueConverter()
-        assert conv.fmt == "env"
-
-
-class TestContainerImageConverter:
-    def test_write_lowercases(self):
-        result = ContainerImageConverter().write("Nginx:Latest")
-        assert result == "nginx:latest"
-
-    def test_write_strips_whitespace(self):
-        result = ContainerImageConverter().write("  nginx:latest  ")
-        assert result == "nginx:latest"
-
-    def test_write_empty_returns_empty(self):
-        assert ContainerImageConverter().write("") == ""
-        assert ContainerImageConverter().write(None) == ""
-
-    def test_read_returns_string(self):
-        assert ContainerImageConverter().read("nginx:latest") == "nginx:latest"
-        assert ContainerImageConverter().read(None) == ""
 
 
 class TestCloneFromDisplayConverter:
