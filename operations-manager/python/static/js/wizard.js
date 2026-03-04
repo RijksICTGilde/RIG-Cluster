@@ -408,7 +408,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initWizardWidgets();
 });
 
-document.addEventListener('htmx:afterSwap', function(event) {
+document.addEventListener('htmx:afterSettle', function(event) {
     initWizardWidgets(event.detail.target);
 });
 
