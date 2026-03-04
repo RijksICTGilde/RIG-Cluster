@@ -288,3 +288,182 @@ class TestOomGracefulDegradation:
         # Should still produce recommendations (without OOM consideration)
         assert len(result["changes"]) == 1
         assert result["changes"][0]["has_oom_kills"] == "False"
+
+
+class TestBaseComponentPropagation:
+    """Test that tuning propagates memory request to the base component definition."""
+
+    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
+    @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_metrics_connector")
+    @pytest.mark.asyncio
+    async def test_base_request_raised_when_within_2x(
+        self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
+    ):
+        """Base component request should be raised when new value is higher but within 2x."""
+        project_data = {
+            "name": "my-project",
+            "components": [
+                {
+                    "name": "api",
+                    "resources": {
+                        "requests": {"memory": "64Mi", "cpu": "50m"},
+                        "limits": {"memory": "512Mi", "cpu": "1000m"},
+                    },
+                }
+            ],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "odcn-production",
+                    "components": [{"reference": "api"}],
+                }
+            ],
+        }
+        mock_project = MagicMock()
+        mock_project.data = project_data
+        mock_project.filename = "my-project.yaml"
+        mock_service = MagicMock()
+        mock_service.get_project.return_value = mock_project
+        mock_get_service.return_value = mock_service
+
+        # max=80Mi -> 80*1.25=100Mi (no +25, below 100). avg=80Mi -> 80*1.25=100Mi.
+        # Gap: 0% -> collapsed to 100Mi. Base request 64Mi, new 100Mi -> ratio 1.56x -> propagate
+        mock_connector = MagicMock()
+        mock_connector.custom_query.side_effect = [
+            [{"value": [0, str(80 * 1024 * 1024)]}],  # max: 80Mi
+            [{"value": [0, str(80 * 1024 * 1024)]}],  # avg: 80Mi
+            [],  # No OOM kills
+        ]
+        mock_get_connector.return_value = mock_connector
+        mock_reprocess.return_value = True
+
+        from opi.api.resource_router import tune_resources
+
+        mock_request = MagicMock()
+        await tune_resources.__wrapped__(mock_request, "my-project", deployment=None)
+
+        # Base component's request should have been updated
+        base_request = project_data["components"][0]["resources"]["requests"]["memory"]
+        assert base_request == "100Mi"
+
+    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
+    @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_metrics_connector")
+    @pytest.mark.asyncio
+    async def test_base_request_not_lowered(
+        self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
+    ):
+        """Base component request should NOT be lowered when new value is smaller."""
+        project_data = {
+            "name": "my-project",
+            "components": [
+                {
+                    "name": "api",
+                    "resources": {
+                        "requests": {"memory": "256Mi", "cpu": "50m"},
+                        "limits": {"memory": "512Mi", "cpu": "1000m"},
+                    },
+                }
+            ],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "odcn-production",
+                    "components": [{"reference": "api"}],
+                }
+            ],
+        }
+        mock_project = MagicMock()
+        mock_project.data = project_data
+        mock_project.filename = "my-project.yaml"
+        mock_service = MagicMock()
+        mock_service.get_project.return_value = mock_project
+        mock_get_service.return_value = mock_service
+
+        # max=100Mi, avg=80Mi -> limit=150Mi, request=100Mi
+        # Base request is 256Mi, new request 100Mi -> lower, don't propagate
+        mock_connector = MagicMock()
+        mock_connector.custom_query.side_effect = [
+            [{"value": [0, str(100 * 1024 * 1024)]}],
+            [{"value": [0, str(80 * 1024 * 1024)]}],
+            [],
+        ]
+        mock_get_connector.return_value = mock_connector
+        mock_reprocess.return_value = True
+
+        from opi.api.resource_router import tune_resources
+
+        mock_request = MagicMock()
+        await tune_resources.__wrapped__(mock_request, "my-project", deployment=None)
+
+        # Base component's request should remain unchanged
+        base_request = project_data["components"][0]["resources"]["requests"]["memory"]
+        assert base_request == "256Mi"
+
+    @patch("opi.api.resource_router.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-prd-my-project")
+    @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_metrics_connector")
+    @pytest.mark.asyncio
+    async def test_base_request_not_raised_when_ratio_exceeds_2x(
+        self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
+    ):
+        """Base component request should NOT be raised when ratio exceeds 2x (outlier deployment)."""
+        project_data = {
+            "name": "my-project",
+            "components": [
+                {
+                    "name": "api",
+                    "resources": {
+                        "requests": {"memory": "64Mi", "cpu": "50m"},
+                        "limits": {"memory": "128Mi", "cpu": "1000m"},
+                    },
+                }
+            ],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "odcn-production",
+                    "components": [{"reference": "api"}],
+                }
+            ],
+        }
+        mock_project = MagicMock()
+        mock_project.data = project_data
+        mock_project.filename = "my-project.yaml"
+        mock_service = MagicMock()
+        mock_service.get_project.return_value = mock_project
+        mock_get_service.return_value = mock_service
+
+        # max=200Mi -> 200*1.25+25 = 275Mi. avg=120Mi -> 120*1.25+25 = 175Mi.
+        # Gap: (275-175)/275 = 36% -> no collapse. New request=175Mi.
+        # Base request 64Mi, 175/64 = 2.73x -> exceeds 2x -> skip propagation
+        mock_connector = MagicMock()
+        mock_connector.custom_query.side_effect = [
+            [{"value": [0, str(200 * 1024 * 1024)]}],  # max: 200Mi
+            [{"value": [0, str(120 * 1024 * 1024)]}],  # avg: 120Mi
+            [],  # No OOM kills
+        ]
+        mock_get_connector.return_value = mock_connector
+        mock_reprocess.return_value = True
+
+        from opi.api.resource_router import tune_resources
+
+        mock_request = MagicMock()
+        await tune_resources.__wrapped__(mock_request, "my-project", deployment=None)
+
+        # Base component's request should remain unchanged (ratio > 2x)
+        base_request = project_data["components"][0]["resources"]["requests"]["memory"]
+        assert base_request == "64Mi"

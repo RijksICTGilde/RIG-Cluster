@@ -224,6 +224,57 @@ class TestComputeMemoryRecommendation:
         assert limit == "192Mi"
         assert "OOM kills detected" in reason
 
+    def test_collapse_request_to_limit_when_close(self):
+        """When request is within 10% of limit, they should be collapsed to the same value."""
+        # max=80 -> 80*1.25 = 100 (no +25, below 100). avg=76 -> 76*1.25 = 95.
+        # Gap: (100-95)/100 = 5% < 10% -> collapsed to 100.
+        result = compute_memory_recommendation(
+            max_observed_mb=80,
+            avg_observed_mb=76,
+            current_limit_mb=256,
+            current_request_mb=128,
+            buffer_percent=25,
+            threshold_percent=20,
+        )
+        assert result is not None
+        limit, request, _ = result
+        assert limit == "100Mi"
+        assert request == "100Mi"  # collapsed from 95Mi
+
+    def test_no_collapse_when_gap_large(self):
+        """When request is more than 10% below limit, they should stay separate."""
+        # max=80 -> 80*1.25 = 100. avg=64 -> 64*1.25 = 80.
+        # Gap: (100-80)/100 = 20% >= 10% -> NOT collapsed.
+        result = compute_memory_recommendation(
+            max_observed_mb=80,
+            avg_observed_mb=64,
+            current_limit_mb=256,
+            current_request_mb=128,
+            buffer_percent=25,
+            threshold_percent=20,
+        )
+        assert result is not None
+        limit, request, _ = result
+        assert limit == "100Mi"
+        assert request == "80Mi"  # stays separate
+
+    def test_collapse_large_values(self):
+        """Collapse also works for larger memory values (~7% gap)."""
+        # max=800 -> 800*1.25+25 = 1025. avg=760 -> 760*1.25+25 = 975.
+        # Gap: (1025-975)/1025 = 4.9% < 10% -> collapsed.
+        result = compute_memory_recommendation(
+            max_observed_mb=800,
+            avg_observed_mb=760,
+            current_limit_mb=2048,
+            current_request_mb=1024,
+            buffer_percent=25,
+            threshold_percent=20,
+        )
+        assert result is not None
+        limit, request, _ = result
+        assert limit == "1025Mi"
+        assert request == "1025Mi"  # collapsed from 975Mi
+
     def test_minimum_memory_does_not_affect_higher_values(self):
         # max=100 -> 100*1.25+25 = 150. Well above 25Mi min.
         result = compute_memory_recommendation(

@@ -273,6 +273,18 @@ async def tune_resources(
                 },
             )
 
+            # Raise the base component's memory request so new deployments inherit
+            # a known-good baseline. Only increase (never decrease), and only when
+            # the jump is <= 2x — a larger ratio signals a deployment-specific need
+            # (e.g. production vs test) that shouldn't inflate the shared default.
+            base_resources = file_handler.extract_component_resources(project_data, component_ref)
+            base_request_mb = _k8s_memory_to_mb(base_resources["requests_memory"])
+            new_request_mb = _k8s_memory_to_mb(new_request)
+            if new_request_mb > base_request_mb and new_request_mb <= base_request_mb * 2:
+                file_handler.set_component_resources(
+                    project_data, component_ref, {"requests_memory": new_request}
+                )
+
             changes.append(
                 {
                     "component": component_ref,
