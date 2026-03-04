@@ -4307,32 +4307,117 @@
         }
     }
 
+    /**
+     * Parse a flat field name (e.g. "users[0]/email") into path segments.
+     * Handles bracket indices and slash separators, same logic as json-enc.js.
+     */
+    function parseKeyToSegments(key) {
+        var segments = [];
+        var current = '';
+        var inBracket = false;
+        for (var i = 0; i < key.length; i++) {
+            var ch = key[i];
+            if (ch === '[') {
+                if (!inBracket) {
+                    // Empty brackets [] — strip them (array field marker)
+                    if (i + 1 < key.length && key[i + 1] === ']') {
+                        i++;
+                    } else {
+                        if (current) { segments.push(current); current = ''; }
+                        inBracket = true;
+                    }
+                } else { current += ch; }
+            } else if (ch === ']') {
+                if (inBracket) { segments.push(current); current = ''; inBracket = false; }
+                else { current += ch; }
+            } else if (ch === '/' && !inBracket) {
+                if (current) { segments.push(current); current = ''; }
+            } else { current += ch; }
+        }
+        if (current) segments.push(current);
+        return segments;
+    }
+
+    /**
+     * Set a value in a nested object at the path described by segments.
+     */
+    function setNestedValue(obj, segments, value) {
+        if (segments.length === 0) return;
+        var cur = obj;
+        for (var i = 0; i < segments.length - 1; i++) {
+            var seg = segments[i];
+            if (cur[seg] === undefined) cur[seg] = {};
+            cur = cur[seg];
+        }
+        cur[segments[segments.length - 1]] = value;
+    }
+
+    /**
+     * Convert objects with only numeric keys into real arrays (recursive).
+     */
+    function cleanArrays(obj) {
+        if (!obj || typeof obj !== 'object') return;
+        for (var key in obj) {
+            var val = obj[key];
+            if (val && typeof val === 'object' && !Array.isArray(val)) {
+                cleanArrays(val);
+                var keys = Object.keys(val);
+                var isArr = keys.length > 0;
+                for (var k = 0; k < keys.length; k++) {
+                    if (isNaN(parseInt(keys[k], 10))) { isArr = false; break; }
+                }
+                if (isArr) {
+                    var arr = [];
+                    keys.sort(function(a, b) { return parseInt(a,10) - parseInt(b,10); });
+                    for (var s = 0; s < keys.length; s++) arr.push(val[keys[s]]);
+                    obj[key] = arr;
+                }
+            }
+        }
+    }
+
+    /**
+     * Collect form data from a container and produce nested JSON.
+     * Converts flat path-based field names (e.g. "users[0]/email")
+     * into a nested object structure the backend processor expects.
+     */
     function collectFormData(container) {
-        var data = {};
+        var flat = {};
         container.querySelectorAll('input, select, textarea').forEach(function(el) {
             var name = el.getAttribute('name');
             if (!name) return;
-
             if (el.type === 'checkbox') {
                 if (name.endsWith('[]')) {
                     var key = name.slice(0, -2);
-                    if (!data[key]) data[key] = [];
-                    if (el.checked) data[key].push(el.value);
+                    if (!flat[key]) flat[key] = [];
+                    if (el.checked) flat[key].push(el.value);
                 } else {
-                    data[name] = el.checked;
+                    flat[name] = el.checked;
                 }
             } else if (el.type === 'radio') {
-                if (el.checked) data[name] = el.value;
+                if (el.checked) flat[name] = el.value;
             } else {
-                data[name] = el.value;
+                flat[name] = el.value;
             }
         });
-        return data;
+        // Convert flat paths to nested JSON
+        var nested = {};
+        for (var key in flat) {
+            if (!flat.hasOwnProperty(key)) continue;
+            var segments = parseKeyToSegments(key);
+            if (segments.length === 0) { nested[key] = flat[key]; }
+            else { setNestedValue(nested, segments, flat[key]); }
+        }
+        cleanArrays(nested);
+        return nested;
     }
 
     /* -- In-modal progress view ---------------------------------------- */
 
-    function showModalProgress(taskId) {
+    var editNextSection = null; // Tracks chained config section (e.g. keycloak-config)
+
+    function showModalProgress(taskId, nextSection) {
+        editNextSection = nextSection || null;
         var contentEl = document.getElementById('edit-section-content');
         var actionsEl = document.getElementById('edit-section-actions');
 
@@ -4347,10 +4432,7 @@
                 '</div>' +
                 '<p class="edit-progress-step" id="edit-progress-step">Verwerking gestart...</p>' +
                 '<div class="edit-progress-tasks" id="edit-progress-tasks"></div>' +
-                '<div class="edit-progress-actions" id="edit-progress-actions" style="display: none;">' +
-                    '<button type="button" class="rvo-button rvo-button--primary" onclick="closeEditModalAndReload()">Sluiten</button>' +
-                    '<a href="/projects/progress/' + taskId + '" class="rvo-button rvo-button--tertiary" target="_blank" rel="noopener">Bekijk volledige voortgang</a>' +
-                '</div>' +
+                '<div class="edit-progress-actions" id="edit-progress-actions" style="display: none;"></div>' +
             '</div>';
 
         // Start polling
@@ -4401,8 +4483,34 @@
                 isEditSubmitting = false;
                 if (stepEl) stepEl.textContent = 'Wijzigingen succesvol verwerkt!';
                 if (bar) bar.style.width = '100%';
+
+                // Build action buttons depending on whether there's a next config section
                 var actionsEl = document.getElementById('edit-progress-actions');
-                if (actionsEl) actionsEl.style.display = '';
+                if (actionsEl) {
+                    if (editNextSection) {
+                        // Service added that needs config — open config modal next
+                        var sectionTitle = {
+                            'keycloak-config': 'Keycloak configuratie',
+                            'postgresql-config': 'Database configuratie',
+                            'auth-wall-config': 'Authorization wall configuratie'
+                        }[editNextSection] || editNextSection;
+                        actionsEl.innerHTML =
+                            '<button type="button" class="rvo-button rvo-button--primary" ' +
+                                'onclick="openEditModal(\'' + editNextSection + '\', \'' + sectionTitle + '\')">' +
+                                'Configureer service' +
+                            '</button>' +
+                            '<button type="button" class="rvo-button rvo-button--tertiary" ' +
+                                'onclick="closeEditModalAndReload()">Later configureren</button>';
+                    } else {
+                        actionsEl.innerHTML =
+                            '<button type="button" class="rvo-button rvo-button--primary" ' +
+                                'onclick="closeEditModalAndReload()">Sluiten</button>' +
+                            '<a href="/projects/progress/' + taskId + '" ' +
+                                'class="rvo-button rvo-button--tertiary" target="_blank" rel="noopener">' +
+                                'Bekijk volledige voortgang</a>';
+                    }
+                    actionsEl.style.display = '';
+                }
             } else if (data.status === 'failed') {
                 clearInterval(editPollTimer);
                 editPollTimer = null;
@@ -4412,7 +4520,15 @@
                     stepEl.classList.add('edit-progress-error');
                 }
                 var actionsEl = document.getElementById('edit-progress-actions');
-                if (actionsEl) actionsEl.style.display = '';
+                if (actionsEl) {
+                    actionsEl.innerHTML =
+                        '<button type="button" class="rvo-button rvo-button--primary" ' +
+                            'onclick="closeEditModalAndReload()">Sluiten</button>' +
+                        '<a href="/projects/progress/' + taskId + '" ' +
+                            'class="rvo-button rvo-button--tertiary" target="_blank" rel="noopener">' +
+                            'Bekijk details</a>';
+                    actionsEl.style.display = '';
+                }
             }
         })
         .catch(function(err) {
@@ -4455,8 +4571,8 @@
 
             // Determine flow based on response headers
             if (taskId) {
-                // process_project: show progress in modal
-                showModalProgress(taskId);
+                // process_project: show progress in modal (pass nextSection for chaining)
+                showModalProgress(taskId, nextSection);
             } else {
                 // save_only: show brief success, then reload
                 isEditSubmitting = false;

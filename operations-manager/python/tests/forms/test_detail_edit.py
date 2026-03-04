@@ -487,6 +487,50 @@ class TestSubmitEditSectionEndpoint:
             assert "HX-Redirect" not in response.headers
 
     @pytest.mark.asyncio
+    async def test_team_edit_saves_users(self):
+        """Team edit should save user changes (save_only, no background task)."""
+        project_data = {
+            "name": "test-project",
+            "display-name": "Test",
+            "description": "test",
+            "users": [{"email": "alice@example.com", "role": "owner"}],
+        }
+        project = MockProjectInfo("test-project", data=project_data, filename="/tmp/test-project.yaml")
+        svc = _mock_project_service(project=project)
+
+        # Simulate nested JSON that collectFormData now produces
+        request = MagicMock()
+        request.json = AsyncMock(
+            return_value={
+                "users": [
+                    {"email": "alice@example.com", "role": "owner"},
+                    {"email": "bob@example.com", "role": "administrator"},
+                ],
+            }
+        )
+
+        with (
+            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.handlers.project_file_handler.save_project_file") as mock_save,
+            patch("opi.core.task_manager.create_task") as mock_create_task,
+        ):
+            from opi.web.router_detail_edit import submit_edit_section
+
+            response = await submit_edit_section(request, "test-project", "team-edit")
+            assert response.status_code == 200
+
+            # Save was called with updated users
+            mock_save.assert_called_once()
+            saved_data = mock_save.call_args[0][1]
+            assert len(saved_data["users"]) == 2
+            assert saved_data["users"][1]["email"] == "bob@example.com"
+
+            # Team is save_only — no background task
+            mock_create_task.assert_not_called()
+            assert "X-Task-Id" not in response.headers
+
+    @pytest.mark.asyncio
     async def test_new_service_triggers_next_section_header(self):
         project_data = {
             "name": "test-project",
