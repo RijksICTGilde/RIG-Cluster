@@ -1,71 +1,98 @@
-# Edit Modal Wizard-Style Config Step Flow
+# Edit Modal Config Chaining (Modal Wizard)
 
 ## What It Is
 
-When editing project services through the project details page, adding new services (e.g. Keycloak, PostgreSQL) triggers a deployment. After deployment completes, the edit modal shows a **wizard-style multi-step flow** with step indicators, back/forward navigation, and progress tracking for all config sections that need attention.
+When editing project services through the project details page, adding new services (e.g. Keycloak, PostgreSQL) triggers a deployment. After deployment completes, the edit modal continues as a **server-driven modal wizard** that chains through the config sections for newly added services, with step indicators, back/forward navigation, and progress tracking.
 
-This mirrors the wizard's step-by-step experience where selecting a service automatically advances to its configuration step with visual step indicators.
+This mirrors the full wizard's step-by-step experience where selecting a service automatically advances to its configuration step.
 
 ## How It Works
 
-### Backend
+### Architecture
 
-When a service edit triggers deployment and new services need configuration, the backend sends an `X-Next-Sections` response header containing a **JSON array** of section metadata (id, title, icon):
+The modal wizard is entirely **server-driven** — step state, navigation, and rendering all happen on the backend. The frontend receives complete HTML fragments via HTMX and swaps them into the modal.
 
-```
-X-Next-Sections: [{"id":"services-edit","title":"Services beheren","icon":"applicatie"},{"id":"keycloak-config","title":"Keycloak configuratie","icon":"sleutel"}]
-```
+State is persisted in a file-based session store (not browser cookies) to avoid the ~4 KB cookie size limit and survive page reloads.
 
-The first entry is always the `services-edit` section (already completed), followed by config sections for each newly added service. This metadata is sourced directly from the `FormSection` definitions in `wizard_sections.py`, so no hardcoded title mappings are needed on the frontend.
+### Routes
 
-### Frontend
+All routes are in `opi/web/router_detail_edit.py`:
 
-The template (`project-details.html.j2`) manages a **step state object** (`editStepState`) that tracks:
-
-- `sections`: ordered list of `{id, title, icon}` objects
-- `currentIndex`: index of the currently active step
-- `completed`: Set of completed section IDs
-
-Key functions:
-
-- `initEditSteps(sections)`: Initializes the step state from the JSON metadata
-- `renderEditStepIndicator()`: Renders a `<nav>` with step items, completion checkmarks, and clickable completed steps (reuses wizard CSS classes)
-- `navigateEditStep(sectionId)`: Click handler for completed steps to navigate back
-- `loadEditStepContent(sectionId, title)`: Loads a section form and updates the indicator
-- `updateEditStepActions()`: Shows step-aware buttons (Vorige/Opslaan & volgende)
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/projects/{name}/modal-wizard/{flow_id}` | Initialize wizard, return first step |
+| GET | `/projects/{name}/modal-wizard/{flow_id}/step/{section_id}` | Load a specific step (back-navigation) |
+| POST | `/projects/{name}/modal-wizard/{flow_id}/step/{section_id}` | Validate and advance step |
+| POST | `/projects/{name}/modal-wizard/{flow_id}/skip` | Save and trigger deployment (skip remaining) |
 
 ### Flow Example (Keycloak + PostgreSQL)
 
 ```
-User adds Keycloak + PostgreSQL in services edit
-  -> Submit triggers deployment
-  -> X-Next-Sections header contains [services-edit, keycloak-config, postgresql-config]
-  -> Step state initialized: services-edit (completed), keycloak-config (active), postgresql-config (pending)
-  -> Deployment completes, "Volgende stap: Keycloak configuratie" shown briefly
-  -> Step indicator appears: [Services (completed)] -> [Keycloak (active)] -> [Database (pending)]
-  -> User fills in Keycloak config and saves
-  -> Step advances: [Services (completed)] -> [Keycloak (completed)] -> [Database (active)]
-  -> User fills in Database config and saves
-  -> Last step done -> modal closes, page reloads
+User adds Keycloak + PostgreSQL in services edit modal
+  → Submit validates and stores services data
+  → Re-resolve active sections: keycloak-config and postgresql-config now visible
+  → Render keycloak-config step with step indicator
+  → Step indicator: [Services ✓] → [Keycloak (active)] → [Database (pending)]
+  → User fills Keycloak config, submits
+  → Advance: [Services ✓] → [Keycloak ✓] → [Database (active)]
+  → User fills Database config, submits
+  → Last step: merge all data, save YAML, trigger deployment
+  → Progress template shown in modal until deployment completes
 ```
 
-### Back Navigation
+### Step Resolution (Config Chaining)
 
-Completed steps in the indicator are clickable. Clicking a completed step navigates back to that step's form (re-fetched from the server with current saved values). The user can re-save and then advance forward again.
+The chaining mechanism uses `resolve_active_section_ids()` from `opi/forms/wizard/resolver.py`:
 
-### Escape Hatch
+1. After each step submission, all step data is merged
+2. Each `FormSection`'s `visible` callable is evaluated against merged data
+3. Active sections list is updated — new service configs appear, removed ones disappear
+4. Data for hidden sections is stashed (preserved if re-activated later)
 
-A "Later configureren" button is shown at every step (except the last). Clicking it clears the step state, closes the modal, and reloads the page. The user can configure remaining sections later from the project details page.
+### Service Protection
+
+Services that existed before the wizard started are "locked" — the user cannot remove them. If a submission tries to remove locked services, the form re-renders with an error and the original services restored. This prevents breaking existing deployments.
+
+### Final Submission
+
+When the last active step is submitted:
+
+1. All section data is merged via `state.get_merged_data()`
+2. Merged with existing project data (preserves system-managed fields)
+3. Saved to project YAML file
+4. If any section has `post_save_action == "process_project"`: triggers background deployment and shows progress template
+5. If save-only: commits to git and shows success template
+
+### Back Navigation & Skip
+
+- Completed steps are clickable in the step indicator for back-navigation
+- A "Later configureren" (skip) button is available to save current progress and close
+
+## Session State
+
+State is managed via `opi/forms/wizard/session.py`:
+
+- `init_modal_wizard_state()` — Create new state, save to file store
+- `get_modal_wizard_state()` — Load from file store
+- `save_modal_wizard_state()` — Persist changes
+- `clear_modal_wizard_state()` — Remove state and cookie
+
+State is stored as JSON files under `{TEMP_DIR}/wizard-sessions/{token}.json`.
 
 ## Key Files
 
 | File | Role |
 |------|------|
-| `opi/web/router_detail_edit.py` | Sends `X-Next-Sections` JSON header with section metadata |
-| `opi/templates/project-details.html.j2` | Step state management, indicator rendering, navigation, and submit handlers |
-| `opi/forms/visualizers/wizard_sections.py` | `FormSection` definitions with title/icon metadata, `SERVICE_CONFIG_SECTIONS` mapping |
-| `static/css/wizard.css` | Shared wizard step indicator CSS (`.wizard-steps` classes), plus `.edit-wizard-steps` override |
+| `opi/web/router_detail_edit.py` | Modal wizard routes and submission logic |
+| `opi/forms/wizard/resolver.py` | `resolve_active_section_ids()` — conditional section resolution |
+| `opi/forms/wizard/session.py` | Modal wizard session state (file-based store) |
+| `opi/forms/wizard/state.py` | `WizardState` dataclass with step tracking and data merging |
+| `opi/forms/visualizers/wizard_sections.py` | `FormSection` definitions, `SERVICE_CONFIG_SECTIONS` mapping |
+| `opi/templates/wizard/modal_wizard_step.html.j2` | Step container with form, navigation, step indicator |
+| `opi/templates/wizard/modal_wizard_progress.html.j2` | Deployment progress display |
+| `opi/templates/wizard/modal_wizard_success.html.j2` | Save-only completion confirmation |
+| `static/css/wizard.css` | Shared wizard step indicator CSS |
 
 ## Configuration
 
-When adding new configurable services, add them to the `SERVICE_CONFIG_SECTIONS` mapping in `wizard_sections.py`. The frontend automatically picks up title and icon from the `FormSection` definition — no frontend changes needed.
+When adding new configurable services, add them to the `SERVICE_CONFIG_SECTIONS` mapping in `wizard_sections.py`. The modal wizard automatically picks up the section when the service is selected — no frontend changes needed.
