@@ -1,8 +1,8 @@
 # Task: Lightweight Kind Cluster for Local Development
 
-**Status:** Future / Planned
-**Priority:** High
-**Created:** 2026-01-30
+**Status**: Planned
+**Priority**: High
+**Created**: 2026-01-30
 
 ## Goal
 
@@ -36,12 +36,12 @@ The current `setup-local-cluster` task installs:
 
 **Core dependencies for Operations Manager to start:**
 1. PostgreSQL - database storage
-2. Keycloak - authentication (OR optional with `AUTH_MODE=api-key-only`)
-3. MinIO - S3-compatible storage
-4. NGINX Ingress - HTTP routing
-5. ArgoCD - GitOps deployment
+2. NGINX Ingress - HTTP routing
+3. ArgoCD - GitOps deployment
+4. MinIO - S3-compatible storage
 
 **Optional (can be added later):**
+- Keycloak (use `AUTH_MODE=api-key-only` without it)
 - Redis, Chisel, Prometheus, Forgejo
 
 ---
@@ -86,29 +86,44 @@ Tier 1 +
 
 ---
 
-## Implementation Plan
+## Implementation
 
-### Phase 1: Create Minimal Kustomization
+### Phase 1: Minimal Kustomization
 
-**New file:** `infrastructure/bootstrap/clusters/minimal/kustomization.yaml`
+**File**: `infrastructure/bootstrap/clusters/minimal/kustomization.yaml` (new)
 
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  # Core infrastructure only
-  - ../../infrastructure/cert-manager
-  - ../../infrastructure/postgresql
-  - ../../infrastructure/minio
+  # Core infrastructure only — no Keycloak, Redis, Chisel, Prometheus, Forgejo
+  - ../../infrastructure/cert-manager/controller/base
+  - ../../infrastructure/postgresql/operator/base
+  - ../../infrastructure/postgresql/database/base
+  - ../../infrastructure/minio/base
   - ../../infrastructure/secrets/config/overlays/local
 
-  # NO: keycloak, redis, chisel, prometheus, forgejo
+# Patches to reduce resource requests for minimal cluster
+patches:
+  - target:
+      kind: Cluster
+      name: rig-db
+    patch: |
+      - op: replace
+        path: /spec/instances
+        value: 1
+      - op: replace
+        path: /spec/resources/requests/memory
+        value: "256Mi"
+      - op: replace
+        path: /spec/resources/limits/memory
+        value: "512Mi"
 ```
 
-### Phase 2: Create Minimal Bootstrap
+### Phase 2: Minimal Bootstrap ArgoCD Application
 
-**New file:** `bootstrap/rig-system/kustomize/overlays/minimal/kustomization.yaml`
+**File**: `bootstrap/rig-system/kustomize/overlays/minimal/kustomization.yaml` (new)
 
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -117,81 +132,177 @@ kind: Kustomization
 resources:
   - ../../base
   - argocd-application-minimal-infrastructure.yaml
-
-# Minimal ArgoCD setup without full infrastructure
 ```
 
-### Phase 3: Add Taskfile Tasks
-
-**New tasks in `Taskfile.yaml`:**
+**File**: `bootstrap/rig-system/kustomize/overlays/minimal/argocd-application-minimal-infrastructure.yaml` (new)
 
 ```yaml
-setup-minimal-cluster:
-  desc: "Create minimal Kind cluster for quick development"
-  cmds:
-    - task: _setup-step
-      vars: { STEP: "1/6", NAME: "Check prerequisites", CMD: "_check-prerequisites" }
-    - task: _setup-step
-      vars: { STEP: "2/6", NAME: "Create Kind cluster", CMD: "_ensure-kind-cluster" }
-    - task: _setup-step
-      vars: { STEP: "3/6", NAME: "Install NGINX Ingress", CMD: "install-ingress-nginx" }
-    - task: _setup-step
-      vars: { STEP: "4/6", NAME: "Install CNPG Operator", CMD: "install-cnpg-operator" }
-    - task: _setup-step
-      vars: { STEP: "5/6", NAME: "Configure CoreDNS", CMD: "configure-coredns-kind-domains" }
-    - task: _setup-step
-      vars: { STEP: "6/6", NAME: "Deploy minimal infrastructure", CMD: "_deploy-minimal-infra" }
-    - task: _minimal-setup-complete
-
-_deploy-minimal-infra:
-  internal: true
-  cmds:
-    - kubectl apply -k infrastructure/bootstrap/clusters/minimal/
-
-_minimal-setup-complete:
-  internal: true
-  cmds:
-    - echo ""
-    - echo "╔═══════════════════════════════════════════════════════════╗"
-    - echo "║         Minimal Cluster Ready!                            ║"
-    - echo "╠═══════════════════════════════════════════════════════════╣"
-    - echo "║                                                           ║"
-    - echo "║  Running services:                                        ║"
-    - echo "║    - PostgreSQL (rig-db)                                  ║"
-    - echo "║    - MinIO                                                ║"
-    - echo "║    - ArgoCD                                               ║"
-    - echo "║                                                           ║"
-    - echo "║  NOT running (add with task setup-local-cluster):         ║"
-    - echo "║    - Keycloak (use AUTH_MODE=api-key-only)                ║"
-    - echo "║    - Redis, Chisel, Prometheus                            ║"
-    - echo "║                                                           ║"
-    - echo "╚═══════════════════════════════════════════════════════════╝"
-
-destroy-cluster:
-  desc: "Delete the Kind cluster completely"
-  cmds:
-    - kind delete cluster --name gitops-fluxcd
-    - echo "Cluster deleted. Run 'task setup-minimal-cluster' to recreate."
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minimal-infrastructure
+  namespace: rig-system
+spec:
+  project: default
+  source:
+    repoURL: git://localhost/
+    targetRevision: HEAD
+    path: infrastructure/bootstrap/clusters/minimal
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rig-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
 ```
 
-### Phase 4: Operations Manager Minimal Mode
+### Phase 3: Taskfile Tasks
 
-Ensure Operations Manager can run with minimal dependencies:
+**File**: `Taskfile.yaml` (modify — add these tasks)
 
-**Config additions (`config.py`):**
-```python
-# Already exists, but document usage:
-SKIP_STARTUP_CHECKS: bool = True  # Skip Keycloak/MinIO checks
-AUTH_MODE: str = "api-key-only"   # Skip OIDC entirely
+```yaml
+  setup-minimal-cluster:
+    desc: "Create minimal Kind cluster for quick development (no Keycloak, no Redis)"
+    cmds:
+      - task: requirements-check
+      - task: generate-age-key
+      - task: generate-local-ca
+      - task: create-local-kind-cluster
+      - task: install-ingress-nginx
+      - task: install-cnpg-operator
+      - task: configure-coredns-kind-domains
+      - task: prepare-argocd-operator
+      - task: update-cmp-kustomize-sops
+      - task: _deploy-minimal-infrastructure
+      - task: import-ca-to-cluster
+      - task: _wait-for-minimal-infrastructure
+      - |
+        echo ""
+        echo "========================================="
+        echo "  Minimal Cluster Ready!"
+        echo "========================================="
+        echo ""
+        echo "Running services:"
+        echo "  - PostgreSQL (rig-db)"
+        echo "  - MinIO"
+        echo "  - ArgoCD"
+        echo "  - NGINX Ingress"
+        echo ""
+        echo "NOT running (add with 'task setup-local-cluster'):"
+        echo "  - Keycloak (use AUTH_MODE=api-key-only)"
+        echo "  - Redis, Chisel, Prometheus"
+        echo ""
+        echo "Start Operations Manager:"
+        echo "  cd operations-manager/python"
+        echo "  cp .env.minimal .env"
+        echo "  uv run python -m opi"
+        echo ""
+    silent: false
+
+  _deploy-minimal-infrastructure:
+    internal: true
+    cmds:
+      - |
+        echo "========================================="
+        echo "Deploying minimal infrastructure"
+        echo "========================================="
+        echo ""
+        echo "Applying minimal kustomization..."
+        kustomize build infrastructure/bootstrap/clusters/minimal | kubectl apply -f -
+        echo ""
+        echo "Applying minimal bootstrap..."
+        kustomize build bootstrap/rig-system/kustomize/overlays/minimal | kubectl apply -f -
+    silent: true
+
+  _wait-for-minimal-infrastructure:
+    internal: true
+    cmds:
+      - |
+        echo "Waiting for PostgreSQL cluster to be ready..."
+        until kubectl get cluster rig-db -n rig-system -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Cluster in healthy state"; do
+          echo "  PostgreSQL not ready yet, waiting..."
+          sleep 10
+        done
+        echo "PostgreSQL ready."
+
+        echo "Waiting for MinIO to be ready..."
+        kubectl wait --namespace rig-system \
+          --for=condition=ready pod \
+          --selector=app=minio \
+          --timeout=300s 2>/dev/null || echo "  MinIO pods not found yet, continuing..."
+        echo "MinIO ready."
+
+        echo ""
+        echo "All minimal infrastructure services are running."
+    silent: true
+
+  destroy-cluster:
+    desc: "Delete the Kind cluster completely"
+    cmds:
+      - |
+        echo "========================================="
+        echo "Destroying Kind cluster: {{.KIND_CLUSTER_NAME}}"
+        echo "========================================="
+
+        if ! kind get clusters | grep -q "^{{.KIND_CLUSTER_NAME}}$"; then
+          echo "Cluster '{{.KIND_CLUSTER_NAME}}' does not exist."
+          exit 0
+        fi
+
+        kind delete cluster --name {{.KIND_CLUSTER_NAME}}
+        echo ""
+        echo "Cluster deleted."
+        echo "Run 'task setup-minimal-cluster' to recreate."
+    silent: false
 ```
 
-**`.env.minimal` file:**
+### Phase 4: Minimal Environment Configuration
+
+**File**: `operations-manager/python/.env.minimal` (new)
+
 ```env
+# Minimal cluster configuration — no Keycloak, no SSO
 ENVIRONMENT=minimal
+CLUSTER_MANAGER=local
+
+# Skip services that aren't deployed in minimal cluster
 SKIP_STARTUP_CHECKS=true
 AUTH_MODE=api-key-only
 USE_UNSAFE_API_KEY=true
+
+# Disable features that require missing services
 ENABLE_GIT_MONITOR=false
+ENABLE_AUTO_SCALE=false
+METRICS_BACKEND=none
+
+# Database (PostgreSQL is available in minimal cluster)
+DATABASE_HOST=postgresql.kind
+DATABASE_PORT=5432
+DATABASE_NAME=operations_manager
+
+# MinIO (available in minimal cluster)
+MINIO_ENDPOINT=minio.kind
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+
+# ArgoCD (available in minimal cluster)
+ARGOCD_SERVER=argocd.kind
+
+# Logging
+LOG_LEVEL=DEBUG
+```
+
+### Phase 5: Taskfile Environment Configuration
+
+**File**: `.env-taskfile-minimal` (new)
+
+```env
+# Taskfile variables for minimal cluster
+KIND_CLUSTER_NAME=gitops-fluxcd
+CLUSTER_TYPE=local
+RIG_NAMESPACE=rig-system
+BOOTSTRAP_CLUSTER_FOLDER=minimal
 ```
 
 ---
@@ -200,11 +311,12 @@ ENABLE_GIT_MONITOR=false
 
 | File | Action |
 |------|--------|
-| `infrastructure/bootstrap/clusters/minimal/kustomization.yaml` | Create - minimal infrastructure |
-| `bootstrap/rig-system/kustomize/overlays/minimal/kustomization.yaml` | Create - minimal bootstrap |
-| `Taskfile.yaml` | Add `setup-minimal-cluster`, `destroy-cluster` tasks |
-| `operations-manager/python/.env.minimal` | Create - minimal environment config |
-| `.env-taskfile-minimal` | Create - taskfile config for minimal cluster |
+| `infrastructure/bootstrap/clusters/minimal/kustomization.yaml` | Create — minimal infrastructure kustomization |
+| `bootstrap/rig-system/kustomize/overlays/minimal/kustomization.yaml` | Create — minimal bootstrap |
+| `bootstrap/rig-system/kustomize/overlays/minimal/argocd-application-minimal-infrastructure.yaml` | Create — ArgoCD app for minimal infra |
+| `Taskfile.yaml` | Modify — add `setup-minimal-cluster`, `_deploy-minimal-infrastructure`, `_wait-for-minimal-infrastructure`, `destroy-cluster` tasks |
+| `operations-manager/python/.env.minimal` | Create — minimal environment config |
+| `.env-taskfile-minimal` | Create — taskfile config for minimal cluster |
 
 ---
 
@@ -220,13 +332,16 @@ ENABLE_GIT_MONITOR=false
    ```bash
    kubectl get pods -n rig-system
    # Should show: postgresql, minio, argocd pods only
+   # Should NOT show: keycloak, redis, chisel, prometheus
    ```
 
 3. **Run Operations Manager:**
    ```bash
    cd operations-manager/python
-   ENVIRONMENT=minimal uv run python -m opi
-   # Should start without Keycloak
+   cp .env.minimal .env
+   uv run python -m opi
+   # Should start without Keycloak errors
+   # Should respond to API calls with API key auth
    ```
 
 4. **Destroy and recreate:**
@@ -234,6 +349,12 @@ ENABLE_GIT_MONITOR=false
    task destroy-cluster
    task setup-minimal-cluster
    # Should be fast and repeatable
+   ```
+
+5. **Upgrade to full:**
+   ```bash
+   task setup-local-cluster
+   # Should add missing services on top of minimal
    ```
 
 ---
@@ -250,8 +371,8 @@ ENABLE_GIT_MONITOR=false
 
 ## Future Enhancements
 
-1. **Add-on tasks:** `task add-keycloak`, `task add-prometheus` to incrementally add services
-2. **Profiles:** Docker Compose-style profiles for different setups
+1. **Add-on tasks:** `task add-keycloak`, `task add-prometheus` to incrementally add services to a minimal cluster
+2. **Profiles:** Use Taskfile `vars` to select profiles: `task setup-local-cluster PROFILE=minimal`
 3. **Prebuilt images:** Cache operator images for faster cluster creation
 4. **Snapshot/restore:** Save cluster state for quick restoration
 
@@ -260,4 +381,4 @@ ENABLE_GIT_MONITOR=false
 ## Dependencies on Other Features
 
 - **Independent Local Development** (`features/future/independent-local-development.md`): The SSL/domain changes should apply to both minimal and full clusters
-- **SSO Optional** (`AUTH_MODE` setting): Required for minimal cluster to work without Keycloak
+- **SSO Optional** (`AUTH_MODE` setting): Required for minimal cluster to work without Keycloak — verify `AUTH_MODE=api-key-only` is fully implemented
