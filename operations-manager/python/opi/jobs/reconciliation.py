@@ -31,16 +31,19 @@ from opi.utils.naming import (
 logger = logging.getLogger(__name__)
 
 
-def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, set[str]]:
-    """Build a set of expected resource names from project YAML definitions.
+def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, set[tuple[str, str]]]:
+    """Build a set of expected (resource_name, cluster) tuples from project YAML definitions.
+
+    Uses (resource_name, cluster) tuples instead of bare resource names to avoid
+    false matches when two clusters have resources with the same generated name.
 
     Args:
         project_yamls: List of parsed project YAML dicts.
 
     Returns:
-        Dict mapping resource_type to a set of expected resource names.
+        Dict mapping resource_type to a set of (resource_name, cluster) tuples.
     """
-    expected: dict[str, set[str]] = {
+    expected: dict[str, set[tuple[str, str]]] = {
         "postgresql_database": set(),
         "postgresql_user": set(),
         "minio_bucket": set(),
@@ -66,13 +69,13 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
 
                 if ref in ("database", "postgresql"):
                     db_name = generate_database_name(project_name, deployment_name)
-                    expected["postgresql_database"].add(db_name)
-                    expected["postgresql_user"].add(db_name)
+                    expected["postgresql_database"].add((db_name, cluster))
+                    expected["postgresql_user"].add((db_name, cluster))
 
                 if ref in ("minio", "minio-storage", "object-storage"):
-                    expected["minio_bucket"].add(generate_bucket_name(project_name, deployment_name))
-                    expected["minio_user"].add(generate_minio_username(project_name, deployment_name))
-                    expected["minio_policy"].add(generate_minio_policy_name(project_name, deployment_name))
+                    expected["minio_bucket"].add((generate_bucket_name(project_name, deployment_name), cluster))
+                    expected["minio_user"].add((generate_minio_username(project_name, deployment_name), cluster))
+                    expected["minio_policy"].add((generate_minio_policy_name(project_name, deployment_name), cluster))
 
             # Build expected backup_data resource name (matches marking format)
             if base_namespace and cluster:
@@ -82,9 +85,132 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
                 namespace = get_prefixed_namespace(cluster, base_namespace)
                 backup_bucket = get_backup_bucket_name(project_name, cluster)
                 backup_prefix = generate_backup_prefix(cluster, namespace)
-                expected["backup_data"].add(f"{backup_bucket}/{backup_prefix}")
+                expected["backup_data"].add((f"{backup_bucket}/{backup_prefix}", cluster))
 
     return expected
+
+
+async def cleanup_project(
+    pool: DatabasePool,
+    project_name: str,
+    grace_period_days: int | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Purge expired marked resources for a specific project.
+
+    This is the public entry point for project-scoped cleanup, used by the
+    admin API. It reuses the same purge helpers as the full reconciliation job.
+
+    Args:
+        pool: Database pool for accessing the marked_for_deletion table.
+        project_name: Project whose expired marks should be purged.
+        grace_period_days: Override for the grace period. Uses config default if None.
+        dry_run: If True, log actions but do not actually purge resources.
+
+    Returns:
+        Summary dict with purged/error lists.
+    """
+    if grace_period_days is None:
+        grace_period_days = settings.DELETION_GRACE_PERIOD_DAYS
+
+    service = MarkedForDeletionService(pool)
+
+    all_expired = await service.get_expired_marks(grace_period_days)
+    project_expired = [m for m in all_expired if m["project_name"] == project_name]
+
+    results: dict[str, Any] = {
+        "project_name": project_name,
+        "grace_period_days": grace_period_days,
+        "dry_run": dry_run,
+        "purged": [],
+        "errors": [],
+    }
+
+    if not project_expired:
+        return results
+
+    await _purge_marks(project_expired, service, pool, results, dry_run)
+
+    logger.info(
+        "Cleanup for project '%s': purged=%d, errors=%d, dry_run=%s",
+        project_name,
+        len(results["purged"]),
+        len(results["errors"]),
+        dry_run,
+    )
+
+    return results
+
+
+async def _purge_marks(
+    marks: list[dict],
+    service: MarkedForDeletionService,
+    pool: DatabasePool,
+    results: dict[str, Any],
+    dry_run: bool,
+) -> None:
+    """Purge a list of marks in the correct dependency order.
+
+    Shared by both ``reconcile()`` and ``cleanup_project()``.
+    """
+    # Group by type for ordered deletion
+    db_marks = [m for m in marks if m["resource_type"] == "postgresql_database"]
+    db_user_marks = [m for m in marks if m["resource_type"] == "postgresql_user"]
+    bucket_marks = [m for m in marks if m["resource_type"] == "minio_bucket"]
+    minio_user_marks = [m for m in marks if m["resource_type"] == "minio_user"]
+    minio_policy_marks = [m for m in marks if m["resource_type"] == "minio_policy"]
+    namespace_marks = [m for m in marks if m["resource_type"] == "namespace"]
+    backup_marks = [m for m in marks if m["resource_type"] == "backup_data"]
+
+    # PostgreSQL databases and users
+    if db_marks or db_user_marks:
+        try:
+            postgres_conn = create_postgres_connector(
+                host=settings.DATABASE_HOST,
+                admin_username=settings.DATABASE_ADMIN_NAME,
+                admin_password=settings.DATABASE_ADMIN_PASSWORD,
+            )
+            for mark in db_marks:
+                await _purge_postgres_database(postgres_conn, mark, service, results, dry_run)
+            for mark in db_user_marks:
+                await _purge_postgres_user(postgres_conn, mark, service, results, dry_run)
+        except Exception as e:
+            error_msg = f"Failed to initialize PostgreSQL connector for purge: {e}"
+            logger.exception(error_msg)
+            results["errors"].append(error_msg)
+
+    # MinIO resources (policies first, then users, then buckets)
+    if minio_policy_marks or minio_user_marks or bucket_marks:
+        try:
+            minio_conn = create_minio_connector()
+            alias = "default-minio"
+            from opi.core.cluster_config import get_minio_host, get_minio_port
+
+            minio_host = get_minio_host(None)
+            minio_port = get_minio_port(None)
+            minio_url = f"{'https' if settings.MINIO_USE_TLS else 'http'}://{minio_host}:{minio_port}"
+            await minio_conn.configure_alias(
+                alias, minio_url, settings.MINIO_ADMIN_ACCESS_KEY, settings.MINIO_ADMIN_SECRET_KEY
+            )
+
+            for mark in minio_policy_marks:
+                await _purge_minio_policy(minio_conn, alias, mark, service, results, dry_run)
+            for mark in minio_user_marks:
+                await _purge_minio_user(minio_conn, alias, mark, service, results, dry_run)
+            for mark in bucket_marks:
+                await _purge_minio_bucket(minio_conn, alias, mark, service, results, dry_run)
+        except Exception as e:
+            error_msg = f"Failed to initialize MinIO connector for purge: {e}"
+            logger.exception(error_msg)
+            results["errors"].append(error_msg)
+
+    # Backup data (Kopia snapshots)
+    for mark in backup_marks:
+        await _purge_backup_data(mark, service, results, dry_run)
+
+    # Namespaces (only when all conditions met)
+    for mark in namespace_marks:
+        await _purge_namespace(mark, service, pool, results, dry_run)
 
 
 async def reconcile(
@@ -133,11 +259,12 @@ async def reconcile(
         rname = mark["resource_name"]
         cluster = mark["cluster"]
 
-        if rtype in expected and rname in expected[rtype]:
+        if rtype in expected and (rname, cluster) in expected[rtype]:
             logger.info(
-                "Resource %s '%s' is back in expected set - unmarking (restored via git revert?)",
+                "Resource %s '%s' on cluster '%s' is back in expected set - unmarking (restored via git revert?)",
                 rtype,
                 rname,
+                cluster,
             )
             if not dry_run:
                 await service.unmark_resource(rtype, rname, cluster)
@@ -145,66 +272,7 @@ async def reconcile(
 
     # --- Step 2: Purge expired marks ---
     expired_marks = await service.get_expired_marks(grace_period_days)
-
-    # Group by type for ordered deletion
-    db_marks = [m for m in expired_marks if m["resource_type"] == "postgresql_database"]
-    db_user_marks = [m for m in expired_marks if m["resource_type"] == "postgresql_user"]
-    bucket_marks = [m for m in expired_marks if m["resource_type"] == "minio_bucket"]
-    minio_user_marks = [m for m in expired_marks if m["resource_type"] == "minio_user"]
-    minio_policy_marks = [m for m in expired_marks if m["resource_type"] == "minio_policy"]
-    namespace_marks = [m for m in expired_marks if m["resource_type"] == "namespace"]
-    backup_marks = [m for m in expired_marks if m["resource_type"] == "backup_data"]
-
-    # 2a. Purge PostgreSQL databases and users
-    if db_marks or db_user_marks:
-        try:
-            postgres_conn = create_postgres_connector(
-                host=settings.DATABASE_HOST,
-                admin_username=settings.DATABASE_ADMIN_NAME,
-                admin_password=settings.DATABASE_ADMIN_PASSWORD,
-            )
-            for mark in db_marks:
-                await _purge_postgres_database(postgres_conn, mark, service, results, dry_run)
-            for mark in db_user_marks:
-                await _purge_postgres_user(postgres_conn, mark, service, results, dry_run)
-        except Exception as e:
-            error_msg = f"Failed to initialize PostgreSQL connector for purge: {e}"
-            logger.exception(error_msg)
-            results["errors"].append(error_msg)
-
-    # 2b. Purge MinIO resources (policies first, then users, then buckets)
-    if minio_policy_marks or minio_user_marks or bucket_marks:
-        try:
-            minio_conn = create_minio_connector()
-            alias = "default-minio"
-            # Ensure alias is configured
-            from opi.core.cluster_config import get_minio_host, get_minio_port
-
-            minio_host = get_minio_host(None)
-            minio_port = get_minio_port(None)
-            minio_url = f"{'https' if settings.MINIO_USE_TLS else 'http'}://{minio_host}:{minio_port}"
-            await minio_conn.configure_alias(
-                alias, minio_url, settings.MINIO_ADMIN_ACCESS_KEY, settings.MINIO_ADMIN_SECRET_KEY
-            )
-
-            for mark in minio_policy_marks:
-                await _purge_minio_policy(minio_conn, alias, mark, service, results, dry_run)
-            for mark in minio_user_marks:
-                await _purge_minio_user(minio_conn, alias, mark, service, results, dry_run)
-            for mark in bucket_marks:
-                await _purge_minio_bucket(minio_conn, alias, mark, service, results, dry_run)
-        except Exception as e:
-            error_msg = f"Failed to initialize MinIO connector for purge: {e}"
-            logger.exception(error_msg)
-            results["errors"].append(error_msg)
-
-    # 2c. Purge backup data (Kopia snapshots)
-    for mark in backup_marks:
-        await _purge_backup_data(mark, service, results, dry_run)
-
-    # 2d. Purge namespaces (only when ALL conditions met)
-    for mark in namespace_marks:
-        await _purge_namespace(mark, service, pool, results, dry_run)
+    await _purge_marks(expired_marks, service, pool, results, dry_run)
 
     # --- Step 3: Detect newly orphaned resources and mark them ---
     # This step queries actual resources and marks any that are not in the expected set
@@ -363,11 +431,14 @@ async def _purge_backup_data(
 
     s3_bucket = metadata.get("s3_bucket")
     s3_prefix = metadata.get("s3_prefix")
-    s3_endpoint = metadata.get("s3_endpoint")
-    s3_access_key = metadata.get("s3_access_key")
-    s3_secret_key = metadata.get("s3_secret_key")
-    s3_use_tls = metadata.get("s3_use_tls", False)
     kopia_password = metadata.get("kopia_password")
+
+    # S3 connection details are read from current settings rather than stored
+    # in mark metadata, to avoid persisting credentials in the database.
+    s3_endpoint = settings.BACKUP_S3_ENDPOINT
+    s3_access_key = settings.BACKUP_S3_ACCESS_KEY
+    s3_secret_key = settings.BACKUP_S3_SECRET_KEY
+    s3_use_tls = settings.BACKUP_S3_USE_TLS
 
     if not all([s3_bucket, s3_prefix, s3_endpoint, kopia_password]):
         error_msg = (
@@ -441,13 +512,20 @@ async def _purge_backup_data(
                     e,
                 )
 
-        await service.delete_mark(mark["id"])
-        logger.info(
-            "Purged %d/%d backup snapshot(s) for '%s'",
-            deleted_count,
-            len(snapshots),
-            resource_name,
-        )
+        if deleted_count == len(snapshots):
+            await service.delete_mark(mark["id"])
+            logger.info(
+                "Purged all %d backup snapshot(s) for '%s'",
+                deleted_count,
+                resource_name,
+            )
+        else:
+            logger.warning(
+                "Only purged %d/%d backup snapshot(s) for '%s' - keeping mark for retry",
+                deleted_count,
+                len(snapshots),
+                resource_name,
+            )
         results["purged"].append({"type": "backup_data", "name": resource_name, "snapshots_deleted": deleted_count})
 
     except Exception as e:

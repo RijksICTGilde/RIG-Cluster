@@ -1,268 +1,89 @@
-# Plan: YAML Diff-Driven Deletion & Resource Cleanup
+# YAML Diff-Driven Deletion & Resource Cleanup
+
+## Status: Implemented
+
+This plan has been implemented. The notes below reflect the **actual implementation**, which diverged from the original plan in key areas.
 
 ## Context
 
-The `ProjectFileHandler` already compares the current project YAML against the previous git version using **DeepDiff** and produces a structured changes dictionary with `added`, `changed`, and `deleted` keys. The `ProjectManager.process_project_from_git()` method calls this analysis and logs the results, but currently **ignores deletions** - it processes the full project regardless of what changed (see TODO at `project_manager.py:2173`).
+When a user edits their project YAML file (removes a deployment, removes a component from a deployment, or removes a service), the system should detect these removals and clean up the corresponding infrastructure resources. The change detection pipeline (`ProjectFileHandler.analyze_project_changes()` using DeepDiff) existed but deletions were silently ignored.
 
-Meanwhile, `DeleteProjectManager` already knows how to delete entire deployments and entire projects, but there is **no mechanism for partial/incremental deletions** triggered by YAML changes (e.g., removing a single service from a component, removing a component from a deployment, or removing a deployment from the project file).
+### Bug Fixed
 
-## Current Architecture
+`_parse_deepdiff_path()` at `project_file_handler.py` had a regex that only converted `['key']` to `.key` but left bare numeric indices `[0]` untouched. This caused `_analyze_deployment_changes()` to miss all list-based deletions. **Fixed** by adding `re.sub(r"\[(\d+)]", r".\1", clean_path)` to convert numeric indices to dot notation.
 
-### Change Detection Pipeline (already working)
+### Implementation Decision: Fix DeepDiff Path Parsing (not bypass)
 
-```
-project_file_handler.py
-  ├── get_previous_yaml_content()     # Gets previous YAML from git history
-  ├── generate_yaml_diff()            # DeepDiff(previous, current, ignore_order=True)
-  ├── extract_changes_from_diff()     # Structures into {added, changed, deleted}
-  └── _parse_deepdiff_path()          # Converts DeepDiff paths to readable format
-                                      #   e.g. "root['deployments'][0]['name']" -> "deployments.0.name"
+The original plan proposed a semantic change interpreter to bypass DeepDiff. The actual implementation took the simpler approach: **fix the regex bug** in `_parse_deepdiff_path()` and keep the existing DeepDiff-based `_analyze_deployment_changes()` pipeline. This avoids introducing a new module while solving the immediate problem.
 
-project_manager.py
-  ├── process_project_from_git()      # Calls analyze_project_changes, logs diff, then ignores it
-  └── _analyze_deployment_changes()   # Filters changes to deployment-specific paths
-```
+### Data Safety Decision
 
-### Deletion Pipeline (already working, but only for explicit API calls)
+When a deployment is removed from YAML, persistent data resources (databases, MinIO buckets, backups) are **marked for deferred deletion** with a configurable grace period (default 7 days). Ephemeral resources (ArgoCD apps, Keycloak clients, manifests) are deleted immediately. This allows accident recovery via git revert.
 
-```
-delete_project_manager.py
-  ├── delete_project()                # Deletes entire project (all deployments + project file)
-  └── delete_deployment()             # Deletes single deployment:
-      ├── ArgoCD application file from GitOps repo
-      ├── ArgoCD AppProject (if namespace not shared)
-      ├── Repository secrets (if repo not shared)
-      ├── ArgoCD application resource (waits for deletion)
-      ├── Kubernetes namespace
-      ├── Database resources (user, schema, database)
-      ├── MinIO resources (user, bucket, policy)
-      └── Deployment folder from infrastructure git repo
-```
+---
 
-### Project YAML Hierarchy
+## What Was Built
 
-```yaml
-name: example-project           # PROJECT level
-repositories: [...]             # PROJECT level
-components:                     # PROJECT level (definitions)
-  - name: frontend
-    services: [database, minio]
-    ports: [8080]
-deployments:                    # DEPLOYMENT level
-  - name: staging
-    cluster: local
-    repository: main-repo
-    components:                 # COMPONENT level (instances within deployment)
-      - reference: frontend
-        image: "nginx:latest"
-    services:                   # SERVICE level (instances within deployment)
-      - reference: database
-        config: { generation: 1 }
-```
+### 1. Two-Phase Deletion in `DeleteProjectManager`
 
-## What the Diff Tells Us
+**New method**: `delete_deployment_from_yaml_change()` in `opi/manager/delete_project_manager.py`
 
-### DeepDiff Change Types Mapped to Actions
+- **Immediate cleanup**: ArgoCD application files, AppProject files, repository secrets, Keycloak clients, deployment manifests, subdomain registrations
+- **Deferred cleanup (marked)**: PostgreSQL databases/users, MinIO buckets/users/policies, backup data (Kopia snapshots), namespaces with persistent resources
 
-| DeepDiff Path Pattern | What Changed | Required Action |
-|---|---|---|
-| `deployments.[N]` (deleted) | Entire deployment removed | `delete_deployment()` |
-| `deployments.[N].components.[M]` (deleted) | Component removed from deployment | Delete component manifests, ingress, related config |
-| `deployments.[N].components.[M].services` or top-level service ref removed | Service removed from component | Delete service resources (DB/MinIO/Keycloak client) |
-| `deployments.[N].name` (changed) | Deployment renamed | Delete old deployment, create new one (rename = delete + add) |
-| `deployments.[N].components.[M].reference` (changed) | Component swapped | Delete old component resources, create new component |
-| `components.[N]` (deleted) | Component definition removed | Delete from all deployments that reference it |
-| `repositories.[N]` (deleted) | Repository removed | Clean up repo secrets if no deployments use it |
+### 2. Marked-for-Deletion Service
 
-### Key Challenges
+**New file**: `opi/services/marked_for_deletion_service.py`
 
-1. **List index instability**: DeepDiff with `ignore_order=True` matches list items by value, not index. Removing item `[0]` from a 3-item list shows as `iterable_item_removed` with the removed item's value, not just an index shift. This is actually helpful - we get the removed item's data directly.
+CRUD service layer for the `marked_for_deletion` database table. Supports mark, unmark, query by project/namespace, and deletion.
 
-2. **Rename detection**: DeepDiff sees a rename as a remove + add (two different items). We could detect renames by matching on other properties, but this adds complexity. Safer to treat as delete old + create new.
+### 3. Database Schema & Migration
 
-3. **Cascade logic**: Removing a component definition (`components.[N]`) should cascade to all deployments referencing it. Removing a deployment should cascade to its services.
+**New files**: `opi/core/marked_for_deletion_schema.py`, `opi/migrations/versions/002_add_marked_for_deletion.py`
 
-4. **Service lifecycle**: Services like databases should NOT be auto-deleted when removed from YAML - data loss risk. Need a confirmation/safety mechanism.
+Table with unique index on `(resource_type, resource_name, cluster)` to prevent duplicate marks. Upsert preserves original `marked_at` timestamp.
 
-## Proposed Approach
+### 4. Reconciliation Job
 
-### Phase 1: Semantic Change Interpreter
+**New file**: `opi/jobs/reconciliation.py`
 
-Create a new module `opi/handlers/change_interpreter.py` that takes the raw DeepDiff changes and interprets them into **actionable operations**:
+- Unmarks resources that reappear in project YAMLs (git revert recovery)
+- Purges resources past the grace period in correct dependency order
+- Provides `cleanup_project()` for project-scoped cleanup
+- Provides `reconcile()` for full reconciliation across all projects
 
-```python
-class ChangeInterpreter:
-    """Interprets structured YAML changes into actionable operations."""
+### 5. Admin API
 
-    def interpret_changes(
-        self,
-        changes: dict[str, Any],        # {added, changed, deleted}
-        current_yaml: dict[str, Any],
-        previous_yaml: dict[str, Any],
-    ) -> ChangeActions:
-        """
-        Returns:
-            ChangeActions with:
-              - deployments_to_delete: list[dict]   # full deployment data from previous YAML
-              - deployments_to_add: list[dict]       # full deployment data from current YAML
-              - components_to_remove: list[ComponentRemoval]  # (deployment_name, component_ref)
-              - components_to_add: list[ComponentAddition]
-              - services_to_remove: list[ServiceRemoval]  # (deployment_name, service_ref)
-              - services_to_add: list[ServiceAddition]
-              - renames: list[RenameOperation]        # detected rename pairs
-              - safe_changes: list[str]               # value changes that just need reprocessing
-        """
-```
+**New file**: `opi/api/admin_router.py`
 
-The interpreter would:
-1. Walk `changes["deleted"]` paths and classify each by hierarchy level
-2. Walk `changes["added"]` paths and classify similarly
-3. Attempt to match delete+add pairs as potential renames (same structure, different name)
-4. For each deleted deployment, extract the full deployment data from `previous_yaml`
-5. For each deleted component reference, identify which deployment it belongs to
+Authenticated via `ADMIN_API_KEY`, all trigger endpoints default to `dry_run=true`:
+- `GET /api/v2/admin/marked-for-deletion` — list marks
+- `POST /api/v2/admin/cleanup/trigger` — purge expired marks for a project
+- `POST /api/v2/admin/reconciliation/trigger` — full reconciliation
+- `DELETE /api/v2/admin/marked-for-deletion/{mark_id}` — cancel a scheduled deletion
 
-### Phase 2: Integrate with `process_project_from_git()`
+### 6. Wiring in `process_project_from_git()`
 
-In `project_manager.py`, after the existing change analysis:
+`project_manager.py` Step 1.6 processes deleted deployments before creations, calling `delete_deployment_from_yaml_change()` with a `MarkedForDeletionService` instance.
 
-```python
-# Existing code (line 2158):
-deployment_changes = self._analyze_deployment_changes(changes, current_yaml)
+---
 
-# New code:
-change_actions = self._change_interpreter.interpret_changes(
-    changes, current_yaml, previous_yaml
-)
+## Files Changed
 
-# Process deletions BEFORE processing additions
-for deployment_data in change_actions.deployments_to_delete:
-    await self._delete_project_manager.delete_deployment(
-        project_name, deployment_data["name"]
-    )
+| File | Action | What |
+|------|--------|------|
+| `opi/handlers/project_file_handler.py` | **MODIFIED** | Fixed `_parse_deepdiff_path()` regex for numeric indices |
+| `opi/core/marked_for_deletion_schema.py` | **NEW** | SQL schema for `marked_for_deletion` table |
+| `opi/services/marked_for_deletion_service.py` | **NEW** | CRUD service layer |
+| `opi/migrations/versions/002_add_marked_for_deletion.py` | **NEW** | Alembic migration |
+| `opi/manager/delete_project_manager.py` | **MODIFIED** | Added `delete_deployment_from_yaml_change()` |
+| `opi/manager/project_manager.py` | **MODIFIED** | Wired deletion into `process_project_from_git()` |
+| `opi/jobs/reconciliation.py` | **NEW** | Reconciliation job with `cleanup_project()` and `reconcile()` |
+| `opi/api/admin_router.py` | **NEW** | Admin API endpoints |
+| `opi/api/endpoint_util.py` | **MODIFIED** | Added `validate_admin_api_key` decorator |
+| `opi/core/config.py` | **MODIFIED** | Added `DELETION_GRACE_PERIOD_DAYS` and `ADMIN_API_KEY` settings |
 
-for removal in change_actions.components_to_remove:
-    await self._handle_component_removal(removal)
+## Scope
 
-for removal in change_actions.services_to_remove:
-    await self._handle_service_removal(removal)
-
-# Then process additions/changes as before
-process_success = await self.process_project(deployment_name, force_clone)
-```
-
-### Phase 3: Safety Mechanisms
-
-1. **Destructive change detection**: Before executing deletions, log a clear summary of what will be destroyed
-2. **Service data protection**: For services with persistent data (database, minio), consider:
-   - Requiring explicit confirmation via a flag in the YAML (e.g., `allow-delete: true`)
-   - Or creating a backup before deletion
-   - Or just deleting the Kubernetes resources but keeping the database/bucket data
-3. **Dry-run mode**: Add ability to analyze changes without executing them (for UI preview)
-
-### Phase 4: Component-Level Deletion Handler
-
-New method needed since `DeleteProjectManager` only handles full deployment deletion:
-
-```python
-async def remove_component_from_deployment(
-    self,
-    project_name: str,
-    deployment_name: str,
-    component_reference: str,
-) -> dict[str, Any]:
-    """
-    Remove a single component from a deployment.
-    Cleans up:
-    - Component manifests from infrastructure git repo
-    - Ingress resources for the component
-    - Keycloak client for the component (if SSO enabled)
-    """
-```
-
-### Phase 5: Service-Level Deletion Handler
-
-```python
-async def remove_service_from_deployment(
-    self,
-    project_name: str,
-    deployment_name: str,
-    service_reference: str,
-) -> dict[str, Any]:
-    """
-    Remove a single service from a deployment.
-    Cleans up:
-    - Database user/schema (if database service)
-    - MinIO user/bucket/policy (if minio service)
-    - Service secrets from Kubernetes
-    """
-```
-
-## Testing Strategy
-
-### Unit Tests for Change Interpreter
-
-Test with concrete YAML diffs to verify correct classification:
-
-```python
-def test_deployment_removed():
-    previous = {"deployments": [{"name": "staging", ...}, {"name": "prod", ...}]}
-    current = {"deployments": [{"name": "prod", ...}]}
-    # Should detect staging as deployments_to_delete
-
-def test_component_removed_from_deployment():
-    previous = {"deployments": [{"name": "staging", "components": [
-        {"reference": "frontend"}, {"reference": "backend"}
-    ]}]}
-    current = {"deployments": [{"name": "staging", "components": [
-        {"reference": "frontend"}
-    ]}]}
-    # Should detect backend as components_to_remove for staging
-
-def test_service_removed():
-    previous = {"deployments": [{"name": "staging", "services": [
-        {"reference": "database"}, {"reference": "minio"}
-    ]}]}
-    current = {"deployments": [{"name": "staging", "services": [
-        {"reference": "database"}
-    ]}]}
-    # Should detect minio as services_to_remove for staging
-
-def test_deployment_renamed():
-    previous = {"deployments": [{"name": "staging", "cluster": "local", "components": [...]}]}
-    current = {"deployments": [{"name": "production", "cluster": "local", "components": [...]}]}
-    # Should detect as rename (delete staging + add production)
-
-def test_no_changes():
-    same = {"deployments": [{"name": "staging"}]}
-    # Should return empty actions
-```
-
-### Integration Tests
-
-Mock the connectors and verify the correct deletion methods are called in the right order.
-
-## Implementation Order
-
-1. **`ChangeInterpreter`** - Pure logic, fully testable with unit tests
-2. **Unit tests for interpreter** - Validate all change type classifications
-3. **Component removal handler** - New capability in `DeleteProjectManager`
-4. **Service removal handler** - New capability in `DeleteProjectManager`
-5. **Wire into `process_project_from_git()`** - Connect the pipeline
-6. **Safety mechanisms** - Dry-run, confirmation, data protection
-7. **Integration tests** - End-to-end with mocked connectors
-
-## Open Questions
-
-1. **Should service data (databases, buckets) be auto-deleted when removed from YAML?** This is destructive. Options:
-   - Never auto-delete data services (safest, require explicit API call)
-   - Auto-delete with a configurable grace period
-   - Add a `retain-data: false` flag to opt-in to auto-deletion
-
-2. **How to handle renames?** Options:
-   - Treat as delete + create (simple, but loses data)
-   - Detect renames and perform in-place updates (complex, preserves data)
-   - Require explicit rename operations via API (safest)
-
-3. **Should the interpreter run in the current `process_project_from_git()` flow, or should it be a separate step triggered by the UI?** Running inline means every git push triggers potential deletions. A separate step gives the user a chance to review.
-
-4. **What about `type_changes` from DeepDiff?** E.g., changing a service from a dict to a list format. Currently not handled in `extract_changes_from_diff()`.
+**Implemented**: Deployment-level deletion detection and two-phase cleanup
+**Deferred**: Component-level removal (Phase 3), Service-level removal (Phase 4)

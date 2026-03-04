@@ -93,117 +93,18 @@ async def trigger_cleanup(
         curl -X POST "http://localhost:9595/api/v2/admin/cleanup/trigger?project_name=my-project&dry_run=false" \\
           -H "X-API-Key: your-admin-api-key"
     """
-    effective_grace = grace_period_days if grace_period_days is not None else settings.DELETION_GRACE_PERIOD_DAYS
-
-    service = _get_marked_for_deletion_service()
-
-    # Get expired marks filtered by project
-    all_expired = await service.get_expired_marks(effective_grace)
-    project_expired = [m for m in all_expired if m["project_name"] == project_name]
-
-    if not project_expired:
-        return JSONResponse(
-            content={
-                "message": f"No expired marks found for project '{project_name}'",
-                "project_name": project_name,
-                "grace_period_days": effective_grace,
-                "dry_run": dry_run,
-                "purged": [],
-                "errors": [],
-            },
-            status_code=200,
-        )
-
-    results: dict[str, Any] = {
-        "project_name": project_name,
-        "grace_period_days": effective_grace,
-        "dry_run": dry_run,
-        "purged": [],
-        "errors": [],
-    }
-
-    # Import reconciliation purge helpers to reuse the same logic
-    from opi.jobs.reconciliation import (
-        _purge_backup_data,
-        _purge_minio_bucket,
-        _purge_minio_policy,
-        _purge_minio_user,
-        _purge_namespace,
-        _purge_postgres_database,
-        _purge_postgres_user,
-    )
+    from opi.jobs.reconciliation import cleanup_project
 
     pool = get_database_pool("main")
-
-    # Group by type for ordered deletion
-    db_marks = [m for m in project_expired if m["resource_type"] == "postgresql_database"]
-    db_user_marks = [m for m in project_expired if m["resource_type"] == "postgresql_user"]
-    bucket_marks = [m for m in project_expired if m["resource_type"] == "minio_bucket"]
-    minio_user_marks = [m for m in project_expired if m["resource_type"] == "minio_user"]
-    minio_policy_marks = [m for m in project_expired if m["resource_type"] == "minio_policy"]
-    backup_marks = [m for m in project_expired if m["resource_type"] == "backup_data"]
-    namespace_marks = [m for m in project_expired if m["resource_type"] == "namespace"]
-
-    # Purge PostgreSQL resources
-    if db_marks or db_user_marks:
-        try:
-            from opi.connectors.postgres import create_postgres_connector
-
-            postgres_conn = create_postgres_connector(
-                host=settings.DATABASE_HOST,
-                admin_username=settings.DATABASE_ADMIN_NAME,
-                admin_password=settings.DATABASE_ADMIN_PASSWORD,
-            )
-            for mark in db_marks:
-                await _purge_postgres_database(postgres_conn, mark, service, results, dry_run)
-            for mark in db_user_marks:
-                await _purge_postgres_user(postgres_conn, mark, service, results, dry_run)
-        except Exception as e:
-            error_msg = f"Failed to initialize PostgreSQL connector for cleanup: {e}"
-            logger.exception(error_msg)
-            results["errors"].append(error_msg)
-
-    # Purge MinIO resources (policies -> users -> buckets)
-    if minio_policy_marks or minio_user_marks or bucket_marks:
-        try:
-            from opi.connectors.minio_mc import create_minio_connector
-            from opi.core.cluster_config import get_minio_host, get_minio_port
-
-            minio_conn = create_minio_connector()
-            alias = "default-minio"
-            minio_host = get_minio_host(None)
-            minio_port = get_minio_port(None)
-            minio_url = f"{'https' if settings.MINIO_USE_TLS else 'http'}://{minio_host}:{minio_port}"
-            await minio_conn.configure_alias(
-                alias, minio_url, settings.MINIO_ADMIN_ACCESS_KEY, settings.MINIO_ADMIN_SECRET_KEY
-            )
-
-            for mark in minio_policy_marks:
-                await _purge_minio_policy(minio_conn, alias, mark, service, results, dry_run)
-            for mark in minio_user_marks:
-                await _purge_minio_user(minio_conn, alias, mark, service, results, dry_run)
-            for mark in bucket_marks:
-                await _purge_minio_bucket(minio_conn, alias, mark, service, results, dry_run)
-        except Exception as e:
-            error_msg = f"Failed to initialize MinIO connector for cleanup: {e}"
-            logger.exception(error_msg)
-            results["errors"].append(error_msg)
-
-    # Purge backup data (Kopia snapshots)
-    for mark in backup_marks:
-        await _purge_backup_data(mark, service, results, dry_run)
-
-    # Purge namespaces (only when all conditions met)
-    for mark in namespace_marks:
-        await _purge_namespace(mark, service, pool, results, dry_run)
-
-    logger.info(
-        "Cleanup for project '%s': purged=%d, errors=%d, dry_run=%s",
-        project_name,
-        len(results["purged"]),
-        len(results["errors"]),
-        dry_run,
+    results = await cleanup_project(
+        pool=pool,
+        project_name=project_name,
+        grace_period_days=grace_period_days,
+        dry_run=dry_run,
     )
+
+    if not results["purged"] and not results["errors"]:
+        results["message"] = f"No expired marks found for project '{project_name}'"
 
     return JSONResponse(content=results, status_code=200)
 

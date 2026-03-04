@@ -16,7 +16,7 @@ from opi.core.database_pool import DatabasePool
 logger = logging.getLogger(__name__)
 
 
-def _row_to_dict(row: Any) -> dict:
+def _row_to_dict(row: Any) -> dict | None:
     """Convert an asyncpg Record to a dict with serializable types."""
     if row is None:
         return None

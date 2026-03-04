@@ -1814,10 +1814,6 @@ class DeleteProjectManager:
                     metadata={
                         "s3_bucket": backup_bucket,
                         "s3_prefix": backup_prefix,
-                        "s3_endpoint": settings.BACKUP_S3_ENDPOINT,
-                        "s3_access_key": settings.BACKUP_S3_ACCESS_KEY,
-                        "s3_secret_key": settings.BACKUP_S3_SECRET_KEY,
-                        "s3_use_tls": settings.BACKUP_S3_USE_TLS,
                         "kopia_password": kopia_password,
                         "namespace": namespace,
                     },

@@ -82,7 +82,7 @@ A unique index on `(resource_type, resource_name, cluster)` prevents duplicate m
 | `minio_bucket` | `myproject-staging` | `{"server_alias": "minio"}` |
 | `minio_user` | `myproject_staging` | `{"server_alias": "minio"}` |
 | `minio_policy` | `myproject_staging-myproject-staging-policy` | `{"server_alias": "minio"}` |
-| `backup_data` | `backup-rig-myproject-local/local/rig-myproject` | `{"s3_bucket": "...", "s3_prefix": "...", "kopia_password": "...", ...}` |
+| `backup_data` | `backup-rig-myproject-local/local/rig-myproject` | `{"s3_bucket": "...", "s3_prefix": "...", "kopia_password": "...", "namespace": "..."}` |
 | `namespace` | `rig-myproject` | `{"has_marked_pvcs": true}` |
 
 ## Accident Recovery
