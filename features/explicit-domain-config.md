@@ -1,5 +1,11 @@
 # Feature: Expliciete Domein Configuratie met Format Strings
 
+> **Status: UNIMPLEMENTED — Future Design Document**
+>
+> This document describes a proposed future architecture for domain configuration.
+> It has **not been implemented** and does not reflect the current system behavior.
+> For the current domain configuration, see [domain-configuration.md](domain-configuration.md).
+
 ## Probleem
 
 De huidige domein configuratie in project YAML's is impliciet: 4 verschillende modi worden bepaald door welke keys aanwezig zijn (`domain-mode`, `subdomain`, `base-domain`). Dit maakt het verwarrend voor gebruikers en fragiel in code (veel if/else branching).

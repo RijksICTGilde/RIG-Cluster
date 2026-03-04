@@ -574,6 +574,48 @@ class ProjectFileHandler:
         logger.debug(f"No path found for component '{component_name}', using default '/'")
         return [{"match": "/", "rewrite": None}]
 
+    def extract_deployment_component_paths(
+        self,
+        project_data: dict[str, Any],
+        deployment_data: dict[str, Any],
+        component_reference: str,
+    ) -> list[dict[str, str | None]]:
+        """
+        Extract publication paths for a component in a deployment context.
+
+        Checks deployment-level paths first (deployments[].components[].paths),
+        then falls back to component-level path (components[].path).
+
+        Args:
+            project_data: The parsed project data
+            deployment_data: The specific deployment dict
+            component_reference: Name of the component to find paths for
+
+        Returns:
+            List of path configs: [{"match": "/api", "rewrite": None}, ...]
+        """
+        # Check deployment-level paths first
+        components = deployment_data.get("components", [])
+        for comp in components:
+            if comp.get("reference") == component_reference:
+                paths = comp.get("paths")
+                if paths is not None:
+                    result = []
+                    for p in paths:
+                        if isinstance(p, dict):
+                            result.append({"match": p.get("match", "/"), "rewrite": p.get("rewrite")})
+                        else:
+                            result.append({"match": str(p), "rewrite": None})
+                    if result:
+                        logger.info(
+                            f"Found {len(result)} deployment-level path(s) for component '{component_reference}'"
+                        )
+                        return result
+                break
+
+        # Fall back to component-level paths
+        return self.extract_component_paths(project_data, component_reference)
+
     def extract_component_storage(self, project_data: dict[str, Any], component_name: str) -> list[dict[str, Any]]:
         """
         Extract storage configuration from a component definition by name.

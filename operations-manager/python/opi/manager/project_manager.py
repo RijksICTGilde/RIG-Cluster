@@ -3984,8 +3984,10 @@ class ProjectManager:
                 project_data, component_reference, default_port=80
             )
 
-            # Extract publication paths from the component definition (supports multiple paths)
-            component_paths = self._project_file_handler.extract_component_paths(project_data, component_reference)
+            # Extract publication paths: deployment-level overrides component-level
+            component_paths = self._project_file_handler.extract_deployment_component_paths(
+                project_data, deployment, component_reference
+            )
             # For backward compatibility, use first path as the primary path
             component_path = component_paths[0]["match"] if component_paths else "/"
 

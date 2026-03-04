@@ -40,11 +40,19 @@ DEPLOYMENT_COMP_IMAGE_EDITABLE = Editable(yaml_path="deployments[*]/components[*
 DEPLOYMENT_COMP_PULL_POLICY_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/imagePullPolicy", values_provider="PullPolicyOptionsProvider"
 )
+DEPLOYMENT_COMP_PATH_EDITABLE = Editable(yaml_path="deployments[*]/components[*]/paths")
+DEPLOYMENT_COMP_REWRITE_PATH_EDITABLE = Editable(yaml_path="deployments[*]/components[*]/rewrite-path")
 
 DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
     yaml_path="deployments[*]/components",
     min_items=1,
-    children=[DEPLOYMENT_COMP_REFERENCE_EDITABLE, DEPLOYMENT_COMP_IMAGE_EDITABLE, DEPLOYMENT_COMP_PULL_POLICY_EDITABLE],
+    children=[
+        DEPLOYMENT_COMP_REFERENCE_EDITABLE,
+        DEPLOYMENT_COMP_IMAGE_EDITABLE,
+        DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
+        DEPLOYMENT_COMP_PATH_EDITABLE,
+        DEPLOYMENT_COMP_REWRITE_PATH_EDITABLE,
+    ],
 )
 
 DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
