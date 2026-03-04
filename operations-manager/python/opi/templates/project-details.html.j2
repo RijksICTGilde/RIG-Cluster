@@ -3253,6 +3253,7 @@
     }
 </style>
 
+<script src="/static/js/wizard.js"></script>
 <script>
     /**
      * Domain Settings Modal Functions
@@ -4240,6 +4241,55 @@
     let editSectionId = null;
     let isEditSubmitting = false;
     let editPollTimer = null;
+
+    /* ---------------------------------------------------------------
+     * Sequence add/remove for edit modal
+     * (mirrors wizard.js but uses the detail-edit sequence endpoint)
+     * --------------------------------------------------------------- */
+    function sequenceAdd(path) {
+        _sequenceAction('add', path, '');
+    }
+
+    function sequenceRemove(path, index) {
+        _sequenceAction('remove', path, String(index));
+    }
+
+    function _sequenceAction(action, path, index) {
+        if (!editSectionId) return;
+        var contentEl = document.getElementById('edit-section-content');
+        if (!contentEl) return;
+
+        var formData = collectFormData(contentEl);
+        formData['_seq_action'] = action;
+        formData['_seq_path'] = path;
+        formData['_seq_index'] = index;
+
+        fetch('/projects/{{ project.name }}/edit/' + editSectionId + '/sequence', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData),
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij reeks-actie');
+            return response.text();
+        })
+        .then(function(html) {
+            contentEl.innerHTML = html;
+            // Re-init service cards if present
+            contentEl.querySelectorAll('.service-cards-grid').forEach(function(grid) {
+                delete grid.dataset.initialized;
+                if (typeof initServiceCards === 'function') initServiceCards(grid);
+            });
+        })
+        .catch(function(err) {
+            var errorEl = document.getElementById('edit-section-error');
+            if (errorEl) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = '';
+            }
+        });
+    }
 
     function openEditModal(sectionId, title) {
         editSectionId = sectionId;

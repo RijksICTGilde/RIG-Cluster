@@ -17,11 +17,13 @@ from starlette.background import BackgroundTask
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.visualizers.wizard_sections import (
     EDIT_SECTIONS,
     SERVICE_CONFIG_SECTIONS,
     _extract_services,
 )
+from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,65 @@ async def get_edit_section(request: Request, project_name: str, section_id: str)
 
     fields_html = _render_section_html(section, project_data)
 
+    return HTMLResponse(content=fields_html)
+
+
+@detail_edit_router.post("/{project_name}/edit/{section_id}/sequence", response_class=HTMLResponse)
+@requires_sso
+async def sequence_action(request: Request, project_name: str, section_id: str) -> HTMLResponse:
+    """Handle add/remove sequence item and re-render the section form."""
+    from opi.services.project_service import get_project_service
+
+    user = get_current_user(request)
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
+
+    user_email = user.get("email", "").lower()
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = project_service.get_user_role_for_project(project_name, user_email)
+    if user_role not in ("admin", "owner"):
+        raise HTTPException(status_code=403, detail="Onvoldoende rechten om dit project te bewerken")
+
+    section = _get_edit_section(section_id)
+    project_data = project.data or {}
+
+    body = await request.json()
+    action = body.pop("_seq_action", None)
+    seq_path = body.pop("_seq_path", None)
+    seq_index = body.pop("_seq_index", None)
+
+    if action not in ("add", "remove") or not seq_path:
+        raise HTTPException(status_code=400, detail="Ongeldige reeks-actie")
+
+    # Process submitted data to get current values merged with project data
+    processor = EditableFormProcessor()
+    yaml_data, _errors = processor.process_json_submission(
+        body,
+        section.editables,
+        project_data,
+        edit_mode=True,
+    )
+
+    items = smart_get_value(yaml_data, seq_path)
+    if not isinstance(items, list):
+        items = []
+
+    if action == "add":
+        editable = _find_sequence_editable(section, seq_path)
+        items.append(_empty_sequence_item(editable))
+    elif action == "remove":
+        remove_index = int(seq_index) if seq_index not in (None, "") else -1
+        if 0 <= remove_index < len(items):
+            items.pop(remove_index)
+
+    smart_set_value(yaml_data, seq_path, items)
+
+    fields_html = _render_section_html(section, yaml_data)
     return HTMLResponse(content=fields_html)
 
 

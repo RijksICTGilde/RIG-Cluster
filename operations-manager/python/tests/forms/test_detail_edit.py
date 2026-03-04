@@ -612,3 +612,83 @@ class TestSubmitEditSectionEndpoint:
             response = await submit_edit_section(request, "test-project", "services-edit")
             assert response.status_code == 200
             assert response.headers.get("X-Next-Section") == "keycloak-config"
+
+
+class TestSequenceActionEndpoint:
+    @pytest.mark.asyncio
+    async def test_sequence_add_returns_html(self):
+        """Sequence add action re-renders the section with an extra item."""
+        project_data = {
+            "name": "test-project",
+            "display-name": "Test",
+            "description": "test",
+            "users": [{"email": "a@b.nl", "role": "owner"}],
+        }
+        project = MockProjectInfo("test-project", data=project_data)
+        svc = _mock_project_service(project=project)
+
+        request = MagicMock()
+        request.json = AsyncMock(return_value={
+            "users": [{"email": "a@b.nl", "role": "owner"}],
+            "_seq_action": "add",
+            "_seq_path": "users",
+            "_seq_index": "",
+        })
+
+        with (
+            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.services.project_service.get_project_service", return_value=svc),
+        ):
+            from opi.web.router_detail_edit import sequence_action
+
+            response = await sequence_action(request, "test-project", "team-edit")
+            assert response.status_code == 200
+            assert len(response.body) > 0
+
+    @pytest.mark.asyncio
+    async def test_sequence_action_rejects_invalid_action(self):
+        """Invalid action returns 400."""
+        project_data = {"name": "test-project", "display-name": "Test", "description": "test"}
+        project = MockProjectInfo("test-project", data=project_data)
+        svc = _mock_project_service(project=project)
+
+        request = MagicMock()
+        request.json = AsyncMock(return_value={
+            "_seq_action": "invalid",
+            "_seq_path": "users",
+            "_seq_index": "",
+        })
+
+        with (
+            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.services.project_service.get_project_service", return_value=svc),
+        ):
+            from opi.web.router_detail_edit import sequence_action
+
+            with pytest.raises(HTTPException) as exc_info:
+                await sequence_action(request, "test-project", "team-edit")
+            assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_sequence_action_requires_auth(self):
+        """Unauthorized user gets 403."""
+        project_data = {"name": "test-project", "display-name": "Test", "description": "test"}
+        project = MockProjectInfo("test-project", data=project_data)
+        svc = _mock_project_service(project=project, user_role="viewer")
+
+        request = MagicMock()
+        request.json = AsyncMock(return_value={
+            "_seq_action": "add",
+            "_seq_path": "users",
+            "_seq_index": "",
+        })
+
+        with (
+            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.services.project_service.get_project_service", return_value=svc),
+        ):
+            from opi.web.router_detail_edit import sequence_action
+
+            with pytest.raises(HTTPException) as exc_info:
+                await sequence_action(request, "test-project", "team-edit")
+            assert exc_info.value.status_code == 403
