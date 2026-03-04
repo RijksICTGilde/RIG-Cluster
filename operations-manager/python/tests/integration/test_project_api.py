@@ -66,6 +66,7 @@ def create_mock_project_manager(
     delete_result: dict[str, Any] | None = None,
     add_component_result: dict[str, Any] | None = None,
     add_component_to_deployment_result: dict[str, Any] | None = None,
+    add_service_result: dict[str, Any] | None = None,
 ) -> MagicMock:
     """Create a mock ProjectManager with configurable behavior."""
     mock_instance = MagicMock()
@@ -138,6 +139,27 @@ def create_mock_project_manager(
         return add_component_to_deployment_result
 
     mock_instance.add_component_to_deployment = mock_add_component_to_deployment
+
+    # Add service result
+    if add_service_result is None:
+        add_service_result = {
+            "success": True,
+            "services_added": ["postgresql-database"],
+            "services_skipped": [],
+            "components_updated": [],
+            "warnings": [],
+        }
+
+    async def mock_add_service(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return add_service_result
+
+    mock_instance.add_service = mock_add_service
+
+    # Mock get_contents for deployment processing
+    async def mock_get_contents() -> dict[str, Any]:
+        return {"deployments": [{"name": "main"}]}
+
+    mock_instance.get_contents = mock_get_contents
 
     # Close method
     async def mock_close() -> None:
@@ -1508,3 +1530,217 @@ class TestAddComponentToDeploymentEndpoint:
         data = response.json()
         assert "Invalid component name" in data["detail"]
         assert "my-component" in data["detail"]
+
+
+@pytest.mark.integration
+class TestAddServiceEndpoint:
+    """Tests for the POST /projects/{project_name}/services endpoint."""
+
+    def test_add_service_success(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test successfully adding a service to a project (project level only)."""
+        mock_pm = create_mock_project_manager(
+            add_service_result={
+                "success": True,
+                "services_added": ["postgresql-database"],
+                "services_skipped": [],
+                "components_updated": [],
+                "warnings": [],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/services",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={"service": "postgresql-database"},
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["services_added"] == ["postgresql-database"]
+        assert data["services_skipped"] == []
+        assert data["processing"]["status"] == "completed"
+
+    def test_add_service_with_components(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a service with component updates."""
+        mock_pm = create_mock_project_manager(
+            add_service_result={
+                "success": True,
+                "services_added": ["postgresql-database"],
+                "services_skipped": [],
+                "components_updated": ["main"],
+                "warnings": [],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/services",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={"service": "postgresql-database", "components": ["main"]},
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["services_added"] == ["postgresql-database"]
+        assert data["components_updated"] == ["main"]
+
+    def test_add_service_already_exists(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a service that already exists returns 201 with warnings."""
+        mock_pm = create_mock_project_manager(
+            add_service_result={
+                "success": True,
+                "services_added": [],
+                "services_skipped": ["postgresql-database"],
+                "components_updated": [],
+                "warnings": ["Service 'postgresql-database' already exists on the project"],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/services",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={"service": "postgresql-database"},
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["services_added"] == []
+        assert data["services_skipped"] == ["postgresql-database"]
+        assert "warnings" in data
+        assert data["processing"]["status"] == "skipped"
+
+    def test_add_service_dependency_already_exists(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a service whose dependency already exists."""
+        mock_pm = create_mock_project_manager(
+            add_service_result={
+                "success": True,
+                "services_added": ["keycloak"],
+                "services_skipped": ["publish-on-web"],
+                "components_updated": [],
+                "warnings": ["Service 'publish-on-web' already exists on the project"],
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/services",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={"service": "keycloak"},
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["services_added"] == ["keycloak"]
+        assert data["services_skipped"] == ["publish-on-web"]
+        assert data["processing"]["status"] == "completed"
+
+    def test_add_service_invalid_name(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding an invalid service name returns 400."""
+        mock_pm = create_mock_project_manager(
+            add_service_result={
+                "success": False,
+                "error": "Unknown service: not-a-real-service",
+                "error_type": "invalid_service",
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/services",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={"service": "not-a-real-service"},
+            )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] == "failed"
+        assert data["error_type"] == "invalid_service"
+
+    def test_add_service_invalid_component(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test adding a service with a non-existent component returns 400."""
+        mock_pm = create_mock_project_manager(
+            add_service_result={
+                "success": False,
+                "error": "Components not found in project: ['nonexistent']",
+                "error_type": "invalid_components",
+            }
+        )
+
+        with patch("opi.api.router.ProjectManager", return_value=mock_pm):
+            response = test_client.post(
+                "/api/projects/test-project/services",
+                headers={"X-API-Key": "test-api-key-12345"},
+                json={"service": "postgresql-database", "components": ["nonexistent"]},
+            )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] == "failed"
+        assert data["error_type"] == "invalid_components"
+
+    def test_add_service_missing_required_fields(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test that missing service field returns 422."""
+        response = test_client.post(
+            "/api/projects/test-project/services",
+            headers={"X-API-Key": "test-api-key-12345"},
+            json={},
+        )
+        assert response.status_code == 422
+
+    def test_add_service_no_api_key(
+        self,
+        test_client: TestClient,
+    ) -> None:
+        """Test that missing API key returns 401."""
+        response = test_client.post(
+            "/api/projects/test-project/services",
+            json={"service": "postgresql-database"},
+        )
+        assert response.status_code == 401
+
+    def test_add_service_invalid_api_key(
+        self,
+        test_client: TestClient,
+        mock_auth_project_service: Any,
+    ) -> None:
+        """Test that an invalid API key returns 401."""
+        response = test_client.post(
+            "/api/projects/test-project/services",
+            headers={"X-API-Key": "wrong-key"},
+            json={"service": "postgresql-database"},
+        )
+        assert response.status_code == 401

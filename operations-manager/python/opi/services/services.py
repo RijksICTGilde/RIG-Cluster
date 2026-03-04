@@ -15,6 +15,10 @@ from opi.services.services_enums import ServiceType
 logger = logging.getLogger(__name__)
 
 
+class ServiceValidationError(ValueError):
+    """Raised for user-facing service validation failures."""
+
+
 @dataclass
 class VariableDefinition:
     """
@@ -546,11 +550,11 @@ class ServiceAdapter:
             except ValueError:
                 # Provide helpful error message for renamed service
                 if service_name == "sso-rijk":
-                    raise ValueError(
+                    raise ServiceValidationError(
                         "Service 'sso-rijk' has been renamed to 'keycloak'. "
                         "Please update your project.yaml to use 'keycloak' instead."
                     ) from None
-                raise ValueError(f"Unknown service: {service_name}") from None
+                raise ServiceValidationError(f"Unknown service: {service_name}") from None
 
         return services
 
@@ -645,3 +649,100 @@ class ServiceAdapter:
     def uses_direct_variables(cls, service: ServiceType) -> bool:
         """Check if a service provides direct environment variables."""
         return bool(cls.get_direct_variables(service))
+
+    @classmethod
+    def add_services_to_project(
+        cls,
+        project_data: dict[str, Any],
+        service_names: list[str],
+        component_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add one or more services (and their dependencies) to a project's configuration.
+
+        Pure data-manipulation logic — no I/O or git operations.
+
+        Args:
+            project_data: The mutable project configuration dict.
+            service_names: Services to add (e.g. ``["postgresql-database"]``).
+            component_names: Optional component names whose ``uses-services``
+                should also be updated. If *None* or empty the services are only
+                added at the project level.
+
+        Returns:
+            Result dict with keys ``services_added``, ``services_skipped``,
+            ``components_updated``, and ``warnings``.
+
+        Raises:
+            ValueError: If a service name is unknown or a component name
+                does not exist in the project.
+        """
+        # Validate all service names
+        cls.parse_services_from_strings(service_names)
+
+        # Resolve dependencies (returns deps first, then the services themselves)
+        all_service_names = cls.resolve_service_dependencies(service_names)
+
+        # Determine which services already exist at the project level
+        existing_service_names = set(cls.extract_service_names_from_project_services(project_data.get("services", [])))
+
+        services_added: list[str] = []
+        services_skipped: list[str] = []
+        warnings: list[str] = []
+
+        for svc in all_service_names:
+            if svc in existing_service_names:
+                services_skipped.append(svc)
+                warnings.append(f"Service '{svc}' already exists on the project")
+            else:
+                services_added.append(svc)
+
+        # Validate component names before mutating project data
+        components_updated: list[str] = []
+        if component_names:
+            existing_components = {comp.get("name"): comp for comp in project_data.get("components", [])}
+            invalid_components = [c for c in component_names if c not in existing_components]
+            if invalid_components:
+                raise ServiceValidationError(f"Components not found in project: {invalid_components}")
+
+        # Append new services to the project-level list
+        if "services" not in project_data:
+            project_data["services"] = []
+        project_data["services"].extend(services_added)
+
+        # Optionally update component uses-services
+        if component_names:
+            # Pre-compute storage configs once for all components
+            parsed_services = cls.parse_services_from_strings(all_service_names)
+            storage_configs = cls.create_storage_configs(parsed_services)
+
+            for comp_name in component_names:
+                comp = existing_components[comp_name]
+                comp_services = comp.get("uses-services", [])
+                comp_updated = False
+
+                for svc in all_service_names:
+                    if svc not in comp_services:
+                        comp_services.append(svc)
+                        comp_updated = True
+
+                if comp_updated:
+                    comp["uses-services"] = comp_services
+                    components_updated.append(comp_name)
+
+                    # Add storage configs for storage services
+                    if storage_configs:
+                        existing_storage = comp.get("storage", [])
+                        existing_storage_names = {s.get("name") for s in existing_storage}
+                        for sc in storage_configs:
+                            if sc.get("name") not in existing_storage_names:
+                                existing_storage.append(sc)
+                        if existing_storage:
+                            comp["storage"] = existing_storage
+
+        return {
+            "services_added": services_added,
+            "services_skipped": services_skipped,
+            "components_updated": components_updated,
+            "warnings": warnings,
+        }

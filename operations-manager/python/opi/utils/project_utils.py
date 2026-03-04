@@ -290,12 +290,10 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     # Repository password from settings (supports plain:, age:, base64+age: prefixes)
     repo_password = settings.PROJECT_REPO_PASSWORD
 
-    # Parse project-level services using the service adapter
-    project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])
-
     # Build components list from form data
     components_list = []
-    if project_data.components:
+    has_explicit_components = bool(project_data.components)
+    if has_explicit_components:
         for idx, comp in enumerate(project_data.components):
             try:
                 component_config = await build_component_config(
@@ -318,19 +316,14 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
             components_list.append(component_config)
     else:
         # Default component if none specified
-        # Create fallback component with project-level services
+        # Services and storage will be added by add_services_to_project() below
         fallback_component_config = {
             "name": "main",
             "type": "deployment",
             "ports": {"inbound": [8080], "outbound": [80, 443]},
-            "uses-services": [service.value for service in project_services],
+            "uses-services": [],
             "uses-components": [],
         }
-
-        # Add storage configurations from project services
-        storage_configs = ServiceAdapter.create_storage_configs(project_services)
-        if storage_configs:
-            fallback_component_config["storage"] = storage_configs
 
         components_list.append(fallback_component_config)
 
@@ -422,7 +415,7 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         "display-name": project_data.display_name,
         "description": project_data.project_description or "Project created via self-service portal",
         "clusters": [project_data.cluster],
-        "services": [service.value for service in project_services],  # Project-level services
+        "services": [],  # Populated by add_services_to_project() below
         "config": config_section,
         "repositories": [
             {
@@ -437,6 +430,16 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         "components": components_list,
         "deployments": deployments_list,
     }
+
+    # Add project-level services using the shared service logic.
+    # For the default component case, also update its uses-services and storage.
+    service_names = project_data.services or []
+    if service_names:
+        ServiceAdapter.add_services_to_project(
+            project_config,
+            service_names=service_names,
+            component_names=["main"] if not has_explicit_components else None,
+        )
 
     # Add users if provided
     if project_data.user_email and project_data.user_role:
