@@ -2114,6 +2114,15 @@ class ProjectManager:
 
         Returns:
             True if all operations were successful, False otherwise
+
+        Note:
+            This method can only be called once per ProjectManager instance.
+            The finally block calls close(), which destroys git connectors and
+            their temp directories. The ProjectFileHandler caches file paths
+            from the first call, so a second call would reference deleted paths.
+            To process multiple deployments, call this method once without
+            deployment_name — process_project() handles all cluster deployments
+            internally.
         """
 
         if self._project_file_relative_path and relative_project_file_path != self._project_file_relative_path:
