@@ -14,7 +14,7 @@ Quick start:
 
 ```bash
 # Install required tools
-brew install go-task kind kubectl kustomize sops age ksops pwgen jq rsync skaffold
+brew install go-task kind kubectl kustomize sops age ksops pwgen jq yq rsync skaffold
 
 # Run the setup (interactive, takes ~5-10 minutes)
 task sandbox:setup
