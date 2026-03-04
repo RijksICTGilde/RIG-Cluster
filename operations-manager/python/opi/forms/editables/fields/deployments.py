@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from opi.forms.editables.editable import Editable
-from opi.forms.editables.validators import BaseDomainValidator, SubdomainValidator
+from opi.forms.editables.validators import BaseDomainValidator, DomainFormatValidator, SubdomainValidator
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -22,6 +22,12 @@ DEPLOYMENT_BASE_DOMAIN_EDITABLE = Editable(
 )
 DEPLOYMENT_DOMAIN_MODE_EDITABLE = Editable(
     yaml_path="deployments[*]/domain-mode", values_provider="DomainModeOptionsProvider"
+)
+DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = Editable(
+    yaml_path="deployments[*]/domain-format",
+    values_provider="DomainFormatOptionsProvider",
+    depends_on="deployments[*]/domain-mode",
+    validator=DomainFormatValidator(),
 )
 DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(yaml_path="deployments[*]/clone-from")
 
@@ -50,6 +56,7 @@ DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
         DEPLOYMENT_SUBDOMAIN_EDITABLE,
         DEPLOYMENT_BASE_DOMAIN_EDITABLE,
         DEPLOYMENT_DOMAIN_MODE_EDITABLE,
+        DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
         DEPLOYMENT_CLONE_FROM_EDITABLE,
         DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     ],

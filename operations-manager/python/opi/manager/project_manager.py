@@ -62,6 +62,7 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
+    DOMAIN_FORMAT_TEMPLATES,
     HostnameFormat,
     generate_argocd_application_name,
     generate_external_hostname,
@@ -4056,9 +4057,10 @@ class ProjectManager:
             base_domain = deployment.get("base-domain")
             issuer_config = deployment.get("issuer")
             domain_mode = deployment.get("domain-mode")
+            domain_format = deployment.get("domain-format")
             logger.info(
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
-                f"issuer: {issuer_config}, domain-mode: {domain_mode}"
+                f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}"
             )
 
             # Get ingress map using centralized function
@@ -4071,6 +4073,7 @@ class ProjectManager:
                 subdomain=subdomain,
                 base_domain=base_domain,
                 hostname_format=hostname_format,
+                domain_format=domain_format,
             )
             hostname = next(iter(ingress_map.values()))
 
@@ -4476,9 +4479,22 @@ class ProjectManager:
                                 f"Successfully created {manifest_file} manifest for {ingress_hostname}{path_value}: {manifest_file_path}"
                             )
 
-                    # Create root ingress for nice-url mode if this is the root component
+                    # Create root ingress for nice-url mode if this is the root component.
+                    # When domain-format is set, skip root ingress if the template does not
+                    # include {component} (all components already share the same hostname).
                     is_root_component = component.get("root") is True
-                    if domain_mode == "nice-url" and subdomain and base_domain and is_root_component:
+                    template_has_component = (
+                        "{component}" in (DOMAIN_FORMAT_TEMPLATES.get(domain_format, ("", ""))[0])
+                        if domain_format
+                        else True
+                    )
+                    if (
+                        domain_mode == "nice-url"
+                        and subdomain
+                        and base_domain
+                        and is_root_component
+                        and template_has_component
+                    ):
                         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
                         root_ingress_name = f"{deployment_name}-root"
                         root_manifest_name = generate_manifest_name(component_name, "ingress-root")

@@ -224,3 +224,16 @@ class BaseDomainValidator:
 
         is_valid, error_msg = validate_base_domain(str(value))
         return [error_msg] if not is_valid and error_msg else []
+
+
+class DomainFormatValidator:
+    """Validates that domain-format is a known template ID."""
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+
+        if str(value) not in DOMAIN_FORMAT_TEMPLATES:
+            return [f"Onbekend URL-formaat: {value}"]
+        return []

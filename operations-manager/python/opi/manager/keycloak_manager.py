@@ -113,6 +113,7 @@ class KeycloakManager:
             subdomain = deployment.get("subdomain")
             base_domain = deployment.get("base-domain")
             domain_mode = deployment.get("domain-mode")
+            domain_format = deployment.get("domain-format")
 
             if domain_mode == "nice-url":
                 logger.info(
@@ -141,6 +142,7 @@ class KeycloakManager:
                 subdomain=subdomain,
                 base_domain=base_domain,
                 hostname_format=HostnameFormat.from_domain_mode(domain_mode),
+                domain_format=domain_format,
             )
             if all_ingress_hosts:
                 logger.info(f"Generated hostnames for components: {all_ingress_hosts}")

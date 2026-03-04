@@ -11,6 +11,7 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     DEPLOYMENT_COMP_REFERENCE_EDITABLE,
     DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
+    DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
     DEPLOYMENT_DOMAIN_MODE_EDITABLE,
     DEPLOYMENT_NAME_EDITABLE,
     DEPLOYMENT_REPOSITORY_EDITABLE,
@@ -62,6 +63,13 @@ DEPLOYMENT_DOMAIN_MODE = EditableVisualizer(
     ),
 )
 
+DEPLOYMENT_DOMAIN_FORMAT = EditableVisualizer(
+    editable=DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="URL-formaat",
+    help_text="Het patroon waarmee hostnamen worden opgebouwd voor deze deployment.",
+)
+
 DEPLOYMENT_CLONE_FROM = EditableVisualizer(
     editable=DEPLOYMENT_CLONE_FROM_EDITABLE,
     widget=WidgetType.SELECT,
@@ -105,6 +113,7 @@ DEPLOYMENTS_SEQUENCE = EditableVisualizer(
         DEPLOYMENT_SUBDOMAIN,
         DEPLOYMENT_BASE_DOMAIN,
         DEPLOYMENT_DOMAIN_MODE,
+        DEPLOYMENT_DOMAIN_FORMAT,
         DEPLOYMENT_CLONE_FROM,
         DEPLOYMENT_COMPONENTS_SEQ,
     ],

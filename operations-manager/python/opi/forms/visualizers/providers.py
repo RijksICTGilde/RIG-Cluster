@@ -440,6 +440,71 @@ class RepositoryOptionsProvider:
         return [{"value": name, "label": name} for name in self.repository_names]
 
 
+class DomainFormatOptionsProvider:
+    """Provides domain-format template options.
+
+    Returns dot-separated templates when the cluster supports nice URLs,
+    dash-separated templates otherwise.  When ``domain_mode`` is ``nice-url``,
+    only dot templates are returned; for all other modes only dash templates.
+    When no mode is specified, all templates are returned.
+    """
+
+    def __init__(self, domain_mode: str | None = None) -> None:
+        self.domain_mode = domain_mode
+
+    def get_options(self) -> list[dict[str, Any]]:
+        dot_options = [
+            {
+                "value": "component-deployment-subdomain",
+                "label": "component.deployment.subdomain.domein",
+                "description": "Bijv. frontend.poc.moza.rijksapp.dev",
+            },
+            {
+                "value": "component-deployment-project",
+                "label": "component.deployment.project.domein",
+                "description": "Bijv. frontend.poc.myapp.rijksapp.dev",
+            },
+            {
+                "value": "deployment-subdomain",
+                "label": "deployment.subdomain.domein",
+                "description": "Bijv. poc.moza.rijksapp.dev",
+            },
+            {
+                "value": "deployment-project",
+                "label": "deployment.project.domein",
+                "description": "Bijv. poc.myapp.rijksapp.dev",
+            },
+        ]
+        dash_options = [
+            {
+                "value": "component-deployment-project",
+                "label": "component-deployment-project.domein",
+                "description": "Bijv. frontend-poc-myapp.kind (standaard)",
+            },
+            {
+                "value": "component-deployment-subdomain",
+                "label": "component-deployment-subdomain.domein",
+                "description": "Bijv. frontend-poc-moza.kind",
+            },
+            {
+                "value": "deployment-project",
+                "label": "deployment-project.domein",
+                "description": "Bijv. poc-myapp.kind",
+            },
+            {
+                "value": "deployment-subdomain",
+                "label": "deployment-subdomain.domein",
+                "description": "Bijv. poc-moza.kind",
+            },
+        ]
+
+        if self.domain_mode == "nice-url":
+            return dot_options
+        if self.domain_mode:
+            return dash_options
+        return dot_options + dash_options
+
+
 # Registry of all available providers
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
@@ -460,6 +525,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
+    "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
 }
 
 
