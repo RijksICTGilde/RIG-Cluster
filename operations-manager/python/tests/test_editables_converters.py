@@ -218,31 +218,76 @@ class TestKeycloakRealmsDisplayConverter:
 
 
 class TestKeyValueValidator:
-    def test_valid_env(self):
+    """Validates ENV and YAML key-value input via validate_and_parse_env_vars."""
+
+    # --- Valid ENV ---
+
+    def test_valid_env_single(self):
+        assert KeyValueValidator().validate("KEY=value") == []
+
+    def test_valid_env_multi(self):
         assert KeyValueValidator().validate("KEY=value\nOTHER=val2") == []
 
-    def test_valid_yaml(self):
+    def test_valid_env_with_comment(self):
+        assert KeyValueValidator().validate("# comment\nKEY=value") == []
+
+    def test_valid_env_equals_in_value(self):
+        assert KeyValueValidator().validate("KEY=val=ue") == []
+
+    def test_valid_env_empty_value(self):
+        assert KeyValueValidator().validate("KEY=") == []
+
+    # --- Valid YAML ---
+
+    def test_valid_yaml_single(self):
+        assert KeyValueValidator().validate("KEY: value") == []
+
+    def test_valid_yaml_multi(self):
         assert KeyValueValidator().validate("KEY: value\nOTHER: val2") == []
 
-    def test_valid_yaml_with_numbers(self):
-        assert KeyValueValidator().validate("PORT: 8080\nDEBUG: true") == []
+    def test_valid_yaml_integer_value(self):
+        assert KeyValueValidator().validate("PORT: 8080") == []
 
-    def test_empty_is_valid(self):
+    def test_valid_yaml_boolean_value(self):
+        assert KeyValueValidator().validate("DEBUG: true") == []
+
+    def test_valid_yaml_pipe_block(self):
+        assert KeyValueValidator().validate("CONFIG: |\n  line1\n  line2") == []
+
+    def test_valid_yaml_folded_block(self):
+        assert KeyValueValidator().validate("CONFIG: >\n  line1\n  line2") == []
+
+    # --- Empty / None ---
+
+    def test_empty_string(self):
         assert KeyValueValidator().validate("") == []
+
+    def test_none(self):
         assert KeyValueValidator().validate(None) == []
+
+    def test_whitespace_only(self):
         assert KeyValueValidator().validate("  ") == []
 
-    def test_invalid_env_missing_equals(self):
-        errors = KeyValueValidator().validate("KEY=value\nBADLINE")
+    # --- Invalid ---
+
+    def test_invalid_no_separator(self):
+        errors = KeyValueValidator().validate("BADLINE")
         assert len(errors) == 1
         assert "BADLINE" in errors[0]
 
-    def test_invalid_env_key_format(self):
+    def test_invalid_env_line_in_multi(self):
+        errors = KeyValueValidator().validate("KEY=value\nBADLINE")
+        assert len(errors) == 1
+
+    def test_invalid_env_key_starts_with_digit(self):
         errors = KeyValueValidator().validate("123BAD=value")
         assert len(errors) == 1
 
-    def test_comments_are_valid(self):
-        assert KeyValueValidator().validate("# comment\nKEY=value") == []
+    def test_invalid_yaml_unclosed_flow(self):
+        errors = KeyValueValidator().validate("KEY: [unclosed")
+        assert len(errors) == 1
 
-    def test_yaml_with_pipe_block(self):
-        assert KeyValueValidator().validate("CONFIG: |\n  line1\n  line2") == []
+    def test_invalid_yaml_list_value(self):
+        """Lists are not valid env var values — only scalars allowed."""
+        errors = KeyValueValidator().validate("ITEMS:\n  - one\n  - two")
+        assert len(errors) == 1
