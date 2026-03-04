@@ -1,47 +1,40 @@
 """Tests for the core editables dataclasses and protocols."""
 
 from opi.forms.editables.editable import (
-    Editable,
     EditableConverter,
     EditableEnforcer,
     EditableValidator,
-    WidgetType,
+    ProjectEditable,
 )
+from opi.forms.editables.flow import FlowMode, FormFlow
+from opi.forms.editables.part import EditablePart
 from opi.forms.layout import LayoutElement
-from opi.forms.visualizers.flows import FlowMode, FormFlow
-from opi.forms.visualizers.sections import FormSection
-from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
-class TestEditableVisualizer:
+class TestProjectEditable:
     def test_minimal_instantiation(self):
-        """Only required fields: Editable(yaml_path) + widget + label."""
-        vis = EditableVisualizer(
-            editable=Editable(yaml_path="name"),
-            widget=WidgetType.TEXT,
-            label="Naam",
-        )
-        assert vis.editable.yaml_path == "name"
-        assert str(vis.widget) == "text"
-        assert vis.label == "Naam"
-        assert vis.readonly is False
-        assert vis.editable.required is False
-        assert vis.children is None
-        assert vis.description is None
-        assert vis.placeholder is None
-        assert vis.editable.values_provider is None
-        assert vis.editable.converter is None
-        assert vis.editable.validator is None
-        assert vis.editable.enforcer is None
-        assert vis.readonly_on_edit is False
-        assert vis.editable.depends_on is None
-        assert vis.editable.show_when is None
-        assert vis.htmx_trigger is None
-        assert vis.htmx_target is None
-        assert vis.htmx_swap is None
-        assert vis.editable.min_items == 0
-        assert vis.editable.max_items is None
-        assert vis.attributes is None
+        """Only required fields: yaml_path, widget, label."""
+        editable = ProjectEditable(yaml_path="name", widget="text", label="Naam")
+        assert editable.yaml_path == "name"
+        assert editable.widget == "text"
+        assert editable.label == "Naam"
+        assert editable.readonly is False
+        assert editable.required is False
+        assert editable.children is None
+        assert editable.description is None
+        assert editable.placeholder is None
+        assert editable.options_provider is None
+        assert editable.converter is None
+        assert editable.validator is None
+        assert editable.enforcer is None
+        assert editable.readonly_on_edit is False
+        assert editable.depends_on is None
+        assert editable.show_when is None
+        assert editable.htmx_trigger is None
+        assert editable.htmx_target is None
+        assert editable.htmx_swap is None
+        assert editable.min_items == 0
+        assert editable.max_items is None
 
     def test_all_fields_populated(self):
         """All optional fields set."""
@@ -64,172 +57,153 @@ class TestEditableVisualizer:
             def enforce(self, value, context):
                 return value
 
-        vis = EditableVisualizer(
-            editable=Editable(
-                yaml_path="components[*]/name",
-                values_provider="ComponentTypeOptionsProvider",
-                converter=StubConverter(),
-                validator=StubValidator(),
-                enforcer=StubEnforcer(),
-                required=True,
-                depends_on="components[*]/type",
-                show_when={"type": ["single", "frontend"]},
-                min_items=1,
-                max_items=10,
-            ),
-            widget=WidgetType.TEXT,
+        editable = ProjectEditable(
+            yaml_path="components[*]/name",
+            widget="text",
             label="component.name",
             description="component.name.description",
             placeholder="component-1",
+            options_provider="ComponentTypeOptionsProvider",
+            converter=StubConverter(),
+            validator=StubValidator(),
+            enforcer=StubEnforcer(),
             readonly=True,
             readonly_on_edit=True,
+            required=True,
             children=[],
+            depends_on="components[*]/type",
+            show_when={"type": ["single", "frontend"]},
             htmx_trigger="change",
             htmx_target="#target",
             htmx_swap="innerHTML",
+            min_items=1,
+            max_items=10,
         )
-        assert vis.editable.yaml_path == "components[*]/name"
-        assert vis.description == "component.name.description"
-        assert vis.placeholder == "component-1"
-        assert vis.editable.values_provider == "ComponentTypeOptionsProvider"
-        assert vis.editable.converter is not None
-        assert vis.editable.validator is not None
-        assert vis.editable.enforcer is not None
-        assert vis.readonly is True
-        assert vis.readonly_on_edit is True
-        assert vis.editable.required is True
-        assert vis.children == []
-        assert vis.editable.depends_on == "components[*]/type"
-        assert vis.editable.show_when == {"type": ["single", "frontend"]}
-        assert vis.htmx_trigger == "change"
-        assert vis.htmx_target == "#target"
-        assert vis.htmx_swap == "innerHTML"
-        assert vis.editable.min_items == 1
-        assert vis.editable.max_items == 10
+        assert editable.yaml_path == "components[*]/name"
+        assert editable.description == "component.name.description"
+        assert editable.placeholder == "component-1"
+        assert editable.options_provider == "ComponentTypeOptionsProvider"
+        assert editable.converter is not None
+        assert editable.validator is not None
+        assert editable.enforcer is not None
+        assert editable.readonly is True
+        assert editable.readonly_on_edit is True
+        assert editable.required is True
+        assert editable.children == []
+        assert editable.depends_on == "components[*]/type"
+        assert editable.show_when == {"type": ["single", "frontend"]}
+        assert editable.htmx_trigger == "change"
+        assert editable.htmx_target == "#target"
+        assert editable.htmx_swap == "innerHTML"
+        assert editable.min_items == 1
+        assert editable.max_items == 10
 
     def test_children_list(self):
-        """Children can hold nested EditableVisualizers."""
-        child = EditableVisualizer(
-            editable=Editable(yaml_path="users[*]/email"),
-            widget=WidgetType.TEXT,
-            label="Email",
-        )
-        parent = EditableVisualizer(
-            editable=Editable(yaml_path="users"),
-            widget=WidgetType.SEQUENCE,
+        """Children can hold nested ProjectEditables."""
+        child = ProjectEditable(yaml_path="users[*]/email", widget="text", label="Email")
+        parent = ProjectEditable(
+            yaml_path="users",
+            widget="sequence",
             label="Gebruikers",
             children=[child],
         )
         assert parent.children is not None
         assert len(parent.children) == 1
-        assert parent.children[0].editable.yaml_path == "users[*]/email"
+        assert parent.children[0].yaml_path == "users[*]/email"
 
     def test_nested_children(self):
         """Children can be nested multiple levels deep."""
-        grandchild = EditableVisualizer(
-            editable=Editable(yaml_path="components[*]/storage[*]/name"),
-            widget=WidgetType.TEXT,
-            label="Naam",
-        )
-        child = EditableVisualizer(
-            editable=Editable(yaml_path="components[*]/storage"),
-            widget=WidgetType.SEQUENCE,
+        grandchild = ProjectEditable(yaml_path="components[*]/storage[*]/name", widget="text", label="Naam")
+        child = ProjectEditable(
+            yaml_path="components[*]/storage",
+            widget="sequence",
             label="Opslag",
             children=[grandchild],
         )
-        parent = EditableVisualizer(
-            editable=Editable(yaml_path="components"),
-            widget=WidgetType.SEQUENCE,
+        parent = ProjectEditable(
+            yaml_path="components",
+            widget="sequence",
             label="Componenten",
             children=[child],
         )
         assert parent.children is not None
         assert parent.children[0].children is not None
-        assert parent.children[0].children[0].editable.yaml_path == "components[*]/storage[*]/name"
+        assert parent.children[0].children[0].yaml_path == "components[*]/storage[*]/name"
 
 
-class TestFormSection:
+class TestEditablePart:
     def test_minimal_instantiation(self):
-        """Only required fields: section_id, title."""
-        section = FormSection(section_id="identity", title="Project")
-        assert section.section_id == "identity"
-        assert section.title == "Project"
-        assert section.editables == []
-        assert section.visible is True
-        assert section.is_readonly is False
-        assert section.icon is None
-        assert section.description is None
-        assert section.layout is None
-        assert section.summary_fn is None
-        assert section.enforcer is None
+        """Only required fields: part_id, title."""
+        part = EditablePart(part_id="identity", title="Project")
+        assert part.part_id == "identity"
+        assert part.title == "Project"
+        assert part.editables == []
+        assert part.in_create_wizard is True
+        assert part.is_readonly is False
+        assert part.icon is None
+        assert part.description is None
+        assert part.layout is None
+        assert part.wizard_step is None
+        assert part.summary_fn is None
+        assert part.enforcer is None
 
     def test_with_editables(self):
-        """Section with populated editables list."""
-        name = EditableVisualizer(
-            editable=Editable(yaml_path="name"),
-            widget=WidgetType.TEXT,
-            label="Naam",
-        )
-        desc = EditableVisualizer(
-            editable=Editable(yaml_path="description"),
-            widget=WidgetType.TEXTAREA,
-            label="Beschrijving",
-        )
-        section = FormSection(
-            section_id="identity",
+        """Part with populated editables list."""
+        name = ProjectEditable(yaml_path="name", widget="text", label="Naam")
+        desc = ProjectEditable(yaml_path="description", widget="textarea", label="Beschrijving")
+        part = EditablePart(
+            part_id="identity",
             title="Project",
             editables=[name, desc],
         )
-        assert len(section.editables) == 2
-        assert section.editables[0].editable.yaml_path == "name"
-        assert section.editables[1].editable.yaml_path == "description"
+        assert len(part.editables) == 2
+        assert part.editables[0].yaml_path == "name"
+        assert part.editables[1].yaml_path == "description"
 
     def test_with_layout(self):
-        """Section with a layout element."""
+        """Part with a layout element."""
         layout = LayoutElement(css_class="test-class")
-        section = FormSection(
-            section_id="identity",
+        part = EditablePart(
+            part_id="identity",
             title="Project",
             layout=layout,
         )
-        assert section.layout is not None
-        assert section.layout.css_class == "test-class"
+        assert part.layout is not None
+        assert part.layout.css_class == "test-class"
 
     def test_with_summary_fn(self):
-        """Section with a summary function."""
+        """Part with a summary function."""
 
         def my_summary(data: dict) -> str:
             return f"Project: {data.get('name', 'onbekend')}"
 
-        section = FormSection(
-            section_id="identity",
+        part = EditablePart(
+            part_id="identity",
             title="Project",
             summary_fn=my_summary,
         )
-        assert section.summary_fn is not None
-        assert section.summary_fn({"name": "test"}) == "Project: test"
+        assert part.summary_fn is not None
+        assert part.summary_fn({"name": "test"}) == "Project: test"
 
-    def test_readonly_section(self):
-        """Read-only section (e.g., config display)."""
-        section = FormSection(
-            section_id="config",
+    def test_readonly_part(self):
+        """Read-only part (e.g., config display)."""
+        part = EditablePart(
+            part_id="config",
             title="Configuratie",
             is_readonly=True,
-            visible=False,
+            in_create_wizard=False,
         )
-        assert section.is_readonly is True
-        assert section.visible is False
+        assert part.is_readonly is True
+        assert part.in_create_wizard is False
 
-    def test_conditional_visibility(self):
-        """Section with callable visibility."""
-        section = FormSection(
-            section_id="keycloak-config",
-            title="Keycloak",
-            visible=lambda data: "keycloak" in data.get("services", []),
+    def test_wizard_step_ordering(self):
+        """Parts can have wizard step numbers."""
+        part = EditablePart(
+            part_id="services",
+            title="Services",
+            wizard_step=2,
         )
-        assert callable(section.visible)
-        assert section.visible({"services": ["keycloak"]}) is True
-        assert section.visible({"services": []}) is False
+        assert part.wizard_step == 2
 
 
 class TestFormFlow:
@@ -237,35 +211,35 @@ class TestFormFlow:
         flow = FormFlow(flow_id="create", title="Aanmaken", mode=FlowMode.WIZARD)
         assert flow.mode == FlowMode.WIZARD
         assert flow.show_review is True
-        assert flow.sections == []
+        assert flow.parts == []
         assert flow.htmx_base_url == ""
-        assert flow.save_per_section is True
+        assert flow.save_per_part is True
 
     def test_tabs_mode(self):
         flow = FormFlow(
             flow_id="edit",
             title="Bewerken",
             mode=FlowMode.TABS,
-            htmx_base_url="/projects/test/sections",
+            htmx_base_url="/projects/test/parts",
         )
         assert flow.mode == FlowMode.TABS
-        assert flow.htmx_base_url == "/projects/test/sections"
+        assert flow.htmx_base_url == "/projects/test/parts"
 
-    def test_with_sections(self):
-        """Flow with multiple sections in order."""
-        s1 = FormSection(section_id="identity", title="Project")
-        s2 = FormSection(section_id="services", title="Services")
-        s3 = FormSection(section_id="users", title="Team")
+    def test_with_parts(self):
+        """Flow with multiple parts in order."""
+        part1 = EditablePart(part_id="identity", title="Project")
+        part2 = EditablePart(part_id="services", title="Services")
+        part3 = EditablePart(part_id="users", title="Team")
         flow = FormFlow(
             flow_id="create",
             title="Aanmaken",
             mode=FlowMode.WIZARD,
-            sections=[s1, s2, s3],
+            parts=[part1, part2, part3],
         )
-        assert len(flow.sections) == 3
-        assert flow.sections[0].section_id == "identity"
-        assert flow.sections[1].section_id == "services"
-        assert flow.sections[2].section_id == "users"
+        assert len(flow.parts) == 3
+        assert flow.parts[0].part_id == "identity"
+        assert flow.parts[1].part_id == "services"
+        assert flow.parts[2].part_id == "users"
 
     def test_flow_mode_values(self):
         """FlowMode enum values match expected strings."""

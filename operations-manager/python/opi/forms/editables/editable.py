@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import StrEnum
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -40,60 +39,32 @@ class EditableEnforcer(Protocol):
         ...
 
 
-@runtime_checkable
-class EditableGenerator(Protocol):
-    """Generates computed values at submit time.
-
-    Editables with a generator are not rendered in forms — their values
-    are computed from the merged YAML data during final submission.
-    """
-
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
-        """Compute a value from the current project data."""
-        ...
-
-
-class WidgetType(StrEnum):
-    """Enumeration of available widget types — no magic strings."""
-
-    TEXT = "text"
-    TEXTAREA = "textarea"
-    SELECT = "select"
-    CHECKBOX = "checkbox"
-    CHECKBOX_GROUP = "checkbox_group"
-    RADIO = "radio"
-    NUMBER = "number"
-    DATE = "date"
-    DATETIME = "datetime"
-    FILE = "file"
-    HIDDEN = "hidden"
-    SERVICE_CARDS = "service_cards"
-    DISPLAY_CARD = "display_card"
-    KEY_VALUE = "key_value"
-    MULTI_SELECT = "multi_select"
-    SEQUENCE = "sequence"
-
-
 @dataclass
-class Editable:
-    """Reusable field logic — pure data, no UI concerns.
+class ProjectEditable:
+    """
+    Declarative mapping from a YAML path to a form widget.
 
-    Defines *what* the data is: where it lives in YAML, how to validate,
-    convert, enforce, and generate values. Extractable to a standalone
-    package with zero UI dependencies.
+    Replaces per-field Pydantic model + FormMeta annotations.
+    The YAML dict IS the schema — no model boilerplate needed.
     """
 
     yaml_path: str
-    validator: EditableValidator | None = None
+    widget: str
+    label: str
+    description: str | None = None
+    placeholder: str | None = None
+    options_provider: str | None = None
     converter: EditableConverter | None = None
+    validator: EditableValidator | None = None
     enforcer: EditableEnforcer | None = None
-    generator: EditableGenerator | None = None
-    values_provider: str | None = None
+    readonly: bool = False
+    readonly_on_edit: bool = False
     required: bool = False
-    default: Any = None
-    children: list[Editable] | None = None
-    min_items: int = 0
-    max_items: int | None = None
+    children: list[ProjectEditable] | None = None
     depends_on: str | None = None
     show_when: dict[str, Any] | None = None
-    hooks: dict[str, Any] | None = field(default=None, repr=False)
+    htmx_trigger: str | None = None
+    htmx_target: str | None = None
+    htmx_swap: str | None = None
+    min_items: int = 0
+    max_items: int | None = None
