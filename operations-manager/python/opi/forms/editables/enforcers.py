@@ -59,6 +59,52 @@ class UniqueNamesEnforcer:
         return value
 
 
+def extract_service_names(services: list[Any]) -> list[str]:
+    """Extract service names from the mixed services list format.
+
+    Handles all formats in the services list:
+      - strings: "keycloak"
+      - service-keyed dicts: {"keycloak": {"config": ...}}
+      - legacy name dicts: {"name": "keycloak"}
+    """
+    result: list[str] = []
+    for svc in services:
+        if isinstance(svc, str):
+            result.append(svc)
+        elif isinstance(svc, dict):
+            if "name" in svc:
+                result.append(svc["name"])
+            else:
+                result.extend(svc.keys())
+    return result
+
+
+class ComponentServicesEnforcer:
+    """Section-level enforcer: validates all components' uses-services."""
+
+    def enforce(self, yaml_data: Any, context: dict[str, Any]) -> Any:
+        services = extract_service_names(yaml_data.get("services", []))
+        if not services:
+            return yaml_data
+
+        components = yaml_data.get("components", [])
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+            uses = comp.get("uses-services", [])
+            if uses == "__all__" or not isinstance(uses, list):
+                continue
+            invalid = [s for s in uses if s not in services]
+            if invalid:
+                comp_name = comp.get("name", "onbekend")
+                invalid_str = ", ".join(invalid)
+                raise ValueError(
+                    f"Component '{comp_name}' gebruikt ongeldige services: {invalid_str}. "
+                    f"Beschikbare services: {', '.join(services)}"
+                )
+        return yaml_data
+
+
 class ServiceDependencyEnforcer:
     """Ensures component services are valid project-level services."""
 

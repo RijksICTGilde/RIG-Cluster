@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.forms.editables.enforcers import ComponentServicesEnforcer, extract_service_names
 from opi.forms.layout import Fieldset, Sequence, TemplatePartial
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
@@ -38,25 +39,10 @@ from opi.forms.visualizers.sections import FormSection
 
 
 def _extract_services(data: dict[str, Any]) -> list[str]:
-    """Extract active service names from wizard form data.
-
-    Handles all formats in the services list:
-      - strings: "keycloak"
-      - service-keyed dicts: {"keycloak": {"config": ...}}
-      - legacy name dicts: {"name": "keycloak"}
-    """
+    """Extract active service names from wizard form data."""
     services = data.get("services", [])
     if isinstance(services, list):
-        result: list[str] = []
-        for svc in services:
-            if isinstance(svc, str):
-                result.append(svc)
-            elif isinstance(svc, dict):
-                if "name" in svc:
-                    result.append(svc["name"])
-                else:
-                    result.extend(svc.keys())
-        return result
+        return extract_service_names(services)
     return []
 
 
@@ -100,6 +86,7 @@ COMPONENTS_SECTION = FormSection(
     title="Componenten",
     icon="puzzel",
     description="Definieer de applicatiecomponenten",
+    enforcer=ComponentServicesEnforcer(),
     editables=[COMPONENTS_SEQUENCE],
     layout=[
         Sequence(

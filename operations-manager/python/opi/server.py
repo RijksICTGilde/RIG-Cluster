@@ -83,9 +83,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     _worker_asyncio_task = None
     if settings.TASK_WORKER_ENABLED:
         try:
-            from opi.core.async_task_service import AsyncTaskService, TaskType
+            from opi.core.async_task_service import AsyncTaskService, TaskType  # type: ignore[reportMissingImports]
             from opi.core.database_pools import get_database_pool
-            from opi.core.task_worker import TaskWorker
+            from opi.core.task_worker import TaskWorker  # type: ignore[reportMissingImports]
 
             pool = get_database_pool("main")
             task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
@@ -94,16 +94,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
             # Register handlers (imported locally to avoid circular imports)
-            from opi.core.task_handlers_deployment import (
+            from opi.core.task_handlers_deployment import (  # type: ignore[reportMissingImports]
                 handle_delete_deployment,
                 handle_update_image,
             )
-            from opi.core.task_handlers_operations import (
+            from opi.core.task_handlers_operations import (  # type: ignore[reportMissingImports]
                 handle_clone_bucket,
                 handle_clone_database,
                 handle_refresh_deployment,
             )
-            from opi.core.task_handlers_project import (
+            from opi.core.task_handlers_project import (  # type: ignore[reportMissingImports]
                 handle_create_project,
                 handle_upsert_deployment,
             )
@@ -123,7 +123,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     else:
         # Frontend-only mode: still create task_service for API endpoints
         try:
-            from opi.core.async_task_service import AsyncTaskService
+            from opi.core.async_task_service import AsyncTaskService  # type: ignore[reportMissingImports]
             from opi.core.database_pools import get_database_pool
 
             pool = get_database_pool("main")

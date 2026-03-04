@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from opi.forms.editables.enforcers import (
     AdminRequiredEnforcer,
+    ComponentServicesEnforcer,
     ServiceDependencyEnforcer,
     UniqueNamesEnforcer,
 )
@@ -105,3 +106,66 @@ class TestServiceDependencyEnforcer:
     def test_none_value(self):
         result = ServiceDependencyEnforcer().enforce(None, {})
         assert result is None
+
+
+class TestComponentServicesEnforcer:
+    def _make_data(self, services, components):
+        return {"services": services, "components": components}
+
+    def test_valid_services_pass(self):
+        data = self._make_data(
+            ["keycloak", "redis"],
+            [{"name": "web", "uses-services": ["keycloak"]}],
+        )
+        result = ComponentServicesEnforcer().enforce(data, data)
+        assert result is data
+
+    def test_invalid_service_raises_with_component_name(self):
+        data = self._make_data(
+            ["keycloak"],
+            [{"name": "web", "uses-services": ["nonexistent"]}],
+        )
+        with pytest.raises(ValueError, match=r"Component 'web'.*nonexistent"):
+            ComponentServicesEnforcer().enforce(data, data)
+
+    def test_all_default_allowed(self):
+        data = self._make_data(
+            ["keycloak"],
+            [{"name": "web", "uses-services": "__all__"}],
+        )
+        result = ComponentServicesEnforcer().enforce(data, data)
+        assert result is data
+
+    def test_empty_services_skips_validation(self):
+        data = self._make_data(
+            [],
+            [{"name": "web", "uses-services": ["anything"]}],
+        )
+        result = ComponentServicesEnforcer().enforce(data, data)
+        assert result is data
+
+    def test_component_without_uses_services(self):
+        data = self._make_data(
+            ["keycloak"],
+            [{"name": "web"}],
+        )
+        result = ComponentServicesEnforcer().enforce(data, data)
+        assert result is data
+
+    def test_dict_format_services(self):
+        """Handles service-keyed dict format like {"keycloak": {...}}."""
+        data = self._make_data(
+            [{"keycloak": {"config": {}}}],
+            [{"name": "web", "uses-services": ["keycloak"]}],
+        )
+        result = ComponentServicesEnforcer().enforce(data, data)
+        assert result is data
+
+    def test_legacy_name_dict_services(self):
+        """Handles legacy {"name": "keycloak"} format."""
+        data = self._make_data(
+            [{"name": "keycloak"}],
+            [{"name": "web", "uses-services": ["keycloak"]}],
+        )
+        result = ComponentServicesEnforcer().enforce(data, data)
+        assert result is data

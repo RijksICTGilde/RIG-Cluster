@@ -68,7 +68,7 @@ class FormState:
         """Get a field value with optional default."""
         return self.data.get(field_name, default)
 
-    def set_field_value[T](self, field_name: str, value: T) -> None:
+    def set_field_value(self, field_name: str, value: object) -> None:
         """Set a field value."""
         self.data[field_name] = value
 

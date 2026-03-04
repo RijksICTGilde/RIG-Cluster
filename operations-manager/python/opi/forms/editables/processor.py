@@ -162,7 +162,7 @@ class EditableFormProcessor:
         for section in sections:
             if section.enforcer:
                 try:
-                    section.enforcer.enforce(yaml_data, {})
+                    section.enforcer.enforce(yaml_data, yaml_data)
                 except ValueError as e:
                     global_errors.append(str(e))
         return global_errors
