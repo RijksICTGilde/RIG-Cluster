@@ -19,39 +19,34 @@ from opi.forms.editables.validators import (
 # Pure Editable definitions (data logic only)
 # ===========================================================================
 
-DOMAIN_MODE_EDITABLE = Editable(
-    yaml_path="deployments[0]/domain-mode",
-    default="component-specific",
-    values_provider="DomainModeOptionsProvider",
+DOMAIN_FORMAT_EDITABLE = Editable(
+    yaml_path="deployments[0]/domain-format",
+    required=True,
+    default="component-deployment-project",
+    values_provider="DomainFormatOptionsProvider",
+    validator=DomainFormatValidator(),
 )
 
 DOMAIN_SUBDOMAIN_EDITABLE = Editable(
     yaml_path="deployments[0]/subdomain",
-    depends_on="deployments[0]/domain-mode",
-    show_when={"value": ["custom", "nice-url"]},
+    depends_on="deployments[0]/domain-format",
+    show_when={"value": ["component-deployment-subdomain", "deployment-subdomain"]},
     validator=SubdomainValidator(),
 )
 
 DOMAIN_BASE_DOMAIN_EDITABLE = Editable(
     yaml_path="deployments[0]/base-domain",
     values_provider="ClusterBaseDomainOptionsProvider",
-    depends_on="deployments[0]/domain-mode",
-    show_when={"value": "nice-url"},
+    depends_on="deployments[0]/domain-format",
+    show_when={"value": ["component-deployment-subdomain", "deployment-subdomain"]},
     validator=BaseDomainValidator(),
-)
-
-DOMAIN_FORMAT_EDITABLE = Editable(
-    yaml_path="deployments[0]/domain-format",
-    values_provider="DomainFormatOptionsProvider",
-    depends_on="deployments[0]/domain-mode",
-    validator=DomainFormatValidator(),
 )
 
 DOMAIN_ROOT_COMPONENT_EDITABLE = Editable(
     yaml_path="deployments[0]/root-component",
     values_provider="ComponentReferenceOptionsProvider",
-    depends_on="deployments[0]/domain-mode",
-    show_when={"value": "nice-url"},
+    depends_on="deployments[0]/domain-format",
+    show_when={"value": ["deployment-project", "deployment-subdomain"]},
 )
 
 WIZARD_DEPLOYMENT_NAME_EDITABLE = Editable(

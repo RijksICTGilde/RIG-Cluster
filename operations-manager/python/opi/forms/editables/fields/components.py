@@ -94,11 +94,15 @@ COMPONENT_PATH_EDITABLE = Editable(
     yaml_path="components[*]/path",
     default="/",
     validator=PathValidator(),
+    depends_on="deployments[0]/domain-format",
+    show_when={"value": ["deployment-project", "deployment-subdomain"]},
 )
 
 COMPONENT_REWRITE_PATH_EDITABLE = Editable(
     yaml_path="components[*]/rewrite-path",
     validator=PathValidator(),
+    depends_on="deployments[0]/domain-format",
+    show_when={"value": ["deployment-project", "deployment-subdomain"]},
 )
 
 COMPONENT_ALIASES_EDITABLE = Editable(

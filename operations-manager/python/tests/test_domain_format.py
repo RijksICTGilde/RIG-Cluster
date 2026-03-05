@@ -7,11 +7,16 @@ Tests the configurable hostname template system:
 - get_component_ingress_map with domain_format parameter
 - get_deployment_hostnames with domain_format parameter
 - Backward compatibility (domain_format=None)
-- DomainFormatOptionsProvider filtering
+- DomainFormatOptionsProvider
 - DomainFormatValidator
+- DomainModeGenerator
+- Per-domain dot support
+- Cross-step visibility (path/rewrite-path)
 """
 
 import pytest
+from opi.core.cluster_config import get_domain_supports_dots, get_nice_url_supported_domains
+from opi.forms.editables.generators import DomainModeGenerator
 from opi.forms.editables.validators import DomainFormatValidator
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
 from opi.utils.naming import (
@@ -244,34 +249,29 @@ class TestGetDeploymentHostnamesWithDomainFormat:
 
 
 class TestDomainFormatOptionsProvider:
-    def test_nice_url_mode_returns_dot_options(self):
-        provider = DomainFormatOptionsProvider(domain_mode="nice-url")
+    def test_returns_four_options(self):
+        provider = DomainFormatOptionsProvider()
         options = provider.get_options()
-        values = [o["value"] for o in options]
-        assert len(values) == 4
-        # Dot options have dot-separated labels
-        for opt in options:
-            assert "." in opt["label"]
-
-    def test_other_mode_returns_dash_options(self):
-        provider = DomainFormatOptionsProvider(domain_mode="component-specific")
-        options = provider.get_options()
-        values = [o["value"] for o in options]
-        assert len(values) == 4
-        # Dash options have dash-separated labels
-        for opt in options:
-            assert "-" in opt["label"]
-
-    def test_no_mode_returns_all_options(self):
-        provider = DomainFormatOptionsProvider(domain_mode=None)
-        options = provider.get_options()
-        # Should return both dot and dash sets
-        assert len(options) == 8
+        assert len(options) == 4
 
     def test_all_values_are_valid_template_ids(self):
         provider = DomainFormatOptionsProvider()
         for opt in provider.get_options():
             assert opt["value"] in DOMAIN_FORMAT_TEMPLATES
+
+    def test_expected_values(self):
+        provider = DomainFormatOptionsProvider()
+        values = [o["value"] for o in provider.get_options()]
+        assert "component-deployment-project" in values
+        assert "component-deployment-subdomain" in values
+        assert "deployment-project" in values
+        assert "deployment-subdomain" in values
+
+    def test_all_options_have_description(self):
+        provider = DomainFormatOptionsProvider()
+        for opt in provider.get_options():
+            assert "description" in opt
+            assert len(opt["description"]) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -334,3 +334,129 @@ class TestDomainFormatTemplates:
     def test_default_format_values_are_valid(self):
         for mode, fmt in DOMAIN_MODE_DEFAULT_FORMAT.items():
             assert fmt in DOMAIN_FORMAT_TEMPLATES, f"Default format '{fmt}' for mode '{mode}' not in templates"
+
+
+# ---------------------------------------------------------------------------
+# DomainModeGenerator
+# ---------------------------------------------------------------------------
+
+
+class TestDomainModeGenerator:
+    def test_derives_component_specific(self):
+        gen = DomainModeGenerator()
+        data = {"deployments": [{"domain-format": "component-deployment-project"}]}
+        assert gen.generate(data) == "component-specific"
+
+    def test_derives_nice_url(self):
+        gen = DomainModeGenerator()
+        data = {"deployments": [{"domain-format": "component-deployment-subdomain"}]}
+        assert gen.generate(data) == "nice-url"
+
+    def test_derives_deployment_name(self):
+        gen = DomainModeGenerator()
+        data = {"deployments": [{"domain-format": "deployment-project"}]}
+        assert gen.generate(data) == "deployment-name"
+
+    def test_derives_custom(self):
+        gen = DomainModeGenerator()
+        data = {"deployments": [{"domain-format": "deployment-subdomain"}]}
+        assert gen.generate(data) == "custom"
+
+    def test_defaults_when_no_deployments(self):
+        gen = DomainModeGenerator()
+        assert gen.generate({}) == "component-specific"
+        assert gen.generate({"deployments": []}) == "component-specific"
+
+    def test_defaults_when_no_format(self):
+        gen = DomainModeGenerator()
+        data = {"deployments": [{}]}
+        assert gen.generate(data) == "component-specific"
+
+    def test_unknown_format_defaults(self):
+        gen = DomainModeGenerator()
+        data = {"deployments": [{"domain-format": "unknown-format"}]}
+        assert gen.generate(data) == "component-specific"
+
+
+# ---------------------------------------------------------------------------
+# Per-domain dot support
+# ---------------------------------------------------------------------------
+
+
+class TestPerDomainDotSupport:
+    def test_get_domain_supports_dots_true(self):
+        assert get_domain_supports_dots("local", "kind") is True
+
+    def test_get_domain_supports_dots_unknown_domain(self):
+        assert get_domain_supports_dots("local", "nonexistent.domain") is False
+
+    def test_get_nice_url_supported_domains_extracts_strings(self):
+        domains = get_nice_url_supported_domains("local")
+        assert "kind" in domains
+        assert "local" in domains
+        assert all(isinstance(d, str) for d in domains)
+
+    def test_get_domain_supports_dots_production(self):
+        assert get_domain_supports_dots("odcn-production", "rijks.app") is True
+
+
+# ---------------------------------------------------------------------------
+# Cross-step visibility (path/rewrite-path based on domain-format)
+# ---------------------------------------------------------------------------
+
+
+class TestComponentPathCrossStepDependency:
+    def test_path_depends_on_domain_format(self):
+        from opi.forms.editables.fields.components import COMPONENT_PATH_EDITABLE
+
+        assert COMPONENT_PATH_EDITABLE.depends_on == "deployments[0]/domain-format"
+
+    def test_path_visible_for_shared_formats(self):
+        from opi.forms.editables.fields.components import COMPONENT_PATH_EDITABLE
+
+        assert COMPONENT_PATH_EDITABLE.show_when == {"value": ["deployment-project", "deployment-subdomain"]}
+
+    def test_rewrite_path_depends_on_domain_format(self):
+        from opi.forms.editables.fields.components import COMPONENT_REWRITE_PATH_EDITABLE
+
+        assert COMPONENT_REWRITE_PATH_EDITABLE.depends_on == "deployments[0]/domain-format"
+
+    def test_rewrite_path_visible_for_shared_formats(self):
+        from opi.forms.editables.fields.components import COMPONENT_REWRITE_PATH_EDITABLE
+
+        assert COMPONENT_REWRITE_PATH_EDITABLE.show_when == {"value": ["deployment-project", "deployment-subdomain"]}
+
+
+# ---------------------------------------------------------------------------
+# Domain editables show_when configuration
+# ---------------------------------------------------------------------------
+
+
+class TestDomainEditablesShowWhen:
+    def test_subdomain_shows_for_subdomain_formats(self):
+        from opi.forms.editables.fields.domains import DOMAIN_SUBDOMAIN_EDITABLE
+
+        assert DOMAIN_SUBDOMAIN_EDITABLE.depends_on == "deployments[0]/domain-format"
+        assert DOMAIN_SUBDOMAIN_EDITABLE.show_when == {
+            "value": ["component-deployment-subdomain", "deployment-subdomain"]
+        }
+
+    def test_base_domain_shows_for_subdomain_formats(self):
+        from opi.forms.editables.fields.domains import DOMAIN_BASE_DOMAIN_EDITABLE
+
+        assert DOMAIN_BASE_DOMAIN_EDITABLE.depends_on == "deployments[0]/domain-format"
+        assert DOMAIN_BASE_DOMAIN_EDITABLE.show_when == {
+            "value": ["component-deployment-subdomain", "deployment-subdomain"]
+        }
+
+    def test_root_component_shows_for_shared_formats(self):
+        from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
+
+        assert DOMAIN_ROOT_COMPONENT_EDITABLE.depends_on == "deployments[0]/domain-format"
+        assert DOMAIN_ROOT_COMPONENT_EDITABLE.show_when == {"value": ["deployment-project", "deployment-subdomain"]}
+
+    def test_domain_format_is_required_with_default(self):
+        from opi.forms.editables.fields.domains import DOMAIN_FORMAT_EDITABLE
+
+        assert DOMAIN_FORMAT_EDITABLE.required is True
+        assert DOMAIN_FORMAT_EDITABLE.default == "component-deployment-project"

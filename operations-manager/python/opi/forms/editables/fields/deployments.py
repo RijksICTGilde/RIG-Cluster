@@ -26,7 +26,6 @@ DEPLOYMENT_DOMAIN_MODE_EDITABLE = Editable(
 DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = Editable(
     yaml_path="deployments[*]/domain-format",
     values_provider="DomainFormatOptionsProvider",
-    depends_on="deployments[*]/domain-mode",
     validator=DomainFormatValidator(),
 )
 DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(yaml_path="deployments[*]/clone-from")

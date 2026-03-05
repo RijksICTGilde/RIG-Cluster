@@ -370,13 +370,18 @@ class ClusterBaseDomainOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get base domain options, optionally filtered by cluster."""
+
+        def _extract_domain(entry: str | dict[str, Any]) -> str:
+            return entry["domain"] if isinstance(entry, dict) else entry
+
         if not self.cluster or self.cluster not in CLUSTER_CONFIG:
             all_domains: set[str] = set()
             for config in CLUSTER_CONFIG.values():
                 for d in config.get("nice_url", {}).get("supported_domains", []):
-                    all_domains.add(d)
+                    all_domains.add(_extract_domain(d))
             return [{"value": d, "label": d} for d in sorted(all_domains)]
-        domains = CLUSTER_CONFIG[self.cluster].get("nice_url", {}).get("supported_domains", [])
+        raw = CLUSTER_CONFIG[self.cluster].get("nice_url", {}).get("supported_domains", [])
+        domains = [_extract_domain(d) for d in raw]
         return [{"value": d, "label": d} for d in domains]
 
 
@@ -443,66 +448,33 @@ class RepositoryOptionsProvider:
 class DomainFormatOptionsProvider:
     """Provides domain-format template options.
 
-    Returns dot-separated templates when the cluster supports nice URLs,
-    dash-separated templates otherwise.  When ``domain_mode`` is ``nice-url``,
-    only dot templates are returned; for all other modes only dash templates.
-    When no mode is specified, all templates are returned.
+    Returns all four format options with clear descriptions.
+    Domain-format is now the primary UI control (replaces domain-mode).
     """
 
-    def __init__(self, domain_mode: str | None = None) -> None:
-        self.domain_mode = domain_mode
-
     def get_options(self) -> list[dict[str, Any]]:
-        dot_options = [
-            {
-                "value": "component-deployment-subdomain",
-                "label": "component.deployment.subdomain.domein",
-                "description": "Bijv. frontend.poc.moza.rijksapp.dev",
-            },
-            {
-                "value": "component-deployment-project",
-                "label": "component.deployment.project.domein",
-                "description": "Bijv. frontend.poc.myapp.rijksapp.dev",
-            },
-            {
-                "value": "deployment-subdomain",
-                "label": "deployment.subdomain.domein",
-                "description": "Bijv. poc.moza.rijksapp.dev",
-            },
-            {
-                "value": "deployment-project",
-                "label": "deployment.project.domein",
-                "description": "Bijv. poc.myapp.rijksapp.dev",
-            },
-        ]
-        dash_options = [
+        return [
             {
                 "value": "component-deployment-project",
                 "label": "component-deployment-project.domein",
-                "description": "Bijv. frontend-poc-myapp.kind (standaard)",
+                "description": "Elk component krijgt een eigen URL (standaard)",
             },
             {
                 "value": "component-deployment-subdomain",
                 "label": "component-deployment-subdomain.domein",
-                "description": "Bijv. frontend-poc-moza.kind",
+                "description": "Eigen URL per component met een subdomein",
             },
             {
                 "value": "deployment-project",
                 "label": "deployment-project.domein",
-                "description": "Bijv. poc-myapp.kind",
+                "description": "Alle componenten op dezelfde URL, verschillende paden",
             },
             {
                 "value": "deployment-subdomain",
                 "label": "deployment-subdomain.domein",
-                "description": "Bijv. poc-moza.kind",
+                "description": "Gedeelde URL met subdomein, verschillende paden",
             },
         ]
-
-        if self.domain_mode == "nice-url":
-            return dot_options
-        if self.domain_mode:
-            return dash_options
-        return dot_options + dash_options
 
 
 # Registry of all available providers

@@ -48,7 +48,10 @@ CLUSTER_CONFIG = {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
         "nice_url": {
-            "supported_domains": ["kind", "local"],  # Domains that support nice URL pattern
+            "supported_domains": [
+                {"domain": "kind", "supports_dots": True},
+                {"domain": "local", "supports_dots": True},
+            ],
         },
     },
     "sandboxed-local": {
@@ -79,7 +82,11 @@ CLUSTER_CONFIG = {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
         "nice_url": {
-            "supported_domains": ["sandbox.rijksapp.dev", "rijksapp.nl", "rijksapp.dev"],
+            "supported_domains": [
+                {"domain": "sandbox.rijksapp.dev", "supports_dots": True},
+                {"domain": "rijksapp.nl", "supports_dots": True},
+                {"domain": "rijksapp.dev", "supports_dots": True},
+            ],
         },
     },
     "odcn-production": {
@@ -112,11 +119,11 @@ CLUSTER_CONFIG = {
         },
         "nice_url": {
             "supported_domains": [
-                "rijks.app",
-                "rijksapps.nl",
-                "rijksapp.nl",
-                "rijksapp.dev",
-            ],  # Domains that support nice URL pattern
+                {"domain": "rijks.app", "supports_dots": True},
+                {"domain": "rijksapps.nl", "supports_dots": True},
+                {"domain": "rijksapp.nl", "supports_dots": True},
+                {"domain": "rijksapp.dev", "supports_dots": True},
+            ],
         },
     },
 }
@@ -705,6 +712,9 @@ def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
     """
     Get the list of domains that support nice URLs for a specific cluster.
 
+    Extracts domain strings from the structured supported_domains list
+    for backward compatibility.
+
     Args:
         cluster_name: Name of the cluster
 
@@ -718,7 +728,8 @@ def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
     nice_url_config = get_nice_url_config(cluster_name)
     if nice_url_config is None:
         return []
-    return nice_url_config.get("supported_domains", [])
+    raw = nice_url_config.get("supported_domains", [])
+    return [entry["domain"] if isinstance(entry, dict) else entry for entry in raw]
 
 
 def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
@@ -737,3 +748,26 @@ def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
     """
     supported_domains = get_nice_url_supported_domains(cluster_name)
     return base_domain in supported_domains
+
+
+def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
+    """
+    Check if a specific domain supports dot-separated hostnames on a cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The domain to check (e.g., "rijks.app")
+
+    Returns:
+        True if the domain supports dot-separated hostnames, False otherwise.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return False
+    for entry in nice_url_config.get("supported_domains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry.get("supports_dots", False)
+    return False

@@ -184,8 +184,9 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 13 children: storage sequence hidden because no storage services selected
-        assert len(first_item.children) == 13
+        # 11 children: storage sequences hidden (no storage services),
+        # path/rewrite-path hidden (domain-format not set to shared format)
+        assert len(first_item.children) == 11
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -197,8 +198,9 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 14 children: storage sequence visible because persistent-storage is enabled
-        assert len(first_item.children) == 14
+        # 12 children: storage sequence visible (persistent-storage enabled),
+        # path/rewrite-path still hidden (domain-format not set to shared format)
+        assert len(first_item.children) == 12
 
 
 class TestNestedSequenceRendering:
@@ -379,7 +381,7 @@ SAMPLE_YAML_WITH_DOMAIN = {
     "deployments": [
         {
             **SAMPLE_YAML["deployments"][0],
-            "domain-mode": "nice-url",
+            "domain-format": "component-deployment-project",
             "subdomain": "mijnapp",
             "base-domain": "rijksapp.nl",
             "root-component": "frontend",
@@ -399,7 +401,7 @@ class TestDomainSectionRendering:
             yaml_data=SAMPLE_YAML_WITH_DOMAIN,
             layout=DOMAIN_SECTION.layout,
         )
-        assert "Domeinmodus" in html
+        assert "URL-formaat" in html
 
     def test_domain_section_has_four_editables(self):
         from opi.forms.visualizers.wizard_sections import DOMAIN_SECTION
