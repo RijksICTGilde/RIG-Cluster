@@ -25,23 +25,19 @@
     {% if health_counts is defined %}
         {% if health_counts.Degraded > 0 %}
         <c-alert kind="error" heading="{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen" maxWidth="lg">
-            <div class="health-alert-projects">
+            <c-layout-flow gap="xs">
                 {% for project in projects if project.health == 'Degraded' %}
-                <a href="/projects/details/{{ project.name }}#deployment-status" class="health-project-link">
-                    {{ project.display_name }} - Bekijk deployment status
-                </a>
+                <c-link content="{{ project.display_name }} - Bekijk deployment status" href="/projects/details/{{ project.name }}#deployment-status" weight="bold" />
                 {% endfor %}
-            </div>
+            </c-layout-flow>
         </c-alert>
         {% elif health_counts.Progressing > 0 %}
         <c-alert kind="warning" heading="{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt" maxWidth="lg">
-            <div class="health-alert-projects">
+            <c-layout-flow gap="xs">
                 {% for project in projects if project.health == 'Progressing' %}
-                <a href="/projects/details/{{ project.name }}#deployment-status" class="health-project-link">
-                    {{ project.display_name }} - Bekijk deployment status
-                </a>
+                <c-link content="{{ project.display_name }} - Bekijk deployment status" href="/projects/details/{{ project.name }}#deployment-status" weight="bold" />
                 {% endfor %}
-            </div>
+            </c-layout-flow>
         </c-alert>
         {% elif health_counts.Healthy > 0 %}
         <c-alert kind="success" heading="Alle {{ health_counts.Healthy }} project{{ 'en' if health_counts.Healthy != 1 }} {{ 'zijn' if health_counts.Healthy != 1 else 'is' }} gezond" maxWidth="lg" />
@@ -283,23 +279,6 @@
 
 {% block additional_styles %}
 <style>
-    /* Health Alert Links */
-    .health-alert-projects {
-        display: flex;
-        flex-direction: column;
-        gap: var(--rvo-space-xs);
-        margin-top: var(--rvo-space-xs);
-    }
-
-    .health-project-link {
-        font-weight: 500;
-        text-decoration: underline;
-    }
-
-    .health-project-link:hover {
-        text-decoration: none;
-    }
-
     /* Stats Grid */
     .stats-grid {
         display: grid;
