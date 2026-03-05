@@ -37,9 +37,9 @@ from typing import Any
 _SEGMENT_RE = re.compile(
     r"^(?P<key>[^\[\{]+)"
     r"(?:"
-    r"  \[(?P<idx>\d+|\*)\]"       # [N] or [*]
+    r"  \[(?P<idx>\d+|\*)\]"  # [N] or [*]
     r"  |"
-    r"  \{(?P<filter>[^\}]+)\}"    # {K} or {F=V}
+    r"  \{(?P<filter>[^\}]+)\}"  # {K} or {F=V}
     r")?$",
     re.VERBOSE,
 )
@@ -263,16 +263,23 @@ def _filter_ensure(lst: list[Any], filt: str) -> dict[str, Any]:
         return new_item
 
     # {K} — dict-key filter in mixed list
-    for i, item in enumerate(lst):
-        if isinstance(item, str) and item == filt:
-            # Promote string to dict
-            promoted: dict[str, Any] = {filt: {}}
-            lst[i] = promoted
-            return promoted[filt]
+    # First pass: prefer an existing dict entry (avoids duplicates when
+    # the list contains both a plain string and a dict for the same key).
+    for item in lst:
         if isinstance(item, dict) and filt in item:
             if not isinstance(item[filt], dict):
                 item[filt] = {}
+            # Remove any leftover plain string duplicate
+            while filt in lst:
+                lst.remove(filt)
             return item[filt]
+
+    # Second pass: promote a plain string to a dict
+    for i, item in enumerate(lst):
+        if isinstance(item, str) and item == filt:
+            promoted: dict[str, Any] = {filt: {}}
+            lst[i] = promoted
+            return promoted[filt]
 
     # Not found — create
     new_entry = {filt: {}}

@@ -23,3 +23,6 @@ class ServiceType(Enum):
     # Cache services
     REDIS = "redis"
     NAMESPACE_REDIS = "namespace-redis"
+
+    # Platform services (always-on, not user-selectable)
+    PLATFORM = "platform"

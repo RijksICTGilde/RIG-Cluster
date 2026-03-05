@@ -282,6 +282,23 @@ class RedisVariables(Enum):
     )
 
 
+class PlatformVariables(Enum):
+    """Platform-provided variable definitions - always available in every deployment."""
+
+    DEPLOYMENT_NAME = VariableDefinition(
+        name="DEPLOYMENT_NAME",
+        description="Naam van het huidige deployment",
+        source="secret",
+        secret_key="deployment_name",
+    )
+    COMPONENT_NAME = VariableDefinition(
+        name="COMPONENT_NAME",
+        description="Naam van het huidige component",
+        source="secret",
+        secret_key="component_name",
+    )
+
+
 class WebVariables(Enum):
     """Web publishing service variable definitions - single source of truth."""
 
@@ -390,6 +407,16 @@ class ServiceAdapter:
             variables=[var.value for var in RedisVariables],
             hidden=True,
             cleanup_strategy="immediate",
+        ),
+        ServiceType.PLATFORM: ServiceDefinition(
+            name="Platform",
+            description="Automatisch beschikbare platform variabelen",
+            icon="info",
+            color="grijs-600",
+            scope="component",
+            secret_class="PlatformSecret",
+            variables=[var.value for var in PlatformVariables],
+            hidden=True,
         ),
         ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
             name="Authorization Wall",

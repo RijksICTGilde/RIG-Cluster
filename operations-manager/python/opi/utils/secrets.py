@@ -310,6 +310,17 @@ class RedisSecret(BaseSecret):
 
 
 @dataclass
+class PlatformSecret(BaseSecret):
+    """Platform-provided variables secret (always available per component)."""
+
+    deployment_name: str
+    component_name: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-platform"
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.PLATFORM
+
+
+@dataclass
 class UserSecret(BaseSecret):
     """User-defined environment variables secret."""
 

@@ -100,6 +100,7 @@ from opi.utils.secrets import (
     DatabaseSecret,
     KeycloakSecret,
     MinIOSecret,
+    PlatformSecret,
     RedisSecret,
     RegistrySecret,
     UserSecret,
@@ -619,6 +620,7 @@ class ProjectManager:
             ServiceType.PUBLISH_ON_WEB: "web",
             ServiceType.PERSISTENT_STORAGE: "storage",
             ServiceType.TEMP_STORAGE: "storage",
+            ServiceType.PLATFORM: "platform",
         }
         return category_map.get(service_type, service_type.value)
 
@@ -4268,6 +4270,11 @@ class ProjectManager:
                 env_from_secrets.append(redis_secret_name)
                 logger.debug(f"Redis secret added to envFrom: {redis_secret_name}")
 
+            # Platform secret (always present, per-component)
+            platform_secret_name = PlatformSecret.get_secret_name(unique_name)
+            env_from_secrets.append(platform_secret_name)
+            logger.debug(f"Platform secret added to envFrom: {platform_secret_name}")
+
             # Add component-level user secret if user env vars exist
             if user_env_vars:
                 logger.info(
@@ -4696,6 +4703,41 @@ class ProjectManager:
                 created_files.append(sops_filename)
                 logger.info(f"SSO secret will be SOPS encrypted: {sops_filename}")
                 logger.info(f"Successfully created SSO secret manifest: {sso_secret_path}")
+
+            # Create platform secret (always present, per-component)
+            platform_secret = PlatformSecret(
+                deployment_name=deployment_name,
+                component_name=component_name,
+            )
+            platform_secret_data = platform_secret.to_k8s_secret_data()
+
+            # Resolve platform aliases if any
+            platform_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("platform", {})
+            if platform_aliases:
+                logger.debug(f"Resolving {len(platform_aliases)} platform aliases for component {component_name}")
+                resolved_platform_aliases = self._resolve_aliases(platform_aliases, platform_secret_data)
+                platform_secret_data.update(resolved_platform_aliases)
+                logger.info(
+                    f"Added {len(resolved_platform_aliases)} resolved platform aliases to component {component_name}"
+                )
+
+            platform_secret_vars = {
+                "name": PlatformSecret.get_secret_name(unique_name),
+                "namespace": namespace,
+                "secret_type": "platform",
+                "secret_pairs": platform_secret_data,
+            }
+
+            platform_manifest_name = generate_manifest_name(component_name, "platform-secret")
+            self._manifest_generator.create_manifest_file(
+                template_path=secret_template_path,
+                values=platform_secret_vars,
+                output_dir=full_output_dir,
+                output_filename=platform_manifest_name,
+                use_sops=False,
+            )
+            created_files.append(f"{platform_manifest_name}.yaml")
+            logger.info(f"Created platform secret manifest: {platform_manifest_name}")
 
             # Create user secret if configured
             if user_env_vars:

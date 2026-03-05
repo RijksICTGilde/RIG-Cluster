@@ -796,6 +796,28 @@ class KubectlConnector:
                 env=self.env,
             )
 
+            # Wait briefly to see if process exits immediately (no running pods)
+            await asyncio.sleep(0.5)
+            if process.returncode is not None:
+                logger.info(f"Log stream exited immediately for {deployment_name}, trying previous container logs")
+                # Try --previous without -f (incompatible flags)
+                prev_cmd = [
+                    "kubectl",
+                    "logs",
+                    "-l",
+                    f"app={deployment_name}",
+                    "-n",
+                    namespace,
+                    f"--tail={lines}",
+                    "--previous",
+                ]
+                process = await asyncio.create_subprocess_exec(
+                    *prev_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=self.env,
+                )
+
             logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid})")
             return process
 

@@ -442,7 +442,6 @@ async def stream_logs(
         async def drain_stdout() -> None:
             """Drain subprocess stdout into bounded queue, dropping oldest when full."""
             nonlocal running
-            got_any_output = False
             while running:
                 async with process_lock:
                     current_process = process
@@ -465,22 +464,11 @@ async def stream_logs(
                     async with process_lock:
                         if process and process.returncode is not None:
                             logger.warning(f"kubectl log stream process exited with code {process.returncode}")
-                            # If no output was produced, try fetching previous container logs
-                            if not got_any_output:
-                                prev_lines = await kubectl.get_deployment_logs(current_k8s_name, namespace, lines=lines)
-                                for prev_line in prev_lines:
-                                    encoded = prev_line.encode("utf-8")
-                                    if log_queue.full():
-                                        with contextlib.suppress(asyncio.QueueEmpty):
-                                            log_queue.get_nowait()
-                                    with contextlib.suppress(asyncio.QueueFull):
-                                        log_queue.put_nowait(encoded)
                             running = False
                             break
                     await asyncio.sleep(0.5)
                     continue
 
-                got_any_output = True
                 # Sliding window: drop oldest line when queue is full
                 if log_queue.full():
                     with contextlib.suppress(asyncio.QueueEmpty):

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class EncryptedDisplayConverter:
@@ -175,53 +178,82 @@ class ListSingleSelectConverter:
 
 
 class KeyValueConverter:
-    """Preserves raw ENV / YAML text as-is.
+    """Converts KEY=value text to/from YAML storage format.
 
-    The text is stored verbatim — no parsing, no reformatting, no
-    reordering.  The project manager's ``validate_and_parse_env_vars``
-    handles actual parsing when the values are needed at deploy time.
+    Two write modes controlled by ``write_as``:
 
-    ``write()`` returns the raw text unchanged (stripped).
-    ``read()`` / ``view()`` pass through.
+    - ``"dict"`` (default): Parses ``KEY=value`` text into a dict.
+      Used for ``aliases`` which are stored as YAML maps.
+    - ``"string"``: Keeps the raw text as a string literal.
+      Used for ``user-env-vars`` which are stored as a string
+      (and later AGE-encrypted by a generator).
     """
 
-    def __init__(self, fmt: str = "env") -> None:
+    def __init__(self, fmt: str = "env", write_as: str = "dict") -> None:
         self.fmt = fmt  # "env" or "yaml"
-
-    def detect_format(self, value: Any) -> str:
-        """Detect which format the stored text uses."""
-        text = str(value or "")
-        # If any line uses KEY=value with no colon-space before the =,
-        # treat as ENV.  Otherwise assume YAML.
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            if "=" in stripped and ": " not in stripped.split("=", 1)[0]:
-                return "env"
-        return "yaml" if text.strip() else self.fmt
+        self.write_as = write_as  # "dict" or "string"
 
     def read(self, value: Any) -> str:
         """Return the stored text for display in the editor."""
+        logger.info(
+            "[KeyValueConverter.read] write_as=%s, input type=%s, value=%r", self.write_as, type(value).__name__, value
+        )
         if isinstance(value, dict):
             if not value:
                 return ""
-            # Legacy: stored as dict (pre-existing projects).
+            # Stored as dict — convert to KEY: value text for the editor.
             # dict() strips ruamel CommentedMap so stdlib yaml.dump works.
             return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
         return str(value or "")
 
-    def write(self, value: Any) -> str | None:
-        """Validate and return the raw text unchanged. Returns None for empty input so the YAML key is omitted."""
-        if isinstance(value, str):
-            stripped = value.strip()
-            return stripped if stripped else None
+    def write(self, value: Any) -> dict[str, str] | str | None:
+        """Convert form input to the appropriate YAML storage format.
+
+        Returns None for empty input so the YAML key is omitted.
+        """
+        logger.info(
+            "[KeyValueConverter.write] write_as=%s, input type=%s, value=%r", self.write_as, type(value).__name__, value
+        )
+        result = self._write_as_string(value) if self.write_as == "string" else self._write_as_dict(value)
+        logger.info(
+            "[KeyValueConverter.write] result type=%s, result=%r",
+            type(result).__name__ if result is not None else "None",
+            result,
+        )
+        return result
+
+    def _write_as_dict(self, value: Any) -> dict[str, str] | None:
+        """Parse KEY=value text into a dict for YAML map storage."""
+        if isinstance(value, dict):
+            return value if value else None
+        text = str(value or "").strip()
+        if not text:
+            return None
+        return self._parse_env_text(text)
+
+    @staticmethod
+    def _write_as_string(value: Any) -> str | None:
+        """Return raw text as a string for YAML literal scalar storage."""
         if isinstance(value, dict):
             if not value:
                 return None
-            return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
+            # Convert dict back to KEY=value text
+            return "\n".join(f"{k}={v}" for k, v in value.items())
         text = str(value or "").strip()
         return text if text else None
+
+    @staticmethod
+    def _parse_env_text(text: str) -> dict[str, str]:
+        """Parse ``KEY=value`` lines into a dict."""
+        result: dict[str, str] = {}
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" in stripped:
+                key, _, val = stripped.partition("=")
+                result[key.strip()] = val.strip()
+        return result
 
     def view(self, value: Any) -> str:
         return self.read(value)
@@ -308,11 +340,11 @@ class KeycloakRealmsDisplayConverter:
 class AGEEncryptConverter:
     """Encrypts/decrypts field values using AGE encryption.
 
-    Uses the system AGE public key for encryption and the AGE private key
-    for decryption. Displays masked values in view mode.
+    Uses the system AGE public key for encryption and the system AGE
+    private key for decryption. Displays masked values in view mode.
 
-    Wraps ``opi.utils.age.encrypt_age_content_sync`` and
-    ``opi.utils.age.decrypt_age_content`` for the converter protocol.
+    For fields encrypted with the **project** key (e.g. ``user-env-vars``),
+    use a generator instead — converters do not have access to project keys.
     """
 
     def __init__(self, public_key: str | None = None) -> None:
@@ -332,9 +364,14 @@ class AGEEncryptConverter:
         if "BEGIN AGE ENCRYPTED FILE" not in value:
             return value
         try:
-            from opi.utils.age import decrypt_age_content
+            from opi.core.config import settings
+            from opi.utils.age import decrypt_age_content_sync
 
-            return decrypt_age_content(value)
+            private_key = settings.SOPS_AGE_PRIVATE_KEY
+            if not private_key:
+                return ""
+            decrypted = decrypt_age_content_sync(value, private_key)
+            return decrypted if decrypted is not None else ""
         except Exception:
             return ""
 

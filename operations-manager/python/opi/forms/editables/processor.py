@@ -446,6 +446,12 @@ class EditableFormProcessor:
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
                     value = get_value(submitted, concrete_path)
+                    logger.info(
+                        "[process_seq_json] child path=%s, value type=%s, value=%r",
+                        concrete_path,
+                        type(value).__name__,
+                        value,
+                    )
                     self._validate_field(child_vis, concrete_path, value, errors)
                     if value is not None:
                         if child_ed.converter:

@@ -134,13 +134,33 @@ class WizardState:
         Merge order (later overrides earlier):
         1. template_data (static skeleton — repositories, base config)
         2. step_data per active section (user-entered form values)
+
+        For list values (e.g. ``deployments``), items are merged by index
+        so that sections sharing a top-level key combine their fields
+        instead of overwriting each other.
         """
+        import copy
+
         merged: dict[str, Any] = {}
         if self.template_data:
-            merged.update(self.template_data)
+            merged.update(copy.deepcopy(self.template_data))
         for section_id in self.active_sections:
-            if section_id in self.step_data:
-                merged.update(self.step_data[section_id])
+            if section_id not in self.step_data:
+                continue
+            for key, value in self.step_data[section_id].items():
+                if key in merged and isinstance(merged[key], list) and isinstance(value, list):
+                    # Merge lists by index (dict items get merged, others replaced)
+                    target = merged[key]
+                    for i, src_item in enumerate(value):
+                        if i < len(target):
+                            if isinstance(target[i], dict) and isinstance(src_item, dict):
+                                target[i].update(copy.deepcopy(src_item))
+                            else:
+                                target[i] = copy.deepcopy(src_item)
+                        else:
+                            target.append(copy.deepcopy(src_item))
+                else:
+                    merged[key] = copy.deepcopy(value)
         return merged
 
     def get_steps(

@@ -466,6 +466,14 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
 
     # Render with any previously stored data for this step
     yaml_data = state.get_merged_data()
+    # Debug: trace deployments data through steps
+    logger.info("[load_step %s] step_data keys=%s", section_id, list(state.step_data.keys()))
+    if "domains" in state.step_data:
+        logger.info("[load_step %s] step_data['domains']=%r", section_id, state.step_data["domains"])
+    if "deployment" in state.step_data:
+        logger.info("[load_step %s] step_data['deployment']=%r", section_id, state.step_data["deployment"])
+    logger.info("[load_step %s] active_sections=%s", section_id, state.active_sections)
+    logger.info("[load_step %s] merged deployments=%r", section_id, yaml_data.get("deployments"))
     step_html = _render_step_html(
         section,
         yaml_data=yaml_data,
@@ -575,8 +583,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     if is_rerender:
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
 
-        section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
-        section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
+        section_data = _extract_section_data(section.editables, submitted_yaml)
         state.store_step_data(section_id, section_data)
         save_wizard_state(request, state)
 
@@ -610,8 +617,10 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
     # Store converted YAML-format data for this section
-    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
-    section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
+    section_data = _extract_section_data(section.editables, submitted_yaml)
+    logger.info("[store_step %s] storing keys=%s", section_id, list(section_data.keys()))
+    if "deployments" in section_data:
+        logger.info("[store_step %s] deployments=%r", section_id, section_data["deployments"])
     state.store_step_data(section_id, section_data)
     state.mark_completed(section_id)
 
@@ -1079,6 +1088,61 @@ async def _render_review(
     )
 
 
+def _extract_section_data(
+    editables: list[Any],
+    submitted_yaml: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract section data, keeping only fields owned by this section's editables.
+
+    For simple top-level keys (e.g. ``components``, ``services``) this copies
+    the entire value — same as before.
+
+    For indexed paths into a shared list (e.g. ``deployments[0]/name`` vs
+    ``deployments[0]/domain-format``), the list items are pruned to only
+    include fields that this section's editables define.  This prevents
+    one section from capturing (and later overwriting) another section's
+    fields during the shallow merge in ``get_merged_data()``.
+    """
+    import copy
+
+    # Collect which top-level keys this section uses, and for indexed list
+    # paths, which sub-fields it owns (e.g. deployments -> {name}).
+    section_keys: set[str] = set()
+    indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
+
+    for vis in editables:
+        parts = vis.editable.yaml_path.split("/")
+        top = parts[0]
+        top_key = top.split("[")[0]
+        section_keys.add(top_key)
+
+        if "[" in top and len(parts) >= 2:
+            # e.g. deployments[0]/base-domain -> owns "base-domain"
+            field_name = parts[1].split("[")[0]
+            indexed_fields.setdefault(top_key, set()).add(field_name)
+
+    result: dict[str, Any] = {}
+    for key in section_keys:
+        if key not in submitted_yaml:
+            continue
+        value = submitted_yaml[key]
+
+        if key in indexed_fields and isinstance(value, list):
+            # Prune list items to only owned fields
+            owned = indexed_fields[key]
+            pruned = []
+            for item in value:
+                if isinstance(item, dict):
+                    pruned.append({k: copy.deepcopy(v) for k, v in item.items() if k in owned})
+                else:
+                    pruned.append(copy.deepcopy(item))
+            result[key] = pruned
+        else:
+            result[key] = copy.deepcopy(value)
+
+    return result
+
+
 def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> str:
     """Build an HTML summary for a section's data.
 
@@ -1132,11 +1196,26 @@ def _build_sequence_summary(
 
         for child in children:
             if str(child.widget) == "sequence":
-                # Nested sequence: summarize inline
-                child_key = child.editable.yaml_path.split("/")[-1].split("[")[0]
-                child_items = item.get(child_key, [])
+                # Nested sequence: navigate using full relative path
+                # (handles {filter} syntax like services{persistent-storage}/config)
+                from opi.forms.editables.path import get_value
+
+                relative_path = _child_key(child)
+                child_items = get_value(item, relative_path)
                 if child_items and isinstance(child_items, list):
-                    formatted = ", ".join(str(v) for v in child_items)
+                    summaries = []
+                    for ci in child_items:
+                        if isinstance(ci, dict) and child.children:
+                            parts_ci = []
+                            for cc in child.children:
+                                cc_key = cc.editable.yaml_path.split("/")[-1].split("[")[0]
+                                cc_val = ci.get(cc_key)
+                                if cc_val is not None:
+                                    parts_ci.append(str(cc_val))
+                            summaries.append(" — ".join(parts_ci) if parts_ci else str(ci))
+                        else:
+                            summaries.append(str(ci))
+                    formatted = ", ".join(summaries)
                     item_parts.append(f"<dt>{child.label}</dt><dd>{formatted}</dd>")
                 continue
 
