@@ -8,24 +8,45 @@
     <div>
         <c-heading type="h1" textContent="Over het platform" />
         <p class="rvo-text--lg">
-            Het RIG Self Service Portal biedt projectteams een centrale plek om Kubernetes-omgevingen
-            aan te vragen, te configureren en te beheren via GitOps-principes.
+            Self Service voor applicatie deployment binnen ODC-Noord.
         </p>
     </div>
 
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="md">
-            <c-heading type="h2" textContent="Wat is het Self Service Portal?" />
+            <c-heading type="h2" textContent="Waarom dit platform?" />
             <p>
-                Dit platform is ontwikkeld voor RIG-projecten binnen ODC-Noord die een Kubernetes-omgeving
-                nodig hebben voor POC-, Pilot- of Productie-doeleinden. Via het portaal kunnen teams
-                zelfstandig projecten aanmaken, deployments configureren en centraal beheerde services
-                zoals PostgreSQL, Keycloak, Vault en MinIO inzetten.
+                Tijdens het ontwikkelproces van een nieuwe applicatie is het vaak nog niet helemaal bekend
+                wat de vereisten zijn. Dat hoeft ook niet. Het maakt het wel lastig om een plek te vinden
+                waar je je applicatie kunt ontwikkelen en tegelijkertijd het proces kunt tonen. Gaandeweg
+                kun je gebruikmaken van steeds meer functionaliteiten als je applicatie dit nodig heeft.
             </p>
         </c-layout-flow>
     </c-card>
 
-    <c-alert kind="info" heading="Deze pagina wordt nog verder uitgebreid" content="Meer informatie over het platform, het team en de roadmap volgt binnenkort." maxWidth="lg" />
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="md">
+            <c-heading type="h2" textContent="Wat biedt het platform?" />
+            <p>
+                De selfservice voor applicatie deployment probeert hier een oplossing voor te bieden door
+                op een click-ops-achtige manier en via een API-interface de tooling aan te bieden aan
+                ontwikkelaars. Hierdoor kunnen zij heel gemakkelijk hun applicatielandschap en
+                afhankelijkheden inrichten, zonder zelf diepgaande kennis te hebben van hoe dit achter
+                de schermen gebeurt.
+            </p>
+        </c-layout-flow>
+    </c-card>
+
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="md">
+            <c-heading type="h2" textContent="Veilig en beproefd" />
+            <p>
+                Dit systeem maakt gebruik van bewezen technieken en voldoet aan alle eisen op het gebied
+                van beveiliging, zodat je wel de lusten hebt en niet de lasten. Je kunt gewoon applicaties
+                ontwikkelen en uitrollen.
+            </p>
+        </c-layout-flow>
+    </c-card>
 
 </c-layout-flow>
 {% endblock %}
