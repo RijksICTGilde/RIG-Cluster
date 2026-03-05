@@ -360,6 +360,19 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                     progress.update_component_web_address(url_name, url_value)
 
             progress.complete_task(deploy_task)
+
+            # Schedule fire-and-forget OOM watcher
+            from opi.core.config import settings
+            from opi.services.oom_watcher import schedule_oom_check
+
+            if settings.OOM_WATCHER_ENABLED:
+                oom_attempt = payload.get("oom_watch_attempt", 1)
+                schedule_oom_check(
+                    project_name,
+                    deployment_name,
+                    attempt=oom_attempt,
+                )
+
             return {
                 "deployment_name": deployment_name,
                 "changes_detected": changes_detected,

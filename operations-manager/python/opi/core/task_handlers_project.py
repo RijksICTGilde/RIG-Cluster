@@ -144,6 +144,24 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             )
 
             progress.complete_task(deploy_task)
+
+            # Schedule fire-and-forget OOM watcher for each deployment
+            from opi.core.config import settings as app_settings
+            from opi.services.oom_watcher import schedule_oom_check
+
+            if app_settings.OOM_WATCHER_ENABLED:
+                from io import StringIO as _StringIO
+
+                from ruamel.yaml import YAML as RuamelYAML
+
+                _yaml_parser = RuamelYAML()
+                parsed_data = _yaml_parser.load(_StringIO(yaml_content))
+                if parsed_data and isinstance(parsed_data, dict):
+                    for dep in parsed_data.get("deployments", []):
+                        dep_name = dep.get("name", "")
+                        if dep_name:
+                            schedule_oom_check(project_name, dep_name)
+
             progress.update_current_step(f"Project {project_name} succesvol geimplementeerd - monitoring actief")
 
             elapsed_time = time.time() - start_time
@@ -292,6 +310,18 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
 
         if processing_result:
             progress.complete_task(deploy_task)
+
+            # Schedule fire-and-forget OOM watcher
+            from opi.core.config import settings
+            from opi.services.oom_watcher import schedule_oom_check
+
+            if settings.OOM_WATCHER_ENABLED:
+                oom_attempt = payload.get("oom_watch_attempt", 1)
+                schedule_oom_check(
+                    project_name,
+                    deployment_name,
+                    attempt=oom_attempt,
+                )
         else:
             processing_error = project_manager.get_processing_error() or "Deployment processing failed"
             progress.fail_task(deploy_task, processing_error)

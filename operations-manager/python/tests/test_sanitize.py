@@ -8,8 +8,8 @@ import pytest
 class TestSanitizeUnhealthyPods:
     """Test sanitize endpoint with unhealthy deployments."""
 
-    @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
-    @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.commit_project_yaml", new_callable=AsyncMock)
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")

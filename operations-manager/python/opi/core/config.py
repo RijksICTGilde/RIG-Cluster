@@ -314,6 +314,11 @@ class Settings(BaseSettings):
     # Deployment sanitization configuration
     SANITIZE_RESTART_THRESHOLD: int = 10  # Restarts above this = broken
 
+    # OOM watcher (fire-and-forget post-deploy check)
+    OOM_WATCHER_ENABLED: bool = True
+    OOM_WATCHER_DELAY_SECONDS: int = 120  # Wait before checking for OOM kills
+    OOM_WATCHER_MAX_ATTEMPTS: int = 3  # Max tune cycles per deploy
+
     # Federation settings
     FEDERATION_ROLE: str = "standalone"  # standalone | master | slave
     FEDERATION_PEERS: str = ""  # JSON: [{"cluster":"local","url":"...","api_key":"..."}]
