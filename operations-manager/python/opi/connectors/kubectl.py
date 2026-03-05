@@ -729,10 +729,20 @@ class KubectlConnector:
 
             if code != 0:
                 logger.warning(f"Failed to get deployment logs: {stderr}")
-                return []
 
             # Split logs into lines, filter out empty lines
             log_lines = [line for line in stdout.split("\n") if line.strip()]
+
+            # If no logs found (e.g. CrashLoopBackOff with no running container),
+            # try fetching previous container logs
+            if not log_lines:
+                prev_args = ["logs", "-l", f"app={deployment_name}", "-n", namespace, f"--tail={lines}", "--previous"]
+                prev_stdout, prev_stderr, prev_code = await self._run_kubectl_command(prev_args)
+                if prev_code == 0 and prev_stdout.strip():
+                    log_lines = ["[previous container logs]"] + [
+                        line for line in prev_stdout.split("\n") if line.strip()
+                    ]
+
             return log_lines
 
         except Exception as e:

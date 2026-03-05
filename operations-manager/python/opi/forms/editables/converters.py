@@ -211,15 +211,17 @@ class KeyValueConverter:
             return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
         return str(value or "")
 
-    def write(self, value: Any) -> str:
-        """Validate and return the raw text unchanged."""
+    def write(self, value: Any) -> str | None:
+        """Validate and return the raw text unchanged. Returns None for empty input so the YAML key is omitted."""
         if isinstance(value, str):
-            return value.strip()
+            stripped = value.strip()
+            return stripped if stripped else None
         if isinstance(value, dict):
             if not value:
-                return ""
+                return None
             return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
-        return str(value or "").strip()
+        text = str(value or "").strip()
+        return text if text else None
 
     def view(self, value: Any) -> str:
         return self.read(value)

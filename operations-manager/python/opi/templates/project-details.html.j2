@@ -512,6 +512,11 @@
                                         <strong style="font-size: 0.875rem;">{{ error.resource }}</strong>
                                     </c-layout-row>
                                     <p style="font-size: 0.8rem; color: var(--rvo-color-grijs-700); margin: 4px 0 0 24px; word-break: break-word;">{{ error.message }}</p>
+                                    {% if error.get('timestamp') %}
+                                    <p style="font-size: 0.75rem; color: var(--rvo-color-grijs-500); margin: 2px 0 0 24px;">
+                                        {{ error.timestamp[:19]|replace('T', ' ') }} UTC
+                                    </p>
+                                    {% endif %}
                                 </div>
                                 {% endfor %}
                             </div>

@@ -53,8 +53,9 @@ def detect_schema_version(project_data: dict[str, Any]) -> int:
         if isinstance(dep, dict) and "uses-services" in dep:
             return 1
 
-    # No version field and no uses-services found — assume v1 (unversioned)
-    return 1
+    # No version field and no uses-services found — assume latest (v2).
+    # Only files with explicit uses-services are v1.
+    return LATEST_SCHEMA_VERSION
 
 
 def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -134,6 +135,10 @@ def _migrate_component_v1_to_v2(component: dict[str, Any]) -> None:
     uses_services = component.get("uses-services", [])
     storage_items = component.get("storage", [])
 
+    # Nothing to migrate if there are no v1 keys
+    if "uses-services" not in component and "storage" not in component:
+        return
+
     if not isinstance(uses_services, list):
         uses_services = []
     if not isinstance(storage_items, list):
@@ -149,31 +154,43 @@ def _migrate_component_v1_to_v2(component: dict[str, Any]) -> None:
         if service_name:
             storage_by_service.setdefault(service_name, []).append({k: v for k, v in item.items() if k != "type"})
 
-    # Build new services list
-    new_services: list[str | dict[str, Any]] = []
+    # Start from existing v2 services (if any) and merge in v1 data
+    existing_services: list[str | dict[str, Any]] = component.get("services", [])
+    if not isinstance(existing_services, list):
+        existing_services = []
+
+    existing_names: set[str] = set()
+    for entry in existing_services:
+        if isinstance(entry, str):
+            existing_names.add(entry)
+        elif isinstance(entry, dict):
+            existing_names.update(entry.keys())
+
+    # Build new entries from uses-services, skipping already present ones
     for entry in uses_services:
         if isinstance(entry, str):
-            # Check if this service has storage items to attach
+            if entry in existing_names:
+                continue
             if entry in storage_by_service:
-                new_services.append({entry: {"config": storage_by_service.pop(entry)}})
+                existing_services.append({entry: {"config": storage_by_service.pop(entry)}})
             else:
-                new_services.append(entry)
+                existing_services.append(entry)
         elif isinstance(entry, dict):
-            # Dict entry (e.g., authorization-wall: {config: ...})
-            # Check if any key matches a storage service
             for key in list(entry.keys()):
+                if key in existing_names:
+                    continue
                 if key in storage_by_service:
                     service_dict = entry[key] if isinstance(entry[key], dict) else {}
                     service_dict["config"] = storage_by_service.pop(key)
                     entry[key] = service_dict
-            new_services.append(entry)
+            existing_services.append(entry)
 
-    # If there are storage items for services not in uses-services (shouldn't
-    # happen normally, but handle gracefully), add them
+    # Remaining storage items not matched to any service
     for service_name, items in storage_by_service.items():
-        new_services.append({service_name: {"config": items}})
+        if service_name not in existing_names:
+            existing_services.append({service_name: {"config": items}})
 
-    component["services"] = new_services
+    component["services"] = existing_services
 
     # Remove old keys
     component.pop("uses-services", None)

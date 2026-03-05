@@ -651,121 +651,71 @@ class ProjectFileHandler:
                 return comp
         return None
 
-    async def extract_component_user_env_vars(
-        self, project_data: dict[str, Any], component_name: str
-    ) -> dict[str, str]:
+    def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
+        """Decrypt and clean up individual env var values.
+
+        Each value is run through the smart decrypt (handling plain, age-encrypted,
+        or empty values) and then stripped of surrounding quotes.
         """
-        Extract user environment variables from a component definition by name.
+        cleaned: dict[str, str] = {}
+        for key, value in env_vars.items():
+            value_str = str(value) if value is not None else ""
+            normalized_value = self._normalize_age_content(value_str)
+            value_str = decrypt_password_smart_sync(normalized_value, private_key)
+
+            # Strip surrounding quotes (single or double) if they wrap the whole value
+            if value_str == '""' or value_str == "''":
+                cleaned[key] = ""
+            elif len(value_str) >= 2 and (
+                (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2)
+                or (value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2)
+            ):
+                cleaned[key] = value_str[1:-1]
+            else:
+                cleaned[key] = value_str
+        return cleaned
+
+    async def _extract_user_env_vars(self, project_data: dict[str, Any], jsonpath: str, label: str) -> dict[str, str]:
+        """Extract, decrypt, and clean user env vars from a JSONPath location.
 
         Args:
             project_data: The parsed project data
-            component_name: Name of the component to find user env vars for
+            jsonpath: JSONPath expression pointing to the user-env-vars field
+            label: Human-readable label for log messages
 
         Returns:
             Dictionary of user environment variables or empty dict if none found
         """
-
         private_key = await get_decoded_project_private_key(project_data)
 
-        # Use JSONPath with extended parser to find the component by name and extract its user-env-vars
-        # TODO: user-env-vars is optional, so we need to check if this path exists before we continu
-        path = f"$.components[?(@.name='{component_name}')].user-env-vars"
-        user_env_vars_str = self.extract_value_by_path(project_data, path, {}, private_key)
-        user_env_vars = validate_and_parse_env_vars(user_env_vars_str)
+        raw = self.extract_value_by_path(project_data, jsonpath, {}, private_key)
+        env_vars = validate_and_parse_env_vars(raw)
 
-        if user_env_vars:
-            logger.info(f"Found {len(user_env_vars)} user environment variable(s) for component '{component_name}'")
-            # Clean up and decrypt user environment variables
-            cleaned_env_vars = {}
-
-            for key, value in user_env_vars.items():
-                # Convert to string and clean up quotes
-                value_str = str(value) if value is not None else ""
-                # Normalize and decrypt the value
-                normalized_value = self._normalize_age_content(value_str)
-                value_str = decrypt_password_smart_sync(normalized_value, private_key)
-
-                # Handle regular values with quote cleaning
-                if value_str == '""' or value_str == "''":
-                    # Convert quoted empty strings to actual empty strings
-                    cleaned_env_vars[key] = ""
-                elif len(value_str) >= 2:
-                    # Remove surrounding quotes if present (but preserve internal quotes)
-                    if (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2) or (
-                        value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2
-                    ):
-                        cleaned_env_vars[key] = value_str[1:-1]
-                    else:
-                        cleaned_env_vars[key] = value_str
-                else:
-                    cleaned_env_vars[key] = value_str
-
-            return cleaned_env_vars
-        else:
-            logger.debug(f"No user environment variables found for component '{component_name}'")
+        if not env_vars:
+            logger.debug(f"No user environment variables found for {label}")
             return {}
+
+        logger.info(f"Found {len(env_vars)} user environment variable(s) for {label}")
+        return self._decrypt_and_clean_env_vars(env_vars, private_key)
+
+    async def extract_component_user_env_vars(
+        self, project_data: dict[str, Any], component_name: str
+    ) -> dict[str, str]:
+        """Extract user environment variables from a component definition by name."""
+        path = f"$.components[?(@.name='{component_name}')].user-env-vars"
+        return await self._extract_user_env_vars(project_data, path, f"component '{component_name}'")
 
     async def extract_deployment_component_user_env_vars(
         self, project_data: dict[str, Any], deployment_name: str, component_reference: str
     ) -> dict[str, str]:
-        """
-        Extract user environment variables from a deployment component by deployment and component reference.
-
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-            component_reference: Reference name of the component in the deployment
-
-        Returns:
-            Dictionary of user environment variables or empty dict if none found
-        """
-        private_key = await get_decoded_project_private_key(project_data)
-
-        # Use JSONPath to find the deployment component and extract its user-env-vars
+        """Extract user environment variables from a deployment component."""
         path = (
             f"$.deployments[?(@.name=='{deployment_name}')]"
             f".components[?(@.reference=='{component_reference}')].user-env-vars"
         )
-        user_env_vars_str = self.extract_value_by_path(project_data, path, {}, private_key)
-        user_env_vars = validate_and_parse_env_vars(user_env_vars_str)
-
-        if user_env_vars:
-            logger.info(
-                f"Found {len(user_env_vars)} deployment-level user environment variable(s) "
-                f"for component '{component_reference}' in deployment '{deployment_name}'"
-            )
-            # Clean up and decrypt user environment variables
-            cleaned_env_vars = {}
-
-            for key, value in user_env_vars.items():
-                # Convert to string and clean up quotes
-                value_str = str(value) if value is not None else ""
-                # Normalize and decrypt the value
-                normalized_value = self._normalize_age_content(value_str)
-                value_str = decrypt_password_smart_sync(normalized_value, private_key)
-
-                # Handle regular values with quote cleaning
-                if value_str == '""' or value_str == "''":
-                    # Convert quoted empty strings to actual empty strings
-                    cleaned_env_vars[key] = ""
-                elif len(value_str) >= 2:
-                    # Remove surrounding quotes if present (but preserve internal quotes)
-                    if (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2) or (
-                        value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2
-                    ):
-                        cleaned_env_vars[key] = value_str[1:-1]
-                    else:
-                        cleaned_env_vars[key] = value_str
-                else:
-                    cleaned_env_vars[key] = value_str
-
-            return cleaned_env_vars
-        else:
-            logger.debug(
-                f"No deployment-level user environment variables found for component '{component_reference}' "
-                f"in deployment '{deployment_name}'"
-            )
-            return {}
+        return await self._extract_user_env_vars(
+            project_data, path, f"component '{component_reference}' in deployment '{deployment_name}'"
+        )
 
     def get_persistent_storage(self, storage_configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """

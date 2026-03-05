@@ -206,9 +206,9 @@ class TestDetectSchemaVersion:
         data = _v1_project_with_helmfile()
         assert detect_schema_version(data) == 1
 
-    def test_detect_v1_no_indicators(self):
-        """Project with no uses-services and no schema-version defaults to v1."""
-        assert detect_schema_version({"name": "bare", "components": []}) == 1
+    def test_detect_v2_no_indicators(self):
+        """Project with no uses-services and no schema-version defaults to latest (v2)."""
+        assert detect_schema_version({"name": "bare", "components": []}) == LATEST_SCHEMA_VERSION
 
     def test_detect_v2_from_field(self):
         data = _v2_project()
@@ -349,18 +349,30 @@ class TestMigrateV1ToV2:
         assert config[0]["name"] == "data"
         assert config[0]["size"] == "500Mi"
 
-    def test_component_without_uses_services(self):
-        """Component without uses-services should get empty services list."""
+    def test_component_without_uses_services_preserved(self):
+        """Component without uses-services should not have services wiped."""
+        data = {
+            "name": "bare",
+            "components": [{"name": "comp", "type": "deployment", "services": ["publish-on-web"]}],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        # No v1 keys → detected as v2 → no migration
+        assert was_migrated is False
+        comp = result["components"][0]
+        assert comp["services"] == ["publish-on-web"]
+
+    def test_component_without_any_services_no_v1_keys(self):
+        """Component with no services and no v1 keys should not be touched."""
         data = {
             "name": "bare",
             "components": [{"name": "comp", "type": "deployment"}],
         }
         result, was_migrated = migrate_to_latest(data)
 
-        assert was_migrated is True
+        assert was_migrated is False
         comp = result["components"][0]
-        assert comp["services"] == []
-        assert "uses-services" not in comp
+        assert "services" not in comp
 
     def test_deployments_unchanged(self):
         """Deployment structure should not be touched by migration."""
@@ -388,13 +400,12 @@ class TestMigrateV1ToV2:
         result, _ = migrate_to_latest(data)
         assert result["schema-version"] == 2
 
-    def test_no_components_still_migrates(self):
-        """Project with no components should still get schema-version."""
+    def test_no_components_no_v1_keys_no_migration(self):
+        """Project with no components and no v1 keys is detected as v2."""
         data = {"name": "empty", "services": [], "components": []}
         result, was_migrated = migrate_to_latest(data)
 
-        assert was_migrated is True
-        assert result["schema-version"] == 2
+        assert was_migrated is False
 
     def test_multiple_components(self):
         """Multiple components should each be migrated independently."""

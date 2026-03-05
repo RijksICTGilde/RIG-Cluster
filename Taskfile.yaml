@@ -2571,6 +2571,13 @@ tasks:
       - echo "Starting Skaffold in hot-reload mode (sandboxed-local)..."
       - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local.yaml
 
+  sandbox:skaffold-debug:
+    desc: "Start Skaffold in debug mode for sandbox development (debugpy on port 5678)"
+    cmds:
+      - echo "Starting Skaffold in debug mode (sandboxed-local)..."
+      - echo "Attach IntelliJ debugger: Run → Debug 'Remote Debug - Operations Manager' (localhost:5678)"
+      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local-debug.yaml
+
   sandbox:build-cmp-image:
     desc: "Build CMP kustomize-sops image and load into Kind (no ArgoCD restart)"
     cmds:
