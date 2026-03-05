@@ -47,8 +47,8 @@ MONITORED_SERVICES: list[dict[str, str]] = [
     {
         "id": "operations-manager",
         "name": "Operations Manager",
-        "description": "OPI internal metrics",
-        "match": '{job="operations-manager"}',
+        "description": "OPI internal metrics (via kubernetes-pods scrape)",
+        "match": '{job="kubernetes-pods",namespace="rig-system",pod=~"operations-manager-.*"}',
         "range": "1h",
     },
     {
