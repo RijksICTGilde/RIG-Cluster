@@ -25,23 +25,66 @@
     {% if health_counts is defined %}
         {% if health_counts.Degraded > 0 %}
         <div class="health-banner health-banner-error">
-            <c-icon icon="kruis" size="lg" />
-            <span>{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen</span>
+            <div class="health-banner-icon">
+                <span class="health-pulse health-pulse-error"></span>
+                <c-icon icon="kruis" size="lg" />
+            </div>
+            <div class="health-banner-content">
+                <strong>{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen</strong>
+                <div class="health-banner-projects">
+                    {% for project in projects if project.health == 'Degraded' %}
+                    <a href="/projects/details/{{ project.name }}" class="health-project-link health-project-link-error">
+                        {{ project.display_name }}
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% if health_counts.Healthy > 0 %}
+            <div class="health-banner-aside">
+                <span class="health-aside-ok">{{ health_counts.Healthy }} gezond</span>
+            </div>
+            {% endif %}
         </div>
         {% elif health_counts.Progressing > 0 %}
         <div class="health-banner health-banner-warning">
-            <c-icon icon="pijl-omhoog" size="lg" />
-            <span>{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt</span>
+            <div class="health-banner-icon">
+                <span class="health-pulse health-pulse-warning"></span>
+                <c-icon icon="pijl-omhoog" size="lg" />
+            </div>
+            <div class="health-banner-content">
+                <strong>{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt</strong>
+                <div class="health-banner-projects">
+                    {% for project in projects if project.health == 'Progressing' %}
+                    <a href="/projects/details/{{ project.name }}" class="health-project-link health-project-link-warning">
+                        {{ project.display_name }}
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% if health_counts.Healthy > 0 %}
+            <div class="health-banner-aside">
+                <span class="health-aside-ok">{{ health_counts.Healthy }} gezond</span>
+            </div>
+            {% endif %}
         </div>
         {% elif health_counts.Healthy > 0 %}
         <div class="health-banner health-banner-healthy">
-            <c-icon icon="vinkje" size="lg" />
-            <span>Alle {{ health_counts.Healthy }} project{{ 'en' if health_counts.Healthy != 1 }} {{ 'zijn' if health_counts.Healthy != 1 else 'is' }} gezond</span>
+            <div class="health-banner-icon">
+                <c-icon icon="vinkje" size="lg" />
+            </div>
+            <div class="health-banner-content">
+                <strong>Alle {{ health_counts.Healthy }} project{{ 'en' if health_counts.Healthy != 1 }} {{ 'zijn' if health_counts.Healthy != 1 else 'is' }} gezond</strong>
+            </div>
         </div>
-        {% else %}
+        {% elif not argocd_available %}
         <div class="health-banner health-banner-unknown">
-            <c-icon icon="info" size="lg" />
-            <span>Status informatie niet beschikbaar</span>
+            <div class="health-banner-icon">
+                <c-icon icon="info" size="lg" />
+            </div>
+            <div class="health-banner-content">
+                <strong>Status informatie niet beschikbaar</strong>
+                <span class="rvo-text--sm">ArgoCD is niet verbonden</span>
+            </div>
         </div>
         {% endif %}
     {% endif %}
@@ -52,7 +95,7 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="applicatie" size="lg" />
-                    <span class="stat-number">{{ active_projects }}</span>
+                    <span class="stat-number" data-count="{{ active_projects }}">0</span>
                 </div>
                 <c-heading type="h3" textContent="Actieve Projecten" />
                 <p class="rvo-text--sm rvo-text--subtle">{{ total_deployments }} deployments</p>
@@ -63,7 +106,7 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="server" size="lg" />
-                    <span class="stat-number">{{ total_deployments }}</span>
+                    <span class="stat-number" data-count="{{ total_deployments }}">0</span>
                 </div>
                 <c-heading type="h3" textContent="Deployments" />
             </c-layout-flow>
@@ -73,7 +116,7 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="user" size="lg" />
-                    <span class="stat-number">{{ total_users }}</span>
+                    <span class="stat-number" data-count="{{ total_users }}">0</span>
                 </div>
                 <c-heading type="h3" textContent="Gebruikers" />
             </c-layout-flow>
@@ -83,7 +126,7 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="vinkje" size="lg" />
-                    <span class="stat-number">{{ pod_count }}</span>
+                    <span class="stat-number" data-count="{{ pod_count }}">0</span>
                 </div>
                 <c-heading type="h3" textContent="Pods" />
             </c-layout-flow>
@@ -167,7 +210,8 @@
                     {% for project in projects %}
                         {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
                         <div class="resource-segment resource-color-{{ loop.index0 % 6 }}"
-                             style="width: {{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%"
+                             data-width="{{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}"
+                             style="width: 0%"
                              title="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores">
                         </div>
                         {% endif %}
@@ -176,11 +220,11 @@
                 <div class="resource-legend">
                     {% for project in projects %}
                         {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
-                        <div class="resource-legend-item">
+                        <a href="/projects/details/{{ project.name }}" class="resource-legend-item">
                             <span class="resource-dot resource-color-{{ loop.index0 % 6 }}"></span>
                             <span class="rvo-text--sm">{{ project.display_name }}</span>
                             <span class="rvo-text--sm rvo-text--subtle">{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</span>
-                        </div>
+                        </a>
                         {% endif %}
                     {% endfor %}
                 </div>
@@ -205,48 +249,58 @@
         {% if projects %}
         <div class="projects-grid">
             {% for project in projects %}
-            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
-                <c-layout-flow gap="md">
-                    <div class="project-header">
-                        <c-heading type="h3" textContent="{{ project.display_name }}" />
-                        {% set health = project.health | default('Unknown') %}
-                        {% if health == 'Healthy' %}
-                        <div class="project-status status-healthy">Healthy</div>
-                        {% elif health == 'Progressing' %}
-                        <div class="project-status status-progressing">Progressing</div>
-                        {% elif health == 'Degraded' %}
-                        <div class="project-status status-degraded">Degraded</div>
-                        {% else %}
-                        <div class="project-status status-unknown">Unknown</div>
+            <a href="/projects/details/{{ project.name }}" class="project-card-link">
+                <c-card class="project-card project-card-{{ project.health | default('Unknown') | lower }}" outline="true" padding="lg" backgroundColor="wit">
+                    <c-layout-flow gap="md">
+                        <div class="project-header">
+                            <c-heading type="h3" textContent="{{ project.display_name }}" />
+                            {% set health = project.health | default('Unknown') %}
+                            {% if health == 'Healthy' %}
+                            <div class="project-status status-healthy">
+                                <span class="status-dot status-dot-healthy"></span>
+                                Healthy
+                            </div>
+                            {% elif health == 'Progressing' %}
+                            <div class="project-status status-progressing">
+                                <span class="status-dot status-dot-progressing"></span>
+                                Progressing
+                            </div>
+                            {% elif health == 'Degraded' %}
+                            <div class="project-status status-degraded">
+                                <span class="status-dot status-dot-degraded"></span>
+                                Degraded
+                            </div>
+                            {% else %}
+                            <div class="project-status status-unknown">
+                                <span class="status-dot status-dot-unknown"></span>
+                                Unknown
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% if project.description %}
+                        <p class="rvo-text--sm">{{ project.description }}</p>
                         {% endif %}
-                    </div>
-                    {% if project.description %}
-                    <p class="rvo-text--sm">{{ project.description }}</p>
-                    {% endif %}
-                    <div class="project-metrics">
-                        <div class="metric">
-                            <c-icon icon="server" size="sm" />
-                            <span>{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 }}</span>
+                        <div class="project-metrics">
+                            <div class="metric">
+                                <c-icon icon="server" size="sm" />
+                                <span>{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 }}</span>
+                            </div>
+                            <div class="metric">
+                                <c-icon icon="user" size="sm" />
+                                <span>{{ project.user_count }} gebruiker{{ 's' if project.user_count != 1 }}</span>
+                            </div>
                         </div>
-                        <div class="metric">
-                            <c-icon icon="user" size="sm" />
-                            <span>{{ project.user_count }} gebruiker{{ 's' if project.user_count != 1 }}</span>
+                        {% if project.last_deployed %}
+                        <div class="project-deploy-time">
+                            <c-icon icon="kalender" size="sm" />
+                            <span class="rvo-text--sm" data-deploy-time="{{ project.last_deployed }}">
+                                {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
+                            </span>
                         </div>
-                    </div>
-                    {% if project.last_deployed %}
-                    <p class="rvo-text--sm rvo-text--subtle">
-                        Laatst gedeployed: {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
-                    </p>
-                    {% endif %}
-                    <div class="project-actions">
-                        <c-button
-                            label="Details"
-                            kind="tertiary"
-                            size="sm"
-                            @click="window.location.href='/projects/details/{{ project.name }}'" />
-                    </div>
-                </c-layout-flow>
-            </c-card>
+                        {% endif %}
+                    </c-layout-flow>
+                </c-card>
+            </a>
             {% endfor %}
         </div>
         {% else %}
@@ -268,6 +322,120 @@
 
 {% block additional_styles %}
 <style>
+    /* Health Banner */
+    .health-banner {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-lg);
+        border-left: 5px solid;
+        border-radius: 6px;
+        padding: var(--rvo-space-lg);
+        animation: bannerSlideIn 0.4s ease-out;
+    }
+
+    @keyframes bannerSlideIn {
+        from { opacity: 0; transform: translateY(-8px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .health-banner-icon {
+        position: relative;
+        flex-shrink: 0;
+    }
+
+    .health-banner-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-xs);
+    }
+
+    .health-banner-aside {
+        flex-shrink: 0;
+    }
+
+    .health-aside-ok {
+        background: var(--rvo-color-groen-50, #e6f5e0);
+        color: var(--rvo-color-groen, #39870c);
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .health-banner-projects {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--rvo-space-xs);
+    }
+
+    .health-project-link {
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        text-decoration: none;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .health-project-link:hover {
+        transform: scale(1.05);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+
+    .health-project-link-error {
+        background: rgba(213, 43, 30, 0.15);
+        color: var(--rvo-color-rood, #d52b1e);
+    }
+
+    .health-project-link-warning {
+        background: rgba(225, 112, 0, 0.15);
+        color: var(--rvo-color-oranje, #e17000);
+    }
+
+    .health-pulse {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        animation: pulse 2s ease-in-out infinite;
+    }
+
+    .health-pulse-error { background: rgba(213, 43, 30, 0.3); }
+    .health-pulse-warning { background: rgba(225, 112, 0, 0.3); }
+
+    @keyframes pulse {
+        0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
+        50% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
+    }
+
+    .health-banner-healthy {
+        background: linear-gradient(135deg, var(--rvo-color-groen-50, #e6f5e0) 0%, #f0faf0 100%);
+        border-color: var(--rvo-color-groen, #39870c);
+        color: var(--rvo-color-groen, #39870c);
+    }
+
+    .health-banner-warning {
+        background: linear-gradient(135deg, var(--rvo-color-oranje-50, #fef3e0) 0%, #fffaf0 100%);
+        border-color: var(--rvo-color-oranje, #e17000);
+        color: var(--rvo-color-oranje, #e17000);
+    }
+
+    .health-banner-error {
+        background: linear-gradient(135deg, var(--rvo-color-rood-50, #fce5e3) 0%, #fff5f5 100%);
+        border-color: var(--rvo-color-rood, #d52b1e);
+        color: var(--rvo-color-rood, #d52b1e);
+    }
+
+    .health-banner-unknown {
+        background: linear-gradient(135deg, var(--rvo-color-grijs-100, #f0f0f0) 0%, #fafafa 100%);
+        border-color: var(--rvo-color-grijs-500, #999);
+        color: var(--rvo-color-grijs-700, #666);
+    }
+
     /* Stats Grid */
     .stats-grid {
         display: grid;
@@ -360,6 +528,55 @@
         max-height: 120px;
     }
 
+    /* Resource Comparison Bar */
+    .resource-bar {
+        display: flex;
+        height: 12px;
+        border-radius: 6px;
+        overflow: hidden;
+        background: var(--rvo-color-grijs-200, #e0e0e0);
+    }
+
+    .resource-segment {
+        min-width: 4px;
+        transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .resource-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--rvo-space-md);
+    }
+
+    .resource-legend-item {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-xs);
+        text-decoration: none;
+        color: inherit;
+        padding: 2px 6px;
+        border-radius: 4px;
+        transition: background 0.15s ease;
+    }
+
+    .resource-legend-item:hover {
+        background: var(--rvo-color-grijs-100, #f0f0f0);
+    }
+
+    .resource-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .resource-color-0, .resource-color-0.resource-segment { background-color: #007bc7; }
+    .resource-color-1, .resource-color-1.resource-segment { background-color: #39870c; }
+    .resource-color-2, .resource-color-2.resource-segment { background-color: #e17000; }
+    .resource-color-3, .resource-color-3.resource-segment { background-color: #d52b1e; }
+    .resource-color-4, .resource-color-4.resource-segment { background-color: #6b4c9a; }
+    .resource-color-5, .resource-color-5.resource-segment { background-color: #007b8a; }
+
     /* Projects Grid */
     .projects-grid {
         display: grid;
@@ -367,13 +584,26 @@
         gap: var(--rvo-space-lg);
     }
 
-    .project-card {
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    .project-card-link {
+        text-decoration: none;
+        color: inherit;
+        display: block;
     }
 
+    .project-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+        border-top: 3px solid transparent;
+        cursor: pointer;
+    }
+
+    .project-card-healthy { border-top-color: var(--rvo-color-groen, #39870c); }
+    .project-card-progressing { border-top-color: var(--rvo-color-oranje, #e17000); }
+    .project-card-degraded { border-top-color: var(--rvo-color-rood, #d52b1e); }
+    .project-card-unknown { border-top-color: var(--rvo-color-grijs-400, #bbb); }
+
     .project-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-3px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.12);
     }
 
     .project-header {
@@ -383,11 +613,38 @@
     }
 
     .project-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
         padding: var(--rvo-space-xs) var(--rvo-space-sm);
-        border-radius: 4px;
+        border-radius: 12px;
         font-size: 0.75rem;
         font-weight: 600;
         text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .status-dot-healthy { background: var(--rvo-color-groen, #39870c); }
+    .status-dot-progressing {
+        background: var(--rvo-color-oranje, #e17000);
+        animation: statusPulse 1.5s ease-in-out infinite;
+    }
+    .status-dot-degraded {
+        background: var(--rvo-color-rood, #d52b1e);
+        animation: statusPulse 1s ease-in-out infinite;
+    }
+    .status-dot-unknown { background: var(--rvo-color-grijs-500, #999); }
+
+    @keyframes statusPulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
     }
 
     .status-healthy {
@@ -424,86 +681,21 @@
         color: var(--rvo-color-grijs-700);
     }
 
+    .project-deploy-time {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-xs);
+        color: var(--rvo-color-grijs-600, #777);
+        font-size: 0.8rem;
+        padding-top: var(--rvo-space-xs);
+        border-top: 1px solid var(--rvo-color-grijs-200, #e0e0e0);
+    }
+
     .project-actions {
         display: flex;
         gap: var(--rvo-space-sm);
         flex-wrap: wrap;
     }
-
-    /* Health Banner */
-    .health-banner {
-        display: flex;
-        align-items: center;
-        gap: var(--rvo-space-md);
-        border-left: 4px solid;
-        border-radius: 4px;
-        padding: var(--rvo-space-md) var(--rvo-space-lg);
-        font-weight: 600;
-    }
-
-    .health-banner-healthy {
-        background: var(--rvo-color-groen-50, #e6f5e0);
-        border-color: var(--rvo-color-groen, #39870c);
-        color: var(--rvo-color-groen, #39870c);
-    }
-
-    .health-banner-warning {
-        background: var(--rvo-color-oranje-50, #fef3e0);
-        border-color: var(--rvo-color-oranje, #e17000);
-        color: var(--rvo-color-oranje, #e17000);
-    }
-
-    .health-banner-error {
-        background: var(--rvo-color-rood-50, #fce5e3);
-        border-color: var(--rvo-color-rood, #d52b1e);
-        color: var(--rvo-color-rood, #d52b1e);
-    }
-
-    .health-banner-unknown {
-        background: var(--rvo-color-grijs-100, #f0f0f0);
-        border-color: var(--rvo-color-grijs-500, #999);
-        color: var(--rvo-color-grijs-700, #666);
-    }
-
-    /* Resource Comparison Bar */
-    .resource-bar {
-        display: flex;
-        height: 12px;
-        border-radius: 6px;
-        overflow: hidden;
-        background: var(--rvo-color-grijs-200, #e0e0e0);
-    }
-
-    .resource-segment {
-        min-width: 4px;
-        transition: width 0.3s ease;
-    }
-
-    .resource-legend {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--rvo-space-md);
-    }
-
-    .resource-legend-item {
-        display: flex;
-        align-items: center;
-        gap: var(--rvo-space-xs);
-    }
-
-    .resource-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        display: inline-block;
-    }
-
-    .resource-color-0, .resource-color-0.resource-segment { background-color: #007bc7; }
-    .resource-color-1, .resource-color-1.resource-segment { background-color: #39870c; }
-    .resource-color-2, .resource-color-2.resource-segment { background-color: #e17000; }
-    .resource-color-3, .resource-color-3.resource-segment { background-color: #d52b1e; }
-    .resource-color-4, .resource-color-4.resource-segment { background-color: #6b4c9a; }
-    .resource-color-5, .resource-color-5.resource-segment { background-color: #007b8a; }
 
     /* Responsive adjustments */
     @media (max-width: 768px) {
@@ -512,11 +704,83 @@
         .projects-grid {
             grid-template-columns: 1fr;
         }
+
+        .health-banner {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .health-banner-aside {
+            align-self: flex-start;
+        }
     }
 </style>
 {% endblock %}
 
 {% block additional_scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        animateCounters();
+        animateResourceBar();
+        formatDeployTimes();
+    });
+
+    /* Animated number counters */
+    function animateCounters() {
+        var counters = document.querySelectorAll('[data-count]');
+        counters.forEach(function(el) {
+            var target = parseInt(el.getAttribute('data-count'), 10);
+            if (target === 0) { el.textContent = '0'; return; }
+            var duration = 600;
+            var start = performance.now();
+            function step(now) {
+                var progress = Math.min((now - start) / duration, 1);
+                var eased = 1 - Math.pow(1 - progress, 3);
+                el.textContent = Math.round(eased * target);
+                if (progress < 1) requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
+        });
+    }
+
+    /* Animate resource bar segments */
+    function animateResourceBar() {
+        var segments = document.querySelectorAll('.resource-segment[data-width]');
+        setTimeout(function() {
+            segments.forEach(function(seg) {
+                seg.style.width = seg.getAttribute('data-width') + '%';
+            });
+        }, 200);
+    }
+
+    /* Convert UTC timestamps to relative time */
+    function formatDeployTimes() {
+        var els = document.querySelectorAll('[data-deploy-time]');
+        els.forEach(function(el) {
+            var raw = el.getAttribute('data-deploy-time');
+            if (!raw) return;
+            try {
+                var ts = raw.endsWith('Z') ? raw : raw + 'Z';
+                var date = new Date(ts);
+                if (isNaN(date.getTime())) return;
+                var now = new Date();
+                var diffMs = now - date;
+                var diffMin = Math.floor(diffMs / 60000);
+                var diffHr = Math.floor(diffMs / 3600000);
+                var diffDay = Math.floor(diffMs / 86400000);
+                var relative;
+                if (diffMin < 1) relative = 'zojuist';
+                else if (diffMin < 60) relative = diffMin + ' min geleden';
+                else if (diffHr < 24) relative = diffHr + ' uur geleden';
+                else if (diffDay < 7) relative = diffDay + (diffDay === 1 ? ' dag' : ' dagen') + ' geleden';
+                else relative = date.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+                el.textContent = relative;
+                el.title = date.toLocaleString('nl-NL', { dateStyle: 'full', timeStyle: 'short' });
+            } catch(e) { /* keep original text */ }
+        });
+    }
+</script>
+
 {% if prometheus_available and metrics %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
@@ -536,46 +800,60 @@
         var memPct = {{ metrics.memory_percentage }};
         var storagePct = {{ metrics.storage_percentage }};
 
-        createGauge('cpu-gauge', cpuPct, getGaugeColor(cpuPct));
-        createGauge('memory-gauge', memPct, getGaugeColor(memPct));
-        createGauge('storage-gauge', storagePct, getGaugeColor(storagePct));
+        animateGauge('cpu-gauge', cpuPct, getGaugeColor(cpuPct));
+        animateGauge('memory-gauge', memPct, getGaugeColor(memPct));
+        animateGauge('storage-gauge', storagePct, getGaugeColor(storagePct));
     }
 
-    function createGauge(canvasId, percentage, color) {
+    function animateGauge(canvasId, targetPct, color) {
         var canvas = document.getElementById(canvasId);
         if (!canvas) return;
         var ctx = canvas.getContext('2d');
-
         canvas.width = 150;
         canvas.height = 150;
-
         var centerX = canvas.width / 2;
         var centerY = canvas.height / 2;
         var radius = 60;
+        var duration = 800;
+        var start = performance.now();
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        function draw(now) {
+            var progress = Math.min((now - start) / duration, 1);
+            var eased = 1 - Math.pow(1 - progress, 3);
+            var currentPct = eased * targetPct;
 
-        /* Background arc */
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, Math.PI, 2 * Math.PI);
-        ctx.strokeStyle = '#f0f0f0';
-        ctx.lineWidth = 12;
-        ctx.stroke();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        /* Progress arc */
-        var angle = Math.PI + (Math.PI * percentage / 100);
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, Math.PI, angle);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 12;
-        ctx.lineCap = 'round';
-        ctx.stroke();
+            /* Background arc */
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, Math.PI, 2 * Math.PI);
+            ctx.strokeStyle = '#f0f0f0';
+            ctx.lineWidth = 12;
+            ctx.lineCap = 'butt';
+            ctx.stroke();
 
-        /* Center circle */
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
-        ctx.fillStyle = color;
-        ctx.fill();
+            /* Progress arc */
+            if (currentPct > 0) {
+                var angle = Math.PI + (Math.PI * currentPct / 100);
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, Math.PI, angle);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 12;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+            }
+
+            /* Center dot */
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.15 + 0.85 * eased;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+
+            if (progress < 1) requestAnimationFrame(draw);
+        }
+        requestAnimationFrame(draw);
     }
 
     function initializeCharts() {
@@ -602,12 +880,14 @@
                     data: inValues,
                     borderColor: '#007bc7',
                     backgroundColor: 'rgba(0, 123, 199, 0.1)',
+                    fill: true,
                     tension: 0.4
                 }, {
                     label: 'Outbound (KB/s)',
                     data: outValues,
                     borderColor: '#e17000',
                     backgroundColor: 'rgba(225, 112, 0, 0.1)',
+                    fill: true,
                     tension: 0.4
                 }]
             },
