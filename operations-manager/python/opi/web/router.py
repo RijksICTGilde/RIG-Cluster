@@ -660,15 +660,281 @@ async def formulier_demo_form(request: Request):
 @requires_sso
 async def dashboard(request: Request):
     """
-    Serve the main dashboard page.
+    Serve the main dashboard page with real project data, Prometheus metrics,
+    and ArgoCD status.
 
     Returns:
         HTML response with the dashboard showing project overview, metrics, and activity
     """
     try:
+        from datetime import UTC, datetime
+
+        from opi.core.startup import ensure_projects_fresh
+        from opi.services.project_service import get_project_service
+
         templates = get_templates()
         user = get_current_user(request)
-        return templates.TemplateResponse("dashboard.html.j2", {"request": request, "menu_items": get_menu_items(user)})
+        user_email = user.get("email", "").lower()
+
+        # --- Load user's projects ---
+        await ensure_projects_fresh()
+        project_service = get_project_service()
+        all_projects = project_service.get_all_projects()
+
+        user_projects: list[dict] = []
+        all_namespaces: list[str] = []
+        total_deployments = 0
+        unique_users: set[str] = set()
+
+        for project_name, project in all_projects.items():
+            if not project_service.is_user_authorized_for_project(project_name, user_email):
+                continue
+            project_data = project.data or {}
+            deployments = project_data.get("deployments", [])
+            users = project.users or []
+            total_deployments += len(deployments)
+            for u in users:
+                if hasattr(u, "email") and u.email:
+                    unique_users.add(u.email.lower())
+
+            # Collect k8s namespaces for Prometheus queries
+            for deployment in deployments:
+                cluster = deployment.get("cluster")
+                namespace = deployment.get("namespace")
+                if cluster and namespace:
+                    from opi.core.cluster_config import get_prefixed_namespace
+
+                    k8s_ns = get_prefixed_namespace(cluster, namespace)
+                    if k8s_ns not in all_namespaces:
+                        all_namespaces.append(k8s_ns)
+
+            user_projects.append(
+                {
+                    "name": project_name,
+                    "display_name": project_data.get("display-name", project_name),
+                    "description": project_data.get("description", ""),
+                    "deployments": deployments,
+                    "users": users,
+                    "deployment_count": len(deployments),
+                    "user_count": len(users),
+                }
+            )
+
+        user_projects.sort(key=lambda p: p["display_name"] or p["name"])
+
+        # --- Query Prometheus metrics (scoped to user's namespaces) ---
+        metrics: dict = {}
+        prometheus_available = False
+        pod_count = 0
+        ns_regex = "|".join(all_namespaces)
+
+        if all_namespaces:
+            try:
+                from opi.connectors.prometheus import get_metrics_connector
+
+                prom = get_metrics_connector()
+                prometheus_available = prom.is_connected
+
+                if prometheus_available:
+                    # CPU usage and limits
+                    cpu_usage_val = 0.0
+                    cpu_limit_val = 0.0
+                    try:
+                        result = prom.custom_query(
+                            f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
+                        )
+                        if result and result[0].get("value"):
+                            cpu_usage_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard CPU usage query failed: {e}")
+
+                    try:
+                        result = prom.custom_query(
+                            f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
+                        )
+                        if result and result[0].get("value"):
+                            cpu_limit_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard CPU limits query failed: {e}")
+
+                    # Memory usage and limits
+                    mem_usage_val = 0.0
+                    mem_limit_val = 0.0
+                    try:
+                        result = prom.custom_query(
+                            f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
+                        )
+                        if result and result[0].get("value"):
+                            mem_usage_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard memory usage query failed: {e}")
+
+                    try:
+                        result = prom.custom_query(
+                            f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
+                        )
+                        if result and result[0].get("value"):
+                            mem_limit_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard memory limits query failed: {e}")
+
+                    # Storage usage and capacity
+                    storage_used_val = 0.0
+                    storage_cap_val = 0.0
+                    try:
+                        result = prom.custom_query(f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})')
+                        if result and result[0].get("value"):
+                            storage_used_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard storage usage query failed: {e}")
+
+                    try:
+                        result = prom.custom_query(
+                            f'sum(kubelet_volume_stats_capacity_bytes{{namespace=~"{ns_regex}"}})'
+                        )
+                        if result and result[0].get("value"):
+                            storage_cap_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard storage capacity query failed: {e}")
+
+                    # Pod count
+                    try:
+                        result = prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                        if result and result[0].get("value"):
+                            pod_count = int(float(result[0]["value"][1]))
+                    except Exception as e:
+                        logger.debug(f"Dashboard pod count query failed: {e}")
+
+                    # Network traffic time-series (last 30min, 5min step)
+                    network_in_data: list[dict] = []
+                    network_out_data: list[dict] = []
+                    try:
+                        now = datetime.now(UTC)
+                        start = now.timestamp() - 1800  # 30 minutes ago
+                        end = now.timestamp()
+                        in_results = prom.query_range(
+                            f'sum(rate(container_network_receive_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                            start_time=str(int(start)),
+                            end_time=str(int(end)),
+                            step="300",
+                        )
+                        if in_results:
+                            for ts, val in in_results[0].get("values", []):
+                                network_in_data.append(
+                                    {
+                                        "t": datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M"),
+                                        "v": round(float(val) / 1024, 1),
+                                    }
+                                )
+
+                        out_results = prom.query_range(
+                            f'sum(rate(container_network_transmit_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                            start_time=str(int(start)),
+                            end_time=str(int(end)),
+                            step="300",
+                        )
+                        if out_results:
+                            for ts, val in out_results[0].get("values", []):
+                                network_out_data.append(
+                                    {
+                                        "t": datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M"),
+                                        "v": round(float(val) / 1024, 1),
+                                    }
+                                )
+                    except Exception as e:
+                        logger.debug(f"Dashboard network query failed: {e}")
+
+                    # Compute display values
+                    def _pct(used: float, total: float) -> int:
+                        if total <= 0:
+                            return 0
+                        return min(100, round(used / total * 100))
+
+                    def _format_cores(val: float) -> str:
+                        if val < 1:
+                            return f"{int(val * 1000)}m"
+                        return f"{val:.1f}"
+
+                    def _format_gib(val_bytes: float) -> str:
+                        gib = val_bytes / (1024**3)
+                        if gib < 0.1:
+                            mib = val_bytes / (1024**2)
+                            return f"{mib:.0f} MiB"
+                        return f"{gib:.1f} GiB"
+
+                    metrics = {
+                        "cpu_percentage": _pct(cpu_usage_val, cpu_limit_val),
+                        "cpu_usage_display": _format_cores(cpu_usage_val),
+                        "cpu_limit_display": _format_cores(cpu_limit_val),
+                        "memory_percentage": _pct(mem_usage_val, mem_limit_val),
+                        "memory_usage_display": _format_gib(mem_usage_val),
+                        "memory_limit_display": _format_gib(mem_limit_val),
+                        "storage_percentage": _pct(storage_used_val, storage_cap_val),
+                        "storage_usage_display": _format_gib(storage_used_val),
+                        "storage_capacity_display": _format_gib(storage_cap_val),
+                        "network_in_data": network_in_data,
+                        "network_out_data": network_out_data,
+                    }
+            except Exception as e:
+                logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
+
+        # --- Query ArgoCD status per project ---
+        argocd_available = False
+        try:
+            from opi.connectors.argo import create_argo_connector
+            from opi.utils.naming import generate_argocd_application_name
+
+            argo_connector = create_argo_connector()
+            argocd_available = argo_connector.auth_token is not None
+
+            if argocd_available:
+                for project in user_projects:
+                    deployment_statuses: list[str] = []
+                    for deployment in project.get("deployments", []):
+                        deployment_name = deployment.get("name")
+                        if not deployment_name:
+                            continue
+                        try:
+                            app_name = generate_argocd_application_name(project["name"], deployment_name)
+                            status_data = await argo_connector.get_application_status(app_name)
+                            if status_data:
+                                health = status_data.get("status", {}).get("health", {}).get("status", "Unknown")
+                                deployment_statuses.append(health)
+                            else:
+                                deployment_statuses.append("Unknown")
+                        except Exception as e:
+                            logger.debug(f"Dashboard: ArgoCD status for {deployment_name}: {e}")
+                            deployment_statuses.append("Unknown")
+
+                    # Derive overall project health (worst status wins)
+                    if "Degraded" in deployment_statuses:
+                        project["health"] = "Degraded"
+                    elif "Progressing" in deployment_statuses:
+                        project["health"] = "Progressing"
+                    elif "Healthy" in deployment_statuses:
+                        project["health"] = "Healthy"
+                    else:
+                        project["health"] = "Unknown"
+        except Exception as e:
+            logger.warning(f"Dashboard: failed to connect to ArgoCD: {e}")
+            for project in user_projects:
+                project["health"] = "Unknown"
+
+        return templates.TemplateResponse(
+            "dashboard.html.j2",
+            {
+                "request": request,
+                "menu_items": get_menu_items(user),
+                "active_projects": len(user_projects),
+                "total_deployments": total_deployments,
+                "total_users": len(unique_users),
+                "pod_count": pod_count,
+                "prometheus_available": prometheus_available,
+                "argocd_available": argocd_available,
+                "metrics": metrics,
+                "projects": user_projects,
+            },
+        )
 
     except Exception as e:
         import traceback

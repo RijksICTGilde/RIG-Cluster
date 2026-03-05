@@ -15,7 +15,7 @@
 
     {# Page Header #}
     <div>
-        <c-heading type="h1" textContent="Dashboard (dit is dummy / fake!)" />
+        <c-heading type="h1" textContent="Dashboard" />
         <p class="rvo-text--lg">
             Hier vindt u een overzicht van al uw projecten, deployments en resource usage.
         </p>
@@ -27,10 +27,10 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="applicatie" size="lg" />
-                    <span class="stat-number">12</span>
+                    <span class="stat-number">{{ active_projects }}</span>
                 </div>
                 <c-heading type="h3" textContent="Actieve Projecten" />
-                <p class="rvo-text--sm rvo-text--subtle">3 nieuwe deze maand</p>
+                <p class="rvo-text--sm rvo-text--subtle">{{ total_deployments }} deployments</p>
             </c-layout-flow>
         </c-card>
 
@@ -38,10 +38,9 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="server" size="lg" />
-                    <span class="stat-number">47</span>
+                    <span class="stat-number">{{ total_deployments }}</span>
                 </div>
                 <c-heading type="h3" textContent="Deployments" />
-                <p class="rvo-text--sm rvo-text--subtle">5 updates vandaag</p>
             </c-layout-flow>
         </c-card>
 
@@ -49,10 +48,9 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="user" size="lg" />
-                    <span class="stat-number">89</span>
+                    <span class="stat-number">{{ total_users }}</span>
                 </div>
                 <c-heading type="h3" textContent="Gebruikers" />
-                <p class="rvo-text--sm rvo-text--subtle">12 online nu</p>
             </c-layout-flow>
         </c-card>
 
@@ -60,10 +58,9 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="vinkje" size="lg" />
-                    <span class="stat-number status-healthy">99.8{{ '%' }}</span>
+                    <span class="stat-number">{{ pod_count }}</span>
                 </div>
-                <c-heading type="h3" textContent="Uptime" />
-                <p class="rvo-text--sm rvo-text--subtle">Laatste 30 dagen</p>
+                <c-heading type="h3" textContent="Pods" />
             </c-layout-flow>
         </c-card>
     </div>
@@ -72,6 +69,7 @@
     <c-layout-flow gap="lg">
         <c-heading type="h2" textContent="Resource Usage" />
 
+        {% if prometheus_available and metrics %}
         <div class="metrics-grid">
             {# CPU Usage Gauge #}
             <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
@@ -80,11 +78,10 @@
                     <div class="gauge-container">
                         <canvas id="cpu-gauge" class="gauge"></canvas>
                         <div class="gauge-value">
-                            <span class="gauge-percentage">67{{ '%' }}</span>
-                            <span class="gauge-label">van 24 cores</span>
+                            <span class="gauge-percentage">{{ metrics.cpu_percentage }}{{ '%' }}</span>
+                            <span class="gauge-label">{{ metrics.cpu_usage_display }} / {{ metrics.cpu_limit_display }} cores</span>
                         </div>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle">Gemiddeld over alle nodes</p>
                 </c-layout-flow>
             </c-card>
 
@@ -95,11 +92,10 @@
                     <div class="gauge-container">
                         <canvas id="memory-gauge" class="gauge"></canvas>
                         <div class="gauge-value">
-                            <span class="gauge-percentage">84{{ '%' }}</span>
-                            <span class="gauge-label">van 64GB</span>
+                            <span class="gauge-percentage">{{ metrics.memory_percentage }}{{ '%' }}</span>
+                            <span class="gauge-label">{{ metrics.memory_usage_display }} / {{ metrics.memory_limit_display }}</span>
                         </div>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle">Totaal cluster geheugen</p>
                 </c-layout-flow>
             </c-card>
 
@@ -110,11 +106,10 @@
                     <div class="gauge-container">
                         <canvas id="storage-gauge" class="gauge"></canvas>
                         <div class="gauge-value">
-                            <span class="gauge-percentage">45{{ '%' }}</span>
-                            <span class="gauge-label">van 2TB</span>
+                            <span class="gauge-percentage">{{ metrics.storage_percentage }}{{ '%' }}</span>
+                            <span class="gauge-label">{{ metrics.storage_usage_display }} / {{ metrics.storage_capacity_display }}</span>
                         </div>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle">Persistent volumes</p>
                 </c-layout-flow>
             </c-card>
 
@@ -125,10 +120,15 @@
                     <div class="chart-container">
                         <canvas id="network-chart" class="chart"></canvas>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle">Inbound/Outbound per minuut</p>
+                    <p class="rvo-text--sm rvo-text--subtle">Inbound/Outbound (KB/s, laatste 30 min)</p>
                 </c-layout-flow>
             </c-card>
         </div>
+        {% else %}
+        <c-card outline="true" padding="lg" backgroundColor="wit">
+            <p class="rvo-text--md rvo-text--subtle">Metrics niet beschikbaar. Prometheus is niet verbonden of er zijn geen namespaces gevonden.</p>
+        </c-card>
+        {% endif %}
     </c-layout-flow>
 
     {# Projects Overview #}
@@ -144,155 +144,62 @@
                 @click="window.location.href='/projects/new'" />
         </div>
 
+        {% if projects %}
         <div class="projects-grid">
-            {# Project 1 #}
+            {% for project in projects %}
             <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
                 <c-layout-flow gap="md">
                     <div class="project-header">
-                        <c-heading type="h3" textContent="webshop-backend" />
-                        <div class="project-status status-running">Running</div>
+                        <c-heading type="h3" textContent="{{ project.display_name }}" />
+                        {% set health = project.health | default('Unknown') %}
+                        {% if health == 'Healthy' %}
+                        <div class="project-status status-healthy">Healthy</div>
+                        {% elif health == 'Progressing' %}
+                        <div class="project-status status-progressing">Progressing</div>
+                        {% elif health == 'Degraded' %}
+                        <div class="project-status status-degraded">Degraded</div>
+                        {% else %}
+                        <div class="project-status status-unknown">Unknown</div>
+                        {% endif %}
                     </div>
-                    <p class="rvo-text--sm">E-commerce backend API met PostgreSQL en Redis</p>
+                    {% if project.description %}
+                    <p class="rvo-text--sm">{{ project.description }}</p>
+                    {% endif %}
                     <div class="project-metrics">
                         <div class="metric">
                             <c-icon icon="server" size="sm" />
-                            <span>3 components</span>
+                            <span>{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 }}</span>
                         </div>
                         <div class="metric">
                             <c-icon icon="user" size="sm" />
-                            <span>1,247 visitors</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="waarschuwing" size="sm" />
-                            <span>2 errors</span>
+                            <span>{{ project.user_count }} gebruiker{{ 's' if project.user_count != 1 }}</span>
                         </div>
                     </div>
                     <div class="project-actions">
-                        <c-button label="Dashboard" kind="tertiary" size="sm" />
-                        <c-button label="Logs" kind="tertiary" size="sm" />
-                        <c-button label="Settings" kind="tertiary" size="sm" />
+                        <c-button
+                            label="Details"
+                            kind="tertiary"
+                            size="sm"
+                            @click="window.location.href='/projects/details/{{ project.name }}'" />
                     </div>
                 </c-layout-flow>
             </c-card>
-
-            {# Project 2 #}
-            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
-                <c-layout-flow gap="md">
-                    <div class="project-header">
-                        <c-heading type="h3" textContent="analytics-dashboard" />
-                        <div class="project-status status-deploying">Deploying</div>
-                    </div>
-                    <p class="rvo-text--sm">Real-time analytics dashboard met ClickHouse</p>
-                    <div class="project-metrics">
-                        <div class="metric">
-                            <c-icon icon="server" size="sm" />
-                            <span>2 components</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="user" size="sm" />
-                            <span>456 visitors</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="vinkje" size="sm" />
-                            <span>0 errors</span>
-                        </div>
-                    </div>
-                    <div class="project-actions">
-                        <c-button label="Dashboard" kind="tertiary" size="sm" />
-                        <c-button label="Logs" kind="tertiary" size="sm" />
-                        <c-button label="Settings" kind="tertiary" size="sm" />
-                    </div>
-                </c-layout-flow>
-            </c-card>
-
-            {# Project 3 #}
-            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
-                <c-layout-flow gap="md">
-                    <div class="project-header">
-                        <c-heading type="h3" textContent="mobile-app-api" />
-                        <div class="project-status status-error">Error</div>
-                    </div>
-                    <p class="rvo-text--sm">REST API voor mobiele applicatie</p>
-                    <div class="project-metrics">
-                        <div class="metric">
-                            <c-icon icon="server" size="sm" />
-                            <span>1 component</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="user" size="sm" />
-                            <span>89 visitors</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="waarschuwing" size="sm" />
-                            <span>15 errors</span>
-                        </div>
-                    </div>
-                    <div class="project-actions">
-                        <c-button label="Dashboard" kind="tertiary" size="sm" />
-                        <c-button label="Logs" kind="tertiary" size="sm" />
-                        <c-button label="Settings" kind="tertiary" size="sm" />
-                    </div>
-                </c-layout-flow>
-            </c-card>
+            {% endfor %}
         </div>
-    </c-layout-flow>
-
-    {# Recent Activity #}
-    <c-layout-flow gap="lg">
-        <c-heading type="h2" textContent="Recente Activiteit" />
-
+        {% else %}
         <c-card outline="true" padding="lg" backgroundColor="wit">
             <c-layout-flow gap="md">
-                {# Activity Item 1 #}
-                <div class="activity-item">
-                    <div class="activity-icon activity-success">
-                        <c-icon icon="plus" size="sm" />
-                    </div>
-                    <div class="activity-content">
-                        <p><strong>webshop-backend</strong> deployment succesvol bijgewerkt naar versie 2.1.4</p>
-                        <p class="rvo-text--sm rvo-text--subtle">2 minuten geleden</p>
-                    </div>
-                </div>
-
-                {# Activity Item 2 #}
-                <div class="activity-item">
-                    <div class="activity-icon activity-warning">
-                        <c-icon icon="waarschuwing" size="sm" />
-                    </div>
-                    <div class="activity-content">
-                        <p><strong>mobile-app-api</strong> heeft hoge error rate (15 errors in laatste 5 minuten)</p>
-                        <p class="rvo-text--sm rvo-text--subtle">8 minuten geleden</p>
-                    </div>
-                </div>
-
-                {# Activity Item 3 #}
-                <div class="activity-item">
-                    <div class="activity-icon activity-info">
-                        <c-icon icon="info" size="sm" />
-                    </div>
-                    <div class="activity-content">
-                        <p><strong>analytics-dashboard</strong> nieuwe component wordt gedeployed</p>
-                        <p class="rvo-text--sm rvo-text--subtle">15 minuten geleden</p>
-                    </div>
-                </div>
-
-                {# Activity Item 4 #}
-                <div class="activity-item">
-                    <div class="activity-icon activity-success">
-                        <c-icon icon="user" size="sm" />
-                    </div>
-                    <div class="activity-content">
-                        <p>Nieuwe gebruiker <strong>jan.vries@odc.nl</strong> toegevoegd aan project <strong>webshop-backend</strong></p>
-                        <p class="rvo-text--sm rvo-text--subtle">1 uur geleden</p>
-                    </div>
-                </div>
-
-                <div style="text-align: center; margin-top: var(--rvo-space-md);">
-                    <c-button label="Alle activiteit bekijken" kind="tertiary" size="sm" />
-                </div>
+                <p class="rvo-text--md">Geen projecten gevonden.</p>
+                <c-button
+                    label="Maak een nieuw project aan"
+                    kind="primary"
+                    size="md"
+                    @click="window.location.href='/projects/new'" />
             </c-layout-flow>
         </c-card>
+        {% endif %}
     </c-layout-flow>
+
 </c-layout-flow>
 {% endblock %}
 
@@ -325,10 +232,6 @@
         font-size: 2rem;
         font-weight: 700;
         color: var(--rvo-color-hemelblauw);
-    }
-
-    .status-healthy {
-        color: var(--rvo-color-groen);
     }
 
     /* Metrics Grid */
@@ -377,7 +280,7 @@
     }
 
     .gauge-label {
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         color: var(--rvo-color-grijs-700);
     }
 
@@ -424,19 +327,24 @@
         text-transform: uppercase;
     }
 
-    .status-running {
+    .status-healthy {
         background: var(--rvo-color-groen-50);
         color: var(--rvo-color-groen);
     }
 
-    .status-deploying {
+    .status-progressing {
         background: var(--rvo-color-oranje-50);
         color: var(--rvo-color-oranje);
     }
 
-    .status-error {
+    .status-degraded {
         background: var(--rvo-color-rood-50);
         color: var(--rvo-color-rood);
+    }
+
+    .status-unknown {
+        background: var(--rvo-color-grijs-200);
+        color: var(--rvo-color-grijs-700);
     }
 
     .project-metrics {
@@ -459,49 +367,6 @@
         flex-wrap: wrap;
     }
 
-    /* Activity Styles */
-    .activity-item {
-        display: flex;
-        gap: var(--rvo-space-md);
-        align-items: flex-start;
-        padding-bottom: var(--rvo-space-md);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .activity-item:last-of-type {
-        border-bottom: none;
-        padding-bottom: 0;
-    }
-
-    .activity-icon {
-        flex-shrink: 0;
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .activity-success {
-        background: var(--rvo-color-groen-50);
-        color: var(--rvo-color-groen);
-    }
-
-    .activity-warning {
-        background: var(--rvo-color-oranje-50);
-        color: var(--rvo-color-oranje);
-    }
-
-    .activity-info {
-        background: var(--rvo-color-hemelblauw-50);
-        color: var(--rvo-color-hemelblauw);
-    }
-
-    .activity-content {
-        flex: 1;
-    }
-
     /* Responsive adjustments */
     @media (max-width: 768px) {
         .stats-grid,
@@ -514,49 +379,53 @@
 {% endblock %}
 
 {% block additional_scripts %}
+{% if prometheus_available and metrics %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-    // Initialize gauges and charts when the page loads
     document.addEventListener('DOMContentLoaded', function() {
         initializeGauges();
         initializeCharts();
     });
 
-    function initializeGauges() {
-        // CPU Gauge
-        createGauge('cpu-gauge', 67, 'CPU Usage', '#1f5e99');
-
-        // Memory Gauge
-        createGauge('memory-gauge', 84, 'Memory Usage', '#e17000');
-
-        // Storage Gauge
-        createGauge('storage-gauge', 45, 'Storage Usage', '#007bc7');
+    function getGaugeColor(percentage) {
+        if (percentage >= 85) return '#d52b1e';      /* red */
+        if (percentage >= 70) return '#e17000';       /* orange */
+        return '#39870c';                              /* green */
     }
 
-    function createGauge(canvasId, percentage, label, color) {
-        const canvas = document.getElementById(canvasId);
-        const ctx = canvas.getContext('2d');
+    function initializeGauges() {
+        var cpuPct = {{ metrics.cpu_percentage }};
+        var memPct = {{ metrics.memory_percentage }};
+        var storagePct = {{ metrics.storage_percentage }};
 
-        // Set canvas size
+        createGauge('cpu-gauge', cpuPct, getGaugeColor(cpuPct));
+        createGauge('memory-gauge', memPct, getGaugeColor(memPct));
+        createGauge('storage-gauge', storagePct, getGaugeColor(storagePct));
+    }
+
+    function createGauge(canvasId, percentage, color) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+
         canvas.width = 150;
         canvas.height = 150;
 
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        const radius = 60;
+        var centerX = canvas.width / 2;
+        var centerY = canvas.height / 2;
+        var radius = 60;
 
-        // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Draw background arc
+        /* Background arc */
         ctx.beginPath();
         ctx.arc(centerX, centerY, radius, Math.PI, 2 * Math.PI);
         ctx.strokeStyle = '#f0f0f0';
         ctx.lineWidth = 12;
         ctx.stroke();
 
-        // Draw progress arc
-        const angle = Math.PI + (Math.PI * percentage / 100);
+        /* Progress arc */
+        var angle = Math.PI + (Math.PI * percentage / 100);
         ctx.beginPath();
         ctx.arc(centerX, centerY, radius, Math.PI, angle);
         ctx.strokeStyle = color;
@@ -564,7 +433,7 @@
         ctx.lineCap = 'round';
         ctx.stroke();
 
-        // Draw center circle
+        /* Center circle */
         ctx.beginPath();
         ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
         ctx.fillStyle = color;
@@ -572,21 +441,33 @@
     }
 
     function initializeCharts() {
-        // Network Traffic Chart
-        const networkCtx = document.getElementById('network-chart').getContext('2d');
+        var networkInData = {{ metrics.network_in_data | tojson }};
+        var networkOutData = {{ metrics.network_out_data | tojson }};
+
+        var labels = networkInData.map(function(d) { return d.t; });
+        var inValues = networkInData.map(function(d) { return d.v; });
+        var outValues = networkOutData.map(function(d) { return d.v; });
+
+        if (labels.length === 0) {
+            labels = ['--'];
+            inValues = [0];
+            outValues = [0];
+        }
+
+        var networkCtx = document.getElementById('network-chart').getContext('2d');
         new Chart(networkCtx, {
             type: 'line',
             data: {
-                labels: ['10:00', '10:05', '10:10', '10:15', '10:20', '10:25', '10:30'],
+                labels: labels,
                 datasets: [{
-                    label: 'Inbound',
-                    data: [12, 19, 15, 25, 22, 18, 24],
+                    label: 'Inbound (KB/s)',
+                    data: inValues,
                     borderColor: '#007bc7',
                     backgroundColor: 'rgba(0, 123, 199, 0.1)',
                     tension: 0.4
                 }, {
-                    label: 'Outbound',
-                    data: [8, 11, 9, 15, 14, 11, 16],
+                    label: 'Outbound (KB/s)',
+                    data: outValues,
                     borderColor: '#e17000',
                     backgroundColor: 'rgba(225, 112, 0, 0.1)',
                     tension: 0.4
@@ -611,22 +492,6 @@
             }
         });
     }
-
-    // Auto-refresh data every 30 seconds
-    setInterval(function() {
-        // In a real application, this would fetch fresh data from the API
-        updateGauges();
-    }, 30000);
-
-    function updateGauges() {
-        // Generate some random variations for demo purposes
-        const cpuVariation = Math.floor(Math.random() * 10) - 5;
-        const memoryVariation = Math.floor(Math.random() * 10) - 5;
-        const storageVariation = Math.floor(Math.random() * 5) - 2;
-
-        createGauge('cpu-gauge', Math.max(0, Math.min(100, 67 + cpuVariation)), 'CPU Usage', '#1f5e99');
-        createGauge('memory-gauge', Math.max(0, Math.min(100, 84 + memoryVariation)), 'Memory Usage', '#e17000');
-        createGauge('storage-gauge', Math.max(0, Math.min(100, 45 + storageVariation)), 'Storage Usage', '#007bc7');
-    }
 </script>
+{% endif %}
 {% endblock %}
