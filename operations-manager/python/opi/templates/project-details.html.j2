@@ -32,6 +32,18 @@
         </div>
     </div>
 
+    {# Global Deployment Selector #}
+    {% if project.deployments|length > 1 %}
+    <div class="deployment-global-selector">
+        <label for="global-deployment-selector"><strong>Deployment:</strong></label>
+        <select id="global-deployment-selector" class="deployment-select" onchange="switchDeployment(this.value)">
+            {% for deployment in project.deployments %}
+            <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+            {% endfor %}
+        </select>
+    </div>
+    {% endif %}
+
     {# Metrics Section #}
     {% set deployments_on_current_cluster = project.deployments | selectattr('cluster', 'equalto', current_cluster) | list %}
     {% if prometheus_available and deployments_on_current_cluster %}
@@ -44,7 +56,7 @@
                 </div>
                 {% if deployments_on_current_cluster|length > 1 %}
                 <div>
-                    <select id="deployment-selector" class="deployment-select" onchange="showDeploymentMetrics(this.value)">
+                    <select id="deployment-selector" class="deployment-select" onchange="switchDeployment(this.value)">
                         {% for deployment in deployments_on_current_cluster %}
                         <option value="{{ deployment.name }}">{{ deployment.name }}</option>
                         {% endfor %}
@@ -54,7 +66,7 @@
             </div>
 
             {% for deployment in deployments_on_current_cluster %}
-            <div id="metrics-{{ deployment.name }}" class="deployment-metrics-section" {% if not loop.first %}style="display: none;"{% endif %}>
+            <div id="metrics-{{ deployment.name }}" class="deployment-metrics-section deployment-section" {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
                 {% if deployment.components %}
                 <div class="metrics-grid">
                     {% for component in deployment.components %}
@@ -375,8 +387,10 @@
                 <p class="rvo-text--subtle">ArgoCD synchronisatie en health status per deployment</p>
             </div>
 
-            <c-grid columns="two" gap="lg">
+            <div>
                 {% for deployment in project.deployments %}
+                <div class="deployment-section" id="argocd-{{ deployment.name }}"
+                     {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
                 {% set status = argocd_status.get(deployment.name, {}) %}
                 {% set health = status.get('health', 'Unknown') %}
                 {% set sync = status.get('sync', 'Unknown') %}
@@ -508,8 +522,9 @@
                         {% endif %}
                     </c-layout-flow>
                 </c-card>
+                </div>
                 {% endfor %}
-            </c-grid>
+            </div>
         </c-layout-flow>
     </c-card>
     {% elif not argocd_available and project.deployments %}
@@ -541,9 +556,11 @@
             {% endfor %}
 
             {% if ns.has_backups %}
-            <c-grid columns="one" gap="lg">
+            <div>
                 {% for deployment in project.deployments %}
                 {% if deployment.cluster == current_cluster %}
+                <div class="deployment-section" id="backups-{{ deployment.name }}"
+                     {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
                 {% set backups = deployment_backups.get(deployment.name, []) %}
 
                 <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-groen);">
@@ -679,9 +696,10 @@
                         {% endif %}
                     </c-layout-flow>
                 </c-card>
+                </div>
                 {% endif %}
                 {% endfor %}
-            </c-grid>
+            </div>
             {% else %}
             <c-card padding="md" outline="true" backgroundColor="grijs-050">
                 <c-layout-row gap="md" verticalSpacing="center">
@@ -980,6 +998,8 @@
             {% if project.deployments %}
             <div class="deployments-section">
                 {% for deployment in project.deployments %}
+                <div class="deployment-section" id="deployment-{{ deployment.name }}"
+                     {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
                 <c-card class="deployment-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
                     <c-layout-flow gap="md">
                         <div class="deployment-header">
@@ -1209,6 +1229,7 @@
                         {% endif %}
                     </c-layout-flow>
                 </c-card>
+                </div>
                 {% endfor %}
             </div>
             {% else %}
@@ -1859,6 +1880,12 @@
     .deployment-select:focus {
         outline: 2px solid var(--rvo-color-hemelblauw);
         outline-offset: 2px;
+    }
+
+    .deployment-global-selector {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
     }
 
     .metrics-grid {
@@ -3692,18 +3719,24 @@
     });
 
     /**
-     * Switch between deployment metrics sections
+     * Switch between deployment sections across all panels
      */
-    function showDeploymentMetrics(deploymentName) {
-        // Hide all deployment metrics sections
-        document.querySelectorAll('.deployment-metrics-section').forEach(section => {
+    function switchDeployment(deploymentName) {
+        // Hide all deployment sections
+        document.querySelectorAll('.deployment-section').forEach(section => {
             section.style.display = 'none';
         });
-        // Show the selected deployment's metrics
-        const selectedSection = document.getElementById('metrics-' + deploymentName);
-        if (selectedSection) {
-            selectedSection.style.display = 'block';
-        }
+        // Show sections matching this deployment
+        ['deployment-', 'argocd-', 'backups-', 'metrics-'].forEach(prefix => {
+            const el = document.getElementById(prefix + deploymentName);
+            if (el) el.style.display = '';
+        });
+        // Sync the metrics selector
+        const ms = document.getElementById('deployment-selector');
+        if (ms) ms.value = deploymentName;
+        // Sync global selector
+        const gs = document.getElementById('global-deployment-selector');
+        if (gs) gs.value = deploymentName;
     }
 
     /**
