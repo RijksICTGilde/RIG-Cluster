@@ -24,68 +24,29 @@
     {# Health Summary Banner #}
     {% if health_counts is defined %}
         {% if health_counts.Degraded > 0 %}
-        <div class="health-banner health-banner-error">
-            <div class="health-banner-icon">
-                <span class="health-pulse health-pulse-error"></span>
-                <c-icon icon="kruis" size="lg" />
+        <c-alert kind="error" heading="{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen" maxWidth="lg">
+            <div class="health-alert-projects">
+                {% for project in projects if project.health == 'Degraded' %}
+                <a href="/projects/details/{{ project.name }}#deployment-status" class="health-project-link">
+                    {{ project.display_name }} - Bekijk deployment status
+                </a>
+                {% endfor %}
             </div>
-            <div class="health-banner-content">
-                <strong>{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen</strong>
-                <div class="health-banner-projects">
-                    {% for project in projects if project.health == 'Degraded' %}
-                    <a href="/projects/details/{{ project.name }}" class="health-project-link health-project-link-error">
-                        {{ project.display_name }}
-                    </a>
-                    {% endfor %}
-                </div>
-            </div>
-            {% if health_counts.Healthy > 0 %}
-            <div class="health-banner-aside">
-                <span class="health-aside-ok">{{ health_counts.Healthy }} gezond</span>
-            </div>
-            {% endif %}
-        </div>
+        </c-alert>
         {% elif health_counts.Progressing > 0 %}
-        <div class="health-banner health-banner-warning">
-            <div class="health-banner-icon">
-                <span class="health-pulse health-pulse-warning"></span>
-                <c-icon icon="pijl-omhoog" size="lg" />
+        <c-alert kind="warning" heading="{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt" maxWidth="lg">
+            <div class="health-alert-projects">
+                {% for project in projects if project.health == 'Progressing' %}
+                <a href="/projects/details/{{ project.name }}#deployment-status" class="health-project-link">
+                    {{ project.display_name }} - Bekijk deployment status
+                </a>
+                {% endfor %}
             </div>
-            <div class="health-banner-content">
-                <strong>{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt</strong>
-                <div class="health-banner-projects">
-                    {% for project in projects if project.health == 'Progressing' %}
-                    <a href="/projects/details/{{ project.name }}" class="health-project-link health-project-link-warning">
-                        {{ project.display_name }}
-                    </a>
-                    {% endfor %}
-                </div>
-            </div>
-            {% if health_counts.Healthy > 0 %}
-            <div class="health-banner-aside">
-                <span class="health-aside-ok">{{ health_counts.Healthy }} gezond</span>
-            </div>
-            {% endif %}
-        </div>
+        </c-alert>
         {% elif health_counts.Healthy > 0 %}
-        <div class="health-banner health-banner-healthy">
-            <div class="health-banner-icon">
-                <c-icon icon="vinkje" size="lg" />
-            </div>
-            <div class="health-banner-content">
-                <strong>Alle {{ health_counts.Healthy }} project{{ 'en' if health_counts.Healthy != 1 }} {{ 'zijn' if health_counts.Healthy != 1 else 'is' }} gezond</strong>
-            </div>
-        </div>
+        <c-alert kind="success" heading="Alle {{ health_counts.Healthy }} project{{ 'en' if health_counts.Healthy != 1 }} {{ 'zijn' if health_counts.Healthy != 1 else 'is' }} gezond" maxWidth="lg" />
         {% elif not argocd_available %}
-        <div class="health-banner health-banner-unknown">
-            <div class="health-banner-icon">
-                <c-icon icon="info" size="lg" />
-            </div>
-            <div class="health-banner-content">
-                <strong>Status informatie niet beschikbaar</strong>
-                <span class="rvo-text--sm">ArgoCD is niet verbonden</span>
-            </div>
-        </div>
+        <c-alert kind="info" heading="Status informatie niet beschikbaar" content="ArgoCD is niet verbonden." maxWidth="lg" />
         {% endif %}
     {% endif %}
 
@@ -322,118 +283,21 @@
 
 {% block additional_styles %}
 <style>
-    /* Health Banner */
-    .health-banner {
-        display: flex;
-        align-items: center;
-        gap: var(--rvo-space-lg);
-        border-left: 5px solid;
-        border-radius: 6px;
-        padding: var(--rvo-space-lg);
-        animation: bannerSlideIn 0.4s ease-out;
-    }
-
-    @keyframes bannerSlideIn {
-        from { opacity: 0; transform: translateY(-8px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-
-    .health-banner-icon {
-        position: relative;
-        flex-shrink: 0;
-    }
-
-    .health-banner-content {
-        flex: 1;
+    /* Health Alert Links */
+    .health-alert-projects {
         display: flex;
         flex-direction: column;
         gap: var(--rvo-space-xs);
-    }
-
-    .health-banner-aside {
-        flex-shrink: 0;
-    }
-
-    .health-aside-ok {
-        background: var(--rvo-color-groen-50, #e6f5e0);
-        color: var(--rvo-color-groen, #39870c);
-        padding: var(--rvo-space-xs) var(--rvo-space-sm);
-        border-radius: 12px;
-        font-size: 0.8rem;
-        font-weight: 600;
-    }
-
-    .health-banner-projects {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--rvo-space-xs);
+        margin-top: var(--rvo-space-xs);
     }
 
     .health-project-link {
-        padding: 2px 10px;
-        border-radius: 12px;
-        font-size: 0.8rem;
         font-weight: 500;
-        text-decoration: none;
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        text-decoration: underline;
     }
 
     .health-project-link:hover {
-        transform: scale(1.05);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    }
-
-    .health-project-link-error {
-        background: rgba(213, 43, 30, 0.15);
-        color: var(--rvo-color-rood, #d52b1e);
-    }
-
-    .health-project-link-warning {
-        background: rgba(225, 112, 0, 0.15);
-        color: var(--rvo-color-oranje, #e17000);
-    }
-
-    .health-pulse {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        transform: translate(-50%, -50%);
-        animation: pulse 2s ease-in-out infinite;
-    }
-
-    .health-pulse-error { background: rgba(213, 43, 30, 0.3); }
-    .health-pulse-warning { background: rgba(225, 112, 0, 0.3); }
-
-    @keyframes pulse {
-        0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
-        50% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
-    }
-
-    .health-banner-healthy {
-        background: linear-gradient(135deg, var(--rvo-color-groen-50, #e6f5e0) 0%, #f0faf0 100%);
-        border-color: var(--rvo-color-groen, #39870c);
-        color: var(--rvo-color-groen, #39870c);
-    }
-
-    .health-banner-warning {
-        background: linear-gradient(135deg, var(--rvo-color-oranje-50, #fef3e0) 0%, #fffaf0 100%);
-        border-color: var(--rvo-color-oranje, #e17000);
-        color: var(--rvo-color-oranje, #e17000);
-    }
-
-    .health-banner-error {
-        background: linear-gradient(135deg, var(--rvo-color-rood-50, #fce5e3) 0%, #fff5f5 100%);
-        border-color: var(--rvo-color-rood, #d52b1e);
-        color: var(--rvo-color-rood, #d52b1e);
-    }
-
-    .health-banner-unknown {
-        background: linear-gradient(135deg, var(--rvo-color-grijs-100, #f0f0f0) 0%, #fafafa 100%);
-        border-color: var(--rvo-color-grijs-500, #999);
-        color: var(--rvo-color-grijs-700, #666);
+        text-decoration: none;
     }
 
     /* Stats Grid */

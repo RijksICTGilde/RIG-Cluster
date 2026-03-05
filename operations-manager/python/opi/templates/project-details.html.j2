@@ -385,7 +385,7 @@
 
     {# ArgoCD Deployment Status Section #}
     {% if argocd_available and project.deployments %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-card id="deployment-status" outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
             <div>
                 <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="server" size="xl" color="hemelblauw" />Deployment Status</c-heading>
