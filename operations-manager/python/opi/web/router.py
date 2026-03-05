@@ -2672,6 +2672,18 @@ async def projects_overview(request: Request):
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
+@web_router.get("/about", response_class=HTMLResponse)
+async def about_platform(request: Request):
+    """Serve the 'About the platform' page."""
+    try:
+        templates = get_templates()
+        user = get_current_user(request)
+        return templates.TemplateResponse("about.html.j2", {"request": request, "menu_items": get_menu_items(user)})
+    except Exception as e:
+        logger.error(f"Error serving about page: {e!s}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @web_router.get("/architecture", response_class=HTMLResponse)
 async def architecture_overview(request: Request):
     """
