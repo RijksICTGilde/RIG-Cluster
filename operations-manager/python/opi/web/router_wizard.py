@@ -366,6 +366,11 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     if not project_data:
         raise HTTPException(status_code=500, detail="Project data niet beschikbaar")
 
+    # Populate transient fields for deferred editables (e.g. custom domain text input)
+    processor = EditableFormProcessor()
+    for section in flow.sections:
+        processor.populate_deferred_fields(project_data, section.editables)
+
     # Pre-fill step data from existing project
     step_data = _split_data_across_sections(flow, project_data)
 

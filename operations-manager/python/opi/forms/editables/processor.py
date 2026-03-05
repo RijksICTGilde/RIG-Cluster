@@ -268,6 +268,8 @@ class EditableFormProcessor:
                         value = ed.converter.write(value)
                     smart_set_value(result, ed.yaml_path, value)
 
+        self._resolve_deferrals(result, editables)
+        self._strip_transients(result, editables)
         return result
 
     def _apply_sequence_to_yaml(
@@ -396,6 +398,8 @@ class EditableFormProcessor:
                         value = ed.converter.write(value)
                     smart_set_value(result, ed.yaml_path, value)
 
+        self._resolve_deferrals(result, editables)
+        self._strip_transients(result, editables)
         return result, errors
 
     def _process_sequence_json(
@@ -490,3 +494,106 @@ class EditableFormProcessor:
                     if child_ed.converter:
                         value = child_ed.converter.write(value)
                     smart_set_value(result, child_path, value)
+
+    # ------------------------------------------------------------------
+    # Deferral and transient field handling
+    # ------------------------------------------------------------------
+
+    def _collect_editables_with_paths(
+        self,
+        editables: list[EditableVisualizer],
+        data: dict[str, Any],
+    ) -> list[tuple[Editable, str]]:
+        """Collect all editables with their concrete paths.
+
+        For sequence children, resolves wildcard paths to concrete
+        indexed paths based on the actual items in data.
+        """
+        result: list[tuple[Editable, str]] = []
+        for vis in editables:
+            ed = vis.editable
+            if str(vis.widget) == "sequence":
+                items = smart_get_value(data, ed.yaml_path) or []
+                if isinstance(items, list):
+                    for index in range(len(items)):
+                        for child_vis in vis.children or []:
+                            child_ed = child_vis.editable
+                            concrete = resolve_path(child_ed.yaml_path, index)
+                            result.append((child_ed, concrete))
+            else:
+                result.append((ed, ed.yaml_path))
+        return result
+
+    def _resolve_deferrals(
+        self,
+        data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> None:
+        """Resolve defers_to relationships: copy transient value to parent path.
+
+        For each editable with ``defers_to`` and ``defer_when``, checks if the
+        condition is met on the current value. If so, copies the value from
+        the deferred (transient) field path into this editable's path.
+        """
+        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
+            if not ed.defers_to or not ed.defer_when:
+                continue
+            current_value = smart_get_value(data, concrete_path)
+            if ed.defer_when.check(current_value):
+                # Resolve the deferred path with the same index context
+                deferred_path = ed.defers_to
+                if "[*]" in deferred_path and "[*]" not in concrete_path:
+                    # Extract index from concrete_path and apply to deferred_path
+                    import re
+
+                    m = re.search(r"\[(\d+)\]", concrete_path)
+                    if m:
+                        deferred_path = deferred_path.replace("[*]", f"[{m.group(1)}]", 1)
+                deferred_value = smart_get_value(data, deferred_path)
+                if deferred_value is not None:
+                    smart_set_value(data, concrete_path, deferred_value)
+
+    def _strip_transients(
+        self,
+        data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> None:
+        """Remove all transient field values from the output data.
+
+        Transient fields participate in form state but must not persist
+        to the final YAML output.
+        """
+        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
+            if ed.transient:
+                smart_set_value(data, concrete_path, None)
+
+    def populate_deferred_fields(
+        self,
+        data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> None:
+        """Prepare data for editing by populating transient fields.
+
+        When loading stored data, a deferred field (e.g. custom domain text
+        input) has no stored value. This method detects when the parent's
+        stored value triggers the defer condition (via converter.view) and
+        copies the stored value into the transient field path so the form
+        renders correctly.
+        """
+        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
+            if not ed.defers_to or not ed.defer_when:
+                continue
+            stored_value = smart_get_value(data, concrete_path)
+            if not stored_value:
+                continue
+            # Apply converter.view to get the display value (e.g. "__custom__")
+            display_value = ed.converter.view(stored_value) if ed.converter else stored_value
+            if ed.defer_when.check(display_value):
+                deferred_path = ed.defers_to
+                if "[*]" in deferred_path and "[*]" not in concrete_path:
+                    import re
+
+                    m = re.search(r"\[(\d+)\]", concrete_path)
+                    if m:
+                        deferred_path = deferred_path.replace("[*]", f"[{m.group(1)}]", 1)
+                smart_set_value(data, deferred_path, stored_value)

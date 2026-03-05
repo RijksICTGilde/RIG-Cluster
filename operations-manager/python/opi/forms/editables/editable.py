@@ -41,6 +41,15 @@ class EditableEnforcer(Protocol):
 
 
 @runtime_checkable
+class EditableCondition(Protocol):
+    """Condition check for deferred field behavior."""
+
+    def check(self, value: Any) -> bool:
+        """Return True when the condition is met."""
+        ...
+
+
+@runtime_checkable
 class EditableGenerator(Protocol):
     """Generates computed values at submit time.
 
@@ -96,4 +105,7 @@ class Editable:
     max_items: int | None = None
     depends_on: str | None = None
     show_when: dict[str, Any] | None = None
+    transient: bool = False
+    defers_to: str | None = None
+    defer_when: EditableCondition | None = None
     hooks: dict[str, Any] | None = field(default=None, repr=False)

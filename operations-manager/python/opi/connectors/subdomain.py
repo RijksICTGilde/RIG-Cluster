@@ -27,6 +27,7 @@ def get_supported_base_domains(cluster: str | None = None) -> set[str]:
     Returns:
         Set of supported base domain strings
     """
+
     def _extract_domain(entry: str | dict) -> str:
         return entry["domain"] if isinstance(entry, dict) else entry
 
@@ -72,6 +73,9 @@ def validate_base_domain(base_domain: str, cluster: str | None = None, language:
     supported_domains = get_supported_base_domains(cluster)
 
     if base_domain_lower not in supported_domains:
+        # Accept any syntactically valid domain (custom domain support)
+        if re.match(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$", base_domain_lower):
+            return True, None
         return False, messages["not_supported"].format(
             base_domain=base_domain_lower, supported=", ".join(sorted(supported_domains))
         )

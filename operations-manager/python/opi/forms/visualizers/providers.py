@@ -355,6 +355,7 @@ class BaseDomainOptionsProvider:
         return [
             {"value": "", "label": "Standaard (clusternaam)"},
             {"value": "rijksapp.nl", "label": "rijksapp.nl"},
+            {"value": "__custom__", "label": "Eigen domein..."},
         ]
 
 
@@ -379,10 +380,14 @@ class ClusterBaseDomainOptionsProvider:
             for config in CLUSTER_CONFIG.values():
                 for d in config.get("nice_url", {}).get("supported_domains", []):
                     all_domains.add(_extract_domain(d))
-            return [{"value": d, "label": d} for d in sorted(all_domains)]
+            options = [{"value": d, "label": d} for d in sorted(all_domains)]
+            options.append({"value": "__custom__", "label": "Eigen domein..."})
+            return options
         raw = CLUSTER_CONFIG[self.cluster].get("nice_url", {}).get("supported_domains", [])
         domains = [_extract_domain(d) for d in raw]
-        return [{"value": d, "label": d} for d in domains]
+        options = [{"value": d, "label": d} for d in domains]
+        options.append({"value": "__custom__", "label": "Eigen domein..."})
+        return options
 
 
 class FilteredServiceOptionsProvider:
@@ -461,7 +466,9 @@ class DomainFormatOptionsProvider:
         from opi.core.cluster_config import get_domain_supports_dots
 
         supports_dots = False
-        if self.base_domain and self.cluster:
+        if self.base_domain == "__custom__":
+            supports_dots = True  # Custom domains assumed to support dots
+        elif self.base_domain and self.cluster:
             supports_dots = get_domain_supports_dots(self.cluster, self.base_domain)
 
         dash_options = [

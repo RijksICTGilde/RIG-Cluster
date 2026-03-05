@@ -7,9 +7,12 @@ the wizard creates a single deployment.
 
 from __future__ import annotations
 
+from opi.forms.editables.conditions import SentinelValueCondition
+from opi.forms.editables.converters import CustomDomainSelectConverter
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
     BaseDomainValidator,
+    CustomDomainValidator,
     DomainFormatValidator,
     MinMaxLengthValidator,
     SubdomainValidator,
@@ -39,6 +42,17 @@ DOMAIN_BASE_DOMAIN_EDITABLE = Editable(
     required=True,
     values_provider="ClusterBaseDomainOptionsProvider",
     validator=BaseDomainValidator(),
+    converter=CustomDomainSelectConverter(),
+    defers_to="deployments[0]/base-domain:custom",
+    defer_when=SentinelValueCondition(),
+)
+
+DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE = Editable(
+    yaml_path="deployments[0]/base-domain:custom",
+    transient=True,
+    depends_on="deployments[0]/base-domain",
+    show_when={"value": ["__custom__"]},
+    validator=CustomDomainValidator(),
 )
 
 DOMAIN_ROOT_COMPONENT_EDITABLE = Editable(

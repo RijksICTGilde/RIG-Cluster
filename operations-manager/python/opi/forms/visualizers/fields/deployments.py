@@ -11,6 +11,7 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     DEPLOYMENT_COMP_REFERENCE_EDITABLE,
     DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
+    DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
     DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
     DEPLOYMENT_DOMAIN_MODE_EDITABLE,
     DEPLOYMENT_NAME_EDITABLE,
@@ -51,6 +52,15 @@ DEPLOYMENT_BASE_DOMAIN = EditableVisualizer(
     widget=WidgetType.SELECT,
     label="Basisdomein",
     help_text="Het basisdomein voor de URL's van deze deployment",
+    attributes={"data-rerender": "true"},
+)
+
+DEPLOYMENT_CUSTOM_BASE_DOMAIN = EditableVisualizer(
+    editable=DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Eigen domein",
+    placeholder="voorbeeld.nl",
+    help_text="Voer uw eigen domeinnaam in. U bent zelf verantwoordelijk voor DNS-configuratie.",
 )
 
 DEPLOYMENT_DOMAIN_MODE = EditableVisualizer(
@@ -112,6 +122,7 @@ DEPLOYMENTS_SEQUENCE = EditableVisualizer(
         DEPLOYMENT_REPOSITORY,
         DEPLOYMENT_SUBDOMAIN,
         DEPLOYMENT_BASE_DOMAIN,
+        DEPLOYMENT_CUSTOM_BASE_DOMAIN,
         DEPLOYMENT_DOMAIN_MODE,
         DEPLOYMENT_DOMAIN_FORMAT,
         DEPLOYMENT_CLONE_FROM,

@@ -220,10 +220,27 @@ class BaseDomainValidator:
     def validate(self, value: Any) -> list[str]:
         if not value:
             return []
+        if str(value) == "__custom__":
+            return []  # Sentinel; actual domain validated via CustomDomainValidator
         from opi.connectors.subdomain import validate_base_domain
 
         is_valid, error_msg = validate_base_domain(str(value))
         return [error_msg] if not is_valid and error_msg else []
+
+
+class CustomDomainValidator:
+    """Validates custom domain format."""
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        domain = str(value).strip().lower()
+        if not re.match(
+            r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$",
+            domain,
+        ):
+            return ["Ongeldig domeinformaat. Gebruik een geldig domeinnaam zoals 'voorbeeld.nl'"]
+        return []
 
 
 class DomainFormatValidator:

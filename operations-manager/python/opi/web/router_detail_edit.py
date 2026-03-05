@@ -274,6 +274,11 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     flow = get_flow(flow_id)
     project_data = project.data or {}
 
+    # Populate transient fields for deferred editables (e.g. custom domain text input)
+    processor = EditableFormProcessor()
+    for section in flow.sections:
+        processor.populate_deferred_fields(project_data, section.editables)
+
     # Pre-fill step data from existing project
     step_data = _split_data_across_sections(flow, project_data)
 

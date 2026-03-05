@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from opi.forms.editables.conditions import SentinelValueCondition
+from opi.forms.editables.converters import CustomDomainSelectConverter
 from opi.forms.editables.editable import Editable
-from opi.forms.editables.validators import BaseDomainValidator, DomainFormatValidator, SubdomainValidator
+from opi.forms.editables.validators import (
+    BaseDomainValidator,
+    CustomDomainValidator,
+    DomainFormatValidator,
+    SubdomainValidator,
+)
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -18,7 +25,17 @@ DEPLOYMENT_REPOSITORY_EDITABLE = Editable(
 )
 DEPLOYMENT_SUBDOMAIN_EDITABLE = Editable(yaml_path="deployments[*]/subdomain", validator=SubdomainValidator())
 DEPLOYMENT_BASE_DOMAIN_EDITABLE = Editable(
-    yaml_path="deployments[*]/base-domain", values_provider="BaseDomainOptionsProvider", validator=BaseDomainValidator()
+    yaml_path="deployments[*]/base-domain",
+    values_provider="BaseDomainOptionsProvider",
+    validator=BaseDomainValidator(),
+    converter=CustomDomainSelectConverter(),
+    defers_to="deployments[*]/base-domain:custom",
+    defer_when=SentinelValueCondition(),
+)
+DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE = Editable(
+    yaml_path="deployments[*]/base-domain:custom",
+    transient=True,
+    validator=CustomDomainValidator(),
 )
 DEPLOYMENT_DOMAIN_MODE_EDITABLE = Editable(
     yaml_path="deployments[*]/domain-mode", values_provider="DomainModeOptionsProvider"
@@ -62,6 +79,7 @@ DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
         DEPLOYMENT_REPOSITORY_EDITABLE,
         DEPLOYMENT_SUBDOMAIN_EDITABLE,
         DEPLOYMENT_BASE_DOMAIN_EDITABLE,
+        DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
         DEPLOYMENT_DOMAIN_MODE_EDITABLE,
         DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
         DEPLOYMENT_CLONE_FROM_EDITABLE,

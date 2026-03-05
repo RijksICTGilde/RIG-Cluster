@@ -337,6 +337,25 @@ class KeycloakRealmsDisplayConverter:
         ]
 
 
+class CustomDomainSelectConverter:
+    """Maps non-standard base-domain values to '__custom__' for the select widget."""
+
+    def read(self, value: Any) -> Any:
+        return self.view(value)
+
+    def write(self, value: Any) -> Any:
+        return value  # passthrough — merge happens in post-processing
+
+    def view(self, value: Any) -> Any:
+        if not value:
+            return value
+        from opi.connectors.subdomain import get_supported_base_domains
+
+        if str(value) not in get_supported_base_domains():
+            return "__custom__"
+        return value
+
+
 class AGEEncryptConverter:
     """Encrypts/decrypts field values using AGE encryption.
 
