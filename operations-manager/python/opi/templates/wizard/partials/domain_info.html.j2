@@ -5,36 +5,25 @@
 
         <c-layout-flow gap="lg">
             <div>
-                <c-p><strong>1. Component-specifiek (standaard)</strong></c-p>
-                <c-p>Elk component krijgt zijn eigen unieke URL zoals:<br/>
-                    <code>componentnaam-deploymentnaam-projectnaam.domein.nl</code></br>
-                    en<br/>
-                    <code>andercomponentnaam-deploymentnaam-projectnaam.domein.nl</code>.</c-p>
+                <c-p><strong>Formaten met "component-" prefix</strong></c-p>
+                <c-p>Elk component krijgt een eigen unieke URL, bijvoorbeeld:<br/>
+                    <code>frontend-poc-myapp.domein</code> en <code>backend-poc-myapp.domein</code>.</c-p>
             </div>
 
             <div>
-                <c-p><strong>2. Deployment-naam (gedeeld domein)</strong></c-p>
-                <c-p>Alle componenten delen dezelfde domeinnaam gebaseerd op de
-                    deployment-naam, bijvoorbeeld <code>deploymentnaam-projectnaam.domein.nl</code>,
-                    maar verschillen in pad zoals <code>/</code> en <code>/api</code>.</c-p>
+                <c-p><strong>Formaten zonder "component-" prefix</strong></c-p>
+                <c-p>Alle componenten delen dezelfde URL en worden onderscheiden via paden,
+                    bijvoorbeeld <code>/</code> voor de frontend en <code>/api</code> voor de backend.</c-p>
                 <c-p class="rvo-text--sm rvo-text--subtle">Dit voorkomt CORS-problemen
                     tussen componenten.</c-p>
             </div>
 
             <div>
-                <c-p><strong>3. Aangepast subdomein</strong></c-p>
-                <c-p>Alle componenten delen een door u opgegeven domeinnaam
-                    bijvoorbeeld <code>subdomein.domein.nl</code>, met verschillende paden.</c-p>
-            </div>
-
-            <div>
-                <c-p><strong>4. Nice URL (punt-gescheiden)</strong></c-p>
-                <c-p>Elk component krijgt een mooie punt-gescheiden URL zoals
-                    <code>frontend.mijnapp.rijks.app</code>. U kiest een uniek subdomein
-                    (bijv. <code>mijnapp</code>) dat voor alle componenten wordt gebruikt.</c-p>
-                <c-p class="rvo-text--sm rvo-text--subtle">Vereist een base-domein zoals
-                    rijks.app of rijksapps.nl. Optioneel kunt u een component als "root"
-                    markeren voor directe toegang via <code>mijnapp.rijks.app</code>.</c-p>
+                <c-p><strong>Formaten met "-subdomain"</strong></c-p>
+                <c-p>U kiest een eigen subdomein en basisdomein. De URL wordt dan bijvoorbeeld
+                    <code>frontend.mijnapp.rijks.app</code> of <code>mijnapp.rijks.app</code>.</c-p>
+                <c-p class="rvo-text--sm rvo-text--subtle">Het basisdomein moet
+                    punt-gescheiden URLs ondersteunen (bijv. rijks.app of rijksapp.nl).</c-p>
             </div>
         </c-layout-flow>
     </div>

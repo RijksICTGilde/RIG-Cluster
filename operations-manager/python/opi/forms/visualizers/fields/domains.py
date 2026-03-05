@@ -6,17 +6,16 @@ from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.fields.domains import (
     DOMAIN_BASE_DOMAIN_EDITABLE,
     DOMAIN_FORMAT_EDITABLE,
-    DOMAIN_MODE_EDITABLE,
     DOMAIN_ROOT_COMPONENT_EDITABLE,
     DOMAIN_SUBDOMAIN_EDITABLE,
     WIZARD_DEPLOYMENT_NAME_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
-DOMAIN_MODE = EditableVisualizer(
-    editable=DOMAIN_MODE_EDITABLE,
+DOMAIN_FORMAT = EditableVisualizer(
+    editable=DOMAIN_FORMAT_EDITABLE,
     widget=WidgetType.SELECT,
-    label="Domeinmodus",
+    label="URL-formaat",
     help_text="Bepaalt hoe URL's voor uw componenten worden opgebouwd.",
     attributes={"data-rerender": "true"},
 )
@@ -32,15 +31,7 @@ DOMAIN_BASE_DOMAIN = EditableVisualizer(
     editable=DOMAIN_BASE_DOMAIN_EDITABLE,
     widget=WidgetType.SELECT,
     label="Basisdomein",
-    help_text="Het basisdomein voor nice-URL's. Afhankelijk van het gekozen cluster.",
-)
-
-DOMAIN_FORMAT = EditableVisualizer(
-    editable=DOMAIN_FORMAT_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="URL-formaat",
-    help_text="Het patroon waarmee hostnamen worden opgebouwd.",
-    attributes={"data-rerender": "true"},
+    help_text="Het basisdomein voor de URLs. Afhankelijk van het gekozen cluster.",
 )
 
 DOMAIN_ROOT_COMPONENT = EditableVisualizer(
