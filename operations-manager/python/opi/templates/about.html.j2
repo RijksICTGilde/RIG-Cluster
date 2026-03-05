@@ -1,0 +1,31 @@
+{% extends "base.html.j2" %}
+
+{% block page_title %}Over het platform - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+
+    <div>
+        <c-heading type="h1" textContent="Over het platform" />
+        <p class="rvo-text--lg">
+            Het RIG Self Service Portal biedt projectteams een centrale plek om Kubernetes-omgevingen
+            aan te vragen, te configureren en te beheren via GitOps-principes.
+        </p>
+    </div>
+
+    <c-card outline="true" padding="xl" backgroundColor="wit">
+        <c-layout-flow gap="md">
+            <c-heading type="h2" textContent="Wat is het Self Service Portal?" />
+            <p>
+                Dit platform is ontwikkeld voor RIG-projecten binnen ODC-Noord die een Kubernetes-omgeving
+                nodig hebben voor POC-, Pilot- of Productie-doeleinden. Via het portaal kunnen teams
+                zelfstandig projecten aanmaken, deployments configureren en centraal beheerde services
+                zoals PostgreSQL, Keycloak, Vault en MinIO inzetten.
+            </p>
+        </c-layout-flow>
+    </c-card>
+
+    <c-alert kind="info" heading="Deze pagina wordt nog verder uitgebreid" content="Meer informatie over het platform, het team en de roadmap volgt binnenkort." maxWidth="lg" />
+
+</c-layout-flow>
+{% endblock %}
