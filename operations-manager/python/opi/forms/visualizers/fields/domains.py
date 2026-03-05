@@ -32,6 +32,7 @@ DOMAIN_BASE_DOMAIN = EditableVisualizer(
     widget=WidgetType.SELECT,
     label="Basisdomein",
     help_text="Het basisdomein voor de URLs. Afhankelijk van het gekozen cluster.",
+    attributes={"data-rerender": "true"},
 )
 
 DOMAIN_ROOT_COMPONENT = EditableVisualizer(

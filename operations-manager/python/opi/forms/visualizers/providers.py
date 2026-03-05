@@ -446,23 +446,29 @@ class RepositoryOptionsProvider:
 
 
 class DomainFormatOptionsProvider:
-    """Provides domain-format template options.
+    """Provides domain-format template options filtered by base_domain capabilities.
 
-    Returns all four format options with clear descriptions.
-    Domain-format is now the primary UI control (replaces domain-mode).
+    When a base_domain is selected, checks whether it supports dot-separated
+    hostnames.  If it does, both dot and dash variants are shown (dots first).
+    If not (or no base_domain yet), only dash variants are returned.
     """
 
+    def __init__(self, base_domain: str | None = None, cluster: str | None = None) -> None:
+        self.base_domain = base_domain
+        self.cluster = cluster
+
     def get_options(self) -> list[dict[str, Any]]:
-        return [
+        from opi.core.cluster_config import get_domain_supports_dots
+
+        supports_dots = False
+        if self.base_domain and self.cluster:
+            supports_dots = get_domain_supports_dots(self.cluster, self.base_domain)
+
+        dash_options = [
             {
                 "value": "component-deployment-project",
                 "label": "component-deployment-project.domein",
                 "description": "Elk component krijgt een eigen URL (standaard)",
-            },
-            {
-                "value": "component-deployment-subdomain",
-                "label": "component-deployment-subdomain.domein",
-                "description": "Eigen URL per component met een subdomein",
             },
             {
                 "value": "deployment-project",
@@ -470,11 +476,44 @@ class DomainFormatOptionsProvider:
                 "description": "Alle componenten op dezelfde URL, verschillende paden",
             },
             {
+                "value": "component-deployment-subdomain",
+                "label": "component-deployment-subdomain.domein",
+                "description": "Eigen URL per component met een subdomein",
+            },
+            {
                 "value": "deployment-subdomain",
                 "label": "deployment-subdomain.domein",
                 "description": "Gedeelde URL met subdomein, verschillende paden",
             },
         ]
+
+        if not supports_dots:
+            return dash_options
+
+        dot_options = [
+            {
+                "value": "component-deployment-project",
+                "label": "component.deployment.project.domein",
+                "description": "Elk component krijgt een eigen URL met punt-scheiding",
+            },
+            {
+                "value": "deployment-project",
+                "label": "deployment.project.domein",
+                "description": "Alle componenten op dezelfde URL met punt-scheiding",
+            },
+            {
+                "value": "component-deployment-subdomain",
+                "label": "component.deployment.subdomain.domein",
+                "description": "Eigen URL per component met subdomein (punt-scheiding)",
+            },
+            {
+                "value": "deployment-subdomain",
+                "label": "deployment.subdomain.domein",
+                "description": "Gedeelde URL met subdomein (punt-scheiding)",
+            },
+        ]
+
+        return dot_options + dash_options
 
 
 # Registry of all available providers

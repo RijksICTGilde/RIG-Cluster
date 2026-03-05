@@ -57,10 +57,11 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
     result = {}
     for cluster_name, config in CLUSTER_CONFIG.items():
         nice_url_config = config.get("nice_url", {})
-        supported_domains = nice_url_config.get("supported_domains", [])
+        raw_domains = nice_url_config.get("supported_domains", [])
 
         domain_options = []
-        for domain in supported_domains:
+        for entry in raw_domains:
+            domain = entry["domain"] if isinstance(entry, dict) else entry
             # Add descriptive label
             label = f"{domain} (lokaal)" if domain in ("kind", "local") else domain
             domain_options.append({"value": domain, "label": label})
