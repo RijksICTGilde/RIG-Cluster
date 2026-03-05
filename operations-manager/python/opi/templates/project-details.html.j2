@@ -29,23 +29,6 @@
                     <span class="project-badge">{{ project.name }}</span>
                 </div>
             </div>
-            <div style="display: flex; gap: var(--rvo-space-md);">
-                <c-button
-                    label="Terug naar overzicht"
-                    kind="secondary"
-                    size="md"
-                    showIcon="before"
-                    icon="terug"
-                    @click="window.location.href='/projects'" />
-                {% if user_role in ["admin", "owner"] %}
-                    <c-button
-                        label="Project beheren"
-                        kind="primary"
-                        size="md"
-                        showIcon="before"
-                        icon="instellingen" />
-                {% endif %}
-            </div>
         </div>
     </div>
 
