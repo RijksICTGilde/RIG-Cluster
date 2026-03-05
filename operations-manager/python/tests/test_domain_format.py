@@ -294,6 +294,18 @@ class TestDomainFormatOptionsProvider:
         options = provider.get_options()
         assert len(options) == 4
 
+    def test_sandbox_default_domain_no_dots(self):
+        """sandbox.rijksapp.dev on sandboxed-local does not support dots."""
+        provider = DomainFormatOptionsProvider(base_domain="sandbox.rijksapp.dev", cluster="sandboxed-local")
+        options = provider.get_options()
+        assert len(options) == 4
+
+    def test_sandbox_test_domain_supports_dots(self):
+        """robbertuittenbroek.nl on sandboxed-local supports dots."""
+        provider = DomainFormatOptionsProvider(base_domain="robbertuittenbroek.nl", cluster="sandboxed-local")
+        options = provider.get_options()
+        assert len(options) == 8
+
 
 # ---------------------------------------------------------------------------
 # DomainFormatValidator

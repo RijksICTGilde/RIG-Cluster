@@ -83,9 +83,8 @@ CLUSTER_CONFIG = {
         },
         "nice_url": {
             "supported_domains": [
-                {"domain": "sandbox.rijksapp.dev", "supports_dots": True},
-                {"domain": "rijksapp.nl", "supports_dots": True},
-                {"domain": "rijksapp.dev", "supports_dots": True},
+                {"domain": "sandbox.rijksapp.dev", "supports_dots": False},
+                {"domain": "robbertuittenbroek.nl", "supports_dots": True},
             ],
         },
     },
