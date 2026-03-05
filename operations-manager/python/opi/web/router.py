@@ -698,6 +698,7 @@ async def dashboard(request: Request):
                     unique_users.add(u.email.lower())
 
             # Collect k8s namespaces for Prometheus queries
+            project_namespaces: list[str] = []
             for deployment in deployments:
                 cluster = deployment.get("cluster")
                 namespace = deployment.get("namespace")
@@ -707,6 +708,8 @@ async def dashboard(request: Request):
                     k8s_ns = get_prefixed_namespace(cluster, namespace)
                     if k8s_ns not in all_namespaces:
                         all_namespaces.append(k8s_ns)
+                    if k8s_ns not in project_namespaces:
+                        project_namespaces.append(k8s_ns)
 
             user_projects.append(
                 {
@@ -717,6 +720,7 @@ async def dashboard(request: Request):
                     "users": users,
                     "deployment_count": len(deployments),
                     "user_count": len(users),
+                    "namespaces": project_namespaces,
                 }
             )
 
@@ -875,8 +879,29 @@ async def dashboard(request: Request):
                         "network_in_data": network_in_data,
                         "network_out_data": network_out_data,
                     }
+                    # Per-project CPU usage for resource comparison bar
+                    for project in user_projects:
+                        proj_ns = project.get("namespaces", [])
+                        if not proj_ns:
+                            project["cpu_cores"] = 0.0
+                            continue
+                        try:
+                            proj_regex = "|".join(proj_ns)
+                            result = prom.custom_query(
+                                f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{proj_regex}",container!=""}}[5m]))'
+                            )
+                            if result and result[0].get("value"):
+                                project["cpu_cores"] = float(result[0]["value"][1])
+                            else:
+                                project["cpu_cores"] = 0.0
+                        except Exception as e:
+                            logger.debug(f"Dashboard per-project CPU query failed for {project['name']}: {e}")
+                            project["cpu_cores"] = 0.0
+
             except Exception as e:
                 logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
+
+        total_cpu_usage = sum(p.get("cpu_cores", 0) for p in user_projects)
 
         # --- Query ArgoCD status per project ---
         argocd_available = False
@@ -890,6 +915,7 @@ async def dashboard(request: Request):
             if argocd_available:
                 for project in user_projects:
                     deployment_statuses: list[str] = []
+                    latest_deploy: str | None = None
                     for deployment in project.get("deployments", []):
                         deployment_name = deployment.get("name")
                         if not deployment_name:
@@ -900,6 +926,13 @@ async def dashboard(request: Request):
                             if status_data:
                                 health = status_data.get("status", {}).get("health", {}).get("status", "Unknown")
                                 deployment_statuses.append(health)
+                                # Extract last deployed timestamp
+                                operation_state = status_data.get("status", {}).get("operationState", {})
+                                finished_at = operation_state.get("finishedAt") or status_data.get("status", {}).get(
+                                    "reconciledAt"
+                                )
+                                if finished_at and (not latest_deploy or finished_at > latest_deploy):
+                                    latest_deploy = finished_at
                             else:
                                 deployment_statuses.append("Unknown")
                         except Exception as e:
@@ -915,10 +948,16 @@ async def dashboard(request: Request):
                         project["health"] = "Healthy"
                     else:
                         project["health"] = "Unknown"
+                    project["last_deployed"] = latest_deploy
         except Exception as e:
             logger.warning(f"Dashboard: failed to connect to ArgoCD: {e}")
             for project in user_projects:
                 project["health"] = "Unknown"
+
+        # Compute health counts for summary banner
+        health_counts = {"Healthy": 0, "Progressing": 0, "Degraded": 0, "Unknown": 0}
+        for p in user_projects:
+            health_counts[p.get("health", "Unknown")] += 1
 
         return templates.TemplateResponse(
             "dashboard.html.j2",
@@ -933,6 +972,8 @@ async def dashboard(request: Request):
                 "argocd_available": argocd_available,
                 "metrics": metrics,
                 "projects": user_projects,
+                "health_counts": health_counts,
+                "total_cpu_usage": total_cpu_usage,
             },
         )
 
