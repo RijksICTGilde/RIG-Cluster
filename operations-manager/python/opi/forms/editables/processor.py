@@ -287,6 +287,8 @@ class EditableFormProcessor:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
+                if not should_render_editable(child_vis, yaml_data):
+                    continue
                 if str(child_vis.widget) == "sequence":
                     self._apply_nested_sequence_to_yaml(child_vis, parsed, yaml_data, edit_mode, parent_index=index)
                 elif str(child_vis.widget) == "checkbox_group":
@@ -422,6 +424,8 @@ class EditableFormProcessor:
             for child_vis in vis.children or []:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
+                    continue
+                if not should_render_editable(child_vis, result):
                     continue
                 if str(child_vis.widget) == "sequence":
                     self._process_nested_sequence_json(

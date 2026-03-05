@@ -390,3 +390,135 @@ class TestCheckboxGroupCoercion:
         yaml_data = {"components": [{"name": "web", "services": []}]}
         result = processor.apply_to_yaml(parsed, [comp_seq], yaml_data)
         assert result["components"][0]["services"] == ["publish-on-web"]
+
+
+class TestHiddenDependsOnSkipped:
+    """Nested sequence children with unmet depends_on must be skipped.
+
+    Regression test: when a component has depends_on storage sequences
+    (persistent-storage, temp-storage) but the project services don't
+    include them, the processor must not create those entries in the
+    component's services list via set_value auto-creation.
+    """
+
+    def test_hidden_nested_sequence_not_added_to_services(self):
+        """Storage config sequence should be skipped when project lacks
+        the storage service, preventing phantom service entries."""
+        processor = EditableFormProcessor()
+
+        services_vis = EditableVisualizer(
+            editable=Editable(yaml_path="components[*]/services"),
+            widget=WidgetType.CHECKBOX_GROUP,
+            label="Services",
+        )
+        storage_name_vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="components[*]/services{persistent-storage}/config[*]/name",
+                required=True,
+            ),
+            widget=WidgetType.TEXT,
+            label="Naam",
+        )
+        storage_seq_vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="components[*]/services{persistent-storage}/config",
+                depends_on="services",
+                show_when={"contains": "persistent-storage"},
+            ),
+            widget=WidgetType.SEQUENCE,
+            label="Persistente opslag",
+            children=[storage_name_vis],
+        )
+        comp_seq = EditableVisualizer(
+            editable=Editable(yaml_path="components"),
+            widget=WidgetType.SEQUENCE,
+            label="Components",
+            children=[services_vis, storage_seq_vis],
+        )
+
+        # Project services do NOT include persistent-storage
+        submitted = {
+            "services": ["publish-on-web", "keycloak"],
+            "components": [{"name": "web", "services": ["publish-on-web"]}],
+        }
+        yaml_data = {
+            "services": ["publish-on-web", "keycloak"],
+            "components": [{"name": "web", "services": ["publish-on-web"]}],
+        }
+
+        result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
+
+        comp_services = result["components"][0]["services"]
+        assert "persistent-storage" not in str(comp_services), (
+            f"persistent-storage should not be in component services, got: {comp_services}"
+        )
+
+    def test_visible_nested_sequence_still_processed(self):
+        """When the project DOES have the storage service, the nested
+        sequence should still be processed normally."""
+        processor = EditableFormProcessor()
+
+        services_vis = EditableVisualizer(
+            editable=Editable(yaml_path="components[*]/services"),
+            widget=WidgetType.CHECKBOX_GROUP,
+            label="Services",
+        )
+        storage_name_vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="components[*]/services{persistent-storage}/config[*]/name",
+            ),
+            widget=WidgetType.TEXT,
+            label="Naam",
+        )
+        storage_seq_vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="components[*]/services{persistent-storage}/config",
+                depends_on="services",
+                show_when={"contains": "persistent-storage"},
+            ),
+            widget=WidgetType.SEQUENCE,
+            label="Persistente opslag",
+            children=[storage_name_vis],
+        )
+        comp_seq = EditableVisualizer(
+            editable=Editable(yaml_path="components"),
+            widget=WidgetType.SEQUENCE,
+            label="Components",
+            children=[services_vis, storage_seq_vis],
+        )
+
+        # Project services DO include persistent-storage
+        submitted = {
+            "services": ["publish-on-web", "persistent-storage"],
+            "components": [
+                {
+                    "name": "web",
+                    "services": [
+                        "publish-on-web",
+                        {"persistent-storage": {"config": [{"name": "data"}]}},
+                    ],
+                }
+            ],
+        }
+        yaml_data = {
+            "services": ["publish-on-web", "persistent-storage"],
+            "components": [
+                {
+                    "name": "web",
+                    "services": [
+                        "publish-on-web",
+                        {"persistent-storage": {"config": [{"name": "data"}]}},
+                    ],
+                }
+            ],
+        }
+
+        result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
+
+        # The storage config should still be present
+        comp_services = result["components"][0]["services"]
+        has_storage = any(
+            isinstance(s, dict) and "persistent-storage" in s
+            for s in comp_services
+        )
+        assert has_storage, f"persistent-storage config should be preserved, got: {comp_services}"
