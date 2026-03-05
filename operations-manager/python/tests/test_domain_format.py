@@ -249,7 +249,7 @@ class TestGetDeploymentHostnamesWithDomainFormat:
 
 
 class TestDomainFormatOptionsProvider:
-    def test_returns_four_options(self):
+    def test_no_base_domain_returns_four_dash_options(self):
         provider = DomainFormatOptionsProvider()
         options = provider.get_options()
         assert len(options) == 4
@@ -272,6 +272,27 @@ class TestDomainFormatOptionsProvider:
         for opt in provider.get_options():
             assert "description" in opt
             assert len(opt["description"]) > 0
+
+    def test_supports_dots_returns_eight_options(self):
+        """When base_domain supports dots, both dot and dash variants are shown."""
+        provider = DomainFormatOptionsProvider(base_domain="kind", cluster="local")
+        options = provider.get_options()
+        assert len(options) == 8
+
+    def test_supports_dots_dot_options_first(self):
+        """Dot variants appear before dash variants."""
+        provider = DomainFormatOptionsProvider(base_domain="kind", cluster="local")
+        options = provider.get_options()
+        # First 4 should be dot labels (contain dots between parts)
+        assert "." in options[0]["label"].replace(".domein", "")
+        # Last 4 should be dash labels (contain dashes between parts)
+        assert "-" in options[4]["label"].split(".")[0]
+
+    def test_no_dots_support_returns_four(self):
+        """When base_domain doesn't support dots, only dash variants."""
+        provider = DomainFormatOptionsProvider(base_domain="nonexistent.domain", cluster="local")
+        options = provider.get_options()
+        assert len(options) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -441,13 +462,12 @@ class TestDomainEditablesShowWhen:
             "value": ["component-deployment-subdomain", "deployment-subdomain"]
         }
 
-    def test_base_domain_shows_for_subdomain_formats(self):
+    def test_base_domain_always_visible_and_required(self):
         from opi.forms.editables.fields.domains import DOMAIN_BASE_DOMAIN_EDITABLE
 
-        assert DOMAIN_BASE_DOMAIN_EDITABLE.depends_on == "deployments[0]/domain-format"
-        assert DOMAIN_BASE_DOMAIN_EDITABLE.show_when == {
-            "value": ["component-deployment-subdomain", "deployment-subdomain"]
-        }
+        assert DOMAIN_BASE_DOMAIN_EDITABLE.depends_on is None
+        assert DOMAIN_BASE_DOMAIN_EDITABLE.show_when is None
+        assert DOMAIN_BASE_DOMAIN_EDITABLE.required is True
 
     def test_root_component_shows_for_shared_formats(self):
         from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE

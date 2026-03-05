@@ -383,6 +383,15 @@ class FormRenderer:
                 c.get("name", "") for c in components if isinstance(c, dict) and c.get("name")
             ]
 
+        # Extract base_domain from first deployment (for DomainFormatOptionsProvider)
+        deployments = yaml_data.get("deployments", [])
+        if isinstance(deployments, list) and deployments:
+            first_dep = deployments[0]
+            if isinstance(first_dep, dict):
+                base_domain = first_dep.get("base-domain")
+                if base_domain:
+                    context["base_domain"] = base_domain
+
         return context
 
     def _build_sequence_field(

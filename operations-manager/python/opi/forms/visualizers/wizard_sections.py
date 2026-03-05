@@ -241,12 +241,12 @@ DOMAIN_SECTION = FormSection(
     title="Webadres",
     icon="wereld",
     description="Configureer hoe uw applicatie bereikbaar wordt",
-    editables=[DOMAIN_FORMAT, DOMAIN_SUBDOMAIN, DOMAIN_BASE_DOMAIN, DOMAIN_ROOT_COMPONENT],
+    editables=[DOMAIN_BASE_DOMAIN, DOMAIN_FORMAT, DOMAIN_SUBDOMAIN, DOMAIN_ROOT_COMPONENT],
     layout=[
         TemplatePartial(template="wizard/partials/domain_info.html.j2"),
+        "deployments[0]/base-domain",
         "deployments[0]/domain-format",
         "deployments[0]/subdomain",
-        "deployments[0]/base-domain",
         "deployments[0]/root-component",
     ],
 )
