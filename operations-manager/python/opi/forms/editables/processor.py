@@ -565,7 +565,24 @@ class EditableFormProcessor:
         """
         for ed, concrete_path in self._collect_editables_with_paths(editables, data):
             if ed.transient:
-                smart_set_value(data, concrete_path, None)
+                self._delete_path(data, concrete_path)
+
+    @staticmethod
+    def _delete_path(data: dict[str, Any], path: str) -> None:
+        """Delete a leaf key from nested data by its path.
+
+        Navigates to the parent container using all segments except the
+        last, then pops the leaf key from the parent dict.
+        """
+        parts = path.split("/")
+        if len(parts) == 1:
+            data.pop(parts[0], None)
+            return
+        # Navigate to the parent of the leaf
+        parent_path = "/".join(parts[:-1])
+        parent = smart_get_value(data, parent_path)
+        if isinstance(parent, dict):
+            parent.pop(parts[-1], None)
 
     def populate_deferred_fields(
         self,
