@@ -1320,81 +1320,15 @@ async def project_details(request: Request, project_name: str):
                                     f"Failed to generate ingress link for component {component_name} in deployment {deployment['name']}: {ingress_error}"
                                 )
 
-        # Fetch Prometheus time-series metrics for each deployment's components
-        deployment_metrics_timeseries: dict[str, dict[str, dict[str, list]]] = {}
-        # Track discovered workloads for helm-based deployments (for template display)
-        discovered_workloads: dict[str, list[dict[str, Any]]] = {}
-        # Track PVC storage data per deployment (namespace-level)
-        deployment_pvc_storage: dict[str, dict[str, dict[str, Any]]] = {}
+        # Check Prometheus availability (metrics are lazy-loaded via HTMX)
         prometheus_available = False
         try:
             from opi.connectors.prometheus import get_metrics_connector
-            from opi.core.cluster_config import get_prefixed_namespace
 
             prom = get_metrics_connector()
             prometheus_available = prom.is_connected
-
-            if prometheus_available:
-                for deployment in project_details["deployments"]:
-                    deployment_name = deployment.get("name")
-                    base_namespace = deployment.get("namespace")
-                    cluster = deployment.get("cluster")
-                    components = deployment.get("components", [])
-                    helm_charts = deployment.get("helm-charts", [])
-
-                    if not deployment_name or not base_namespace or not cluster:
-                        continue
-
-                    # Get the actual Kubernetes namespace with cluster prefix
-                    k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
-
-                    if components:
-                        # Component-based deployment: use predefined components
-                        component_names = [c.get("reference") for c in components if c.get("reference")]
-                        if component_names:
-                            metrics = prom.get_deployment_component_metrics_timeseries(
-                                namespace=k8s_namespace,
-                                components=component_names,
-                                deployment_name=deployment_name,
-                                duration_minutes=60,
-                                step_minutes=5,
-                            )
-                            deployment_metrics_timeseries[deployment_name] = metrics
-                            logger.debug(f"Fetched time-series metrics for deployment {deployment_name}")
-
-                    elif helm_charts:
-                        # Helm-based deployment: discover workloads dynamically
-                        workloads = prom.discover_workloads_in_namespace(k8s_namespace)
-                        if workloads:
-                            discovered_workloads[deployment_name] = workloads
-                            metrics = prom.get_discovered_workload_metrics_timeseries(
-                                namespace=k8s_namespace,
-                                workloads=workloads,
-                                duration_minutes=60,
-                                step_minutes=5,
-                            )
-                            deployment_metrics_timeseries[deployment_name] = metrics
-                            logger.debug(
-                                f"Discovered {len(workloads)} workloads and fetched metrics for helm deployment {deployment_name}"
-                            )
-
-                    # Fetch PVC storage data for the namespace (works for both component and helm deployments)
-                    try:
-                        pvc_storage = prom.get_pvc_storage_by_namespace(
-                            namespace=k8s_namespace,
-                            duration_minutes=60,
-                            step_minutes=5,
-                        )
-                        if pvc_storage:
-                            deployment_pvc_storage[deployment_name] = pvc_storage
-                            logger.debug(
-                                f"Fetched PVC storage for {len(pvc_storage)} PVCs in deployment {deployment_name}"
-                            )
-                    except Exception as pvc_error:
-                        logger.warning(f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}")
-
-        except Exception as metrics_error:
-            logger.warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
+        except Exception as e:
+            logger.debug(f"Prometheus not available: {e}")
 
         # Fetch ArgoCD status for each deployment
         from typing import Any
@@ -1752,9 +1686,6 @@ async def project_details(request: Request, project_name: str):
                 "user": user,
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
-                "deployment_metrics_timeseries": deployment_metrics_timeseries,
-                "deployment_pvc_storage": deployment_pvc_storage,
-                "discovered_workloads": discovered_workloads,
                 "prometheus_available": prometheus_available,
                 "argocd_status": argocd_status,
                 "argocd_available": argocd_available,
@@ -1788,6 +1719,116 @@ async def project_details(request: Request, project_name: str):
                 error_msg += f"\nSource: {lines[line_num].strip()}"
 
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+
+
+@web_router.get("/projects/details/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def deployment_metrics_fragment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Return metrics HTML fragment for a single deployment (HTMX lazy-load)."""
+    from typing import Any
+
+    from opi.core.startup import ensure_projects_fresh
+    from opi.services.project_service import get_project_service
+
+    templates = get_templates()
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    await ensure_projects_fresh()
+
+    project_service = get_project_service()
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    project = project_service.get_project(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_data = project.data or {}
+    deployments = project_data.get("deployments", [])
+
+    # Find the requested deployment
+    deployment = None
+    for d in deployments:
+        if d.get("name") == deployment_name:
+            deployment = d
+            break
+
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    base_namespace = deployment.get("namespace")
+    cluster = deployment.get("cluster")
+    components = deployment.get("components", [])
+    helm_charts = deployment.get("helm-charts", [])
+
+    metrics: dict[str, dict[str, Any]] = {}
+    discovered_workloads: list[dict[str, Any]] = []
+    pvc_storage: dict[str, dict[str, Any]] = {}
+
+    if base_namespace and cluster:
+        try:
+            from opi.connectors.prometheus import get_metrics_connector
+            from opi.core.cluster_config import get_prefixed_namespace
+
+            prom = get_metrics_connector()
+            if prom.is_connected:
+                k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
+
+                if components:
+                    component_names = [c.get("reference") for c in components if c.get("reference")]
+                    if component_names:
+                        metrics = prom.get_deployment_component_metrics_timeseries(
+                            namespace=k8s_namespace,
+                            components=component_names,
+                            deployment_name=deployment_name,
+                            duration_minutes=60,
+                            step_minutes=5,
+                        )
+                elif helm_charts:
+                    workloads = prom.discover_workloads_in_namespace(k8s_namespace)
+                    if workloads:
+                        discovered_workloads = workloads
+                        metrics = prom.get_discovered_workload_metrics_timeseries(
+                            namespace=k8s_namespace,
+                            workloads=workloads,
+                            duration_minutes=60,
+                            step_minutes=5,
+                        )
+
+                try:
+                    pvc_data = prom.get_pvc_storage_by_namespace(
+                        namespace=k8s_namespace,
+                        duration_minutes=60,
+                        step_minutes=5,
+                    )
+                    if pvc_data:
+                        pvc_storage = pvc_data
+                except Exception as pvc_error:
+                    logging.getLogger(__name__).warning(
+                        f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}"
+                    )
+        except Exception as metrics_error:
+            logging.getLogger(__name__).warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
+
+    # Build a deployment-like object for the template (needs .name and .components attributes)
+    class DeploymentContext:
+        def __init__(self, name: str, components: list):
+            self.name = name
+            self.components = [type("C", (), {"reference": c.get("reference")})() for c in components]
+
+    deployment_ctx = DeploymentContext(deployment_name, components)
+
+    return templates.TemplateResponse(
+        "partials/deployment_metrics.html.j2",
+        {
+            "request": request,
+            "deployment": deployment_ctx,
+            "metrics": metrics,
+            "discovered_workloads": discovered_workloads,
+            "pvc_storage": pvc_storage,
+        },
+    )
 
 
 @web_router.get("/projects/{project_name}/deployments/{deployment_name}/domain-settings")
