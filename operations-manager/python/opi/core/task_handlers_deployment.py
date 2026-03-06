@@ -2,7 +2,11 @@
 
 These handlers are invoked by TaskWorker and contain the long-running logic
 extracted from API endpoints. They receive a payload dict and a progress
-manager, and return a result dict. They have no dependency on FastAPI.
+manager, and return a result dict.
+
+The result dict matches the JSON structure returned by the corresponding
+V1 sync endpoint, so clients get the same information whether they use
+the sync path or poll an async task.
 """
 
 import logging
@@ -55,18 +59,17 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
             registry=registry,
         )
 
-        previous_image = ""
-        updates = result.get("updates", {})
-        if isinstance(updates, dict):
-            previous_image = updates.get("previous_image", "")
-
         progress.complete_task(update_task)
         logger.info(f"Task: image update completed for {project_name}/{deployment_name}/{component_name}")
 
         return {
-            "deployment_name": deployment_name,
-            "image": image,
-            "previous_image": previous_image,
+            "status": result.get("status", "success"),
+            "message": result.get("message", f"Image updated for component '{component_name}'"),
+            "project": project_name,
+            "deployment": deployment_name,
+            "component": component_name,
+            "updates": result.get("updates", {}),
+            "actions_performed": result.get("actions_performed", []),
         }
     except Exception as exc:
         error_msg = f"Failed to update image: {exc}"
@@ -105,27 +108,24 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     try:
         deletion_results = await project_manager.delete_deployment(project_name, deployment_name)
 
-        resources_removed: list[str] = []
-        if isinstance(deletion_results, dict):
-            # Collect names of successfully removed resources from the results
-            for key, value in deletion_results.items():
-                if key == "success":
-                    continue
-                if (isinstance(value, dict) and value.get("success", False)) or (isinstance(value, bool) and value):
-                    resources_removed.append(key)
-
         success = deletion_results.get("success", False) if isinstance(deletion_results, dict) else False
         if success:
             progress.complete_task(delete_task)
+            message = f"Deployment '{deployment_name}' in project '{project_name}' deleted successfully"
         else:
             progress.fail_task(delete_task, "Deletion completed with some errors")
+            message = f"Deployment '{deployment_name}' deletion completed with some errors"
 
         status_msg = "completed successfully" if success else "completed with some errors"
         logger.info(f"Task: deployment deletion {status_msg} for {project_name}/{deployment_name}")
 
         return {
-            "deployment_name": deployment_name,
-            "resources_removed": resources_removed,
+            "status": "completed" if success else "partial",
+            "message": message,
+            "project": project_name,
+            "deployment": deployment_name,
+            "deletion_results": deletion_results if isinstance(deletion_results, dict) else {},
+            "warning": "This deletion is permanent and cannot be undone",
         }
     except Exception as exc:
         error_msg = f"Failed to delete deployment: {exc}"

@@ -338,17 +338,19 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 if succeeded
                 else (project_manager.get_processing_error() or f"Deployment '{deployment_name}' processing failed")
             ),
-            "deployment_name": deployment_name,
-            "project": project_name,
-            "components": [
-                {
-                    "reference": c["reference"],
-                    "image": normalize_container_image(c["image"])[0],
-                }
-                for c in components
-            ],
-            "force_clone": force_clone,
-            "created": result.get("created", False),
+            "deployment": {
+                "name": deployment_name,
+                "project": project_name,
+                "components": [
+                    {
+                        "reference": c["reference"],
+                        "image": normalize_container_image(c["image"])[0],
+                    }
+                    for c in components
+                ],
+                "forceClone": force_clone,
+                "created": result.get("created", False),
+            },
             "urls": urls,
             "processing": {
                 "status": "completed" if succeeded else "failed",
@@ -358,9 +360,9 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                     else {}
                 ),
             },
-            "web_addresses": [url for dep_urls in urls.values() for url in dep_urls.get("urls", {}).values()],
-            "warnings": result.get("warnings", []),
         }
+        if result.get("warnings"):
+            response["warnings"] = result["warnings"]
         return response
 
     except Exception as exc:

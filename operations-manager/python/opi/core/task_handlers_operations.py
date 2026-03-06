@@ -295,8 +295,11 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
         progress: PersistentTaskProgressManager for reporting progress.
 
     Returns:
-        Dict with deployment_name and changes_detected fields.
+        Dict matching the V1 sync response structure with status, message,
+        project info, urls, and processing details.
     """
+    from typing import Any
+
     from opi.manager.project_manager import create_project_manager
     from opi.services.project_service import get_project_service
     from opi.utils.project_utils import validate_project_name
@@ -351,10 +354,13 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             logger.info("Deployment refresh completed successfully: %s/%s", project_name, deployment_name)
 
             # Collect deployment results (URLs, cluster info)
-            changes_detected: list[str] = []
+            urls: dict[str, dict[str, Any]] = {}
             deployment_results = project_manager.get_deployment_results()
             for dep_name, dep_result in deployment_results.items():
-                changes_detected.append(f"{dep_name}: cluster={dep_result.cluster}, urls={dep_result.urls}")
+                urls[dep_name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
                 # Report web addresses from deployment results
                 for url_name, url_value in (dep_result.urls or {}).items():
                     progress.update_component_web_address(url_name, url_value)
@@ -374,8 +380,15 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                 )
 
             return {
-                "deployment_name": deployment_name,
-                "changes_detected": changes_detected,
+                "status": "success",
+                "message": f"Deployment '{deployment_name}' in project '{project_name}' refreshed successfully",
+                "project": {"name": project_name, "file_path": project_file_path},
+                "urls": urls,
+                "processing": {
+                    "status": "completed",
+                    "message": f"Deployment '{deployment_name}' processed successfully",
+                    "result": processing_result,
+                },
             }
         else:
             processing_error = project_manager.get_processing_error()
