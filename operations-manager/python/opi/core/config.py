@@ -280,7 +280,7 @@ class Settings(BaseSettings):
     TASK_WORKER_HEARTBEAT_INTERVAL: float = 30.0
     TASK_WORKER_STALE_THRESHOLD: int = 120
     TASK_WORKER_MAX_ATTEMPTS: int = 3
-    TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 72
+    TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1
 
     # MinIO configuration
     MINIO_HOST: str = "minio.kind:9000"
