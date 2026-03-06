@@ -34,6 +34,7 @@ DOMAIN_FORMAT_EDITABLE = Editable(
 
 DOMAIN_SUBDOMAIN_EDITABLE = Editable(
     yaml_path="deployments[0]/subdomain",
+    required=True,
     depends_on="deployments[0]/domain-format",
     show_when={"value": SUBDOMAIN_FORMAT_IDS},
     validator=SubdomainValidator(),
