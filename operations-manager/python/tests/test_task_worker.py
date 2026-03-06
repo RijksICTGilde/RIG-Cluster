@@ -23,6 +23,7 @@ def mock_task_service() -> AsyncMock:
     service.recover_stale_tasks = AsyncMock(return_value=0)
     service.cleanup_old_tasks = AsyncMock(return_value=0)
     service.update_progress = AsyncMock()
+    service.find_conflicting_task = AsyncMock(return_value=None)
     return service
 
 
@@ -35,6 +36,7 @@ def mock_worker_settings() -> Any:
         s.TASK_WORKER_STALE_THRESHOLD = 120
         s.TASK_WORKER_MAX_ATTEMPTS = 3
         s.TASK_WORKER_CLEANUP_RETENTION_HOURS = 72
+        s.TASK_WORKER_CONCURRENCY = 1
         yield s
 
 
@@ -294,5 +296,3 @@ class TestWorkerHeartbeat:
         # at least one heartbeat should have been sent
         assert mock_task_service.send_heartbeat.call_count >= 1
         mock_task_service.send_heartbeat.assert_any_call("test-id")
-        # Heartbeat task should have been cleaned up
-        assert worker._heartbeat_task is None

@@ -61,10 +61,11 @@ class TestPullPolicyOptionsProvider:
 class TestBaseDomainOptionsProvider:
     def test_returns_options(self):
         options = BaseDomainOptionsProvider().get_options()
-        assert len(options) == 2
+        assert len(options) == 3
         values = [o["value"] for o in options]
         assert "" in values
         assert "rijksapp.nl" in values
+        assert "__custom__" in values
 
 
 class TestFilteredServiceOptionsProvider:

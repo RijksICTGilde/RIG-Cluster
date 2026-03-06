@@ -451,6 +451,7 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
         mock_process.stdout = MagicMock()
         mock_process.stderr = MagicMock()
         mock_process.pid = 12345
+        mock_process.returncode = None
         mock_exec.return_value = mock_process
 
         connector = KubectlConnector()

@@ -890,7 +890,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "worker",
@@ -930,7 +930,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "worker",
@@ -960,7 +960,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "worker",
@@ -990,7 +990,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "worker",
@@ -1012,7 +1012,7 @@ class TestAddComponentEndpoint:
         """Test validation rejects requests missing required fields."""
         # Missing name
         response = test_client.post(
-            "/api/projects/test-project/components",
+            "/api/projects/test-project/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "image": "nginx:latest",
@@ -1023,7 +1023,7 @@ class TestAddComponentEndpoint:
 
         # Missing image
         response = test_client.post(
-            "/api/projects/test-project/components",
+            "/api/projects/test-project/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "name": "worker",
@@ -1034,7 +1034,7 @@ class TestAddComponentEndpoint:
 
         # Missing deployment_names
         response = test_client.post(
-            "/api/projects/test-project/components",
+            "/api/projects/test-project/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "name": "worker",
@@ -1050,7 +1050,7 @@ class TestAddComponentEndpoint:
     ) -> None:
         """Test validation rejects empty deployment_names list."""
         response = test_client.post(
-            "/api/projects/test-project/components",
+            "/api/projects/test-project/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "name": "worker",
@@ -1066,7 +1066,7 @@ class TestAddComponentEndpoint:
     ) -> None:
         """Test that adding a component without API key returns 401."""
         response = test_client.post(
-            "/api/projects/test-project/components",
+            "/api/projects/test-project/components?sync=true",
             json={
                 "name": "worker",
                 "image": "nginx:latest",
@@ -1082,7 +1082,7 @@ class TestAddComponentEndpoint:
     ) -> None:
         """Test that adding a component with wrong API key returns 401."""
         response = test_client.post(
-            "/api/projects/test-project/components",
+            "/api/projects/test-project/components?sync=true",
             headers={"X-API-Key": "wrong-api-key"},
             json={
                 "name": "worker",
@@ -1116,7 +1116,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "frontend",
@@ -1156,7 +1156,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "backend",
@@ -1200,7 +1200,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "frontend",
@@ -1232,7 +1232,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "api",
@@ -1262,7 +1262,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "worker",
@@ -1294,7 +1294,7 @@ class TestAddComponentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/components",
+                "/api/projects/test-project/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "name": "worker",
@@ -1330,7 +1330,7 @@ class TestAddComponentToDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/deployments/staging/components",
+                "/api/projects/test-project/deployments/staging/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "component_name": "backend",
@@ -1360,7 +1360,7 @@ class TestAddComponentToDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/deployments/nonexistent/components",
+                "/api/projects/test-project/deployments/nonexistent/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "component_name": "backend",
@@ -1389,7 +1389,7 @@ class TestAddComponentToDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/deployments/main/components",
+                "/api/projects/test-project/deployments/main/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "component_name": "nonexistent",
@@ -1418,7 +1418,7 @@ class TestAddComponentToDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/deployments/main/components",
+                "/api/projects/test-project/deployments/main/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "component_name": "frontend",
@@ -1447,7 +1447,7 @@ class TestAddComponentToDeploymentEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/deployments/main/components",
+                "/api/projects/test-project/deployments/main/components?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={
                     "component_name": "api",
@@ -1467,7 +1467,7 @@ class TestAddComponentToDeploymentEndpoint:
         """Test validation rejects requests missing required fields."""
         # Missing component_name
         response = test_client.post(
-            "/api/projects/test-project/deployments/main/components",
+            "/api/projects/test-project/deployments/main/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "image": "nginx:latest",
@@ -1477,7 +1477,7 @@ class TestAddComponentToDeploymentEndpoint:
 
         # Missing image
         response = test_client.post(
-            "/api/projects/test-project/deployments/main/components",
+            "/api/projects/test-project/deployments/main/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "component_name": "backend",
@@ -1491,7 +1491,7 @@ class TestAddComponentToDeploymentEndpoint:
     ) -> None:
         """Test that adding a component to a deployment without API key returns 401."""
         response = test_client.post(
-            "/api/projects/test-project/deployments/main/components",
+            "/api/projects/test-project/deployments/main/components?sync=true",
             json={
                 "component_name": "backend",
                 "image": "nginx:latest",
@@ -1506,7 +1506,7 @@ class TestAddComponentToDeploymentEndpoint:
     ) -> None:
         """Test that adding a component to a deployment with wrong API key returns 401."""
         response = test_client.post(
-            "/api/projects/test-project/deployments/main/components",
+            "/api/projects/test-project/deployments/main/components?sync=true",
             headers={"X-API-Key": "wrong-api-key"},
             json={
                 "component_name": "backend",
@@ -1522,7 +1522,7 @@ class TestAddComponentToDeploymentEndpoint:
     ) -> None:
         """Test that a component name with underscores returns 400 instead of 500."""
         response = test_client.post(
-            "/api/projects/test-project/deployments/main/components",
+            "/api/projects/test-project/deployments/main/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={
                 "component_name": "my_component",
@@ -1557,7 +1557,7 @@ class TestAddServiceEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/services",
+                "/api/projects/test-project/services?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={"service": "postgresql-database"},
             )
@@ -1587,7 +1587,7 @@ class TestAddServiceEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/services",
+                "/api/projects/test-project/services?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={"service": "postgresql-database", "components": ["main"]},
             )
@@ -1616,7 +1616,7 @@ class TestAddServiceEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/services",
+                "/api/projects/test-project/services?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={"service": "postgresql-database"},
             )
@@ -1647,7 +1647,7 @@ class TestAddServiceEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/services",
+                "/api/projects/test-project/services?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={"service": "keycloak"},
             )
@@ -1675,7 +1675,7 @@ class TestAddServiceEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/services",
+                "/api/projects/test-project/services?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={"service": "not-a-real-service"},
             )
@@ -1701,7 +1701,7 @@ class TestAddServiceEndpoint:
 
         with patch("opi.api.router.ProjectManager", return_value=mock_pm):
             response = test_client.post(
-                "/api/projects/test-project/services",
+                "/api/projects/test-project/services?sync=true",
                 headers={"X-API-Key": "test-api-key-12345"},
                 json={"service": "postgresql-database", "components": ["nonexistent"]},
             )
@@ -1718,7 +1718,7 @@ class TestAddServiceEndpoint:
     ) -> None:
         """Test that missing service field returns 422."""
         response = test_client.post(
-            "/api/projects/test-project/services",
+            "/api/projects/test-project/services?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
             json={},
         )
@@ -1730,7 +1730,7 @@ class TestAddServiceEndpoint:
     ) -> None:
         """Test that missing API key returns 401."""
         response = test_client.post(
-            "/api/projects/test-project/services",
+            "/api/projects/test-project/services?sync=true",
             json={"service": "postgresql-database"},
         )
         assert response.status_code == 401
@@ -1742,7 +1742,7 @@ class TestAddServiceEndpoint:
     ) -> None:
         """Test that an invalid API key returns 401."""
         response = test_client.post(
-            "/api/projects/test-project/services",
+            "/api/projects/test-project/services?sync=true",
             headers={"X-API-Key": "wrong-key"},
             json={"service": "postgresql-database"},
         )

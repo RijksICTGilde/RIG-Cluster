@@ -97,14 +97,14 @@ class TestIntegerListConverter:
 
 
 class TestKeyValueConverter:
-    def test_read_dict_to_yaml_string(self):
-        """Legacy dict values are converted to YAML text for editing."""
+    def test_read_dict_yaml_format(self):
+        """Dict values with yaml fmt produce KEY: value lines."""
         result = KeyValueConverter(fmt="yaml").read({"KEY": "value", "OTHER": "val2"})
         assert "KEY: value" in result
         assert "OTHER: val2" in result
 
-    def test_read_dict_legacy_env(self):
-        """Legacy dict values with env fmt also produce YAML (yaml.dump)."""
+    def test_read_dict_env_format(self):
+        """Dict values are always serialized via yaml.dump (KEY: value)."""
         result = KeyValueConverter(fmt="env").read({"KEY": "value"})
         assert "KEY: value" in result
 
@@ -112,34 +112,28 @@ class TestKeyValueConverter:
         """String values are returned as-is."""
         assert KeyValueConverter().read("KEY=value\nOTHER=val2") == "KEY=value\nOTHER=val2"
 
-    def test_write_preserves_raw_text(self):
-        """write() returns the raw text unchanged."""
-        text = "KEY=value\nOTHER=val2"
-        assert KeyValueConverter().write(text) == text
+    def test_write_env_text_to_dict(self):
+        """write() parses KEY=value text into a dict."""
+        result = KeyValueConverter().write("KEY=value\nOTHER=val2")
+        assert result == {"KEY": "value", "OTHER": "val2"}
 
-    def test_write_preserves_yaml(self):
-        text = "KEY: value\nOTHER: val2"
-        assert KeyValueConverter().write(text) == text
+    def test_write_yaml_text_returns_empty(self):
+        """write() with default dict mode only parses KEY=value, not YAML."""
+        result = KeyValueConverter().write("KEY: value\nOTHER: val2")
+        assert result == {}  # no KEY=value lines found, returns empty dict
 
-    def test_write_preserves_comments(self):
-        text = "# comment\nKEY=value"
-        assert KeyValueConverter().write(text) == text
+    def test_write_skips_comments(self):
+        result = KeyValueConverter().write("# comment\nKEY=value")
+        assert result == {"KEY": "value"}
 
-    def test_write_preserves_empty_lines(self):
-        text = "KEY=value\n\nOTHER=val2"
-        assert KeyValueConverter().write(text) == text
+    def test_write_skips_empty_lines(self):
+        result = KeyValueConverter().write("KEY=value\n\nOTHER=val2")
+        assert result == {"KEY": "value", "OTHER": "val2"}
 
-    def test_write_preserves_pipe_blocks(self):
-        text = "CONFIG: |\n  line1\n  line2"
-        assert KeyValueConverter().write(text) == text
-
-    def test_write_strips_whitespace(self):
-        assert KeyValueConverter().write("  KEY=value  ") == "KEY=value"
-
-    def test_write_dict_to_yaml(self):
-        """Legacy dict input is converted to YAML text."""
+    def test_write_dict_passthrough(self):
+        """Dict input is returned as-is."""
         result = KeyValueConverter().write({"KEY": "value"})
-        assert "KEY: value" in result
+        assert result == {"KEY": "value"}
 
     def test_view_matches_read(self):
         conv = KeyValueConverter()
@@ -148,15 +142,6 @@ class TestKeyValueConverter:
     def test_default_format_is_env(self):
         conv = KeyValueConverter()
         assert conv.fmt == "env"
-
-    def test_detect_format_env(self):
-        assert KeyValueConverter().detect_format("KEY=value\nOTHER=val2") == "env"
-
-    def test_detect_format_yaml(self):
-        assert KeyValueConverter().detect_format("KEY: value\nOTHER: val2") == "yaml"
-
-    def test_detect_format_empty(self):
-        assert KeyValueConverter(fmt="env").detect_format("") == "env"
 
 
 class TestContainerImageConverter:

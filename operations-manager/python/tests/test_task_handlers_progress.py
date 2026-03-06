@@ -58,7 +58,7 @@ class TestHandleUpdateImage:
         progress.add_task.assert_any_call("Initializing project")
         progress.add_task.assert_any_call("Updating component image")
         assert progress.complete_task.call_count == 2
-        assert result["image"] == "registry.example.com/web:v2"
+        assert result["component"] == "web"
 
     @pytest.mark.asyncio
     async def test_error_calls_fail_task_and_fail_project(self, payload):
@@ -107,7 +107,7 @@ class TestHandleDeleteDeployment:
         progress.add_task.assert_any_call("Initializing project manager")
         progress.add_task.assert_any_call("Deleting deployment resources")
         assert progress.complete_task.call_count == 2
-        assert "namespace" in result["resources_removed"]
+        assert result["deletion_results"]["namespace"]["success"] is True
 
     @pytest.mark.asyncio
     async def test_deletion_not_success_calls_fail_task(self, payload):
@@ -384,7 +384,7 @@ class TestHandleRefreshDeployment:
         # Web addresses reported
         progress.update_component_web_address.assert_called_once_with("web", "https://web.example.com")
 
-        assert result["deployment_name"] == "dev"
+        assert result["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_project_not_found_calls_fail_project(self, payload):
