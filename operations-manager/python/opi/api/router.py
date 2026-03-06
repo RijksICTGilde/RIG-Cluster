@@ -366,7 +366,11 @@ class BasicProjectCreateRequest(BaseModel):
     cluster: str
     imageUrl: str
     appPort: int | None = None
-    userEnvVars: str | None = None
+    userEnvVars: str | None = Field(
+        None,
+        description="User env vars in KEY=value format, newline-separated (will be encrypted). "
+        "Example: 'DB_HOST=localhost\\nAPI_KEY=secret123'",
+    )
     exposeWeb: bool = False
     ssoRijk: bool = False
     persistentStorage: bool = False
@@ -770,8 +774,18 @@ class SelfServiceComponent(BaseModel):
     path: str = Field("/", max_length=256)  # Publication path for ingress routing (e.g., "/", "/api", "/aanleverapi")
     cpu_limit: str | None = Field(None, max_length=16)  # e.g., "100m", "1000m"
     memory_limit: str | None = Field(None, max_length=16)  # e.g., "128Mi", "1Gi"
-    env_vars: str | None = Field(None, max_length=65536)  # Environment variables in KEY=value format
-    aliases: str | None = Field(None, max_length=4096)  # Aliases for system-provided variables (not encoded)
+    env_vars: str | None = Field(
+        None,
+        max_length=65536,
+        description="User env vars in KEY=value format, newline-separated (will be encrypted). "
+        "Example: 'DB_HOST=localhost\\nAPI_KEY=secret123'",
+    )
+    aliases: str | None = Field(
+        None,
+        max_length=4096,
+        description="YAML string of alias definitions, newline-separated. "
+        "Example: 'DATABASE_URL: $HOST:$PORT/$DB_NAME\\nS3: $OBJECT_STORE_URL'",
+    )
     services: list[str] | None = None  # ["keycloak", "postgres", "minio"]
     root: bool = False  # Whether this component receives the root path in nice-url mode
 
@@ -809,12 +823,14 @@ class AddComponentRequest(BaseModel):
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'")
     env_vars: str | None = Field(
-        None, max_length=65536, description="User env vars in KEY=value format (will be encrypted)"
+        None,
+        max_length=65536,
+        description="User env vars in KEY=value format, newline-separated (will be encrypted). Example: 'DB_HOST=localhost\\nAPI_KEY=secret123'",
     )
     aliases: str | None = Field(
         None,
         max_length=4096,
-        description="YAML string of alias definitions (e.g. 'DATABASE_URL: $HOST:$PORT/$DB_NAME')",
+        description="YAML string of alias definitions, newline-separated. Example: 'DATABASE_URL: $HOST:$PORT/$DB_NAME\\nS3: $OBJECT_STORE_URL'",
     )
     root: bool = Field(False, description="Mark as root component for nice-url mode (receives bare subdomain traffic)")
     deployment_names: list[str] = Field(
