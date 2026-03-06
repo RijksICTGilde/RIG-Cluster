@@ -729,15 +729,9 @@
                             </div>
                             <div class="deployment-actions">
                                 {% if user_role in ['admin', 'owner'] %}
-                                <button type="button" class="rvo-button rvo-button--tertiary rvo-button--sm"
-                                    data-deployment="{{ deployment.name }}"
-                                    data-cluster="{{ deployment.cluster }}"
-                                    data-domain-mode="{{ deployment.get('domain-mode', '') }}"
-                                    data-subdomain="{{ deployment.get('subdomain', '') }}"
-                                    data-base-domain="{{ deployment.get('base-domain', '') }}"
-                                    data-components='{{ deployment.get('components', []) | tojson }}'
-                                    onclick="openDomainSettingsFromButton(this)">
-                                    <c-icon icon="bewerken" size="sm" />Domein instellingen
+                                <button type="button" class="edit-section-btn"
+                                    onclick="openEditModal('modal-edit-domain-{{ loop.index0 }}', 'Webadres bewerken — {{ deployment.name }}')">
+                                    <c-icon icon="bewerken" size="sm" />Webadres bewerken
                                 </button>
                                 {% endif %}
                                 <div class="deployment-status">
@@ -1331,100 +1325,6 @@
     {% endif %}
 
 </c-layout-flow>
-
-{# Domain Settings Modal #}
-<div id="domain-settings-backdrop" class="domain-settings-backdrop" onclick="handleBackdropClick()"></div>
-<div id="domain-settings-modal" class="domain-settings-modal" role="dialog" aria-modal="true" aria-labelledby="domain-settings-title">
-    <div class="domain-settings-header">
-        <c-heading type="h2" id="domain-settings-title"><c-icon icon="bewerken" size="lg" color="donkerblauw" />Domein Instellingen</c-heading>
-        <span id="domain-settings-deployment-name" class="domain-modal-deployment-badge"></span>
-        <button type="button" class="domain-modal-close-btn" onclick="closeDomainSettingsModal()" title="Sluiten">
-            <c-icon icon="kruis" size="md" />
-        </button>
-    </div>
-
-    <form id="domain-settings-form" autocomplete="off" onsubmit="submitDomainSettings(event)">
-        <input type="hidden" id="domain-settings-deployment" name="deployment-name" />
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-
-        <c-layout-flow gap="lg">
-            {# Domain Mode Select #}
-            <div class="form-field">
-                <label for="edit-domain-mode" class="form-label">URL Modus</label>
-                <select id="edit-domain-mode" name="domain-mode" class="form-select" onchange="handleDomainModeChange()">
-                    <option value="component-specific">Component-specifiek (standaard) — bijv. frontend.mijnproject-staging.odcn.nl</option>
-                    <option value="deployment-name">Deployment-naam — bijv. staging.mijnproject.odcn.nl</option>
-                    <option value="nice-url">Eigen subdomein — bijv. frontend.mijnapp.rijks.app (root: mijnapp.rijks.app)</option>
-                    <option value="custom">Aangepast subdomein — bijv. custom-subdomain.odcn.nl</option>
-                </select>
-                <p class="form-help">Bepaalt hoe URLs worden gegenereerd voor deze deployment</p>
-            </div>
-
-            {# Nice-URL Container (shown when nice-url selected) #}
-            <div id="edit-nice-url-container" style="display: none;">
-                <c-layout-flow gap="md">
-                    {# Base Domain Select #}
-                    <div class="form-field">
-                        <label for="edit-base-domain" class="form-label">Base Domain</label>
-                        <select id="edit-base-domain" name="base-domain" class="form-select">
-                            <option value="">Selecteer een base domain...</option>
-                        </select>
-                        <p class="form-help">Beschikbare domeinen zijn afhankelijk van het cluster</p>
-                    </div>
-
-                    {# Subdomain Input #}
-                    <div class="form-field">
-                        <label for="edit-subdomain" class="form-label">Subdomein</label>
-                        <div class="subdomain-input-container">
-                            <input type="text" id="edit-subdomain" name="subdomain" class="form-input"
-                                   placeholder="mijn-app" pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]"
-                                   oninput="checkSubdomainAvailabilityDebounced()" />
-                            <span class="subdomain-suffix" id="subdomain-suffix">.rijks.app</span>
-                        </div>
-                        <div id="edit-subdomain-availability" class="subdomain-availability"></div>
-                        <p class="form-help">Alleen kleine letters, cijfers en koppeltekens. Mag niet beginnen of eindigen met een koppelteken.</p>
-                    </div>
-                </c-layout-flow>
-            </div>
-
-            {# Custom URL Container (shown when custom selected) #}
-            <div id="edit-custom-url-container" style="display: none;">
-                <div class="form-field">
-                    <label for="edit-custom-subdomain" class="form-label">Aangepast Subdomein</label>
-                    <input type="text" id="edit-custom-subdomain" name="custom-subdomain" class="form-input"
-                           placeholder="custom-subdomain" />
-                    <p class="form-help">Voer een aangepast subdomein in</p>
-                </div>
-            </div>
-
-            {# Root Component Select (for nice-url mode) #}
-            <div id="edit-root-component-container" style="display: none;">
-                <div class="form-field">
-                    <label for="edit-root-component" class="form-label">Root Component</label>
-                    <select id="edit-root-component" name="root-component" class="form-select">
-                        <option value="">Geen (alle componenten op eigen pad)</option>
-                    </select>
-                    <p class="form-help">De root component wordt beschikbaar op het basis-pad (/) in plaats van /component-naam</p>
-                </div>
-            </div>
-
-            {# Current URL Preview #}
-            <div id="url-preview-container" class="url-preview-box" style="display: none;">
-                <div class="url-preview-label">Voorbeeld URL:</div>
-                <div id="url-preview" class="url-preview-value">-</div>
-            </div>
-
-            {# Error/Success Messages - placed before form actions for visibility #}
-            <div id="domain-settings-message" class="domain-settings-message" style="display: none;"></div>
-
-            {# Form Actions #}
-            <div class="form-actions">
-                <c-button type="button" label="Annuleren" kind="tertiary" @click="closeDomainSettingsModal()" />
-                <c-button type="submit" label="Opslaan" kind="primary" id="domain-settings-submit" />
-            </div>
-        </c-layout-flow>
-    </form>
-</div>
 
 {# Generic Edit Section Modal #}
 <div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
@@ -2604,8 +2504,8 @@
         font-size: 0.75rem;
     }
 
-    /* Domain Settings Modal Styles */
-    .domain-settings-backdrop {
+    /* Edit Section Modal */
+    .edit-section-backdrop {
         position: fixed;
         top: 0;
         left: 0;
@@ -2616,187 +2516,6 @@
         display: none;
         opacity: 0;
         transition: opacity 0.3s ease;
-    }
-
-    .domain-settings-backdrop.is-open {
-        display: block;
-        opacity: 1;
-    }
-
-    .domain-settings-modal {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%) scale(0.95);
-        background: var(--rvo-color-wit);
-        border-radius: var(--rvo-border-radius-lg);
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-        width: 90%;
-        max-width: 560px;
-        max-height: 90vh;
-        overflow-y: auto;
-        z-index: 1000;
-        display: none;
-        opacity: 0;
-        transition: opacity 0.3s ease, transform 0.3s ease;
-        padding: var(--rvo-space-xl);
-    }
-
-    .domain-settings-modal.is-open {
-        display: block;
-        opacity: 1;
-        transform: translate(-50%, -50%) scale(1);
-    }
-
-    .domain-settings-header {
-        display: flex;
-        align-items: center;
-        gap: var(--rvo-space-md);
-        margin-bottom: var(--rvo-space-xl);
-        padding-bottom: var(--rvo-space-md);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .domain-modal-deployment-badge {
-        background: var(--rvo-color-hemelblauw-100);
-        color: var(--rvo-color-hemelblauw-700);
-        padding: var(--rvo-space-xs) var(--rvo-space-sm);
-        border-radius: var(--rvo-border-radius-sm);
-        font-size: var(--rvo-text-sm);
-        font-weight: 600;
-    }
-
-    .domain-modal-close-btn {
-        margin-left: auto;
-        background: transparent;
-        border: none;
-        cursor: pointer;
-        padding: var(--rvo-space-xs);
-        border-radius: var(--rvo-border-radius-sm);
-        transition: background-color 0.2s ease;
-    }
-
-    .domain-modal-close-btn:hover {
-        background: var(--rvo-color-grijs-100);
-    }
-
-    .form-field {
-        display: flex;
-        flex-direction: column;
-        gap: var(--rvo-space-xs);
-    }
-
-    .form-label {
-        font-weight: 600;
-        color: var(--rvo-color-grijs-800);
-        font-size: var(--rvo-text-sm);
-    }
-
-    .form-select, .form-input {
-        width: 100%;
-        padding: var(--rvo-space-sm) var(--rvo-space-md);
-        border: 1px solid var(--rvo-color-grijs-300);
-        border-radius: var(--rvo-border-radius-sm);
-        font-size: var(--rvo-text-md);
-        background: var(--rvo-color-wit);
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .form-select:focus, .form-input:focus {
-        outline: none;
-        border-color: var(--rvo-color-hemelblauw);
-        box-shadow: 0 0 0 3px rgba(0, 136, 206, 0.1);
-    }
-
-    .form-help {
-        font-size: var(--rvo-text-sm);
-        color: var(--rvo-color-grijs-500);
-        margin: 0;
-    }
-
-    .subdomain-input-container {
-        display: flex;
-        align-items: center;
-    }
-
-    .subdomain-input-container .form-input {
-        border-radius: var(--rvo-border-radius-sm) 0 0 var(--rvo-border-radius-sm);
-        border-right: none;
-    }
-
-    .subdomain-suffix {
-        background: var(--rvo-color-grijs-100);
-        border: 1px solid var(--rvo-color-grijs-300);
-        border-left: none;
-        padding: var(--rvo-space-sm) var(--rvo-space-md);
-        border-radius: 0 var(--rvo-border-radius-sm) var(--rvo-border-radius-sm) 0;
-        color: var(--rvo-color-grijs-600);
-        font-size: var(--rvo-text-md);
-        white-space: nowrap;
-    }
-
-    .subdomain-availability {
-        min-height: 24px;
-        font-size: var(--rvo-text-sm);
-        padding-top: var(--rvo-space-xs);
-    }
-
-    .subdomain-availability.available {
-        color: var(--rvo-color-groen-700);
-    }
-
-    .subdomain-availability.unavailable {
-        color: var(--rvo-color-rood-700);
-    }
-
-    .subdomain-availability.checking {
-        color: var(--rvo-color-grijs-500);
-    }
-
-    .url-preview-box {
-        background: var(--rvo-color-grijs-050);
-        border: 1px solid var(--rvo-color-grijs-200);
-        border-radius: var(--rvo-border-radius-sm);
-        padding: var(--rvo-space-md);
-    }
-
-    .url-preview-label {
-        font-size: var(--rvo-text-sm);
-        color: var(--rvo-color-grijs-600);
-        margin-bottom: var(--rvo-space-xs);
-    }
-
-    .url-preview-value {
-        font-family: monospace;
-        font-size: var(--rvo-text-md);
-        color: var(--rvo-color-hemelblauw-700);
-        word-break: break-all;
-    }
-
-    .form-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: var(--rvo-space-md);
-        padding-top: var(--rvo-space-lg);
-        border-top: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .domain-settings-message {
-        padding: var(--rvo-space-md);
-        border-radius: var(--rvo-border-radius-sm);
-        font-size: var(--rvo-text-sm);
-    }
-
-    .domain-settings-message.success {
-        background: var(--rvo-color-groen-100);
-        color: var(--rvo-color-groen-800);
-        border: 1px solid var(--rvo-color-groen-300);
-    }
-
-    .domain-settings-message.error {
-        background: var(--rvo-color-rood-100);
-        color: var(--rvo-color-rood-800);
-        border: 1px solid var(--rvo-color-rood-300);
     }
 
     /* Edit Section Modal */
@@ -3002,26 +2721,14 @@
 <script src="/static/js/codemirror-kv.js"></script>
 <script src="/static/js/wizard.js"></script>
 <script>
-    /**
-     * Domain Settings Modal Functions
-     */
-    const clusterBaseDomains = {{ cluster_base_domains | tojson }};
-    const projectName = {{ project.name | tojson }};
-    let currentDeploymentName = null;
-    let currentDeploymentCluster = null;
-    let currentDeploymentComponents = [];
-    let subdomainCheckTimeout = null;
-    let originalDomainMode = null;  // Track original mode to detect nice-url -> other transitions
-    let originalSubdomain = null;   // Track original subdomain for confirmation message
+    /* Domain editing is now handled via the modal wizard system.
+       See flows.py build_domain_edit_flow() */
 
     /**
-     * Helper to open domain settings from button with data attributes
+     * LEGACY PLACEHOLDER — remove once confirmed no references remain.
      */
-    function openDomainSettingsFromButton(button) {
-        const deployment = button.dataset.deployment;
-        const cluster = button.dataset.cluster;
-        const domainMode = button.dataset.domainMode || '';
-        const subdomain = button.dataset.subdomain || '';
+    const _domainSettingsRemoved = true; // Marker for cleanup
+    /* --- Begin: old domain settings functions removed --- */
         const baseDomain = button.dataset.baseDomain || '';
         const components = JSON.parse(button.dataset.components || '[]');
         openDomainSettingsModal(deployment, cluster, domainMode, subdomain, baseDomain, components);

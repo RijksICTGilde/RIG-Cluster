@@ -340,6 +340,36 @@ EDIT_SECTIONS: dict[str, FormSection] = {
 }
 
 # ---------------------------------------------------------------------------
+# Dynamic section factories (parameterized by deployment index)
+# ---------------------------------------------------------------------------
+
+
+def build_domain_edit_section(deployment_index: int) -> FormSection:
+    """Build a domain edit section targeting a specific deployment.
+
+    Clones the wizard's DOMAIN_SECTION with all ``[0]`` path references
+    replaced by ``[deployment_index]``, so the form reads/writes to the
+    correct deployment in the YAML data.
+    """
+    from opi.forms.editables.reindex import reindex_layout, reindex_visualizer
+
+    editables = [reindex_visualizer(e, 0, deployment_index) for e in DOMAIN_SECTION.editables]
+    base_layout = DOMAIN_SECTION.layout if isinstance(DOMAIN_SECTION.layout, list) else []
+    layout = reindex_layout(list(base_layout), 0, deployment_index)
+
+    return FormSection(
+        section_id=f"domain-edit-{deployment_index}",
+        title="Webadres bewerken",
+        icon="wereldbol",
+        description="Wijzig het webadres voor deze deployment",
+        enforcer=DomainConfigEnforcer(),
+        editables=editables,
+        layout=layout,
+        post_save_action="process_project",
+    )
+
+
+# ---------------------------------------------------------------------------
 # All sections for easy iteration
 # ---------------------------------------------------------------------------
 

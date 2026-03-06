@@ -184,12 +184,36 @@ SERVICE_CONFIG_MODAL_FLOWS: dict[str, str] = {
 }
 
 
+def build_domain_edit_flow(deployment_index: int) -> FormFlow:
+    """Build a modal edit flow for a specific deployment's domain config."""
+    from opi.forms.visualizers.wizard_sections import build_domain_edit_section
+
+    section = build_domain_edit_section(deployment_index)
+    return FormFlow(
+        flow_id=f"modal-edit-domain-{deployment_index}",
+        title="Webadres bewerken",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+    )
+
+
 def get_flow(flow_id: str) -> FormFlow:
     """Get a FormFlow by its ID.
+
+    Supports both static registry flows and dynamic domain-edit flows
+    (``modal-edit-domain-N`` where N is the deployment index).
 
     Raises:
         KeyError: If the flow_id is not registered.
     """
-    if flow_id not in FLOW_REGISTRY:
-        raise KeyError(f"Unknown flow: {flow_id}")
-    return FLOW_REGISTRY[flow_id]
+    if flow_id in FLOW_REGISTRY:
+        return FLOW_REGISTRY[flow_id]
+
+    # Dynamic domain edit flows: modal-edit-domain-0, modal-edit-domain-1, ...
+    if flow_id.startswith("modal-edit-domain-"):
+        suffix = flow_id.removeprefix("modal-edit-domain-")
+        if suffix.isdigit():
+            return build_domain_edit_flow(int(suffix))
+
+    raise KeyError(f"Unknown flow: {flow_id}")
