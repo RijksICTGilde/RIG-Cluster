@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # ZooKeeper (coordination for ClickHouse)
+  - zookeeper-deployment.yaml
+  - zookeeper-service.yaml
+  # ClickHouse (trace/metrics/logs storage)
+  - clickhouse-configmap.yaml
+  - clickhouse-pvc.yaml
+  - clickhouse-deployment.yaml
+  - clickhouse-service.yaml
+  # Schema Migrator (runs before SigNoz starts)
+  - schema-migrator-job.yaml
+  # OTel Collector (receives OTLP from applications)
+  - otel-collector-configmap.yaml
+  - otel-collector-deployment.yaml
+  - otel-collector-service.yaml
+  # SigNoz (UI + query service)
+  - signoz-pvc.yaml
+  - signoz-deployment.yaml
+  - signoz-service.yaml

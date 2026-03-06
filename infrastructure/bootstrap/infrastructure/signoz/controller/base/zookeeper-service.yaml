@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: signoz-zookeeper
+  namespace: rig-system
+  labels:
+    app: signoz-zookeeper
+spec:
+  selector:
+    app: signoz-zookeeper
+  ports:
+    - port: 2181
+      targetPort: 2181
+      name: client

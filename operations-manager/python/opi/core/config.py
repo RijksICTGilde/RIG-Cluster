@@ -219,6 +219,13 @@ class Settings(BaseSettings):
     SOPS_AGE_PUBLIC_KEY: str | None = None  # Public key for SOPS age encryption
     SOPS_AGE_PRIVATE_KEY: str | None = None  # Private key for SOPS age decryption
 
+    # OpenTelemetry configuration
+    OTEL_ENABLED: bool = False  # Safe default - zero overhead when off
+    OTEL_SERVICE_NAME: str = "opi-operations-manager"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://signoz-otel-collector.rig-system:4317"
+    OTEL_TRACES_SAMPLER_ARG: str = "1.0"  # 1.0 = 100% sampling for dev
+    OTEL_LOG_CORRELATION: bool = True
+
     # Prometheus metrics configuration
     ENABLE_TRACEMALLOC: bool = False  # Enable tracemalloc for Python memory allocation tracking (adds ~10-30% overhead)
 

@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: signoz-clickhouse
+  namespace: rig-system
+  labels:
+    app: signoz-clickhouse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: signoz-clickhouse
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: signoz-clickhouse
+    spec:
+      securityContext:
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:24.1
+          ports:
+            - containerPort: 9000
+              name: native
+            - containerPort: 8123
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/custom-config.xml
+              subPath: config.xml
+            - name: config
+              mountPath: /etc/clickhouse-server/users.d/custom-users.xml
+              subPath: users.xml
+            - name: storage
+              mountPath: /var/lib/clickhouse
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: signoz-clickhouse-config
+        - name: storage
+          persistentVolumeClaim:
+            claimName: signoz-clickhouse-storage

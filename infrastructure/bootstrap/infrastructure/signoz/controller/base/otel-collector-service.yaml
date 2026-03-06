@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: signoz-otel-collector
+  namespace: rig-system
+  labels:
+    app: signoz-otel-collector
+spec:
+  selector:
+    app: signoz-otel-collector
+  ports:
+    - port: 4317
+      targetPort: 4317
+      name: otlp-grpc
+    - port: 4318
+      targetPort: 4318
+      name: otlp-http

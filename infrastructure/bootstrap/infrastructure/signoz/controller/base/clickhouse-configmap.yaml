@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: signoz-clickhouse-config
+  namespace: rig-system
+data:
+  config.xml: |
+    <clickhouse>
+      <logger>
+        <level>warning</level>
+        <console>true</console>
+      </logger>
+      <listen_host>0.0.0.0</listen_host>
+      <http_port>8123</http_port>
+      <tcp_port>9000</tcp_port>
+      <zookeeper>
+        <node>
+          <host>signoz-zookeeper</host>
+          <port>2181</port>
+        </node>
+      </zookeeper>
+      <mark_cache_size>5368709120</mark_cache_size>
+    </clickhouse>
+  users.xml: |
+    <clickhouse>
+      <users>
+        <default>
+          <password></password>
+          <networks>
+            <ip>::/0</ip>
+          </networks>
+          <profile>default</profile>
+          <quota>default</quota>
+          <access_management>1</access_management>
+        </default>
+      </users>
+      <profiles>
+        <default/>
+      </profiles>
+      <quotas>
+        <default/>
+      </quotas>
+    </clickhouse>

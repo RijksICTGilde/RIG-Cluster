@@ -61,6 +61,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     if settings.ENABLE_TRACEMALLOC:
         setup_tracemalloc()
 
+    # Set up OpenTelemetry tracing
+    from opi.core.tracing import setup_tracing
+
+    setup_tracing(app)
+
     # Logging is already initialized via early_logging import
     logger.info(f"Starting {PROJECT_NAME} version {VERSION}")
     # logger.info(f"Settings: {mask.secrets(get_settings().model_dump())}")
@@ -183,6 +188,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.info("Database pools closed successfully")
     except Exception as e:
         logger.error(f"Error closing database pools: {e}")
+
+    # Shut down OpenTelemetry tracing (flush pending spans)
+    from opi.core.tracing import shutdown_tracing
+
+    shutdown_tracing()
 
     logger.info(f"Stopping application {PROJECT_NAME} version {VERSION}")
     logging.shutdown()
