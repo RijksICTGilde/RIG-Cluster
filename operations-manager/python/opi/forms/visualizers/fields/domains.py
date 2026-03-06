@@ -32,6 +32,7 @@ DOMAIN_SUBDOMAIN = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Subdomein",
     help_text="Het subdomein voor uw applicatie URLs.",
+    attributes={"data-rerender": "true"},
 )
 
 DOMAIN_BASE_DOMAIN = EditableVisualizer(

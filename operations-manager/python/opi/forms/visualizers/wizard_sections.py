@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.forms.editables.enforcers import ComponentServicesEnforcer, extract_service_names
-from opi.forms.layout import Fieldset, Sequence, TemplatePartial
+from opi.forms.editables.enforcers import ComponentServicesEnforcer, DomainConfigEnforcer, extract_service_names
+from opi.forms.layout import DisplayBlock, Fieldset, Sequence, TemplatePartial
+from opi.forms.visualizers.display_blocks import compute_url_preview as _compute_url_preview
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import DEPLOYMENTS_SEQUENCE
@@ -238,6 +239,7 @@ DOMAIN_SECTION = FormSection(
     title="Webadres",
     icon="wereldbol",
     description="Configureer hoe uw applicatie bereikbaar wordt",
+    enforcer=DomainConfigEnforcer(),
     editables=[DOMAIN_CONFIG],
     layout=[
         TemplatePartial(template="wizard/partials/domain_info.html.j2"),
@@ -246,6 +248,11 @@ DOMAIN_SECTION = FormSection(
         "deployments[0]/domain-format",
         "deployments[0]/subdomain",
         "deployments[0]/root-component",
+        DisplayBlock(
+            display_id="url-preview",
+            compute=_compute_url_preview,
+            template="wizard/partials/url_preview.html.j2",
+        ),
     ],
 )
 

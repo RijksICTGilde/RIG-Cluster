@@ -268,10 +268,10 @@ class FormRenderer:
         fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode)
 
         if isinstance(layout, list):
-            content_parts = [self._render_layout_element(elem, fields_by_name) for elem in layout]
+            content_parts = [self._render_layout_element(elem, fields_by_name, yaml_data) for elem in layout]
             content_html = "\n".join(content_parts)
         else:
-            content_html = self._render_layout_element(layout, fields_by_name)
+            content_html = self._render_layout_element(layout, fields_by_name, yaml_data)
 
         form_start = self.adapter.render_form_start(form_id, action, method, enctype, htmx_attrs)
         form_end = self.adapter.render_form_end()
@@ -290,10 +290,10 @@ class FormRenderer:
         fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode)
 
         if isinstance(layout, list):
-            content_parts = [self._render_layout_element(elem, fields_by_name) for elem in layout]
+            content_parts = [self._render_layout_element(elem, fields_by_name, yaml_data) for elem in layout]
             inner = "\n".join(content_parts)
             return f'<c-layout-flow gap="lg">\n{inner}\n</c-layout-flow>'
-        return self._render_layout_element(layout, fields_by_name)
+        return self._render_layout_element(layout, fields_by_name, yaml_data)
 
     def _build_fields_from_editables(
         self,
@@ -718,6 +718,15 @@ class FormRenderer:
 
             tmpl = get_templates().get_template(element.template)
             return tmpl.render(element.context)
+
+        # Display block (server-rendered via HTMX)
+        if isinstance(element, DisplayBlock):
+            from opi.core.templates import get_templates
+
+            context = element.compute(yaml_data or {})
+            tmpl = get_templates().get_template(element.template)
+            inner = tmpl.render(context)
+            return f'<div id="display-{element.display_id}">{inner}</div>'
 
         # Submit button
         if isinstance(element, Submit):
