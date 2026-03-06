@@ -1060,7 +1060,10 @@ async def upsert_deployment(
 )
 @validate_api_token
 async def add_component(
-    request: Request, project_name: str, component_data: AddComponentRequest = Body(...)
+    request: Request,
+    project_name: str,
+    component_data: AddComponentRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Add a new component definition to an existing project.
@@ -1086,27 +1089,57 @@ async def add_component(
       }'
     ```
     """
-    project_manager = None
-    try:
-        logger.info(
-            f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}"
+    logger.info(
+        f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}"
+    )
+
+    # Validate project name format
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-        # Validate project name format
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
+    # Validate component name
+    sanitized_name = sanitize_kubernetes_name(component_data.name)
+    if sanitized_name != component_data.name.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
 
-        # Validate component name
-        sanitized_name = sanitize_kubernetes_name(component_data.name)
-        if sanitized_name != component_data.name.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-            )
+    # Async path (default) - use /api/v2/projects/{project_name}/components for pure async
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="add_component",
+            project_name=project_name,
+            payload={
+                "project_name": project_name,
+                "name": component_data.name,
+                "type": component_data.type,
+                "image": component_data.image,
+                "deployment_names": component_data.deployment_names,
+                "port": component_data.port,
+                "path": component_data.path,
+                "services": component_data.services,
+                "cpu_limit": component_data.cpu_limit,
+                "memory_limit": component_data.memory_limit,
+                "env_vars": component_data.env_vars,
+                "aliases": component_data.aliases,
+                "root": component_data.root,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "add_component"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
 
+    # Sync path (backward compatibility)
+    project_manager = None
+    try:
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
@@ -1200,6 +1233,7 @@ async def add_component_to_deployment(
     project_name: str,
     deployment_name: str,
     component_data: AddComponentToDeploymentRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Add an existing component to a deployment that doesn't yet include it.
@@ -1221,29 +1255,51 @@ async def add_component_to_deployment(
       }'
     ```
     """
-    project_manager = None
-    try:
-        logger.info(
-            f"Adding component '{sanitize_for_log(component_data.component_name)}' "
-            f"to deployment '{sanitize_for_log(deployment_name)}' "
-            f"in project: {sanitize_for_log(project_name)}"
+    logger.info(
+        f"Adding component '{sanitize_for_log(component_data.component_name)}' "
+        f"to deployment '{sanitize_for_log(deployment_name)}' "
+        f"in project: {sanitize_for_log(project_name)}"
+    )
+
+    # Validate project name format
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-        # Validate project name format
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
+    # Validate component name
+    sanitized_name = sanitize_kubernetes_name(component_data.component_name)
+    if sanitized_name != component_data.component_name.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
 
-        # Validate component name
-        sanitized_name = sanitize_kubernetes_name(component_data.component_name)
-        if sanitized_name != component_data.component_name.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-            )
+    # Async path (default) - use /api/v2/ for pure async
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="add_component_to_deployment",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "component_name": component_data.component_name,
+                "image": component_data.image,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "add_component_to_deployment"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
 
+    # Sync path (backward compatibility)
+    project_manager = None
+    try:
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
@@ -1323,7 +1379,12 @@ async def add_component_to_deployment(
     },
 )
 @validate_api_token
-async def add_service(request: Request, project_name: str, service_data: AddServiceRequest = Body(...)) -> JSONResponse:
+async def add_service(
+    request: Request,
+    project_name: str,
+    service_data: AddServiceRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
+) -> JSONResponse:
     """
     Add a service to an existing project.
 
@@ -1348,19 +1409,39 @@ async def add_service(request: Request, project_name: str, service_data: AddServ
       }'
     ```
     """
-    project_manager = None
-    try:
-        logger.info(
-            f"Adding service '{sanitize_for_log(service_data.service)}' to project: {sanitize_for_log(project_name)}"
+    logger.info(
+        f"Adding service '{sanitize_for_log(service_data.service)}' to project: {sanitize_for_log(project_name)}"
+    )
+
+    # Validate project name format
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-        # Validate project name format
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
+    # Async path (default) - use /api/v2/ for pure async
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="add_service",
+            project_name=project_name,
+            payload={
+                "project_name": project_name,
+                "service": service_data.service,
+                "components": service_data.components,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "add_service"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
 
+    # Sync path (backward compatibility)
+    project_manager = None
+    try:
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 

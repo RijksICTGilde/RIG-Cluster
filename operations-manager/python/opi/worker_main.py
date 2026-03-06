@@ -35,6 +35,11 @@ async def main() -> None:
     worker = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
     # Register handlers
+    from opi.core.task_handlers_components import (
+        handle_add_component,
+        handle_add_component_to_deployment,
+        handle_add_service,
+    )
     from opi.core.task_handlers_deployment import (
         handle_delete_deployment,
         handle_update_image,
@@ -56,6 +61,9 @@ async def main() -> None:
     worker.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
     worker.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
     worker.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+    worker.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
+    worker.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
+    worker.register_handler(TaskType.ADD_SERVICE, handle_add_service)
 
     # Handle graceful shutdown
     loop = asyncio.get_running_loop()

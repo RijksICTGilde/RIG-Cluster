@@ -100,6 +100,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
             # Register handlers (imported locally to avoid circular imports)
+            from opi.core.task_handlers_components import (  # type: ignore[reportMissingImports]
+                handle_add_component,
+                handle_add_component_to_deployment,
+                handle_add_service,
+            )
             from opi.core.task_handlers_deployment import (  # type: ignore[reportMissingImports]
                 handle_delete_deployment,
                 handle_update_image,
@@ -121,6 +126,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
             _worker_instance.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
             _worker_instance.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+            _worker_instance.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
+            _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
+            _worker_instance.register_handler(TaskType.ADD_SERVICE, handle_add_service)
 
             _worker_asyncio_task = asyncio.create_task(_worker_instance.run())
             logger.info("Task worker started in combined mode")

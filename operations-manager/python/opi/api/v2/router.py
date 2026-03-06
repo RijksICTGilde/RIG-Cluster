@@ -10,6 +10,9 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.router import (
+    AddComponentRequest,
+    AddComponentToDeploymentRequest,
+    AddServiceRequest,
     CloneBucketFromExternalRequest,
     CloneDatabaseFromExternalRequest,
     SelfServiceProjectRequest,
@@ -317,3 +320,152 @@ async def refresh_deployment_v2(
         },
     )
     return _accepted_response(task, "refresh_deployment")
+
+
+@v2_router.post(
+    "/projects/{project_name}/components",
+    tags=["v2", "components"],
+    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+)
+@validate_api_token
+async def add_component_v2(
+    request: Request,
+    project_name: str,
+    component_data: AddComponentRequest = Body(...),
+) -> JSONResponse:
+    """Add a new component to a project (async).
+
+    Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    logger.info("V2 add component '%s' to project: %s", component_data.name, project_name)
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    sanitized_name = sanitize_kubernetes_name(component_data.name)
+    if sanitized_name != component_data.name.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
+
+    task = await create_async_task(
+        request=request,
+        task_type="add_component",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "name": component_data.name,
+            "type": component_data.type,
+            "image": component_data.image,
+            "deployment_names": component_data.deployment_names,
+            "port": component_data.port,
+            "path": component_data.path,
+            "services": component_data.services,
+            "cpu_limit": component_data.cpu_limit,
+            "memory_limit": component_data.memory_limit,
+            "env_vars": component_data.env_vars,
+            "aliases": component_data.aliases,
+            "root": component_data.root,
+        },
+    )
+    return _accepted_response(task, "add_component")
+
+
+@v2_router.post(
+    "/projects/{project_name}/deployments/{deployment_name}/components",
+    tags=["v2", "components"],
+    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+)
+@validate_api_token
+async def add_component_to_deployment_v2(
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    component_data: AddComponentToDeploymentRequest = Body(...),
+) -> JSONResponse:
+    """Add an existing component to a deployment (async).
+
+    Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    logger.info(
+        "V2 add component '%s' to deployment '%s' in project: %s",
+        component_data.component_name,
+        deployment_name,
+        project_name,
+    )
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    sanitized_name = sanitize_kubernetes_name(component_data.component_name)
+    if sanitized_name != component_data.component_name.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
+
+    task = await create_async_task(
+        request=request,
+        task_type="add_component_to_deployment",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "component_name": component_data.component_name,
+            "image": component_data.image,
+        },
+    )
+    return _accepted_response(task, "add_component_to_deployment")
+
+
+@v2_router.post(
+    "/projects/{project_name}/services",
+    tags=["v2", "services"],
+    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+)
+@validate_api_token
+async def add_service_v2(
+    request: Request,
+    project_name: str,
+    service_data: AddServiceRequest = Body(...),
+) -> JSONResponse:
+    """Add a service to a project (async).
+
+    Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    logger.info("V2 add service '%s' to project: %s", service_data.service, project_name)
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    task = await create_async_task(
+        request=request,
+        task_type="add_service",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "service": service_data.service,
+            "components": service_data.components,
+        },
+    )
+    return _accepted_response(task, "add_service")

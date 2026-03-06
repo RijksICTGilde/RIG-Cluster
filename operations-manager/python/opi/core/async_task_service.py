@@ -22,6 +22,9 @@ class TaskType(StrEnum):
     CLONE_BUCKET = "clone_bucket"
     REFRESH_DEPLOYMENT = "refresh_deployment"
     CREATE_PROJECT = "create_project"
+    ADD_COMPONENT = "add_component"
+    ADD_COMPONENT_TO_DEPLOYMENT = "add_component_to_deployment"
+    ADD_SERVICE = "add_service"
 
 
 class AsyncTaskStatus(StrEnum):
