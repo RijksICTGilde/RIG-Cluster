@@ -84,7 +84,7 @@ def convert_fields(
     return result
 
 
-def enforce_rules(
+async def enforce_rules(
     data: dict[str, Any],
     enforcers: list[EditableEnforcer],
     context: dict[str, Any] | None = None,
@@ -102,7 +102,7 @@ def enforce_rules(
 
     for enforcer in enforcers:
         try:
-            enforcer.enforce(data, ctx)
+            await enforcer.enforce(data, ctx)
         except ValueError as e:
             errors.append(str(e))
 

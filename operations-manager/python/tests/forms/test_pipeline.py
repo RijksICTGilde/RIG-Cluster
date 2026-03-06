@@ -177,22 +177,22 @@ class TestConvertFields:
 
 
 class TestEnforceRules:
-    def test_no_enforcers(self):
-        assert enforce_rules({"key": "value"}, []) == []
+    async def test_no_enforcers(self):
+        assert await enforce_rules({"key": "value"}, []) == []
 
-    def test_enforcer_passes(self):
+    async def test_enforcer_passes(self):
         data = {
             "services": ["publish-on-web"],
             "components": [{"name": "app", "services": ["publish-on-web"]}],
         }
-        errors = enforce_rules(data, [ComponentServicesEnforcer()])
+        errors = await enforce_rules(data, [ComponentServicesEnforcer()])
         assert errors == []
 
-    def test_enforcer_fails(self):
+    async def test_enforcer_fails(self):
         data = {
             "services": ["publish-on-web"],
             "components": [{"name": "app", "services": ["postgresql-database"]}],
         }
-        errors = enforce_rules(data, [ComponentServicesEnforcer()])
+        errors = await enforce_rules(data, [ComponentServicesEnforcer()])
         assert len(errors) == 1
         assert "postgresql-database" in errors[0]

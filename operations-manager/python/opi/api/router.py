@@ -953,14 +953,14 @@ async def upsert_deployment(
         )
 
     # Validate fields using editable validators
-    validate_api_payload(
+    await validate_api_payload(
         deployment_data.model_dump(),
         UPSERT_DEPLOYMENT_VALIDATORS,
     )
 
     # Validate component images
     for comp in deployment_data.components:
-        validate_api_payload(
+        await validate_api_payload(
             {"newImageUrl": comp.image},
             UPDATE_IMAGE_VALIDATORS,
         )
@@ -1133,7 +1133,7 @@ async def add_component(
         )
 
     # Validate fields using editable validators
-    validate_api_payload(
+    await validate_api_payload(
         component_data.model_dump(),
         ADD_COMPONENT_VALIDATORS,
     )
@@ -1307,7 +1307,7 @@ async def add_component_to_deployment(
         )
 
     # Validate fields using editable validators
-    validate_api_payload(
+    await validate_api_payload(
         component_data.model_dump(),
         ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     )
@@ -1596,7 +1596,7 @@ async def update_deployment_image(
     ```
     """
     # Validate fields using editable validators
-    validate_api_payload(
+    await validate_api_payload(
         image_data.model_dump(),
         UPDATE_IMAGE_VALIDATORS,
     )
@@ -2567,7 +2567,7 @@ async def create_self_service_project(
 
         # Validate domain fields using editable validators
         if project_data.domain_format:
-            validate_api_payload(
+            await validate_api_payload(
                 {
                     "domain_format": project_data.domain_format,
                     "subdomain": project_data.subdomain,

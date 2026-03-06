@@ -96,12 +96,12 @@ async def upsert_deployment_v2(
         )
 
     # Validate fields using editable validators
-    validate_api_payload(
+    await validate_api_payload(
         deployment_data.model_dump(),
         UPSERT_DEPLOYMENT_VALIDATORS,
     )
     for comp in deployment_data.components:
-        validate_api_payload(
+        await validate_api_payload(
             {"newImageUrl": comp.image},
             UPDATE_IMAGE_VALIDATORS,
         )
@@ -145,7 +145,7 @@ async def create_project_v2(
 
     # Validate domain fields using editable validators
     if project_data.domain_format:
-        validate_api_payload(
+        await validate_api_payload(
             {
                 "domain_format": project_data.domain_format,
                 "subdomain": project_data.subdomain,
@@ -219,7 +219,7 @@ async def update_image_v2(
     logger.info("V2 update image for '%s' in %s/%s", image_data.componentName, project_name, deployment_name)
 
     # Validate fields using editable validators
-    validate_api_payload(
+    await validate_api_payload(
         image_data.model_dump(),
         UPDATE_IMAGE_VALIDATORS,
     )
@@ -393,7 +393,7 @@ async def add_component_v2(
         )
 
     # Validate fields using editable validators
-    validate_api_payload(
+    await validate_api_payload(
         component_data.model_dump(),
         ADD_COMPONENT_VALIDATORS,
     )
@@ -461,7 +461,7 @@ async def add_component_to_deployment_v2(
         )
 
     # Validate fields using editable validators
-    validate_api_payload(
+    await validate_api_payload(
         component_data.model_dump(),
         ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     )

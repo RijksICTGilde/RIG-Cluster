@@ -81,7 +81,7 @@ CREATE_PROJECT_DOMAIN_VALIDATORS: dict[str, Editable] = {
 # ---------------------------------------------------------------------------
 
 
-def validate_api_payload(
+async def validate_api_payload(
     payload: dict[str, Any],
     validators: dict[str, Editable],
     enforcers: list[EditableEnforcer] | None = None,
@@ -111,7 +111,7 @@ def validate_api_payload(
 
     global_errors: list[str] = []
     if enforcers:
-        global_errors = enforce_rules(payload, enforcers, context)
+        global_errors = await enforce_rules(payload, enforcers, context)
 
     if field_errors or global_errors:
         detail: dict[str, Any] = {}
