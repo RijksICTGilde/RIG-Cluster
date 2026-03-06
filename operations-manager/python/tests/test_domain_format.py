@@ -459,33 +459,6 @@ class TestPerDomainDotSupport:
 
 
 # ---------------------------------------------------------------------------
-# Cross-step visibility (path/rewrite-path based on domain-format)
-# ---------------------------------------------------------------------------
-
-
-class TestComponentPathCrossStepDependency:
-    def test_path_depends_on_domain_format(self):
-        from opi.forms.editables.fields.components import COMPONENT_PATH_EDITABLE
-
-        assert COMPONENT_PATH_EDITABLE.depends_on == "deployments[0]/domain-format"
-
-    def test_path_visible_for_shared_formats(self):
-        from opi.forms.editables.fields.components import COMPONENT_PATH_EDITABLE
-
-        assert COMPONENT_PATH_EDITABLE.show_when == {"value": ["deployment-project", "deployment-subdomain"]}
-
-    def test_rewrite_path_depends_on_domain_format(self):
-        from opi.forms.editables.fields.components import COMPONENT_REWRITE_PATH_EDITABLE
-
-        assert COMPONENT_REWRITE_PATH_EDITABLE.depends_on == "deployments[0]/domain-format"
-
-    def test_rewrite_path_visible_for_shared_formats(self):
-        from opi.forms.editables.fields.components import COMPONENT_REWRITE_PATH_EDITABLE
-
-        assert COMPONENT_REWRITE_PATH_EDITABLE.show_when == {"value": ["deployment-project", "deployment-subdomain"]}
-
-
-# ---------------------------------------------------------------------------
 # Domain editables show_when configuration
 # ---------------------------------------------------------------------------
 

@@ -234,7 +234,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
     base_data = state.get_merged_data() if state else project_data
 
     processor = EditableFormProcessor()
-    yaml_data, _errors = processor.process_json_submission(
+    yaml_data, _errors = await processor.process_json_submission(
         body,
         section.editables,
         base_data,
@@ -368,7 +368,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     if seq_action in ("add", "remove"):
         yaml_data = state.get_merged_data()
         processor = EditableFormProcessor()
-        merged, _err = processor.process_json_submission(body, section.editables, yaml_data, edit_mode=True)
+        merged, _err = await processor.process_json_submission(body, section.editables, yaml_data, edit_mode=True)
 
         items = smart_get_value(merged, seq_path) if seq_path else []
         if not isinstance(items, list):
@@ -415,7 +415,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     # Validate
     processor = EditableFormProcessor()
     yaml_data = state.get_merged_data()
-    submitted_yaml, errors = processor.process_json_submission(
+    submitted_yaml, errors = await processor.process_json_submission(
         submitted_data, section.editables, yaml_data, edit_mode=True
     )
 

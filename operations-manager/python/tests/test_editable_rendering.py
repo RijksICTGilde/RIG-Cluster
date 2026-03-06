@@ -184,9 +184,9 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 11 children: storage sequences hidden (no storage services),
-        # path/rewrite-path hidden (domain-format not set to shared format)
-        assert len(first_item.children) == 11
+        # 13 children: storage sequences hidden (no storage services),
+        # path/rewrite-path always visible
+        assert len(first_item.children) == 13
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -198,9 +198,9 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 12 children: storage sequence visible (persistent-storage enabled),
-        # path/rewrite-path still hidden (domain-format not set to shared format)
-        assert len(first_item.children) == 12
+        # 14 children: storage sequence visible (persistent-storage enabled),
+        # path/rewrite-path always visible
+        assert len(first_item.children) == 14
 
 
 class TestNestedSequenceRendering:

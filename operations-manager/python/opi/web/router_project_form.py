@@ -104,7 +104,7 @@ async def save_project_form(request: Request, project_name: str) -> HTMLResponse
     parsed = processor.parse_form_data(form_data, editables)
 
     original_data = project.data or {}
-    errors = processor.validate_editables(parsed, editables, original_data)
+    errors = await processor.validate_editables(parsed, editables, original_data)
 
     if errors:
         renderer = create_form_renderer()

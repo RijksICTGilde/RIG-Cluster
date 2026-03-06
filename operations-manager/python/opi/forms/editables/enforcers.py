@@ -6,18 +6,7 @@ from typing import Any
 class AdminRequiredEnforcer:
     """Ensures at least one user has role='admin'."""
 
-    def enforce(self, value: Any, context: dict[str, Any]) -> Any:
-        """
-        Args:
-            value: List of user dicts, each with 'email' and 'role' keys.
-            context: Not used.
-
-        Returns:
-            The value unchanged if valid.
-
-        Raises:
-            ValueError: If no user has role='admin'.
-        """
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         if not value or not isinstance(value, list):
             raise ValueError("Er moet minimaal één gebruiker zijn")
         has_admin = any(isinstance(user, dict) and user.get("role") == "admin" for user in value)
@@ -32,18 +21,7 @@ class UniqueNamesEnforcer:
     def __init__(self, field_name: str = "name") -> None:
         self.field_name = field_name
 
-    def enforce(self, value: Any, context: dict[str, Any]) -> Any:
-        """
-        Args:
-            value: List of dicts (e.g., components, deployments).
-            context: Not used.
-
-        Returns:
-            The value unchanged if valid.
-
-        Raises:
-            ValueError: If duplicate names found.
-        """
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         if not value or not isinstance(value, list):
             return value
         names: list[str] = []
@@ -82,7 +60,7 @@ def extract_service_names(services: list[Any]) -> list[str]:
 class ComponentServicesEnforcer:
     """Section-level enforcer: validates component services against project services."""
 
-    def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         services = extract_service_names(value.get("services", []))
         if not services:
             return value
@@ -113,9 +91,10 @@ class DomainConfigEnforcer:
     Checks that dependent fields are set when the chosen domain-format requires them:
     - subdomain is required for formats containing '{subdomain}'
     - custom domain is set when base-domain is the sentinel value
+    - subdomain + base-domain combination is available (async DB check)
     """
 
-    def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
         deployments = value.get("deployments", [])
@@ -137,24 +116,43 @@ class DomainConfigEnforcer:
         if "{subdomain}" in template and not subdomain:
             raise ValueError("Een subdomein is vereist voor het gekozen URL-formaat")
 
+        # Check subdomain availability for nice-URL formats
+        if subdomain and base_domain and "{subdomain}" in template:
+            await self._check_subdomain_availability(subdomain, base_domain, context)
+
         return value
+
+    @staticmethod
+    async def _check_subdomain_availability(
+        subdomain: str,
+        base_domain: str,
+        context: dict[str, Any],
+    ) -> None:
+        """Check if the subdomain + base_domain pair is available.
+
+        Skips the check when the current project already owns the registration
+        (edit mode).
+        """
+        from opi.connectors.subdomain import SubdomainConnector
+
+        connector = SubdomainConnector()
+        registration = await connector.get_by_subdomain(subdomain.lower(), base_domain.lower())
+
+        if registration is None:
+            return  # Available
+
+        # On edit: allow if same project owns it
+        project_name = context.get("project_name")
+        if project_name and registration.get("project_name") == project_name:
+            return  # Owned by this project
+
+        raise ValueError(f"Het subdomein '{subdomain}.{base_domain}' is niet beschikbaar")
 
 
 class ServiceDependencyEnforcer:
     """Ensures component services are valid project-level services."""
 
-    def enforce(self, value: Any, context: dict[str, Any]) -> Any:
-        """
-        Args:
-            value: List of service name strings (component's services).
-            context: Must contain 'project_services' key with list of valid service names.
-
-        Returns:
-            The value unchanged if valid.
-
-        Raises:
-            ValueError: If any service is not in the project services list.
-        """
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         if not value or not isinstance(value, list):
             return value
         project_services = context.get("project_services", [])

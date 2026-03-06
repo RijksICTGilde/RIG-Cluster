@@ -67,32 +67,38 @@ class EditableFormProcessor:
 
         return parsed
 
-    def validate_editables(
+    async def validate_editables(
         self,
         parsed: dict[str, Any],
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
+        enforcer_context: dict[str, Any] | None = None,
     ) -> dict[str, list[str]]:
         """
         Run each editable's validator on the parsed form data.
 
         For sequence editables, validates each item's child editables.
 
+        Args:
+            enforcer_context: Optional metadata for enforcers (e.g. project_name,
+                edit_mode). Separate from yaml_data to avoid polluting form data.
+
         Returns:
             dict mapping yaml_path -> list of error messages.
             Empty dict means no errors.
         """
         errors: dict[str, list[str]] = {}
+        ctx = enforcer_context or {}
 
         for vis in editables:
             ed = vis.editable
             if vis.widget == WidgetType.GROUP:
                 # Recurse into group children, then run parent enforcer
-                group_errors = self.validate_editables(parsed, vis.children or [], yaml_data)
+                group_errors = await self.validate_editables(parsed, vis.children or [], yaml_data, ctx)
                 errors.update(group_errors)
                 if not group_errors and ed.enforcer:
                     try:
-                        ed.enforcer.enforce(yaml_data, yaml_data)
+                        await ed.enforcer.enforce(yaml_data, ctx)
                     except ValueError as e:
                         errors.setdefault(ed.yaml_path, []).append(str(e))
             elif vis.widget == WidgetType.SEQUENCE:
@@ -157,33 +163,39 @@ class EditableFormProcessor:
                 value = parsed.get(child_path)
                 self._validate_field(child_vis, child_path, value, errors)
 
-    def enforce_sections(
+    async def enforce_sections(
         self,
         yaml_data: dict[str, Any],
         sections: list[FormSection],
+        enforcer_context: dict[str, Any] | None = None,
     ) -> list[str]:
         """
         Run section-level enforcers.
 
+        Args:
+            enforcer_context: Optional metadata for enforcers (e.g. project_name).
+
         Returns:
             List of global error messages. Empty means all passed.
         """
+        ctx = enforcer_context or {}
         global_errors: list[str] = []
         for section in sections:
             if section.enforcer:
                 try:
-                    section.enforcer.enforce(yaml_data, yaml_data)
+                    await section.enforcer.enforce(yaml_data, ctx)
                 except ValueError as e:
                     global_errors.append(str(e))
         return global_errors
 
-    def enforce_parts(
+    async def enforce_parts(
         self,
         yaml_data: dict[str, Any],
         sections: list[FormSection],
+        enforcer_context: dict[str, Any] | None = None,
     ) -> list[str]:
         """Backward compatibility alias for enforce_sections."""
-        return self.enforce_sections(yaml_data, sections)
+        return await self.enforce_sections(yaml_data, sections, enforcer_context)
 
     def clear_hidden_depends_on(
         self,
@@ -353,12 +365,13 @@ class EditableFormProcessor:
     # JSON submission pipeline (nested structure, no flat intermediate)
     # ------------------------------------------------------------------
 
-    def process_json_submission(
+    async def process_json_submission(
         self,
         submitted: dict[str, Any],
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
         edit_mode: bool = False,
+        enforcer_context: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, list[str]]]:
         """Process a nested JSON form submission in a single pass.
 
@@ -370,6 +383,9 @@ class EditableFormProcessor:
         The key improvement over the flat-key pipeline: **sequence item
         counts come from the submitted data** (the form's truth), not
         from stale session state.
+
+        Args:
+            enforcer_context: Optional metadata for enforcers (e.g. project_name).
 
         Returns:
             ``(result_yaml, errors)`` tuple.
@@ -383,12 +399,13 @@ class EditableFormProcessor:
                 continue
 
             if vis.widget == WidgetType.GROUP:
-                self._process_group_json(
+                await self._process_group_json(
                     vis,
                     submitted,
                     result,
                     errors,
                     edit_mode,
+                    enforcer_context,
                 )
             elif vis.widget == WidgetType.SEQUENCE:
                 self._process_sequence_json(
@@ -424,13 +441,14 @@ class EditableFormProcessor:
         self._strip_transients(result, editables)
         return result, errors
 
-    def _process_group_json(
+    async def _process_group_json(
         self,
         vis: EditableVisualizer,
         submitted: dict[str, Any],
         result: dict[str, Any],
         errors: dict[str, list[str]],
         edit_mode: bool,
+        enforcer_context: dict[str, Any] | None = None,
     ) -> None:
         """Process a group editable: validate children, then run parent enforcer.
 
@@ -451,7 +469,7 @@ class EditableFormProcessor:
                 continue
 
             if child_vis.widget == WidgetType.GROUP:
-                self._process_group_json(child_vis, submitted, result, errors, edit_mode)
+                await self._process_group_json(child_vis, submitted, result, errors, edit_mode, enforcer_context)
             elif child_vis.widget == WidgetType.CHECKBOX:
                 raw = get_value(submitted, child_ed.yaml_path)
                 value: Any = bool(raw) if raw else False
@@ -476,7 +494,7 @@ class EditableFormProcessor:
         # Run parent enforcer only if children introduced no new errors
         if len(errors) == errors_before and ed.enforcer:
             try:
-                ed.enforcer.enforce(result, result)
+                await ed.enforcer.enforce(result, enforcer_context or {})
             except ValueError as e:
                 errors.setdefault(ed.yaml_path, []).append(str(e))
 

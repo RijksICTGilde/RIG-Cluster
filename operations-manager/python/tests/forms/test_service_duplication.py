@@ -168,7 +168,7 @@ class TestFinalProjectYaml:
         )
         assert _count_service_entries(services, "temp-storage") == 1, f"temp-storage duplicated! services = {services}"
 
-    def test_json_then_flat_pipeline(self):
+    async def test_json_then_flat_pipeline(self):
         """Full flow: JSON submission → store → merge → flatten → apply → YAML."""
         processor = EditableFormProcessor()
         editables = [COMPONENTS_SEQUENCE]
@@ -207,7 +207,7 @@ class TestFinalProjectYaml:
         }
 
         # JSON pipeline (step submission)
-        step_result, errors = processor.process_json_submission(submitted_json, editables, initial_yaml)
+        step_result, errors = await processor.process_json_submission(submitted_json, editables, initial_yaml)
 
         # Phase 2: Simulate get_merged_data() — extract section keys
         section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in editables}

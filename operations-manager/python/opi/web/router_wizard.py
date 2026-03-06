@@ -498,7 +498,7 @@ def _resolve_goto_target(
     return current_section_id
 
 
-def _navigate_to_step(
+async def _navigate_to_step(
     request: Request,
     state: WizardState,
     flow_id: str,
@@ -529,7 +529,7 @@ def _navigate_to_step(
     errors: dict[str, list[str]] | None = None
     if target_section_id in state.completed_steps and target_section_id in state.step_data:
         processor = EditableFormProcessor()
-        _, errors = processor.process_json_submission(
+        _, errors = await processor.process_json_submission(
             state.step_data[target_section_id],
             target_section.editables,
             yaml_data,
@@ -578,7 +578,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if is_htmx:
-        return _navigate_to_step(request, state, flow_id, section_id, templates)
+        return await _navigate_to_step(request, state, flow_id, section_id, templates)
 
     # Direct browser access: return the full page with the step embedded
     section = _get_section_from_flow(flow_id, section_id)
@@ -592,7 +592,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     errors: dict[str, list[str]] | None = None
     if section_id in state.completed_steps and section_id in state.step_data:
         processor = EditableFormProcessor()
-        _, errors = processor.process_json_submission(
+        _, errors = await processor.process_json_submission(
             state.step_data[section_id],
             section.editables,
             yaml_data,
@@ -693,12 +693,16 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     yaml_data = state.get_merged_data()
     edit_mode = state.project_name is not None
 
+    # Build enforcer context with out-of-scope metadata
+    enforcer_context = {"project_name": state.project_name, "edit_mode": edit_mode}
+
     # Process the nested JSON: validate, convert, and write to yaml in one pass.
-    submitted_yaml, errors = processor.process_json_submission(
+    submitted_yaml, errors = await processor.process_json_submission(
         submitted_data,
         section.editables,
         yaml_data,
         edit_mode=edit_mode,
+        enforcer_context=enforcer_context,
     )
 
     # Handle re-render request (e.g., toggle changed): save values, clear hidden
@@ -743,7 +747,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # Forward navigation: run section-level enforcer for cross-field validation
     if is_forward and section.enforcer:
-        global_errors = processor.enforce_sections(submitted_yaml, [section])
+        global_errors = await processor.enforce_sections(submitted_yaml, [section], enforcer_context)
         if global_errors:
             step_html = _render_step_html(
                 section,
@@ -788,7 +792,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             return await _render_review(request, flow_id, templates)
         return await _do_submit(request, flow_id, templates)
 
-    return _navigate_to_step(request, state, flow_id, target_section_id, templates)
+    return await _navigate_to_step(request, state, flow_id, target_section_id, templates)
 
 
 # ---------------------------------------------------------------------------
@@ -957,7 +961,7 @@ async def _handle_sequence_action(
     processor = EditableFormProcessor()
     yaml_data = state.get_merged_data()
     edit_mode = state.project_name is not None
-    yaml_data, _errors = processor.process_json_submission(
+    yaml_data, _errors = await processor.process_json_submission(
         submitted_data,
         section.editables,
         yaml_data,
@@ -1590,7 +1594,8 @@ async def _do_submit(
     yaml_data = state.get_merged_data()
     processor = EditableFormProcessor()
     flat = _flatten_yaml_for_validation(all_editables, yaml_data)
-    errors = processor.validate_editables(flat, all_editables, yaml_data)
+    enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
+    errors = await processor.validate_editables(flat, all_editables, yaml_data, enforcer_context=enforcer_context)
 
     if errors:
         # Find the first section with errors and navigate there
@@ -1622,7 +1627,7 @@ async def _do_submit(
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
     # Cross-section enforcement
-    global_errors = processor.enforce_sections(yaml_data, active_sections)
+    global_errors = await processor.enforce_sections(yaml_data, active_sections, enforcer_context=enforcer_context)
     if global_errors:
         logger.warning("Section enforcement failed: %s", global_errors)
         first_section = active_sections[0]

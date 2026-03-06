@@ -86,7 +86,7 @@ class TestParseFormData:
 
 
 class TestValidateEditables:
-    def test_valid_data_returns_empty(self):
+    async def test_valid_data_returns_empty(self):
         processor = EditableFormProcessor()
         editables = [
             EditableVisualizer(
@@ -96,10 +96,10 @@ class TestValidateEditables:
             ),
         ]
         parsed = {"name": "valid-name"}
-        errors = processor.validate_editables(parsed, editables, {})
+        errors = await processor.validate_editables(parsed, editables, {})
         assert errors == {}
 
-    def test_invalid_slug_returns_error(self):
+    async def test_invalid_slug_returns_error(self):
         processor = EditableFormProcessor()
         editables = [
             EditableVisualizer(
@@ -109,11 +109,11 @@ class TestValidateEditables:
             ),
         ]
         parsed = {"name": "INVALID NAME!"}
-        errors = processor.validate_editables(parsed, editables, {})
+        errors = await processor.validate_editables(parsed, editables, {})
         assert "name" in errors
         assert len(errors["name"]) > 0
 
-    def test_sequence_child_validation(self):
+    async def test_sequence_child_validation(self):
         processor = EditableFormProcessor()
         email_visualizer = EditableVisualizer(
             editable=Editable(yaml_path="users[*]/email", validator=EmailValidator()),
@@ -131,11 +131,11 @@ class TestValidateEditables:
             "users[1]/email": "not-an-email",
         }
         yaml_data = {"users": [{"email": "a"}, {"email": "b"}]}
-        errors = processor.validate_editables(parsed, [seq_visualizer], yaml_data)
+        errors = await processor.validate_editables(parsed, [seq_visualizer], yaml_data)
         assert "users[0]/email" not in errors
         assert "users[1]/email" in errors
 
-    def test_no_validator_no_error(self):
+    async def test_no_validator_no_error(self):
         processor = EditableFormProcessor()
         editables = [
             EditableVisualizer(
@@ -145,7 +145,7 @@ class TestValidateEditables:
             ),
         ]
         parsed = {"description": "anything"}
-        errors = processor.validate_editables(parsed, editables, {})
+        errors = await processor.validate_editables(parsed, editables, {})
         assert errors == {}
 
 
@@ -275,7 +275,7 @@ class TestApplyToYaml:
 
 
 class TestNestedSequenceValidation:
-    def test_nested_sequence_validation(self):
+    async def test_nested_sequence_validation(self):
         processor = EditableFormProcessor()
         comp_ref = EditableVisualizer(
             editable=Editable(
@@ -306,7 +306,7 @@ class TestNestedSequenceValidation:
             "deployments[0]/components[0]/reference": "valid",
             "deployments[0]/components[1]/reference": "INVALID!",
         }
-        errors = processor.validate_editables(parsed, [dep_seq], yaml_data)
+        errors = await processor.validate_editables(parsed, [dep_seq], yaml_data)
         assert "deployments[0]/components[0]/reference" not in errors
         assert "deployments[0]/components[1]/reference" in errors
 
@@ -319,7 +319,7 @@ class TestCheckboxGroupCoercion:
     iterates over individual characters.
     """
 
-    def test_single_string_coerced_to_list_in_json_pipeline(self):
+    async def test_single_string_coerced_to_list_in_json_pipeline(self):
         processor = EditableFormProcessor()
         services_vis = EditableVisualizer(
             editable=Editable(yaml_path="components[*]/services"),
@@ -334,10 +334,10 @@ class TestCheckboxGroupCoercion:
         )
         submitted = {"components": [{"services": "publish-on-web"}]}
         yaml_data = {"components": [{"name": "web", "services": []}]}
-        result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
+        result, errors = await processor.process_json_submission(submitted, [comp_seq], yaml_data)
         assert result["components"][0]["services"] == ["publish-on-web"]
 
-    def test_list_stays_list_in_json_pipeline(self):
+    async def test_list_stays_list_in_json_pipeline(self):
         processor = EditableFormProcessor()
         services_vis = EditableVisualizer(
             editable=Editable(yaml_path="components[*]/services"),
@@ -352,10 +352,10 @@ class TestCheckboxGroupCoercion:
         )
         submitted = {"components": [{"services": ["publish-on-web", "keycloak"]}]}
         yaml_data = {"components": [{"name": "web", "services": []}]}
-        result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
+        result, errors = await processor.process_json_submission(submitted, [comp_seq], yaml_data)
         assert result["components"][0]["services"] == ["publish-on-web", "keycloak"]
 
-    def test_none_coerced_to_empty_list(self):
+    async def test_none_coerced_to_empty_list(self):
         processor = EditableFormProcessor()
         services_vis = EditableVisualizer(
             editable=Editable(yaml_path="components[*]/services"),
@@ -370,7 +370,7 @@ class TestCheckboxGroupCoercion:
         )
         submitted = {"components": [{"name": "web"}]}
         yaml_data = {"components": [{"name": "web", "services": ["old"]}]}
-        result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
+        result, errors = await processor.process_json_submission(submitted, [comp_seq], yaml_data)
         assert result["components"][0]["services"] == []
 
     def test_flat_key_single_string_coerced(self):
@@ -401,7 +401,7 @@ class TestHiddenDependsOnSkipped:
     component's services list via set_value auto-creation.
     """
 
-    def test_hidden_nested_sequence_not_added_to_services(self):
+    async def test_hidden_nested_sequence_not_added_to_services(self):
         """Storage config sequence should be skipped when project lacks
         the storage service, preventing phantom service entries."""
         processor = EditableFormProcessor()
@@ -446,14 +446,14 @@ class TestHiddenDependsOnSkipped:
             "components": [{"name": "web", "services": ["publish-on-web"]}],
         }
 
-        result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
+        result, errors = await processor.process_json_submission(submitted, [comp_seq], yaml_data)
 
         comp_services = result["components"][0]["services"]
         assert "persistent-storage" not in str(comp_services), (
             f"persistent-storage should not be in component services, got: {comp_services}"
         )
 
-    def test_visible_nested_sequence_still_processed(self):
+    async def test_visible_nested_sequence_still_processed(self):
         """When the project DOES have the storage service, the nested
         sequence should still be processed normally."""
         processor = EditableFormProcessor()
@@ -513,12 +513,9 @@ class TestHiddenDependsOnSkipped:
             ],
         }
 
-        result, errors = processor.process_json_submission(submitted, [comp_seq], yaml_data)
+        result, errors = await processor.process_json_submission(submitted, [comp_seq], yaml_data)
 
         # The storage config should still be present
         comp_services = result["components"][0]["services"]
-        has_storage = any(
-            isinstance(s, dict) and "persistent-storage" in s
-            for s in comp_services
-        )
+        has_storage = any(isinstance(s, dict) and "persistent-storage" in s for s in comp_services)
         assert has_storage, f"persistent-storage config should be preserved, got: {comp_services}"
