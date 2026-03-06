@@ -59,12 +59,9 @@
 
         <div class="wizard-step__actions">
             {% if not steps.is_first %}
-            <c-button kind="secondary"
+            <c-button type="submit" kind="secondary"
                       showIcon="before" icon="delta-naar-links"
-                      hx-get="/forms/wizard/{{ flow_id }}/step/{{ steps.prev }}"
-                      hx-target="#wizard-step-content"
-                      hx-swap="innerHTML"
-                      hx-push-url="true">
+                      hx-vals='{"_goto": "{{ steps.prev }}"}'>
                 Vorige
             </c-button>
             {% else %}

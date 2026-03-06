@@ -26,10 +26,12 @@
             {% if is_current %}aria-current="step"{% endif %}>
             {% if is_completed and not is_current %}
             <a href="{{ base_url }}{{ section_id }}{{ query_params }}"
-               hx-get="{{ base_url }}{{ section_id }}{{ query_params }}"
+               hx-post="{{ base_url }}{{ steps.current }}{{ query_params }}"
                hx-target="{{ target }}"
                hx-swap="innerHTML"
-               {% if use_push_url %}hx-push-url="true"{% endif %}
+               hx-include="#wizard-step-form"
+               hx-vals='{"_goto": "{{ section_id }}"}'
+               hx-ext="json-enc"
                class="wizard-steps__link">
                 <span class="wizard-steps__number">
                     <c-icon icon="vinkje" size="sm" />

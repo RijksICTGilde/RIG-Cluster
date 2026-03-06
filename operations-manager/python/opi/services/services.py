@@ -432,6 +432,14 @@ class ServiceAdapter:
                 "services/keycloak/config/restrict-access",
             ],
         ),
+        ServiceType.METRICS_SCRAPER: ServiceDefinition(
+            name="Prometheus Metrics Scraper",
+            description="Zorgt dat prometheus scraping op het component wordt ingeschakeld",
+            icon="grafiek",
+            color="hemelblauw",
+            scope="component",
+            variables=[],
+        ),
     }
 
     @classmethod

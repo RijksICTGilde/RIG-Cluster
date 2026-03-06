@@ -30,6 +30,7 @@ from opi.web.menu import get_menu_items
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
     from opi.forms.visualizers.sections import FormSection
+    from opi.forms.wizard.state import WizardState
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +451,62 @@ def _split_data_across_sections(
 
 
 # ---------------------------------------------------------------------------
+# Shared navigation helper
+# ---------------------------------------------------------------------------
+
+
+def _navigate_to_step(
+    request: Request,
+    state: WizardState,
+    flow_id: str,
+    target_section_id: str,
+    templates: Any,
+) -> HTMLResponse:
+    """Save state and render the target step.
+
+    Used by both forward navigation (after validation) and jump/back
+    navigation (skip validation).  Runs validation on load when the
+    target step already has stored data, so errors are shown immediately.
+    """
+    target_section = _get_section_from_flow(flow_id, target_section_id)
+    state.current_step = target_section_id
+    save_wizard_state(request, state)
+
+    yaml_data = state.get_merged_data()
+    edit_mode = state.project_name is not None
+
+    # If the target step has stored data, validate it so errors show immediately
+    errors: dict[str, list[str]] | None = None
+    if target_section_id in state.step_data:
+        processor = EditableFormProcessor()
+        _, errors = processor.process_json_submission(
+            state.step_data[target_section_id],
+            target_section.editables,
+            yaml_data,
+            edit_mode=edit_mode,
+        )
+        if not errors:
+            errors = None
+
+    step_html = _render_step_html(
+        target_section,
+        yaml_data=yaml_data,
+        errors=errors,
+        edit_mode=edit_mode,
+    )
+    context = _build_step_context(
+        request,
+        flow_id,
+        target_section,
+        step_html,
+        errors=errors,
+    )
+    response = templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+    response.headers["HX-Push-Url"] = f"/forms/wizard/{flow_id}/step/{target_section_id}"
+    return response
+
+
+# ---------------------------------------------------------------------------
 # HTMX: load a step (GET)
 # ---------------------------------------------------------------------------
 
@@ -457,43 +514,50 @@ def _split_data_across_sections(
 @wizard_router.get("/{flow_id}/step/{section_id}", response_class=HTMLResponse)
 @requires_sso
 async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse:
-    """Load a wizard step via HTMX or direct browser navigation."""
+    """Load a wizard step via HTMX or direct browser navigation.
+
+    For HTMX requests, delegates to ``_navigate_to_step`` which validates
+    stored data on load.  For direct browser access, renders the full page.
+    """
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
         # No session — redirect to the wizard start page which will init state
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=302)  # type: ignore[return-value]
 
-    section = _get_section_from_flow(flow_id, section_id)
-
-    # Update current step
-    state.current_step = section_id
-    save_wizard_state(request, state)
-
-    # Render with any previously stored data for this step
-    yaml_data = state.get_merged_data()
-    # Debug: trace deployments data through steps
-    logger.info("[load_step %s] step_data keys=%s", section_id, list(state.step_data.keys()))
-    if "domains" in state.step_data:
-        logger.info("[load_step %s] step_data['domains']=%r", section_id, state.step_data["domains"])
-    if "deployment" in state.step_data:
-        logger.info("[load_step %s] step_data['deployment']=%r", section_id, state.step_data["deployment"])
-    logger.info("[load_step %s] active_sections=%s", section_id, state.active_sections)
-    logger.info("[load_step %s] merged deployments=%r", section_id, yaml_data.get("deployments"))
-    step_html = _render_step_html(
-        section,
-        yaml_data=yaml_data,
-        edit_mode=state.project_name is not None,
-    )
-
     templates = get_templates()
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if is_htmx:
-        # HTMX partial: return just the step fragment
-        context = _build_step_context(request, flow_id, section, step_html)
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _navigate_to_step(request, state, flow_id, section_id, templates)
 
     # Direct browser access: return the full page with the step embedded
+    section = _get_section_from_flow(flow_id, section_id)
+    state.current_step = section_id
+    save_wizard_state(request, state)
+
+    yaml_data = state.get_merged_data()
+    edit_mode = state.project_name is not None
+
+    # Validate stored data on load
+    errors: dict[str, list[str]] | None = None
+    if section_id in state.step_data:
+        processor = EditableFormProcessor()
+        _, errors = processor.process_json_submission(
+            state.step_data[section_id],
+            section.editables,
+            yaml_data,
+            edit_mode=edit_mode,
+        )
+        if not errors:
+            errors = None
+
+    step_html = _render_step_html(
+        section,
+        yaml_data=yaml_data,
+        errors=errors,
+        edit_mode=edit_mode,
+    )
+
     flow = get_flow(flow_id)
     user = get_current_user(request)
     active_sections = resolve_active_sections(flow, state.step_data)
@@ -513,7 +577,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
             "section": section,
             "step_html": step_html,
             "preset_html": preset_html,
-            "errors": {},
+            "errors": errors or {},
             "global_errors": [],
             "show_review": flow.show_review,
             "menu_items": get_menu_items(user),
@@ -535,6 +599,11 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     Also handles sequence add/remove actions when ``_seq_action`` is present
     in the form data.  The same endpoint is reused so that current field values
     are preserved via the normal form submission.
+
+    Navigation modes (controlled by ``_goto``):
+    - empty / not set: validate + advance to next step (default "Next" button)
+    - ``"review"``: validate + jump to review page
+    - any section_id: save without validation + navigate to that step
     """
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -556,6 +625,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # body is now the nested step data
     submitted_data = body
+    logger.info("[submit_step %s] goto=%r, keys=%s", section_id, goto, list(submitted_data.keys()))
 
     # Check for sequence add/remove action — handle before normal validation
     if seq_action in ("add", "remove"):
@@ -596,7 +666,9 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         context = _build_step_context(request, flow_id, section, step_html)
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
-    logger.debug("Step %s validation errors: %s", section_id, errors)
+    # --- Determine navigation mode ---
+    # _goto is either: "" (next), "review", or a section_id (jump/back)
+    is_jump = goto and goto != "review"
 
     # Auto-add service dependencies when leaving the services step
     if section_id == "services" and isinstance(submitted_yaml.get("services"), list):
@@ -604,8 +676,8 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
         submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
 
-    if errors:
-        # Re-render current step with errors, using submitted values so input is preserved
+    # For forward navigation (Next / Review): block on validation errors
+    if not is_jump and errors:
         step_html = _render_step_html(
             section,
             yaml_data=submitted_yaml,
@@ -624,10 +696,10 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Store converted YAML-format data for this section
     section_data = _extract_section_data(section.editables, submitted_yaml)
     logger.info("[store_step %s] storing keys=%s", section_id, list(section_data.keys()))
-    if "deployments" in section_data:
-        logger.info("[store_step %s] deployments=%r", section_id, section_data["deployments"])
     state.store_step_data(section_id, section_data)
-    state.mark_completed(section_id)
+    if not is_jump:
+        # Only mark completed on forward navigation (validated)
+        state.mark_completed(section_id)
 
     # Re-resolve active sections (services step may add/remove conditional steps)
     active_section_ids = resolve_active_section_ids(flow, state.step_data)
@@ -636,6 +708,12 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Stash data for sections that became inactive (e.g. keycloak-config when
     # keycloak is deselected) and restore for sections that became active again.
     state.stash_inactive_sections(active_section_ids)
+
+    # --- Navigate to target ---
+
+    # Jump to a specific section (back/step indicator click)
+    if is_jump:
+        return _navigate_to_step(request, state, flow_id, goto, templates)
 
     # "Naar samenvatting" button: skip to review if validation passed
     if goto == "review" and flow.show_review:
@@ -651,21 +729,8 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         current_idx = -1
 
     if current_idx < len(active_sections) - 1:
-        # Navigate to next step
         next_section = active_sections[current_idx + 1]
-        state.current_step = next_section.section_id
-        save_wizard_state(request, state)
-
-        yaml_data = state.get_merged_data()
-        step_html = _render_step_html(
-            next_section,
-            yaml_data=yaml_data,
-            edit_mode=state.project_name is not None,
-        )
-        context = _build_step_context(request, flow_id, next_section, step_html)
-        response = templates.TemplateResponse("wizard/wizard_step.html.j2", context)
-        response.headers["HX-Push-Url"] = f"/forms/wizard/{flow_id}/step/{next_section.section_id}"
-        return response
+        return _navigate_to_step(request, state, flow_id, next_section.section_id, templates)
 
     # Last step - go to review or submit
     save_wizard_state(request, state)

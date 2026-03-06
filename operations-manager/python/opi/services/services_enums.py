@@ -8,6 +8,7 @@ class ServiceType(Enum):
     PUBLISH_ON_WEB = "publish-on-web"
     KEYCLOAK = "keycloak"
     AUTHORIZATION_WALL = "authorization-wall"
+    METRICS_SCRAPER = "metrics-scraper"
 
     # Storage services
     PERSISTENT_STORAGE = "persistent-storage"

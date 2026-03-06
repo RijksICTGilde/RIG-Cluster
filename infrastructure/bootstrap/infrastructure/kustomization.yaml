@@ -13,6 +13,5 @@ resources:
   - minio/config/base
   - pgadmin/controller/base
   - pgadmin/config/base
-  - jaeger/controller/base
 
 namespace: rig-system

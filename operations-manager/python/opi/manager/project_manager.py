@@ -4046,9 +4046,6 @@ class ProjectManager:
                 project_data, component_reference
             )
 
-            # Extract metrics configuration from component (for Prometheus scraping)
-            metrics_config = self._project_file_handler.extract_component_metrics(project_data, component_reference)
-
             # Extract resource configuration (component-level, then deployment-level overrides)
             component_resources = self._project_file_handler.extract_component_resources(
                 project_data, component_reference
@@ -4227,6 +4224,9 @@ class ProjectManager:
             component_uses_sso = False
             component_uses_redis = False
             component_uses_authorization_wall = False
+            component_uses_metrics_scraper = False
+            component_def = None
+            metrics_config = {"port": None, "path": None}
 
             if component_reference:
                 component_def = self._project_file_handler._find_component(project_data, component_reference)
@@ -4243,6 +4243,7 @@ class ProjectManager:
                     ServiceType.REDIS.value in all_services or ServiceType.NAMESPACE_REDIS.value in all_services
                 )
                 component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
+                component_uses_metrics_scraper = ServiceType.METRICS_SCRAPER.value in all_services
 
             # Build envFrom secrets list based on services used and user env vars
             # This list determines which secrets are referenced in the deployment manifest
@@ -4319,9 +4320,8 @@ class ProjectManager:
                 "generated_at": generated_at,
                 # CA certificate configuration for SSL/TLS
                 "ca_config": get_ca_certificate_config(cluster),
-                # Prometheus metrics configuration (port and path for scraping)
-                "metrics_port": metrics_config.get("port"),
-                "metrics_path": metrics_config.get("path"),
+                # Prometheus metrics configuration (passed to template if metrics-scraper service enabled)
+                "metrics_config": metrics_config if component_uses_metrics_scraper else None,
                 # Resource configuration (requests and limits)
                 "resources_requests_memory": component_resources["requests_memory"],
                 "resources_requests_cpu": component_resources["requests_cpu"],
@@ -4425,6 +4425,23 @@ class ProjectManager:
                     use_sops=True,
                 )
                 logger.info(f"Created authorization-wall cookie secret: {cookie_secret_name}")
+
+            # Configure metrics scraper if enabled
+            if component_uses_metrics_scraper and component_def:
+                # Extract metrics config from component's service definition
+                services = component_def.get("services", [])
+                for service_item in services:
+                    if isinstance(service_item, dict) and ServiceType.METRICS_SCRAPER.value in service_item:
+                        metrics_data = service_item[ServiceType.METRICS_SCRAPER.value]
+                        if isinstance(metrics_data, dict):
+                            metrics_config = {
+                                "port": metrics_data.get("port"),
+                                "path": metrics_data.get("path"),
+                            }
+                        break
+                logger.info(
+                    f"Metrics scraper enabled for component '{component_name}': port={metrics_config.get('port')}, path={metrics_config.get('path')}"
+                )
 
             # Generate extra manifests for sidecars (e.g. ConfigMaps)
             # Each sidecar template can define a 'configmap' section that produces a standalone manifest

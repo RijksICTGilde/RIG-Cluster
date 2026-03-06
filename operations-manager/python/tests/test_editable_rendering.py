@@ -428,7 +428,62 @@ class TestConditionalVisibility:
         )
         assert "conditional-field" not in fields
 
-    def test_visible_editable_in_fields(self):
+
+class TestTextareaValueRendering:
+    """Verify the textarea widget renders the stored value correctly."""
+
+    def test_identity_section_textarea_contains_description(self):
+        """The description textarea must contain the value from yaml_data."""
+        from opi.forms.visualizers.wizard_sections import IDENTITY_SECTION
+
+        yaml_data = {
+            "display-name": "Mijn Project",
+            "description": "Dit is de omschrijving",
+            "clusters": ["sandboxed-local"],
+        }
+        renderer = _create_renderer()
+        html = renderer.render_fields_from_editables(
+            editables=IDENTITY_SECTION.editables,
+            yaml_data=yaml_data,
+            layout=IDENTITY_SECTION.layout,
+        )
+        assert "Mijn Project" in html, "display-name should be in rendered HTML"
+        assert "Dit is de omschrijving" in html, f"description value should be in rendered HTML, got:\n{html}"
+
+    def test_textarea_field_has_value(self):
+        """The description FormField must have the value populated."""
+        from opi.forms.visualizers.wizard_sections import IDENTITY_SECTION
+
+        yaml_data = {
+            "display-name": "Test",
+            "description": "Mijn omschrijving",
+            "clusters": ["sandboxed-local"],
+        }
+        renderer = _create_renderer()
+        fields = renderer._build_fields_from_editables(
+            editables=IDENTITY_SECTION.editables,
+            yaml_data=yaml_data,
+        )
+        desc_field = fields["description"]
+        assert desc_field.widget_type == "textarea"
+        assert desc_field.value == "Mijn omschrijving", f"Expected 'Mijn omschrijving', got {desc_field.value!r}"
+
+    def test_textarea_renders_value_in_tag_content(self):
+        """The c-textarea-field tag must contain the value as inner text."""
+        editable = EditableVisualizer(
+            editable=Editable(yaml_path="description"),
+            widget=WidgetType.TEXTAREA,
+            label="Omschrijving",
+        )
+        yaml_data = {"description": "Hallo wereld"}
+        renderer = _create_renderer()
+        html = renderer.render_fields_from_editables(
+            editables=[editable],
+            yaml_data=yaml_data,
+            layout=["description"],
+        )
+        assert ">Hallo wereld</c-textarea-field>" in html, f"Expected value between textarea tags, got:\n{html}"
+
         """An editable whose dependency is satisfied should be included."""
         renderer = _create_renderer()
         editable = EditableVisualizer(
