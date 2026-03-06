@@ -562,6 +562,69 @@ class AsyncTaskService:
         finally:
             await self._pool.release(conn)
 
+    async def find_conflicting_task(
+        self,
+        task_id: str,
+        task_type: str,
+        project_name: str,
+        deployment_name: str | None = None,
+    ) -> dict | None:
+        """Check if another task with the same type and project is already running.
+
+        Looks for claimed/running tasks that match the same project_name and
+        task_type, excluding the given task_id (the one about to execute).
+
+        Args:
+            task_id: The current task's ID (excluded from the search).
+            task_type: The task type to check for.
+            project_name: The project name to check for.
+            deployment_name: Optional deployment name for more specific matching.
+
+        Returns:
+            A dict representing the conflicting task, or None if no conflict.
+        """
+        conn = await self._pool.acquire()
+        try:
+            if deployment_name:
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, task_type, project_name, deployment_name, status, created_at
+                    FROM async_tasks
+                    WHERE status IN ('claimed', 'running')
+                      AND task_type = $1
+                      AND project_name = $2
+                      AND deployment_name = $3
+                      AND id != $4
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    task_type,
+                    project_name,
+                    deployment_name,
+                    uuid.UUID(task_id),
+                )
+            else:
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, task_type, project_name, deployment_name, status, created_at
+                    FROM async_tasks
+                    WHERE status IN ('claimed', 'running')
+                      AND task_type = $1
+                      AND project_name = $2
+                      AND id != $3
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    task_type,
+                    project_name,
+                    uuid.UUID(task_id),
+                )
+            if row is None:
+                return None
+            return _row_to_dict(row)
+        finally:
+            await self._pool.release(conn)
+
     async def cleanup_old_tasks(self, retention_hours: int = 168) -> int:
         """Delete old completed/failed/cancelled tasks beyond the retention period.
 

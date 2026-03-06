@@ -23,17 +23,19 @@ class TaskWorker:
 
     The worker has no dependency on FastAPI and can run either inside the API
     server process (combined mode) or as a standalone worker process.
+
+    Supports concurrent task execution via TASK_WORKER_CONCURRENCY setting.
+    Each task gets its own heartbeat coroutine and runs independently.
     """
 
     def __init__(self, task_service: AsyncTaskService, cluster: str):
         self._task_service = task_service
         self._cluster = cluster
         self._running = False
-        self._current_task_id: str | None = None
-        self._heartbeat_task: asyncio.Task | None = None
+        self._semaphore = asyncio.Semaphore(settings.TASK_WORKER_CONCURRENCY)
+        self._active_tasks: set[asyncio.Task] = set()
 
         # Handler registry - maps TaskType to handler function
-        # Handlers will be registered after task_handlers.py is created
         self._handlers: dict[str, Callable] = {}
 
     def register_handler(self, task_type: str, handler: Callable) -> None:
@@ -45,8 +47,9 @@ class TaskWorker:
         """Main entry point. Runs forever until stop() is called."""
         self._running = True
         logger.info(
-            "Task worker starting (cluster=%s, poll_interval=%.1fs)",
+            "Task worker starting (cluster=%s, concurrency=%d, poll_interval=%.1fs)",
             self._cluster,
+            settings.TASK_WORKER_CONCURRENCY,
             settings.TASK_WORKER_POLL_INTERVAL,
         )
 
@@ -62,35 +65,76 @@ class TaskWorker:
         self._running = False
 
     async def _main_loop(self) -> None:
-        """Poll for and execute tasks."""
+        """Poll for and execute tasks concurrently up to TASK_WORKER_CONCURRENCY."""
         while self._running:
             try:
+                # Wait for a concurrency slot before claiming
+                await self._semaphore.acquire()
+
                 task = await self._task_service.claim_next_task(self._cluster)
                 if task is None:
+                    self._semaphore.release()
                     await asyncio.sleep(settings.TASK_WORKER_POLL_INTERVAL)
                     continue
 
-                await self._execute_task(task)
+                # Spawn task execution as a concurrent coroutine
+                asyncio_task = asyncio.create_task(self._run_task(task))
+                self._active_tasks.add(asyncio_task)
+                asyncio_task.add_done_callback(self._active_tasks.discard)
 
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("Error in main worker loop")
+                self._semaphore.release()
                 await asyncio.sleep(settings.TASK_WORKER_POLL_INTERVAL)
+
+        # Wait for all active tasks to finish before exiting
+        if self._active_tasks:
+            logger.info("Waiting for %d active tasks to complete...", len(self._active_tasks))
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+
+    async def _run_task(self, task: dict) -> None:
+        """Wrapper that executes a task and releases the semaphore when done."""
+        try:
+            await self._execute_task(task)
+        finally:
+            self._semaphore.release()
 
     async def _execute_task(self, task: dict) -> None:
         """Execute a single claimed task."""
         task_id = task["task_id"]
         task_type = task["task_type"]
-        self._current_task_id = task_id
+        project_name = task.get("project_name", "")
+        deployment_name = task.get("deployment_name")
 
-        logger.info("Executing task %s (type=%s)", task_id, task_type)
+        logger.info("Executing task %s (type=%s, project=%s)", task_id, task_type, project_name)
+
+        # Check for conflicting tasks (same project + task_type already running)
+        conflicting = await self._task_service.find_conflicting_task(
+            task_id=task_id,
+            task_type=task_type,
+            project_name=project_name,
+            deployment_name=deployment_name,
+        )
+        if conflicting:
+            logger.warning(
+                "Task %s (%s) for project '%s' is starting while conflicting task %s "
+                "is already %s (started at %s). Concurrent modification of the same "
+                "project may cause unexpected results.",
+                task_id,
+                task_type,
+                project_name,
+                conflicting.get("task_id", "?"),
+                conflicting.get("status", "?"),
+                conflicting.get("created_at", "?"),
+            )
 
         # Start the task (status: claimed -> running)
         await self._task_service.start_task(task_id)
 
-        # Start heartbeat
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(task_id))
+        # Start heartbeat for this task
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(task_id))
 
         try:
             handler = self._handlers.get(task_type)
@@ -102,7 +146,7 @@ class TaskWorker:
 
             progress = PersistentTaskProgressManager(
                 task_id=task_id,
-                project_name=task.get("project_name", ""),
+                project_name=project_name,
                 task_service=self._task_service,
             )
 
@@ -138,12 +182,9 @@ class TaskWorker:
 
         finally:
             # Stop heartbeat
-            if self._heartbeat_task:
-                self._heartbeat_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._heartbeat_task
-                self._heartbeat_task = None
-            self._current_task_id = None
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
 
     async def _heartbeat_loop(self, task_id: str) -> None:
         """Send periodic heartbeats for the current task."""
