@@ -1,41 +1,41 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: signoz-otel-collector
+  name: jaeger
   namespace: rig-system
   labels:
-    app: signoz-otel-collector
+    app: jaeger
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: signoz-otel-collector
+      app: jaeger
   template:
     metadata:
       labels:
-        app: signoz-otel-collector
+        app: jaeger
     spec:
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: otel-collector
-          image: signoz/signoz-otel-collector:0.111.24
-          args:
-            - "--config=/etc/otel/otel-collector-config.yaml"
+        - name: jaeger
+          image: jaegertracing/all-in-one:1.64
           ports:
+            - containerPort: 16686
+              name: ui
             - containerPort: 4317
               name: otlp-grpc
             - containerPort: 4318
               name: otlp-http
-          volumeMounts:
-            - name: config
-              mountPath: /etc/otel
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
-            runAsUser: 65534
+            runAsUser: 10001
             capabilities:
               drop:
                 - ALL
@@ -51,16 +51,12 @@ spec:
           livenessProbe:
             httpGet:
               path: /
-              port: 13133
-            initialDelaySeconds: 30
+              port: 14269
+            initialDelaySeconds: 15
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /
-              port: 13133
-            initialDelaySeconds: 10
+              port: 14269
+            initialDelaySeconds: 5
             periodSeconds: 10
-      volumes:
-        - name: config
-          configMap:
-            name: signoz-otel-collector-config

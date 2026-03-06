@@ -1,24 +1,24 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: signoz
+  name: jaeger
   namespace: rig-system
   annotations:
     cert-manager.io/cluster-issuer: kind-ca-issuer
 spec:
   ingressClassName: nginx
   rules:
-    - host: signoz.kind
+    - host: jaeger.kind
       http:
         paths:
           - backend:
               service:
-                name: signoz
+                name: jaeger
                 port:
-                  number: 8080
+                  number: 16686
             path: /
             pathType: Prefix
   tls:
     - hosts:
-        - signoz.kind
-      secretName: signoz-tls
+        - jaeger.kind
+      secretName: jaeger-tls

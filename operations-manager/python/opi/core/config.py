@@ -222,7 +222,7 @@ class Settings(BaseSettings):
     # OpenTelemetry configuration
     OTEL_ENABLED: bool = False  # Safe default - zero overhead when off
     OTEL_SERVICE_NAME: str = "opi-operations-manager"
-    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://signoz-otel-collector.rig-system:4317"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://jaeger.rig-system:4317"
     OTEL_TRACES_SAMPLER_ARG: str = "1.0"  # 1.0 = 100% sampling for dev
     OTEL_LOG_CORRELATION: bool = True
 

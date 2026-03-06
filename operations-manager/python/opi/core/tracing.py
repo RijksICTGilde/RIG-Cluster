@@ -2,7 +2,7 @@
 
 Provides distributed tracing with automatic instrumentation for FastAPI,
 httpx, aiohttp, asyncpg, and log correlation. Exports traces via OTLP gRPC
-to a SigNoz OTel Collector.
+to a Jaeger instance.
 """
 
 import logging
