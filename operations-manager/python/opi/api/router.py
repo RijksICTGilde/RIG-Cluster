@@ -721,23 +721,43 @@ class DeploymentDomainSettingsRequest(BaseModel):
         example="nice-url",
         max_length=32,
     )
+    domain_format: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "URL format template ID that controls how hostnames are generated. "
+            "Dash variants: 'component-deployment-project', 'deployment-project', "
+            "'component-deployment-subdomain', 'deployment-subdomain', 'component-subdomain', 'subdomain'. "
+            "Dot variants (requires wildcard DNS): 'component.deployment.project', 'deployment.project', "
+            "'component.deployment.subdomain', 'deployment.subdomain', 'component.subdomain'. "
+            "Formats containing 'subdomain' require the subdomain field to be set."
+        ),
+        example="component-deployment-subdomain",
+    )
     subdomain: str | None = Field(
         None,
-        description="Subdomain for nice-url or custom mode",
+        description=(
+            "Subdomain for URL generation. Required when domain_format contains 'subdomain'. "
+            "Must be a valid DNS label: lowercase letters, digits, and hyphens, starting with a letter."
+        ),
         example="myapp",
-        max_length=63,  # DNS subdomain limit
+        max_length=63,
     )
     base_domain: str | None = Field(
         None,
-        description="Base domain for nice-url mode (e.g., 'rijks.app')",
+        description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
         example="rijks.app",
-        max_length=255,  # DNS domain limit
+        max_length=255,
     )
     root_component: str | None = Field(
         None,
-        description="Component reference to mark as root (receives / path)",
+        description=(
+            "Component reference to mark as root. Only applicable for dot-variant domain formats "
+            "(e.g., 'component.deployment.subdomain') — the root component receives traffic at the "
+            "bare subdomain without a component prefix."
+        ),
         example="frontend",
-        max_length=63,  # Kubernetes name limit
+        max_length=63,
     )
 
     model_config = {
@@ -745,12 +765,14 @@ class DeploymentDomainSettingsRequest(BaseModel):
             "examples": [
                 {
                     "domain_mode": "nice-url",
+                    "domain_format": "component.deployment.subdomain",
                     "subdomain": "myapp",
                     "base_domain": "rijks.app",
                     "root_component": "frontend",
                 },
                 {
                     "domain_mode": "component-specific",
+                    "domain_format": "component-deployment-project",
                 },
             ]
         }
@@ -763,9 +785,12 @@ class DeploymentDomainSettingsResponse(BaseModel):
     deployment_name: str = Field(..., description="Name of the deployment")
     cluster: str = Field(..., description="Cluster where deployment runs")
     domain_mode: str | None = Field(None, description="Current URL mode")
-    subdomain: str | None = Field(None, description="Current subdomain (if nice-url or custom)")
-    base_domain: str | None = Field(None, description="Current base domain (if nice-url)")
-    root_component: str | None = Field(None, description="Component marked as root")
+    domain_format: str | None = Field(
+        None, description="Current URL format template ID (e.g., 'component-deployment-project')"
+    )
+    subdomain: str | None = Field(None, description="Current subdomain (if format uses subdomain)")
+    base_domain: str | None = Field(None, description="Current base domain")
+    root_component: str | None = Field(None, description="Component marked as root (dot-variant formats only)")
     components: list[dict] = Field(default_factory=list, description="List of components in deployment")
     supported_base_domains: list[dict] = Field(
         default_factory=list, description="Supported base domains for this cluster"
@@ -859,23 +884,54 @@ class SelfServiceProjectRequest(BaseModel):
 
     # Web Address Configuration
     domain_mode: str = Field(
-        "component-specific", max_length=32
-    )  # "component-specific", "deployment-name", "custom", or "nice-url"
+        "component-specific",
+        max_length=32,
+        description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
+        example="component-specific",
+    )
     domain_format: str | None = Field(
-        None, max_length=64, description="URL format template ID (e.g., 'component-deployment-project')"
+        None,
+        max_length=64,
+        description=(
+            "URL format template ID that controls how hostnames are generated. "
+            "Dash variants: 'component-deployment-project', 'deployment-project', "
+            "'component-deployment-subdomain', 'deployment-subdomain', 'component-subdomain', 'subdomain'. "
+            "Dot variants (requires wildcard DNS): 'component.deployment.project', 'deployment.project', "
+            "'component.deployment.subdomain', 'deployment.subdomain', 'component.subdomain'. "
+            "Formats containing 'subdomain' require the subdomain field to be set."
+        ),
+        example="component-deployment-project",
     )
     subdomain: str | None = Field(
-        None, max_length=63
-    )  # For nice-url mode: globally unique subdomain. For custom mode: custom subdomain
+        None,
+        max_length=63,
+        description=(
+            "Subdomain for URL generation. Required when domain_format contains 'subdomain' "
+            "(e.g., 'component-deployment-subdomain'). Must be a valid DNS label: lowercase letters, "
+            "digits, and hyphens, starting with a letter."
+        ),
+        example="myapp",
+    )
 
     # External Domain Configuration (for public domains with Let's Encrypt)
-    base_domain: str | None = Field(None, max_length=255)  # Apex domain (e.g., "rijks.app")
+    base_domain: str | None = Field(
+        None,
+        max_length=255,
+        description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
+        example="rijks.app",
+    )
     issuer: str | None = Field(
-        None, max_length=64
-    )  # Certificate issuer: "letsencrypt", "letsencrypt-staging", or custom issuer name
+        None,
+        max_length=64,
+        description="TLS certificate issuer: 'letsencrypt', 'letsencrypt-staging', or a custom issuer name",
+        example="letsencrypt",
+    )
     contact_email: str | None = Field(
-        None, max_length=254
-    )  # Contact email for Let's Encrypt (overrides cluster default)
+        None,
+        max_length=254,
+        description="Contact email for Let's Encrypt certificate notifications (overrides cluster default)",
+        example="team@example.com",
+    )
 
     # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
