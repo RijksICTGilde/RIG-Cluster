@@ -4568,9 +4568,7 @@ class ProjectManager:
                     # include {component} (all components already share the same hostname).
                     is_root_component = component.get("root") is True
                     template_has_component = (
-                        "{component}" in (DOMAIN_FORMAT_TEMPLATES.get(domain_format, ("", ""))[0])
-                        if domain_format
-                        else True
+                        "{component}" in DOMAIN_FORMAT_TEMPLATES.get(domain_format, "") if domain_format else True
                     )
                     if (
                         domain_mode == "nice-url"

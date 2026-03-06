@@ -81,6 +81,7 @@ class WidgetType(StrEnum):
     KEY_VALUE = "key_value"
     MULTI_SELECT = "multi_select"
     SEQUENCE = "sequence"
+    GROUP = "group"
 
 
 @dataclass

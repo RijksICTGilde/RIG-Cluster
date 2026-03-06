@@ -60,7 +60,7 @@ DEPLOYMENT_CUSTOM_BASE_DOMAIN = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Eigen domein",
     placeholder="voorbeeld.nl",
-    help_text="Voer uw eigen domeinnaam in. U bent zelf verantwoordelijk voor DNS-configuratie.",
+    help_text="Voer uw eigen domeinnaam in. U bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
 )
 
 DEPLOYMENT_DOMAIN_MODE = EditableVisualizer(

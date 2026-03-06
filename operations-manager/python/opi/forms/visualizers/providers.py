@@ -5,7 +5,7 @@ This module provides the OptionsProvider protocol and concrete implementations
 for populating select/radio fields with dynamic data from OPI's domain.
 """
 
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.services.services import ServiceAdapter
@@ -427,12 +427,30 @@ class ComponentReferenceOptionsProvider:
     Used by deployment component reference selects (cross-part dependency).
     """
 
-    def __init__(self, component_names: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        component_names: list[str] | None = None,
+        include_empty: bool = False,
+        empty_label: str = "Geen root component",
+    ) -> None:
         self.component_names = component_names or []
+        self.include_empty = include_empty
+        self.empty_label = empty_label
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get component name options."""
-        return [{"value": name, "label": name} for name in self.component_names]
+        options: list[dict[str, Any]] = []
+        if self.include_empty:
+            options.append({"value": "", "label": self.empty_label})
+        options.extend({"value": name, "label": name} for name in self.component_names)
+        return options
+
+
+class RootComponentOptionsProvider(ComponentReferenceOptionsProvider):
+    """ComponentReferenceOptionsProvider with an empty 'no root' option."""
+
+    def __init__(self, component_names: list[str] | None = None) -> None:
+        super().__init__(component_names=component_names, include_empty=True)
 
 
 class RepositoryOptionsProvider:
@@ -453,10 +471,27 @@ class RepositoryOptionsProvider:
 class DomainFormatOptionsProvider:
     """Provides domain-format template options filtered by base_domain capabilities.
 
-    When a base_domain is selected, checks whether it supports dot-separated
-    hostnames.  If it does, both dot and dash variants are shown (dots first).
-    If not (or no base_domain yet), only dash variants are returned.
+    Always shows dash-separated formats. When the selected base_domain supports
+    dot-separated hostnames, the dot variants are shown as well.
+    Options are sorted alphabetically by value.
     """
+
+    _DASH_FORMATS: ClassVar[list[str]] = [
+        "component-deployment-project",
+        "component-deployment-subdomain",
+        "component-subdomain",
+        "deployment-project",
+        "deployment-subdomain",
+        "subdomain",
+    ]
+
+    _DOT_FORMATS: ClassVar[list[str]] = [
+        "component.deployment.project",
+        "component.deployment.subdomain",
+        "component.subdomain",
+        "deployment.project",
+        "deployment.subdomain",
+    ]
 
     def __init__(self, base_domain: str | None = None, cluster: str | None = None) -> None:
         self.base_domain = base_domain
@@ -467,60 +502,16 @@ class DomainFormatOptionsProvider:
 
         supports_dots = False
         if self.base_domain == "__custom__":
-            supports_dots = True  # Custom domains assumed to support dots
+            supports_dots = True
         elif self.base_domain and self.cluster:
             supports_dots = get_domain_supports_dots(self.cluster, self.base_domain)
 
-        dash_options = [
-            {
-                "value": "component-deployment-project",
-                "label": "component-deployment-project.domein",
-                "description": "Elk component krijgt een eigen URL (standaard)",
-            },
-            {
-                "value": "deployment-project",
-                "label": "deployment-project.domein",
-                "description": "Alle componenten op dezelfde URL, verschillende paden",
-            },
-            {
-                "value": "component-deployment-subdomain",
-                "label": "component-deployment-subdomain.domein",
-                "description": "Eigen URL per component met een subdomein",
-            },
-            {
-                "value": "deployment-subdomain",
-                "label": "deployment-subdomain.domein",
-                "description": "Gedeelde URL met subdomein, verschillende paden",
-            },
-        ]
+        format_ids = list(self._DASH_FORMATS)
+        if supports_dots:
+            format_ids.extend(self._DOT_FORMATS)
 
-        if not supports_dots:
-            return dash_options
-
-        dot_options = [
-            {
-                "value": "component-deployment-project",
-                "label": "component.deployment.project.domein",
-                "description": "Elk component krijgt een eigen URL met punt-scheiding",
-            },
-            {
-                "value": "deployment-project",
-                "label": "deployment.project.domein",
-                "description": "Alle componenten op dezelfde URL met punt-scheiding",
-            },
-            {
-                "value": "component-deployment-subdomain",
-                "label": "component.deployment.subdomain.domein",
-                "description": "Eigen URL per component met subdomein (punt-scheiding)",
-            },
-            {
-                "value": "deployment-subdomain",
-                "label": "deployment.subdomain.domein",
-                "description": "Gedeelde URL met subdomein (punt-scheiding)",
-            },
-        ]
-
-        return dot_options + dash_options
+        format_ids.sort()
+        return [{"value": f, "label": f"{f}.domein"} for f in format_ids]
 
 
 # Registry of all available providers
@@ -542,6 +533,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
+    "RootComponentOptionsProvider": RootComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
     "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
 }

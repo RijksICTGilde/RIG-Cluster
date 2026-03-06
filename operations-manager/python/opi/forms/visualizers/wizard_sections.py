@@ -15,11 +15,7 @@ from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import DEPLOYMENTS_SEQUENCE
 from opi.forms.visualizers.fields.domains import (
-    DOMAIN_BASE_DOMAIN,
-    DOMAIN_CUSTOM_BASE_DOMAIN,
-    DOMAIN_FORMAT,
-    DOMAIN_ROOT_COMPONENT,
-    DOMAIN_SUBDOMAIN,
+    DOMAIN_CONFIG,
     WIZARD_DEPLOYMENT_NAME,
 )
 from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
@@ -242,7 +238,7 @@ DOMAIN_SECTION = FormSection(
     title="Webadres",
     icon="wereldbol",
     description="Configureer hoe uw applicatie bereikbaar wordt",
-    editables=[DOMAIN_BASE_DOMAIN, DOMAIN_CUSTOM_BASE_DOMAIN, DOMAIN_FORMAT, DOMAIN_SUBDOMAIN, DOMAIN_ROOT_COMPONENT],
+    editables=[DOMAIN_CONFIG],
     layout=[
         TemplatePartial(template="wizard/partials/domain_info.html.j2"),
         "deployments[0]/base-domain",

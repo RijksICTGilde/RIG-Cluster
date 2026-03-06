@@ -455,6 +455,49 @@ def _split_data_across_sections(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_goto_target(
+    goto: str,
+    current_section_id: str,
+    active_section_ids: list[str],
+) -> str | None:
+    """Resolve a navigation direction to a concrete section_id.
+
+    Args:
+        goto: Direction — "next", "prev", "review", or a section_id.
+        current_section_id: The section the user is currently on.
+        active_section_ids: Ordered list of active section_ids.
+
+    Returns:
+        A section_id to navigate to, "review" for summary, or None if
+        at the end with no review.
+    """
+    if goto == "review":
+        return "review"
+
+    try:
+        current_idx = active_section_ids.index(current_section_id)
+    except ValueError:
+        return active_section_ids[0] if active_section_ids else None
+
+    if goto == "next":
+        if current_idx < len(active_section_ids) - 1:
+            return active_section_ids[current_idx + 1]
+        return None  # past last step
+
+    if goto == "prev":
+        if current_idx > 0:
+            return active_section_ids[current_idx - 1]
+        return active_section_ids[0]  # already at first step
+
+    # Specific section_id (from step indicator jump)
+    if goto in active_section_ids:
+        return goto
+
+    # Unknown goto — stay on current
+    logger.warning("[resolve_goto] unknown goto=%r, staying on %s", goto, current_section_id)
+    return current_section_id
+
+
 def _navigate_to_step(
     request: Request,
     state: WizardState,
@@ -471,13 +514,20 @@ def _navigate_to_step(
     target_section = _get_section_from_flow(flow_id, target_section_id)
     state.current_step = target_section_id
     save_wizard_state(request, state)
+    logger.info(
+        "[navigate] target=%s, active_sections=%s, current_step=%s",
+        target_section_id,
+        state.active_sections,
+        state.current_step,
+    )
 
     yaml_data = state.get_merged_data()
     edit_mode = state.project_name is not None
 
-    # If the target step has stored data, validate it so errors show immediately
+    # Validate on load only for steps the user has explicitly completed (forward-validated).
+    # Steps that merely have saved data from back-navigation should not show errors.
     errors: dict[str, list[str]] | None = None
-    if target_section_id in state.step_data:
+    if target_section_id in state.completed_steps and target_section_id in state.step_data:
         processor = EditableFormProcessor()
         _, errors = processor.process_json_submission(
             state.step_data[target_section_id],
@@ -538,9 +588,9 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     yaml_data = state.get_merged_data()
     edit_mode = state.project_name is not None
 
-    # Validate stored data on load
+    # Validate on load only for completed steps (not just saved from back-navigation)
     errors: dict[str, list[str]] | None = None
-    if section_id in state.step_data:
+    if section_id in state.completed_steps and section_id in state.step_data:
         processor = EditableFormProcessor()
         _, errors = processor.process_json_submission(
             state.step_data[section_id],
@@ -594,16 +644,16 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
 @wizard_router.post("/{flow_id}/step/{section_id}", response_model=None)
 @requires_sso
 async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse | RedirectResponse:
-    """Validate step data and advance to the next step.
+    """Process form data and navigate to the requested step.
 
     Also handles sequence add/remove actions when ``_seq_action`` is present
-    in the form data.  The same endpoint is reused so that current field values
-    are preserved via the normal form submission.
+    in the form data.
 
-    Navigation modes (controlled by ``_goto``):
-    - empty / not set: validate + advance to next step (default "Next" button)
-    - ``"review"``: validate + jump to review page
-    - any section_id: save without validation + navigate to that step
+    Navigation directions (controlled by ``_goto``):
+    - ``"next"`` or empty: validate + advance to next step
+    - ``"prev"``: save without validation + go to previous step
+    - ``"review"``: validate + show summary page
+    - any section_id: save without validation + jump to that step
     """
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -621,11 +671,10 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     seq_path = body.pop("_seq_path", None)
     seq_index = body.pop("_seq_index", None)
     is_rerender = body.pop("_rerender", None) == "1"
-    goto = body.pop("_goto", "")
+    goto = body.pop("_goto", "next")
 
     # body is now the nested step data
     submitted_data = body
-    logger.info("[submit_step %s] goto=%r, keys=%s", section_id, goto, list(submitted_data.keys()))
 
     # Check for sequence add/remove action — handle before normal validation
     if seq_action in ("add", "remove"):
@@ -645,7 +694,6 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     edit_mode = state.project_name is not None
 
     # Process the nested JSON: validate, convert, and write to yaml in one pass.
-    # Item counts come from the submitted data (form truth), not stale session.
     submitted_yaml, errors = processor.process_json_submission(
         submitted_data,
         section.editables,
@@ -666,9 +714,9 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         context = _build_step_context(request, flow_id, section, step_html)
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
-    # --- Determine navigation mode ---
-    # _goto is either: "" (next), "review", or a section_id (jump/back)
-    is_jump = goto and goto != "review"
+    # --- Resolve navigation direction ---
+    is_forward = goto in ("next", "review")
+    logger.info("[submit_step %s] goto=%r, is_forward=%s", section_id, goto, is_forward)
 
     # Auto-add service dependencies when leaving the services step
     if section_id == "services" and isinstance(submitted_yaml.get("services"), list):
@@ -676,8 +724,8 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
         submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
 
-    # For forward navigation (Next / Review): block on validation errors
-    if not is_jump and errors:
+    # Forward navigation (Next / Review): block on field-level validation errors
+    if is_forward and errors:
         step_html = _render_step_html(
             section,
             yaml_data=submitted_yaml,
@@ -693,53 +741,54 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
+    # Forward navigation: run section-level enforcer for cross-field validation
+    if is_forward and section.enforcer:
+        global_errors = processor.enforce_sections(submitted_yaml, [section])
+        if global_errors:
+            step_html = _render_step_html(
+                section,
+                yaml_data=submitted_yaml,
+                errors=errors,
+                edit_mode=edit_mode,
+            )
+            context = _build_step_context(
+                request,
+                flow_id,
+                section,
+                step_html,
+                errors=errors,
+                global_errors=global_errors,
+            )
+            return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+
     # Store converted YAML-format data for this section
     section_data = _extract_section_data(section.editables, submitted_yaml)
-    logger.info("[store_step %s] storing keys=%s", section_id, list(section_data.keys()))
     state.store_step_data(section_id, section_data)
-    if not is_jump:
-        # Only mark completed on forward navigation (validated)
+    if is_forward:
         state.mark_completed(section_id)
 
     # Re-resolve active sections (services step may add/remove conditional steps)
     active_section_ids = resolve_active_section_ids(flow, state.step_data)
     state.active_sections = active_section_ids
-
-    # Stash data for sections that became inactive (e.g. keycloak-config when
-    # keycloak is deselected) and restore for sections that became active again.
     state.stash_inactive_sections(active_section_ids)
 
-    # --- Navigate to target ---
+    # --- Resolve target step ---
+    target_section_id = _resolve_goto_target(goto, section_id, active_section_ids)
+    logger.info("[submit_step %s] resolved target=%s", section_id, target_section_id)
 
-    # Jump to a specific section (back/step indicator click)
-    if is_jump:
-        return _navigate_to_step(request, state, flow_id, goto, templates)
-
-    # "Naar samenvatting" button: skip to review if validation passed
-    if goto == "review" and flow.show_review:
+    # Review page
+    if target_section_id == "review":
         save_wizard_state(request, state)
         return await _render_review(request, flow_id, templates)
 
-    # Determine next step
-    active_sections = resolve_active_sections(flow, state.step_data)
+    # Submit (last step, no review)
+    if target_section_id is None:
+        save_wizard_state(request, state)
+        if flow.show_review:
+            return await _render_review(request, flow_id, templates)
+        return await _do_submit(request, flow_id, templates)
 
-    try:
-        current_idx = [s.section_id for s in active_sections].index(section_id)
-    except ValueError:
-        current_idx = -1
-
-    if current_idx < len(active_sections) - 1:
-        next_section = active_sections[current_idx + 1]
-        return _navigate_to_step(request, state, flow_id, next_section.section_id, templates)
-
-    # Last step - go to review or submit
-    save_wizard_state(request, state)
-
-    if flow.show_review:
-        return await _render_review(request, flow_id, templates)
-
-    # No review step: submit directly
-    return await _do_submit(request, flow_id, templates)
+    return _navigate_to_step(request, state, flow_id, target_section_id, templates)
 
 
 # ---------------------------------------------------------------------------
@@ -1180,16 +1229,24 @@ def _extract_section_data(
     section_keys: set[str] = set()
     indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
 
-    for vis in editables:
-        parts = vis.editable.yaml_path.split("/")
-        top = parts[0]
-        top_key = top.split("[")[0]
-        section_keys.add(top_key)
+    def _collect_leaf_paths(vis_list: list[Any]) -> None:
+        for vis in vis_list:
+            # Groups are transparent — collect their children's paths
+            if vis.children and str(vis.widget) == "group":
+                _collect_leaf_paths(vis.children)
+                continue
 
-        if "[" in top and len(parts) >= 2:
-            # e.g. deployments[0]/base-domain -> owns "base-domain"
-            field_name = parts[1].split("[")[0]
-            indexed_fields.setdefault(top_key, set()).add(field_name)
+            parts = vis.editable.yaml_path.split("/")
+            top = parts[0]
+            top_key = top.split("[")[0]
+            section_keys.add(top_key)
+
+            if "[" in top and len(parts) >= 2:
+                # e.g. deployments[0]/base-domain -> owns "base-domain"
+                field_name = parts[1].split("[")[0]
+                indexed_fields.setdefault(top_key, set()).add(field_name)
+
+    _collect_leaf_paths(editables)
 
     result: dict[str, Any] = {}
     for key in section_keys:
@@ -1226,14 +1283,19 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
 
     parts: list[str] = []
 
-    for editable in section.editables:
-        if str(editable.widget) == "sequence":
-            parts.append(_build_sequence_summary(editable, yaml_data))
-        else:
-            value = smart_get_value(yaml_data, editable.editable.yaml_path)
-            display = _format_value(editable, value)
-            if display is not None:
-                parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
+    def _collect_summary(vis_list: list[Any]) -> None:
+        for editable in vis_list:
+            if str(editable.widget) == "group":
+                _collect_summary(editable.children or [])
+            elif str(editable.widget) == "sequence":
+                parts.append(_build_sequence_summary(editable, yaml_data))
+            else:
+                value = smart_get_value(yaml_data, editable.editable.yaml_path)
+                display = _format_value(editable, value)
+                if display is not None:
+                    parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
+
+    _collect_summary(section.editables)
 
     return "\n".join(parts) if parts else "<p><em>Geen gegevens ingevuld</em></p>"
 
@@ -1444,35 +1506,39 @@ def _flatten_yaml_for_validation(
 
     flat: dict[str, Any] = {}
 
-    for editable in editables:
-        if not should_render_editable(editable, yaml_data):
-            continue
-
-        if str(editable.widget) == "sequence":
-            items = smart_get_value(yaml_data, editable.editable.yaml_path) or []
-            if not isinstance(items, list):
+    def _collect_flat(vis_list: list[Any]) -> None:
+        for editable in vis_list:
+            if not should_render_editable(editable, yaml_data):
                 continue
-            for index in range(len(items)):
-                for child in editable.children or []:
-                    if not should_render_editable(child, yaml_data):
-                        continue
-                    if str(child.widget) == "sequence":
-                        # Nested sequence
-                        parent_path = resolve_path(child.editable.yaml_path, index)
-                        nested_items = smart_get_value(yaml_data, parent_path) or []
-                        if not isinstance(nested_items, list):
-                            continue
-                        for ci in range(len(nested_items)):
-                            for gc in child.children or []:
-                                gc_path = resolve_path(gc.editable.yaml_path, index)
-                                gc_path = resolve_path(gc_path, ci)
-                                flat[gc_path] = smart_get_value(yaml_data, gc_path)
-                    else:
-                        concrete = resolve_path(child.editable.yaml_path, index)
-                        flat[concrete] = smart_get_value(yaml_data, concrete)
-        else:
-            flat[editable.editable.yaml_path] = smart_get_value(yaml_data, editable.editable.yaml_path)
 
+            if str(editable.widget) == "group":
+                _collect_flat(editable.children or [])
+            elif str(editable.widget) == "sequence":
+                items = smart_get_value(yaml_data, editable.editable.yaml_path) or []
+                if not isinstance(items, list):
+                    continue
+                for index in range(len(items)):
+                    for child in editable.children or []:
+                        if not should_render_editable(child, yaml_data):
+                            continue
+                        if str(child.widget) == "sequence":
+                            # Nested sequence
+                            parent_path = resolve_path(child.editable.yaml_path, index)
+                            nested_items = smart_get_value(yaml_data, parent_path) or []
+                            if not isinstance(nested_items, list):
+                                continue
+                            for ci in range(len(nested_items)):
+                                for gc in child.children or []:
+                                    gc_path = resolve_path(gc.editable.yaml_path, index)
+                                    gc_path = resolve_path(gc_path, ci)
+                                    flat[gc_path] = smart_get_value(yaml_data, gc_path)
+                        else:
+                            concrete = resolve_path(child.editable.yaml_path, index)
+                            flat[concrete] = smart_get_value(yaml_data, concrete)
+            else:
+                flat[editable.editable.yaml_path] = smart_get_value(yaml_data, editable.editable.yaml_path)
+
+    _collect_flat(editables)
     return flat
 
 

@@ -46,25 +46,27 @@ class HostnameFormat(Enum):
 # Available variables: {component}, {deployment}, {project}, {subdomain}, {domain}
 #   {domain} = base_domain from YAML if set, else ingress_postfix from cluster config
 
-DOMAIN_FORMAT_TEMPLATES: dict[str, tuple[str, str]] = {
-    # (dash_template, dot_template)
-    "component-deployment-project": (
-        "{component}-{deployment}-{project}.{domain}",
-        "{component}.{deployment}.{project}.{domain}",
-    ),
-    "component-deployment-subdomain": (
-        "{component}-{deployment}-{subdomain}.{domain}",
-        "{component}.{deployment}.{subdomain}.{domain}",
-    ),
-    "deployment-project": (
-        "{deployment}-{project}.{domain}",
-        "{deployment}.{project}.{domain}",
-    ),
-    "deployment-subdomain": (
-        "{deployment}-{subdomain}.{domain}",
-        "{deployment}.{subdomain}.{domain}",
-    ),
+DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
+    # Dash variants (always available)
+    "component-deployment-project": "{component}-{deployment}-{project}.{domain}",
+    "deployment-project": "{deployment}-{project}.{domain}",
+    "component-deployment-subdomain": "{component}-{deployment}-{subdomain}.{domain}",
+    "deployment-subdomain": "{deployment}-{subdomain}.{domain}",
+    "component-subdomain": "{component}-{subdomain}.{domain}",
+    "subdomain": "{subdomain}.{domain}",
+    # Dot variants (only when domain supports dot-separated hostnames)
+    "component.deployment.project": "{component}.{deployment}.{project}.{domain}",
+    "deployment.project": "{deployment}.{project}.{domain}",
+    "component.deployment.subdomain": "{component}.{deployment}.{subdomain}.{domain}",
+    "deployment.subdomain": "{deployment}.{subdomain}.{domain}",
+    "component.subdomain": "{component}.{subdomain}.{domain}",
 }
+
+# Computed sets derived from templates for use by editables and enforcers.
+SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "{subdomain}" in t]
+ROOT_COMPONENT_FORMAT_IDS: list[str] = [
+    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." in f and "{component}" in t
+]
 
 # Maps each domain-mode to its implicit default format (backward compat).
 # Only used for documentation/display; when domain-format is absent the
@@ -97,7 +99,6 @@ def generate_hostname_from_format(
     project_name: str,
     subdomain: str | None,
     domain: str,
-    use_dots: bool = False,
 ) -> str:
     """Resolve a hostname from a domain-format template.
 
@@ -108,7 +109,6 @@ def generate_hostname_from_format(
         project_name: Project name
         subdomain: Optional subdomain
         domain: Domain tail (resolved via resolve_domain_tail)
-        use_dots: If True, use dot-separated variant; otherwise dash-separated
 
     Returns:
         Generated hostname string
@@ -116,11 +116,9 @@ def generate_hostname_from_format(
     Raises:
         ValueError: If domain_format is not a known template ID.
     """
-    templates = DOMAIN_FORMAT_TEMPLATES.get(domain_format)
-    if templates is None:
+    template = DOMAIN_FORMAT_TEMPLATES.get(domain_format)
+    if template is None:
         raise ValueError(f"Unknown domain-format: {domain_format}")
-
-    template = templates[1] if use_dots else templates[0]
 
     return template.format(
         component=_sanitize_for_lowercase(component_name),
@@ -1658,8 +1656,7 @@ def get_component_ingress_map(
         >>> get_component_ingress_map(
         ...     "frontend", "poc", "myapp", ".kind",
         ...     subdomain="moza", base_domain="rijksapp.dev",
-        ...     hostname_format=HostnameFormat.DOTS,
-        ...     domain_format="deployment-subdomain"
+        ...     domain_format="deployment.subdomain"
         ... )
         {'poc-frontend': 'poc.moza.rijksapp.dev'}
     """
@@ -1668,7 +1665,6 @@ def get_component_ingress_map(
     # When domain_format is explicitly set, use the template-based generation
     if domain_format and domain_format in DOMAIN_FORMAT_TEMPLATES:
         domain = resolve_domain_tail(base_domain, ingress_postfix)
-        use_dots = hostname_format == HostnameFormat.DOTS
         hostname = generate_hostname_from_format(
             domain_format=domain_format,
             component_name=component_name,
@@ -1676,7 +1672,6 @@ def get_component_ingress_map(
             project_name=project_name,
             subdomain=subdomain,
             domain=domain,
-            use_dots=use_dots,
         )
         return {base_name: hostname}
 

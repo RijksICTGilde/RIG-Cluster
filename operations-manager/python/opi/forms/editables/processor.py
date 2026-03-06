@@ -10,6 +10,7 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.path import get_value, resolve_path
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.visualizers.bridge import should_render_editable
@@ -85,7 +86,16 @@ class EditableFormProcessor:
 
         for vis in editables:
             ed = vis.editable
-            if str(vis.widget) == "sequence":
+            if vis.widget == WidgetType.GROUP:
+                # Recurse into group children, then run parent enforcer
+                group_errors = self.validate_editables(parsed, vis.children or [], yaml_data)
+                errors.update(group_errors)
+                if not group_errors and ed.enforcer:
+                    try:
+                        ed.enforcer.enforce(yaml_data, yaml_data)
+                    except ValueError as e:
+                        errors.setdefault(ed.yaml_path, []).append(str(e))
+            elif vis.widget == WidgetType.SEQUENCE:
                 items = smart_get_value(yaml_data, ed.yaml_path) or []
                 if not isinstance(items, list):
                     logger.debug("validate: %s not a list in yaml_data, skipping", ed.yaml_path)
@@ -94,7 +104,7 @@ class EditableFormProcessor:
                 for index in range(len(items)):
                     for child_vis in vis.children or []:
                         child_ed = child_vis.editable
-                        if str(child_vis.widget) == "sequence":
+                        if child_vis.widget == WidgetType.SEQUENCE:
                             self._validate_nested_sequence(child_vis, parsed, yaml_data, errors, parent_index=index)
                         else:
                             concrete_path = resolve_path(child_ed.yaml_path, index)
@@ -188,6 +198,9 @@ class EditableFormProcessor:
         """
         for vis in editables:
             ed = vis.editable
+            if vis.widget == WidgetType.GROUP:
+                self.clear_hidden_depends_on(vis.children or [], yaml_data)
+                continue
             if not ed.depends_on:
                 continue
             if not should_render_editable(vis, yaml_data):
@@ -246,17 +259,19 @@ class EditableFormProcessor:
             if vis.readonly_on_edit and edit_mode:
                 continue
 
-            widget = str(vis.widget)
-            if widget == "sequence":
+            if vis.widget == WidgetType.GROUP:
+                # Groups are transparent — recurse into children
+                self.apply_to_yaml(parsed, vis.children or [], result, edit_mode)
+            elif vis.widget == WidgetType.SEQUENCE:
                 self._apply_sequence_to_yaml(vis, parsed, result, edit_mode)
-            elif widget == "checkbox":
+            elif vis.widget == WidgetType.CHECKBOX:
                 # Unchecked checkboxes are absent from form data; treat as False.
                 raw = parsed.get(ed.yaml_path)
                 value: Any = bool(raw) if raw else False
                 if ed.converter:
                     value = ed.converter.write(value)
                 smart_set_value(result, ed.yaml_path, value)
-            elif widget == "checkbox_group":
+            elif vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(parsed.get(ed.yaml_path))
                 if ed.converter:
                     value = ed.converter.write(value)
@@ -291,9 +306,9 @@ class EditableFormProcessor:
                     continue
                 if not should_render_editable(child_vis, yaml_data):
                     continue
-                if str(child_vis.widget) == "sequence":
+                if child_vis.widget == WidgetType.SEQUENCE:
                     self._apply_nested_sequence_to_yaml(child_vis, parsed, yaml_data, edit_mode, parent_index=index)
-                elif str(child_vis.widget) == "checkbox_group":
+                elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
                     value = _coerce_to_list(parsed.get(concrete_path))
                     if child_ed.converter:
@@ -367,8 +382,15 @@ class EditableFormProcessor:
             if vis.readonly or (vis.readonly_on_edit and edit_mode):
                 continue
 
-            widget = str(vis.widget)
-            if widget == "sequence":
+            if vis.widget == WidgetType.GROUP:
+                self._process_group_json(
+                    vis,
+                    submitted,
+                    result,
+                    errors,
+                    edit_mode,
+                )
+            elif vis.widget == WidgetType.SEQUENCE:
                 self._process_sequence_json(
                     vis,
                     submitted,
@@ -376,7 +398,7 @@ class EditableFormProcessor:
                     errors,
                     edit_mode,
                 )
-            elif widget == "checkbox":
+            elif vis.widget == WidgetType.CHECKBOX:
                 # Unchecked checkboxes are absent from JSON; treat as False.
                 raw = get_value(submitted, ed.yaml_path)
                 value: Any = bool(raw) if raw else False
@@ -384,7 +406,7 @@ class EditableFormProcessor:
                 if ed.converter:
                     value = ed.converter.write(value)
                 smart_set_value(result, ed.yaml_path, value)
-            elif widget == "checkbox_group":
+            elif vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(get_value(submitted, ed.yaml_path))
                 self._validate_field(vis, ed.yaml_path, value, errors)
                 if ed.converter:
@@ -401,6 +423,60 @@ class EditableFormProcessor:
         self._resolve_deferrals(result, editables)
         self._strip_transients(result, editables)
         return result, errors
+
+    def _process_group_json(
+        self,
+        vis: EditableVisualizer,
+        submitted: dict[str, Any],
+        result: dict[str, Any],
+        errors: dict[str, list[str]],
+        edit_mode: bool,
+    ) -> None:
+        """Process a group editable: validate children, then run parent enforcer.
+
+        A group is a non-repeating parent that wraps related fields under a
+        common path. Unlike sequences, there is no index iteration — children
+        are processed directly. The group's enforcer provides cross-field
+        validation after all children pass individual validation.
+        """
+        ed = vis.editable
+        errors_before = len(errors)
+
+        # Process each child through the same dispatch logic
+        for child_vis in vis.children or []:
+            child_ed = child_vis.editable
+            if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
+                continue
+
+            if child_vis.widget == WidgetType.GROUP:
+                self._process_group_json(child_vis, submitted, result, errors, edit_mode)
+            elif child_vis.widget == WidgetType.CHECKBOX:
+                raw = get_value(submitted, child_ed.yaml_path)
+                value: Any = bool(raw) if raw else False
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors)
+                if child_ed.converter:
+                    value = child_ed.converter.write(value)
+                smart_set_value(result, child_ed.yaml_path, value)
+            elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
+                value = _coerce_to_list(get_value(submitted, child_ed.yaml_path))
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors)
+                if child_ed.converter:
+                    value = child_ed.converter.write(value)
+                smart_set_value(result, child_ed.yaml_path, value)
+            else:
+                value = get_value(submitted, child_ed.yaml_path)
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors)
+                if value is not None:
+                    if child_ed.converter:
+                        value = child_ed.converter.write(value)
+                    smart_set_value(result, child_ed.yaml_path, value)
+
+        # Run parent enforcer only if children introduced no new errors
+        if len(errors) == errors_before and ed.enforcer:
+            try:
+                ed.enforcer.enforce(result, result)
+            except ValueError as e:
+                errors.setdefault(ed.yaml_path, []).append(str(e))
 
     def _process_sequence_json(
         self,
@@ -431,7 +507,7 @@ class EditableFormProcessor:
                     continue
                 if not should_render_editable(child_vis, result):
                     continue
-                if str(child_vis.widget) == "sequence":
+                if child_vis.widget == WidgetType.SEQUENCE:
                     self._process_nested_sequence_json(
                         child_vis,
                         submitted,
@@ -440,7 +516,7 @@ class EditableFormProcessor:
                         edit_mode,
                         index,
                     )
-                elif str(child_vis.widget) == "checkbox_group":
+                elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
                     value = _coerce_to_list(get_value(submitted, concrete_path))
                     self._validate_field(child_vis, concrete_path, value, errors)
@@ -512,7 +588,10 @@ class EditableFormProcessor:
         result: list[tuple[Editable, str]] = []
         for vis in editables:
             ed = vis.editable
-            if str(vis.widget) == "sequence":
+            if vis.widget == WidgetType.GROUP:
+                # Recurse into group children (no index iteration)
+                result.extend(self._collect_editables_with_paths(vis.children or [], data))
+            elif vis.widget == WidgetType.SEQUENCE:
                 items = smart_get_value(data, ed.yaml_path) or []
                 if isinstance(items, list):
                     for index in range(len(items)):

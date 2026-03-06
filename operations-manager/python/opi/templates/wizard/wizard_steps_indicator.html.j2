@@ -33,9 +33,7 @@
                hx-vals='{"_goto": "{{ section_id }}"}'
                hx-ext="json-enc"
                class="wizard-steps__link">
-                <span class="wizard-steps__number">
-                    <c-icon icon="vinkje" size="sm" />
-                </span>
+                <span class="wizard-steps__number">{{ step_num }}</span>
                 <span class="wizard-steps__label">{{ steps.titles[section_id] }}</span>
             </a>
             {% else %}

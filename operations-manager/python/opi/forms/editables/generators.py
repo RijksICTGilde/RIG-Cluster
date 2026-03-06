@@ -76,8 +76,11 @@ class DomainModeGenerator:
         if not deployments or not isinstance(deployments[0], dict):
             return "component-specific"
         domain_format = deployments[0].get("domain-format", "component-deployment-project")
+        # Dot format IDs use dots as separators; normalize to dash equivalent
+        # for the legacy mode lookup (e.g. "deployment.subdomain" -> "deployment-subdomain").
+        normalized = domain_format.replace(".", "-")
         for mode, fmt in DOMAIN_MODE_DEFAULT_FORMAT.items():
-            if fmt == domain_format:
+            if fmt in (domain_format, normalized):
                 return mode
         return "component-specific"
 

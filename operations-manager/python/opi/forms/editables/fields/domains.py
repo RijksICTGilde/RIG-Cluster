@@ -10,6 +10,7 @@ from __future__ import annotations
 from opi.forms.editables.conditions import SentinelValueCondition
 from opi.forms.editables.converters import CustomDomainSelectConverter
 from opi.forms.editables.editable import Editable
+from opi.forms.editables.enforcers import DomainConfigEnforcer
 from opi.forms.editables.validators import (
     BaseDomainValidator,
     CustomDomainValidator,
@@ -17,6 +18,7 @@ from opi.forms.editables.validators import (
     MinMaxLengthValidator,
     SubdomainValidator,
 )
+from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS, SUBDOMAIN_FORMAT_IDS
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -33,7 +35,7 @@ DOMAIN_FORMAT_EDITABLE = Editable(
 DOMAIN_SUBDOMAIN_EDITABLE = Editable(
     yaml_path="deployments[0]/subdomain",
     depends_on="deployments[0]/domain-format",
-    show_when={"value": ["component-deployment-subdomain", "deployment-subdomain"]},
+    show_when={"value": SUBDOMAIN_FORMAT_IDS},
     validator=SubdomainValidator(),
 )
 
@@ -57,9 +59,21 @@ DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE = Editable(
 
 DOMAIN_ROOT_COMPONENT_EDITABLE = Editable(
     yaml_path="deployments[0]/root-component",
-    values_provider="ComponentReferenceOptionsProvider",
+    values_provider="RootComponentOptionsProvider",
     depends_on="deployments[0]/domain-format",
-    show_when={"value": ["deployment-project", "deployment-subdomain"]},
+    show_when={"value": ROOT_COMPONENT_FORMAT_IDS},
+)
+
+DOMAIN_CONFIG_EDITABLE = Editable(
+    yaml_path="deployments[0]",
+    enforcer=DomainConfigEnforcer(),
+    children=[
+        DOMAIN_FORMAT_EDITABLE,
+        DOMAIN_BASE_DOMAIN_EDITABLE,
+        DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
+        DOMAIN_SUBDOMAIN_EDITABLE,
+        DOMAIN_ROOT_COMPONENT_EDITABLE,
+    ],
 )
 
 WIZARD_DEPLOYMENT_NAME_EDITABLE = Editable(

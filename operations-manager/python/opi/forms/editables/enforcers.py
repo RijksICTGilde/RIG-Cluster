@@ -82,12 +82,12 @@ def extract_service_names(services: list[Any]) -> list[str]:
 class ComponentServicesEnforcer:
     """Section-level enforcer: validates component services against project services."""
 
-    def enforce(self, yaml_data: Any, context: dict[str, Any]) -> Any:
-        services = extract_service_names(yaml_data.get("services", []))
+    def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        services = extract_service_names(value.get("services", []))
         if not services:
-            return yaml_data
+            return value
 
-        components = yaml_data.get("components", [])
+        components = value.get("components", [])
         for comp in components:
             if not isinstance(comp, dict):
                 continue
@@ -104,7 +104,40 @@ class ComponentServicesEnforcer:
                     f"Beschikbare services: {', '.join(services)}"
                 )
 
-        return yaml_data
+        return value
+
+
+class DomainConfigEnforcer:
+    """Section-level enforcer: validates cross-field domain configuration.
+
+    Checks that dependent fields are set when the chosen domain-format requires them:
+    - subdomain is required for formats containing '{subdomain}'
+    - custom domain is set when base-domain is the sentinel value
+    """
+
+    def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+
+        deployments = value.get("deployments", [])
+        if not deployments or not isinstance(deployments[0], dict):
+            return value
+
+        dep = deployments[0]
+        domain_format = dep.get("domain-format")
+        if not domain_format:
+            return value
+
+        base_domain = dep.get("base-domain")
+        subdomain = dep.get("subdomain")
+
+        if base_domain == "__custom__":
+            raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
+
+        template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
+        if "{subdomain}" in template and not subdomain:
+            raise ValueError("Een subdomein is vereist voor het gekozen URL-formaat")
+
+        return value
 
 
 class ServiceDependencyEnforcer:

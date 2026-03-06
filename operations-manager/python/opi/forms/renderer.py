@@ -12,12 +12,14 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
+from opi.forms.editables.editable import WidgetType
 from opi.forms.extractor import extract_fields_from_model
 from opi.forms.field import FormField
 from opi.forms.layout import (
     HTML,
     ButtonGroup,
     Column,
+    DisplayBlock,
     Div,
     Fieldset,
     Hidden,
@@ -322,7 +324,11 @@ class FormRenderer:
             if not should_render_editable(editable, yaml_data):
                 continue
 
-            if str(editable.widget) == "sequence":
+            if editable.widget == WidgetType.GROUP:
+                # Groups flatten their children into the field list
+                group_fields = self._build_group_fields(editable, yaml_data, errors, edit_mode, provider_context)
+                fields_by_name.update(group_fields)
+            elif editable.widget == WidgetType.SEQUENCE:
                 seq_field = self._build_sequence_field(editable, yaml_data, errors, edit_mode, provider_context)
                 fields_by_name[editable.editable.yaml_path] = seq_field
             else:
@@ -334,7 +340,7 @@ class FormRenderer:
                     provider_context=provider_context,
                 )
                 # Pass locked services to service_cards widget
-                if str(editable.widget) == "service_cards" and "_locked_services" in yaml_data:
+                if editable.widget == WidgetType.SERVICE_CARDS and "_locked_services" in yaml_data:
                     form_field.attributes["locked_values"] = ",".join(yaml_data["_locked_services"])
                 fields_by_name[form_field.path] = form_field
 
@@ -394,6 +400,42 @@ class FormRenderer:
 
         return context
 
+    def _build_group_fields(
+        self,
+        editable: EditableVisualizer,
+        yaml_data: dict[str, Any],
+        errors: dict[str, list[str]],
+        edit_mode: bool,
+        provider_context: dict[str, Any] | None = None,
+    ) -> dict[str, FormField]:
+        """Flatten a group editable's children into individual form fields.
+
+        Groups are transparent containers — they don't render themselves,
+        they just let their children participate directly in the field list.
+        Enforcer errors from the group are attached to the parent path.
+        """
+        from opi.forms.visualizers.bridge import editable_to_form_field, should_render_editable
+
+        fields: dict[str, FormField] = {}
+        for child in editable.children or []:
+            if not should_render_editable(child, yaml_data):
+                continue
+            if child.widget == WidgetType.GROUP:
+                fields.update(self._build_group_fields(child, yaml_data, errors, edit_mode, provider_context))
+            elif child.widget == WidgetType.SEQUENCE:
+                seq_field = self._build_sequence_field(child, yaml_data, errors, edit_mode, provider_context)
+                fields[child.editable.yaml_path] = seq_field
+            else:
+                form_field = editable_to_form_field(
+                    child,
+                    yaml_data,
+                    errors,
+                    edit_mode=edit_mode,
+                    provider_context=provider_context,
+                )
+                fields[form_field.path] = form_field
+        return fields
+
     def _build_sequence_field(
         self,
         editable: EditableVisualizer,
@@ -432,7 +474,7 @@ class FormRenderer:
             for child_editable in editable.children or []:
                 if not should_render_editable(child_editable, yaml_data):
                     continue
-                if str(child_editable.widget) == "sequence":
+                if child_editable.widget == WidgetType.SEQUENCE:
                     nested_seq = self._build_nested_sequence_field(
                         child_editable,
                         yaml_data,
@@ -589,6 +631,7 @@ class FormRenderer:
         self,
         element: LayoutElement | str,
         fields: dict[str, FormField],
+        yaml_data: dict[str, Any] | None = None,
     ) -> str:
         """
         Render a layout element or field reference.
@@ -596,6 +639,7 @@ class FormRenderer:
         Args:
             element: Layout element or field name string
             fields: Field lookup by name
+            yaml_data: Current YAML data (needed by DisplayBlock)
 
         Returns:
             Rendered HTML
@@ -605,26 +649,26 @@ class FormRenderer:
             field = fields.get(element)
             if field:
                 return self.adapter.render_field(field)
-            return f"<!-- Unknown field: {element} -->"
+            return ""
 
         # Row layout
         if isinstance(element, Row):
-            children_html = [self._render_layout_element(child, fields) for child in element.children]
+            children_html = [self._render_layout_element(child, fields, yaml_data) for child in element.children]
             return self.adapter.render_row(element, children_html)
 
         # Column layout
         if isinstance(element, Column):
-            child_html = self._render_layout_element(element.child, fields)
+            child_html = self._render_layout_element(element.child, fields, yaml_data)
             return self.adapter.render_column(element, child_html)
 
         # Fieldset layout
         if isinstance(element, Fieldset):
-            children_html = [self._render_layout_element(child, fields) for child in element.children]
+            children_html = [self._render_layout_element(child, fields, yaml_data) for child in element.children]
             return self.adapter.render_fieldset(element, children_html)
 
         # Div wrapper
         if isinstance(element, Div):
-            children_html = [self._render_layout_element(child, fields) for child in element.children]
+            children_html = [self._render_layout_element(child, fields, yaml_data) for child in element.children]
             return self.adapter.render_div(element, children_html)
 
         # Sequence (repeatable fields)

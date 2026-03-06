@@ -17,6 +17,7 @@ Example:
     )
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Union
 
@@ -215,6 +216,28 @@ class TemplatePartial(LayoutElement):
 
     template: str = ""
     context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DisplayBlock(LayoutElement):
+    """Server-rendered display area updated via HTMX.
+
+    Renders a small HTML fragment computed from form data. Source fields
+    trigger ``hx-post`` to a generic endpoint that re-runs ``compute``
+    and swaps only the display div.
+
+    Attributes:
+        display_id: Unique identifier, used as both the endpoint lookup
+            key and the HTML element id for HTMX targeting.
+        compute: Callable that receives ``yaml_data`` (dict) and returns
+            a template context dict.
+        template: Jinja2 template path (relative to templates dir) that
+            renders the computed context into an HTML fragment.
+    """
+
+    display_id: str = ""
+    compute: Callable[[dict[str, Any]], dict[str, Any]] = field(default_factory=lambda: lambda d: {})
+    template: str = ""
 
 
 @dataclass

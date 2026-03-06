@@ -54,7 +54,7 @@ class TestResolveDomainTail:
 
 
 class TestGenerateHostnameFromFormat:
-    """Test each template ID produces expected hostnames in both variants."""
+    """Test each template ID produces expected hostnames."""
 
     def test_component_deployment_project_dashes(self):
         result = generate_hostname_from_format("component-deployment-project", "frontend", "poc", "myapp", None, "kind")
@@ -62,7 +62,7 @@ class TestGenerateHostnameFromFormat:
 
     def test_component_deployment_project_dots(self):
         result = generate_hostname_from_format(
-            "component-deployment-project", "frontend", "poc", "myapp", None, "rijksapp.dev", use_dots=True
+            "component.deployment.project", "frontend", "poc", "myapp", None, "rijksapp.dev"
         )
         assert result == "frontend.poc.myapp.rijksapp.dev"
 
@@ -74,7 +74,7 @@ class TestGenerateHostnameFromFormat:
 
     def test_component_deployment_subdomain_dots(self):
         result = generate_hostname_from_format(
-            "component-deployment-subdomain", "frontend", "poc", "myapp", "moza", "rijksapp.dev", use_dots=True
+            "component.deployment.subdomain", "frontend", "poc", "myapp", "moza", "rijksapp.dev"
         )
         assert result == "frontend.poc.moza.rijksapp.dev"
 
@@ -83,9 +83,7 @@ class TestGenerateHostnameFromFormat:
         assert result == "poc-myapp.kind"
 
     def test_deployment_project_dots(self):
-        result = generate_hostname_from_format(
-            "deployment-project", "frontend", "poc", "myapp", None, "rijksapp.dev", use_dots=True
-        )
+        result = generate_hostname_from_format("deployment.project", "frontend", "poc", "myapp", None, "rijksapp.dev")
         assert result == "poc.myapp.rijksapp.dev"
 
     def test_deployment_subdomain_dashes(self):
@@ -94,9 +92,23 @@ class TestGenerateHostnameFromFormat:
 
     def test_deployment_subdomain_dots(self):
         result = generate_hostname_from_format(
-            "deployment-subdomain", "frontend", "poc", "myapp", "moza", "rijksapp.dev", use_dots=True
+            "deployment.subdomain", "frontend", "poc", "myapp", "moza", "rijksapp.dev"
         )
         assert result == "poc.moza.rijksapp.dev"
+
+    def test_component_subdomain_dashes(self):
+        result = generate_hostname_from_format("component-subdomain", "frontend", "poc", "myapp", "moza", "kind")
+        assert result == "frontend-moza.kind"
+
+    def test_component_subdomain_dots(self):
+        result = generate_hostname_from_format(
+            "component.subdomain", "frontend", "poc", "myapp", "moza", "rijksapp.dev"
+        )
+        assert result == "frontend.moza.rijksapp.dev"
+
+    def test_subdomain_format(self):
+        result = generate_hostname_from_format("subdomain", "frontend", "poc", "myapp", "moza", "kind")
+        assert result == "moza.kind"
 
     def test_unknown_format_raises(self):
         with pytest.raises(ValueError, match="Unknown domain-format"):
@@ -133,8 +145,7 @@ class TestGetComponentIngressMapWithDomainFormat:
             ".kind",
             subdomain="moza",
             base_domain="rijksapp.dev",
-            hostname_format=HostnameFormat.DOTS,
-            domain_format="deployment-subdomain",
+            domain_format="deployment.subdomain",
         )
         assert result == {"poc-frontend": "poc.moza.rijksapp.dev"}
 
@@ -145,8 +156,7 @@ class TestGetComponentIngressMapWithDomainFormat:
             "myapp",
             ".kind",
             base_domain="rijksapp.dev",
-            hostname_format=HostnameFormat.DOTS,
-            domain_format="deployment-project",
+            domain_format="deployment.project",
         )
         assert result == {"poc-frontend": "poc.myapp.rijksapp.dev"}
 
@@ -203,8 +213,7 @@ class TestGetDeploymentHostnamesWithDomainFormat:
             ".kind",
             subdomain="moza",
             base_domain="rijksapp.dev",
-            hostname_format=HostnameFormat.DOTS,
-            domain_format="component-deployment-subdomain",
+            domain_format="component.deployment.subdomain",
         )
         # Each component gets its own hostname, no root
         assert "frontend.poc.moza.rijksapp.dev" in hostnames
@@ -236,8 +245,7 @@ class TestGetDeploymentHostnamesWithDomainFormat:
             ".kind",
             subdomain="moza",
             base_domain="rijksapp.dev",
-            hostname_format=HostnameFormat.DOTS,
-            domain_format="deployment-subdomain",
+            domain_format="deployment.subdomain",
         )
         # Both components produce poc.moza.rijksapp.dev, deduplicated
         assert hostnames == ["poc.moza.rijksapp.dev"]
@@ -249,62 +257,76 @@ class TestGetDeploymentHostnamesWithDomainFormat:
 
 
 class TestDomainFormatOptionsProvider:
-    def test_no_base_domain_returns_four_dash_options(self):
+    def test_no_base_domain_returns_six_dash_options(self):
         provider = DomainFormatOptionsProvider()
         options = provider.get_options()
-        assert len(options) == 4
+        assert len(options) == 6
 
     def test_all_values_are_valid_template_ids(self):
         provider = DomainFormatOptionsProvider()
         for opt in provider.get_options():
             assert opt["value"] in DOMAIN_FORMAT_TEMPLATES
 
-    def test_expected_values(self):
+    def test_expected_dash_values(self):
         provider = DomainFormatOptionsProvider()
         values = [o["value"] for o in provider.get_options()]
         assert "component-deployment-project" in values
         assert "component-deployment-subdomain" in values
         assert "deployment-project" in values
         assert "deployment-subdomain" in values
+        assert "component-subdomain" in values
+        assert "subdomain" in values
 
-    def test_all_options_have_description(self):
+    def test_all_options_have_label(self):
         provider = DomainFormatOptionsProvider()
         for opt in provider.get_options():
-            assert "description" in opt
-            assert len(opt["description"]) > 0
+            assert "label" in opt
+            assert len(opt["label"]) > 0
 
-    def test_supports_dots_returns_eight_options(self):
-        """When base_domain supports dots, both dot and dash variants are shown."""
+    def test_supports_dots_returns_eleven_options(self):
+        """When base_domain supports dots, dash + dot variants are shown."""
         provider = DomainFormatOptionsProvider(base_domain="kind", cluster="local")
         options = provider.get_options()
-        assert len(options) == 8
+        assert len(options) == 11  # 6 dash + 5 dot (subdomain has no dot variant)
 
-    def test_supports_dots_dot_options_first(self):
-        """Dot variants appear before dash variants."""
+    def test_supports_dots_sorted_by_value(self):
+        """Options are sorted alphabetically by value."""
         provider = DomainFormatOptionsProvider(base_domain="kind", cluster="local")
         options = provider.get_options()
-        # First 4 should be dot labels (contain dots between parts)
-        assert "." in options[0]["label"].replace(".domein", "")
-        # Last 4 should be dash labels (contain dashes between parts)
-        assert "-" in options[4]["label"].split(".")[0]
+        values = [o["value"] for o in options]
+        assert values == sorted(values)
 
-    def test_no_dots_support_returns_four(self):
+    def test_dot_values_are_valid_template_ids(self):
+        provider = DomainFormatOptionsProvider(base_domain="kind", cluster="local")
+        for opt in provider.get_options():
+            assert opt["value"] in DOMAIN_FORMAT_TEMPLATES
+
+    def test_labels_show_format_pattern(self):
+        """Labels show the format pattern with .domein suffix."""
+        provider = DomainFormatOptionsProvider()
+        options = provider.get_options()
+        cdp = next(o for o in options if o["value"] == "component-deployment-project")
+        assert cdp["label"] == "component-deployment-project.domein"
+        sub = next(o for o in options if o["value"] == "subdomain")
+        assert sub["label"] == "subdomain.domein"
+
+    def test_no_dots_support_returns_six(self):
         """When base_domain doesn't support dots, only dash variants."""
         provider = DomainFormatOptionsProvider(base_domain="nonexistent.domain", cluster="local")
         options = provider.get_options()
-        assert len(options) == 4
+        assert len(options) == 6
 
     def test_sandbox_default_domain_no_dots(self):
         """sandbox.rijksapp.dev on sandboxed-local does not support dots."""
         provider = DomainFormatOptionsProvider(base_domain="sandbox.rijksapp.dev", cluster="sandboxed-local")
         options = provider.get_options()
-        assert len(options) == 4
+        assert len(options) == 6
 
     def test_sandbox_test_domain_supports_dots(self):
         """robbertuittenbroek.nl on sandboxed-local supports dots."""
         provider = DomainFormatOptionsProvider(base_domain="robbertuittenbroek.nl", cluster="sandboxed-local")
         options = provider.get_options()
-        assert len(options) == 8
+        assert len(options) == 11
 
 
 # ---------------------------------------------------------------------------
@@ -336,28 +358,22 @@ class TestDomainFormatValidator:
 
 
 class TestDomainFormatTemplates:
-    def test_all_templates_have_two_variants(self):
+    def test_all_templates_are_strings(self):
         for key, val in DOMAIN_FORMAT_TEMPLATES.items():
-            assert isinstance(val, tuple), f"{key} should be a tuple"
-            assert len(val) == 2, f"{key} should have (dash, dot) pair"
+            assert isinstance(val, str), f"{key} should be a string template"
 
-    def test_dash_variant_uses_hyphens(self):
-        for key, (dash, _dot) in DOMAIN_FORMAT_TEMPLATES.items():
-            # The dash variant joins prefix parts with hyphens before the dot+domain
-            parts = dash.split(".{domain}")
-            prefix = parts[0]
-            # Should not contain dots in prefix (except {domain} placeholder)
-            assert "." not in prefix, f"{key} dash variant should not have dots in prefix"
+    def test_dash_formats_use_hyphens(self):
+        dash_formats = {k: v for k, v in DOMAIN_FORMAT_TEMPLATES.items() if "-" in k or k == "subdomain"}
+        for key, template in dash_formats.items():
+            prefix = template.split(".{domain}")[0]
+            assert "." not in prefix, f"{key} dash template should not have dots in prefix"
 
-    def test_dot_variant_uses_dots(self):
-        for key, (_dash, dot) in DOMAIN_FORMAT_TEMPLATES.items():
-            # The dot variant uses dots to separate parts
-            parts = dot.split(".{domain}")
-            prefix = parts[0]
-            # Should not contain hyphens between template variables
-            # (variables themselves may contain hyphens in their values)
+    def test_dot_formats_use_dots(self):
+        dot_formats = {k: v for k, v in DOMAIN_FORMAT_TEMPLATES.items() if "." in k}
+        for key, template in dot_formats.items():
+            prefix = template.split(".{domain}")[0]
             assert "-" not in prefix.replace("{", "").replace("}", ""), (
-                f"{key} dot variant should use dots, not hyphens between variables"
+                f"{key} dot template should use dots, not hyphens"
             )
 
     def test_default_format_mapping_covers_all_modes(self):
@@ -409,6 +425,15 @@ class TestDomainModeGenerator:
         gen = DomainModeGenerator()
         data = {"deployments": [{"domain-format": "unknown-format"}]}
         assert gen.generate(data) == "component-specific"
+
+    def test_dot_format_maps_to_same_mode(self):
+        gen = DomainModeGenerator()
+        assert (
+            gen.generate({"deployments": [{"domain-format": "component.deployment.project"}]}) == "component-specific"
+        )
+        assert gen.generate({"deployments": [{"domain-format": "component.deployment.subdomain"}]}) == "nice-url"
+        assert gen.generate({"deployments": [{"domain-format": "deployment.project"}]}) == "deployment-name"
+        assert gen.generate({"deployments": [{"domain-format": "deployment.subdomain"}]}) == "custom"
 
 
 # ---------------------------------------------------------------------------
@@ -468,11 +493,17 @@ class TestComponentPathCrossStepDependency:
 class TestDomainEditablesShowWhen:
     def test_subdomain_shows_for_subdomain_formats(self):
         from opi.forms.editables.fields.domains import DOMAIN_SUBDOMAIN_EDITABLE
+        from opi.utils.naming import SUBDOMAIN_FORMAT_IDS
 
         assert DOMAIN_SUBDOMAIN_EDITABLE.depends_on == "deployments[0]/domain-format"
-        assert DOMAIN_SUBDOMAIN_EDITABLE.show_when == {
-            "value": ["component-deployment-subdomain", "deployment-subdomain"]
-        }
+        assert DOMAIN_SUBDOMAIN_EDITABLE.show_when == {"value": SUBDOMAIN_FORMAT_IDS}
+        # Verify expected formats are included
+        assert "component-deployment-subdomain" in SUBDOMAIN_FORMAT_IDS
+        assert "deployment-subdomain" in SUBDOMAIN_FORMAT_IDS
+        assert "subdomain" in SUBDOMAIN_FORMAT_IDS
+        assert "component.deployment.subdomain" in SUBDOMAIN_FORMAT_IDS
+        # Non-subdomain formats are excluded
+        assert "component-deployment-project" not in SUBDOMAIN_FORMAT_IDS
 
     def test_base_domain_always_visible_and_required(self):
         from opi.forms.editables.fields.domains import DOMAIN_BASE_DOMAIN_EDITABLE
@@ -481,11 +512,20 @@ class TestDomainEditablesShowWhen:
         assert DOMAIN_BASE_DOMAIN_EDITABLE.show_when is None
         assert DOMAIN_BASE_DOMAIN_EDITABLE.required is True
 
-    def test_root_component_shows_for_shared_formats(self):
+    def test_root_component_shows_for_dot_component_formats(self):
         from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
+        from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 
         assert DOMAIN_ROOT_COMPONENT_EDITABLE.depends_on == "deployments[0]/domain-format"
-        assert DOMAIN_ROOT_COMPONENT_EDITABLE.show_when == {"value": ["deployment-project", "deployment-subdomain"]}
+        assert DOMAIN_ROOT_COMPONENT_EDITABLE.show_when == {"value": ROOT_COMPONENT_FORMAT_IDS}
+        # Only dot formats with {component} qualify
+        assert "component.deployment.project" in ROOT_COMPONENT_FORMAT_IDS
+        assert "component.deployment.subdomain" in ROOT_COMPONENT_FORMAT_IDS
+        assert "component.subdomain" in ROOT_COMPONENT_FORMAT_IDS
+        # Dash formats and formats without {component} are excluded
+        assert "component-deployment-project" not in ROOT_COMPONENT_FORMAT_IDS
+        assert "deployment-project" not in ROOT_COMPONENT_FORMAT_IDS
+        assert "subdomain" not in ROOT_COMPONENT_FORMAT_IDS
 
     def test_domain_format_is_required_with_default(self):
         from opi.forms.editables.fields.domains import DOMAIN_FORMAT_EDITABLE
