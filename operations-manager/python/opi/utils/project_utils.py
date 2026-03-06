@@ -361,6 +361,8 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         # Add external domain configuration if specified
         if hasattr(project_data, "base_domain") and project_data.base_domain:
             deployment_config["base-domain"] = project_data.base_domain
+        if hasattr(project_data, "domain_format") and project_data.domain_format:
+            deployment_config["domain-format"] = project_data.domain_format
         if hasattr(project_data, "issuer") and project_data.issuer:
             deployment_config["issuer"] = project_data.issuer
 
@@ -392,6 +394,8 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         # Add external domain configuration if specified
         if hasattr(project_data, "base_domain") and project_data.base_domain:
             deployment_config["base-domain"] = project_data.base_domain
+        if hasattr(project_data, "domain_format") and project_data.domain_format:
+            deployment_config["domain-format"] = project_data.domain_format
         if hasattr(project_data, "issuer") and project_data.issuer:
             deployment_config["issuer"] = project_data.issuer
 

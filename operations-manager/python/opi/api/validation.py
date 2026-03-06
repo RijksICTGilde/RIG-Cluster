@@ -19,6 +19,12 @@ from opi.forms.editables.fields.components import (
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     COMPONENT_USER_ENV_VARS_EDITABLE,
 )
+from opi.forms.editables.fields.domains import (
+    DOMAIN_BASE_DOMAIN_EDITABLE,
+    DOMAIN_FORMAT_EDITABLE,
+    DOMAIN_SUBDOMAIN_EDITABLE,
+    WIZARD_DEPLOYMENT_NAME_EDITABLE,
+)
 from opi.forms.editables.pipeline import convert_fields, enforce_rules, validate_fields
 from opi.forms.editables.validators import ContainerImageValidator, SlugValidator
 
@@ -60,6 +66,13 @@ UPSERT_DEPLOYMENT_VALIDATORS: dict[str, Editable] = {
         validator=SlugValidator(),
         required=True,
     ),
+}
+
+CREATE_PROJECT_DOMAIN_VALIDATORS: dict[str, Editable] = {
+    "domain_format": DOMAIN_FORMAT_EDITABLE,
+    "subdomain": DOMAIN_SUBDOMAIN_EDITABLE,
+    "base_domain": DOMAIN_BASE_DOMAIN_EDITABLE,
+    "deployment_name": WIZARD_DEPLOYMENT_NAME_EDITABLE,
 }
 
 

@@ -23,6 +23,7 @@ from opi.api.v2.models import AsyncTaskAcceptedResponse
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
+    CREATE_PROJECT_DOMAIN_VALIDATORS,
     UPDATE_IMAGE_VALIDATORS,
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
@@ -140,6 +141,18 @@ async def create_project_v2(
         raise HTTPException(
             status_code=400,
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    # Validate domain fields using editable validators
+    if project_data.domain_format:
+        validate_api_payload(
+            {
+                "domain_format": project_data.domain_format,
+                "subdomain": project_data.subdomain,
+                "base_domain": project_data.base_domain,
+                "deployment_name": project_data.deployment_name,
+            },
+            CREATE_PROJECT_DOMAIN_VALIDATORS,
         )
 
     task = await create_async_task(

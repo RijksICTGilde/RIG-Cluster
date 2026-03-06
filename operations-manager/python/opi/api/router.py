@@ -10,6 +10,7 @@ from opi.api.endpoint_util import validate_api_token
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
+    CREATE_PROJECT_DOMAIN_VALIDATORS,
     UPDATE_IMAGE_VALIDATORS,
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
@@ -860,6 +861,9 @@ class SelfServiceProjectRequest(BaseModel):
     domain_mode: str = Field(
         "component-specific", max_length=32
     )  # "component-specific", "deployment-name", "custom", or "nice-url"
+    domain_format: str | None = Field(
+        None, max_length=64, description="URL format template ID (e.g., 'component-deployment-project')"
+    )
     subdomain: str | None = Field(
         None, max_length=63
     )  # For nice-url mode: globally unique subdomain. For custom mode: custom subdomain
@@ -2559,6 +2563,18 @@ async def create_self_service_project(
             raise HTTPException(
                 status_code=400,
                 detail="Project name must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+
+        # Validate domain fields using editable validators
+        if project_data.domain_format:
+            validate_api_payload(
+                {
+                    "domain_format": project_data.domain_format,
+                    "subdomain": project_data.subdomain,
+                    "base_domain": project_data.base_domain,
+                    "deployment_name": project_data.deployment_name,
+                },
+                CREATE_PROJECT_DOMAIN_VALIDATORS,
             )
 
         # Validate nice-url mode requirements
