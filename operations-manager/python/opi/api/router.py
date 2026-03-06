@@ -7,6 +7,13 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.validation import (
+    ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
+    ADD_COMPONENT_VALIDATORS,
+    UPDATE_IMAGE_VALIDATORS,
+    UPSERT_DEPLOYMENT_VALIDATORS,
+    validate_api_payload,
+)
 from opi.connectors.git import GitConnector
 from opi.connectors.subdomain import (
     BaseDomainValidationError,
@@ -941,6 +948,19 @@ async def upsert_deployment(
             detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
 
+    # Validate fields using editable validators
+    validate_api_payload(
+        deployment_data.model_dump(),
+        UPSERT_DEPLOYMENT_VALIDATORS,
+    )
+
+    # Validate component images
+    for comp in deployment_data.components:
+        validate_api_payload(
+            {"newImageUrl": comp.image},
+            UPDATE_IMAGE_VALIDATORS,
+        )
+
     # Async path (default) - deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
     if not sync:
         task = await create_async_task(
@@ -1107,6 +1127,12 @@ async def add_component(
             status_code=400,
             detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
+
+    # Validate fields using editable validators
+    validate_api_payload(
+        component_data.model_dump(),
+        ADD_COMPONENT_VALIDATORS,
+    )
 
     # Async path (default) - use /api/v2/projects/{project_name}/components for pure async
     if not sync:
@@ -1275,6 +1301,12 @@ async def add_component_to_deployment(
             status_code=400,
             detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
+
+    # Validate fields using editable validators
+    validate_api_payload(
+        component_data.model_dump(),
+        ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
+    )
 
     # Async path (default) - use /api/v2/ for pure async
     if not sync:
@@ -1559,6 +1591,12 @@ async def update_deployment_image(
       }'
     ```
     """
+    # Validate fields using editable validators
+    validate_api_payload(
+        image_data.model_dump(),
+        UPDATE_IMAGE_VALIDATORS,
+    )
+
     # Async path (default)
     if not sync:
         # Serialize service actions for payload

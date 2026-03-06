@@ -20,6 +20,13 @@ from opi.api.router import (
     UpsertDeploymentRequest,
 )
 from opi.api.v2.models import AsyncTaskAcceptedResponse
+from opi.api.validation import (
+    ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
+    ADD_COMPONENT_VALIDATORS,
+    UPDATE_IMAGE_VALIDATORS,
+    UPSERT_DEPLOYMENT_VALIDATORS,
+    validate_api_payload,
+)
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.utils.naming import sanitize_kubernetes_name
 from opi.utils.project_utils import validate_project_name
@@ -85,6 +92,17 @@ async def upsert_deployment_v2(
         raise HTTPException(
             status_code=400,
             detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
+
+    # Validate fields using editable validators
+    validate_api_payload(
+        deployment_data.model_dump(),
+        UPSERT_DEPLOYMENT_VALIDATORS,
+    )
+    for comp in deployment_data.components:
+        validate_api_payload(
+            {"newImageUrl": comp.image},
+            UPDATE_IMAGE_VALIDATORS,
         )
 
     task = await create_async_task(
@@ -186,6 +204,12 @@ async def update_image_v2(
         X-API-Key: The API key for the project (required)
     """
     logger.info("V2 update image for '%s' in %s/%s", image_data.componentName, project_name, deployment_name)
+
+    # Validate fields using editable validators
+    validate_api_payload(
+        image_data.model_dump(),
+        UPDATE_IMAGE_VALIDATORS,
+    )
 
     service_actions = None
     if image_data.services:
@@ -355,6 +379,12 @@ async def add_component_v2(
             detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
 
+    # Validate fields using editable validators
+    validate_api_payload(
+        component_data.model_dump(),
+        ADD_COMPONENT_VALIDATORS,
+    )
+
     task = await create_async_task(
         request=request,
         task_type="add_component",
@@ -416,6 +446,12 @@ async def add_component_to_deployment_v2(
             status_code=400,
             detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
         )
+
+    # Validate fields using editable validators
+    validate_api_payload(
+        component_data.model_dump(),
+        ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
+    )
 
     task = await create_async_task(
         request=request,
