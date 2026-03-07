@@ -138,6 +138,45 @@ def _require_project_edit_access(request: Request, project_name: str):
     return project, user_email
 
 
+def _flow_context_from_state(state, flow_id: str) -> dict[str, Any]:
+    """Extract flow builder context from wizard state.
+
+    Deployment edit flows need ``component_count`` so the sequence
+    enforces a max-items limit matching the number of project components.
+    """
+    if flow_id.startswith("modal-edit-deployment-") and state and state.template_data:
+        components = state.template_data.get("components", [])
+        return {"component_count": len(components)}
+    return {}
+
+
+def _pad_sparse_submission(body: dict[str, Any], flow_id: str) -> dict[str, Any]:
+    """Pad sparse arrays collapsed by json-enc's cleanArrays.
+
+    Single-item edit flows (component-N, deployment-N, domain-N) produce
+    form fields at a specific array index (e.g. ``components[1]/name``).
+    json-enc's ``cleanArrays`` collapses ``{"1": {...}}`` into ``[{...}]``,
+    losing the original index.  This re-pads the array so that
+    ``get_value`` finds data at the correct position.
+    """
+    for prefix, key in [
+        ("modal-edit-component-", "components"),
+        ("modal-edit-deployment-", "deployments"),
+        ("modal-edit-domain-", "deployments"),
+    ]:
+        if flow_id.startswith(prefix):
+            suffix = flow_id.removeprefix(prefix)
+            if suffix.isdigit():
+                target_idx = int(suffix)
+                items = body.get(key)
+                if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
+                    # Insert empty placeholders so the actual data sits at target_idx
+                    padded = [{} for _ in range(target_idx)] + items
+                    return {**body, key: padded}
+            break
+    return body
+
+
 def _determine_flow_action(flow, active_sections) -> str:
     """Return 'process_project' if any active section needs deployment, else 'save_only'."""
     for section in active_sections:
@@ -160,7 +199,7 @@ def _render_modal_step(
     if not state:
         raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
 
-    flow = get_flow(flow_id)
+    flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     active_sections = resolve_active_sections(flow, state.step_data)
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
@@ -271,8 +310,23 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     """Initialize modal wizard and return the first step HTML."""
     project, _user_email = _require_project_edit_access(request, project_name)
 
-    flow = get_flow(flow_id)
     project_data = project.data or {}
+
+    # Pass context to dynamic flow builders (e.g. component_count for deployment edit)
+    flow_context: dict[str, Any] = {}
+    if flow_id.startswith("modal-edit-deployment-"):
+        flow_context["component_count"] = len(project_data.get("components", []))
+
+    flow = get_flow(flow_id, **flow_context)
+
+    # When adding a new component, ensure the components list has the target slot
+    if flow_id.startswith("modal-edit-component-"):
+        idx = int(flow_id.removeprefix("modal-edit-component-"))
+        components = list(project_data.get("components", []))
+        if idx >= len(components):
+            while len(components) <= idx:
+                components.append({})
+            project_data = {**project_data, "components": components}
 
     # Populate transient fields for deferred editables (e.g. custom domain text input)
     processor = EditableFormProcessor()
@@ -299,6 +353,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     )
     state.step_data = step_data
     state.locked_services = _extract_services(project_data)
+
+    # Deployment edit flows need component names for the reference provider
+    if flow_id.startswith("modal-edit-deployment-"):
+        components = project_data.get("components", [])
+        state.template_data = {"components": components}
+
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
         if step_data.get(section_id):
@@ -324,7 +384,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
     if not state or state.flow_id != flow_id:
         raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
 
-    flow = get_flow(flow_id)
+    flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     section = _get_section_from_flow(flow, section_id)
 
     state.current_step = section_id
@@ -347,7 +407,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     if not state or state.flow_id != flow_id:
         raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
 
-    flow = get_flow(flow_id)
+    flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     section = _get_section_from_flow(flow, section_id)
 
     # Parse JSON body (requires htmx json-enc extension on the client)
@@ -363,12 +423,15 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     seq_action = body.pop("_seq_action", None)
     seq_path = body.pop("_seq_path", None)
     seq_index = body.pop("_seq_index", None)
-    body.pop("_rerender", None)
+    is_rerender = bool(body.pop("_rerender", None))
 
     if seq_action in ("add", "remove"):
         yaml_data = state.get_merged_data()
         processor = EditableFormProcessor()
-        merged, _err = await processor.process_json_submission(body, section.editables, yaml_data, edit_mode=True)
+        padded_body = _pad_sparse_submission(body, flow_id)
+        merged, _err = await processor.process_json_submission(
+            padded_body, section.editables, yaml_data, edit_mode=True,
+        )
 
         items = smart_get_value(merged, seq_path) if seq_path else []
         if not isinstance(items, list):
@@ -387,7 +450,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
-    submitted_data = body
+    submitted_data = _pad_sparse_submission(body, flow_id)
 
     # Service removal enforcement: only locked (original) services cannot be removed
     if section_id == "services-edit" and state.locked_services:
@@ -436,6 +499,14 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     state.store_step_data(section_id, section_data)
     state.mark_completed(section_id)
 
+    # Re-render only (preview update) — stay on the same step
+    if is_rerender:
+        save_modal_wizard_state(request, state)
+        yaml_data = state.get_merged_data()
+        step_html = _render_section_html(section, submitted_yaml, locked_services=state.locked_services)
+        rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+        return HTMLResponse(content=rendered)
+
     # Re-resolve active sections (services may add/remove conditional steps)
     active_section_ids = resolve_active_section_ids(flow, state.step_data)
     state.active_sections = active_section_ids
@@ -461,7 +532,12 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         rendered = _render_modal_step(request, flow_id, next_section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
-    # Last step — do the final submit
+    # All steps completed — show review if flow requires it
+    if flow.show_review:
+        save_modal_wizard_state(request, state)
+        return _render_modal_review(request, project_name, flow_id, active_sections, state)
+
+    # No review needed — do the final submit
     save_modal_wizard_state(request, state)
     return await _modal_do_submit(request, project_name, flow_id)
 
@@ -479,6 +555,62 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
     return await _modal_do_submit(request, project_name, flow_id)
 
 
+@detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/confirm", response_class=HTMLResponse)
+@requires_sso
+async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
+    """Confirm after review — execute the final submit."""
+    _require_project_edit_access(request, project_name)
+
+    state = get_modal_wizard_state(request)
+    if not state or state.flow_id != flow_id:
+        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+
+    return await _modal_do_submit(request, project_name, flow_id)
+
+
+def _render_modal_review(
+    request: Request,
+    project_name: str,
+    flow_id: str,
+    active_sections,
+    state,
+) -> HTMLResponse:
+    """Render the review/confirmation page for the modal wizard."""
+    from opi.web.router_wizard import _build_section_summary
+
+    yaml_data = state.get_merged_data()
+    section_summaries = []
+    for section in active_sections:
+        summary_html = _build_section_summary(section, yaml_data)
+        section_summaries.append(
+            {
+                "section_id": section.section_id,
+                "title": section.title,
+                "icon": section.icon,
+                "summary_html": summary_html,
+            }
+        )
+
+    section_meta = get_section_metadata(active_sections)
+    steps = state.get_steps(section_meta)
+
+    templates = get_templates()
+    rendered = templates.get_template("wizard/modal_wizard_review.html.j2").render(
+        {
+            "request": request,
+            "steps": steps,
+            "flow_id": flow_id,
+            "project_name": project_name,
+            "section_summaries": section_summaries,
+            "action_label": "Bevestigen en verwerken",
+        }
+    )
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+    return HTMLResponse(content=rendered)
+
+
 async def _modal_do_submit(
     request: Request,
     project_name: str,
@@ -492,7 +624,7 @@ async def _modal_do_submit(
     if not state:
         raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
 
-    flow = get_flow(flow_id)
+    flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     active_sections = resolve_active_sections(flow, state.step_data)
 
     # Merge all step data

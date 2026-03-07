@@ -37,6 +37,24 @@ class UniqueNamesEnforcer:
         return value
 
 
+class UniqueReferencesEnforcer:
+    """Ensures deployment components have unique references."""
+
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        deployments = value.get("deployments", []) if isinstance(value, dict) else []
+        for deployment in deployments:
+            if not isinstance(deployment, dict):
+                continue
+            components = deployment.get("components", [])
+            refs: list[str] = [c["reference"] for c in components if isinstance(c, dict) and c.get("reference")]
+            duplicates = [r for r in set(refs) if refs.count(r) > 1]
+            if duplicates:
+                name = deployment.get("name", "onbekend")
+                dup_str = ", ".join(sorted(duplicates))
+                raise ValueError(f"Deployment '{name}' heeft dubbele componenten: {dup_str}")
+        return value
+
+
 def extract_service_names(services: list[Any]) -> list[str]:
     """Extract service names from the mixed services list format.
 

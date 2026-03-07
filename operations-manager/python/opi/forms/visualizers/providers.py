@@ -370,24 +370,26 @@ class ClusterBaseDomainOptionsProvider:
         self.cluster = cluster
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get base domain options, optionally filtered by cluster."""
+        """Get base domain options, filtered by cluster.
+
+        When no cluster is explicitly provided, falls back to the
+        CLUSTER_MANAGER setting (the cluster this OPI instance manages).
+        """
+        from opi.core.config import settings
 
         def _extract_domain(entry: str | dict[str, Any]) -> str:
             return entry["domain"] if isinstance(entry, dict) else entry
 
-        if not self.cluster or self.cluster not in CLUSTER_CONFIG:
-            all_domains: set[str] = set()
-            for config in CLUSTER_CONFIG.values():
-                for d in config.get("nice_url", {}).get("supported_domains", []):
-                    all_domains.add(_extract_domain(d))
-            options = [{"value": d, "label": d} for d in sorted(all_domains)]
+        cluster = self.cluster or settings.CLUSTER_MANAGER
+        if cluster and cluster in CLUSTER_CONFIG:
+            raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
+            domains = [_extract_domain(d) for d in raw]
+            options = [{"value": d, "label": d} for d in domains]
             options.append({"value": "__custom__", "label": "Eigen domein..."})
             return options
-        raw = CLUSTER_CONFIG[self.cluster].get("nice_url", {}).get("supported_domains", [])
-        domains = [_extract_domain(d) for d in raw]
-        options = [{"value": d, "label": d} for d in domains]
-        options.append({"value": "__custom__", "label": "Eigen domein..."})
-        return options
+
+        # Fallback: no matching cluster config — return empty with custom option
+        return [{"value": "__custom__", "label": "Eigen domein..."}]
 
 
 class FilteredServiceOptionsProvider:
@@ -432,17 +434,23 @@ class ComponentReferenceOptionsProvider:
         component_names: list[str] | None = None,
         include_empty: bool = False,
         empty_label: str = "Geen root component",
+        exclude_references: list[str] | None = None,
     ) -> None:
         self.component_names = component_names or []
         self.include_empty = include_empty
         self.empty_label = empty_label
+        self.exclude_references = set(exclude_references or [])
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get component name options."""
+        """Get component name options, excluding already-used references."""
         options: list[dict[str, Any]] = []
         if self.include_empty:
             options.append({"value": "", "label": self.empty_label})
-        options.extend({"value": name, "label": name} for name in self.component_names)
+        options.extend(
+            {"value": name, "label": name}
+            for name in self.component_names
+            if name not in self.exclude_references
+        )
         return options
 
 
@@ -499,12 +507,15 @@ class DomainFormatOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         from opi.core.cluster_config import get_domain_supports_dots
+        from opi.core.config import settings
 
+        cluster = self.cluster or settings.CLUSTER_MANAGER
         supports_dots = False
+
         if self.base_domain == "__custom__":
             supports_dots = True
-        elif self.base_domain and self.cluster:
-            supports_dots = get_domain_supports_dots(self.cluster, self.base_domain)
+        elif self.base_domain and cluster:
+            supports_dots = get_domain_supports_dots(cluster, self.base_domain)
 
         format_ids = list(self._DASH_FORMATS)
         if supports_dots:

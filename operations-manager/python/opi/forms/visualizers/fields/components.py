@@ -37,6 +37,7 @@ COMPONENT_NAME = EditableVisualizer(
     label="Componentnaam",
     description="Alleen kleine letters en cijfers, maximaal 12 tekens.",
     help_text="Voorbeeld: frontend, api, worker.",
+    readonly_on_edit=True,
 )
 
 COMPONENT_IMAGE = EditableVisualizer(

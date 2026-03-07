@@ -274,11 +274,20 @@ async def project_progress_page(request: Request, task_id: str):
 
         # Get project info
         project = get_task(task_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-
         user = get_current_user(request)
         templates = get_templates()
+
+        if not project:
+            # Task not found — completed and cleaned up, or never existed
+            return templates.TemplateResponse(
+                "project-progress-done.html.j2",
+                {
+                    "request": request,
+                    "title": "Taak niet beschikbaar",
+                    "menu_items": get_menu_items(user),
+                    "task_id": task_id,
+                },
+            )
 
         return templates.TemplateResponse(
             "project-progress.html.j2",
@@ -592,6 +601,149 @@ async def delete_project_web(request: Request, project_name: str):
     except Exception as e:
         logger.error(f"Error processing web project deletion: {e!s}")
         return JSONResponse(content={"error": f"Error deleting project: {e!s}"}, status_code=500)
+
+
+@web_router.post("/projects/{project_name}/delete-deployment/{deployment_name}")
+@requires_sso
+async def delete_deployment_web(request: Request, project_name: str, deployment_name: str):
+    """Delete a deployment via web interface with SSO validation."""
+    try:
+        from fastapi.responses import JSONResponse
+
+        from opi.manager.project_manager import create_project_manager
+        from opi.services.project_service import get_project_service
+
+        user = get_current_user(request)
+        user_email = user.get("email", "").lower()
+
+        logger.info(f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}")
+
+        project_service = get_project_service()
+
+        if not project_service.is_user_authorized_for_project(project_name, user_email):
+            return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
+
+        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        if user_role not in ["admin", "owner"]:
+            return JSONResponse(
+                content={"error": f"Alleen admin of owner rollen kunnen deployments verwijderen. Uw rol: {user_role}"},
+                status_code=403,
+            )
+
+        project_manager = create_project_manager()
+
+        logger.info(f"Starting deployment deletion for '{deployment_name}' in '{project_name}' by {user_email}")
+        deletion_results = await project_manager.delete_deployment(project_name, deployment_name)
+
+        if deletion_results["success"]:
+            logger.info(f"Deployment deletion completed successfully: {deployment_name}")
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "message": f"Deployment '{deployment_name}' succesvol verwijderd",
+                    "deletion_results": deletion_results,
+                },
+                status_code=200,
+            )
+        else:
+            errors = deletion_results.get("errors", [])
+            message = f"Deployment '{deployment_name}' verwijderen mislukt"
+            if errors:
+                message += f": {'; '.join(str(e) for e in errors)}"
+            logger.warning(f"Deployment deletion failed for {deployment_name}: {errors}")
+            return JSONResponse(
+                content={"success": False, "error": message, "deletion_results": deletion_results},
+                status_code=207,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing web deployment deletion: {e!s}")
+        return JSONResponse(content={"error": f"Fout bij verwijderen van deployment: {e!s}"}, status_code=500)
+
+
+@web_router.post("/projects/{project_name}/delete-component/{component_name}")
+@requires_sso
+async def delete_component_web(request: Request, project_name: str, component_name: str):
+    """Delete a component from a project via web interface."""
+    try:
+        from fastapi.responses import JSONResponse
+
+        from opi.handlers.project_file_handler import save_project_file
+        from opi.services.project_service import get_project_service
+
+        user = get_current_user(request)
+        user_email = user.get("email", "").lower()
+
+        logger.info(f"Web component deletion request for '{component_name}' in '{project_name}' by user: {user_email}")
+
+        project_service = get_project_service()
+
+        if not project_service.is_user_authorized_for_project(project_name, user_email):
+            return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
+
+        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        if user_role not in ["admin", "owner"]:
+            return JSONResponse(
+                content={"error": f"Alleen admin of owner rollen kunnen components verwijderen. Uw rol: {user_role}"},
+                status_code=403,
+            )
+
+        project = project_service.get_project(project_name)
+        if not project:
+            return JSONResponse(content={"error": "Project niet gevonden"}, status_code=404)
+
+        project_data = project.data or {}
+        components = list(project_data.get("components", []))
+
+        # Find and remove the component by name
+        original_count = len(components)
+        components = [c for c in components if c.get("name") != component_name]
+        if len(components) == original_count:
+            return JSONResponse(content={"error": f"Component '{component_name}' niet gevonden"}, status_code=404)
+
+        project_data["components"] = components
+        save_project_file(project.filename, project_data)
+        project_service.load_project_from_data(project_data, project.filename)
+        logger.info(f"Component '{component_name}' removed from '{project_name}', triggering reprocessing")
+
+        # Trigger background reprocessing to update K8s manifests
+        from io import StringIO
+
+        from ruamel.yaml import YAML
+
+        from opi.core.simple_background import process_project_yaml_background
+        from opi.core.task_manager import create_task
+
+        yaml_instance = YAML()
+        yaml_instance.preserve_quotes = True
+        yaml_instance.width = 4096
+        yaml_output = StringIO()
+        yaml_instance.dump(project_data, yaml_output)
+        yaml_content = yaml_output.getvalue()
+
+        display_name = project_data.get("display-name", project_name)
+        task_id = create_task(display_name)
+
+        from starlette.background import BackgroundTask
+
+        background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
+
+        response = JSONResponse(
+            content={"success": True, "message": f"Component '{component_name}' succesvol verwijderd"},
+            status_code=200,
+            background=background,
+        )
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing web component deletion: {e!s}")
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(content={"error": f"Fout bij verwijderen van component: {e!s}"}, status_code=500)
 
 
 @web_router.get("/test-architecture", response_class=HTMLResponse)

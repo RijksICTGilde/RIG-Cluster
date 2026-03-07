@@ -7,14 +7,26 @@ any property on the section itself.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
-from opi.forms.editables.enforcers import ComponentServicesEnforcer, DomainConfigEnforcer, extract_service_names
+from opi.forms.editables.enforcers import (
+    ComponentServicesEnforcer,
+    DomainConfigEnforcer,
+    UniqueReferencesEnforcer,
+    extract_service_names,
+)
 from opi.forms.layout import DisplayBlock, Fieldset, Sequence, TemplatePartial
 from opi.forms.visualizers.display_blocks import compute_url_preview as _compute_url_preview
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
-from opi.forms.visualizers.fields.deployments import DEPLOYMENTS_SEQUENCE
+from opi.forms.visualizers.fields.deployments import (
+    DEPLOYMENT_COMP_IMAGE,
+    DEPLOYMENT_COMP_REFERENCE,
+    DEPLOYMENT_COMP_USER_ENV_VARS,
+    DEPLOYMENT_COMPONENTS_SEQ,
+    DEPLOYMENTS_SEQUENCE,
+)
 from opi.forms.visualizers.fields.domains import (
     DOMAIN_CONFIG,
     WIZARD_DEPLOYMENT_NAME,
@@ -372,6 +384,131 @@ def build_domain_edit_section(deployment_index: int) -> FormSection:
 # ---------------------------------------------------------------------------
 # All sections for easy iteration
 # ---------------------------------------------------------------------------
+
+
+def _prefix_layout_children(items: list, prefix: str) -> list:
+    """Prefix relative paths in a layout with an absolute path prefix.
+
+    Turns ``"name"`` into ``"components[0]/name"`` when *prefix* is
+    ``"components[0]"``.  Recurses into Fieldset and Sequence children.
+    """
+    result: list = []
+    for item in items:
+        if isinstance(item, str):
+            result.append(f"{prefix}/{item}")
+        elif isinstance(item, Fieldset):
+            result.append(dataclasses.replace(item, children=_prefix_layout_children(list(item.children), prefix)))
+        elif isinstance(item, Sequence):
+            child_layout = item.child_layout
+            if isinstance(child_layout, list):
+                child_layout = _prefix_layout_children(child_layout, prefix)
+            result.append(
+                dataclasses.replace(
+                    item,
+                    field_name=f"{prefix}/{item.field_name}" if item.field_name else item.field_name,
+                    child_layout=child_layout,
+                )
+            )
+        else:
+            result.append(item)
+    return result
+
+
+def build_component_edit_section(component_index: int) -> FormSection:
+    """Build a component edit section targeting a specific component.
+
+    Extracts child editables from COMPONENTS_SEQUENCE, materialises
+    ``[*]`` wildcards to ``[component_index]``, and prefixes layout
+    paths so the form reads/writes to the correct component slot.
+    """
+    from opi.forms.editables.reindex import materialize_wildcard_visualizer
+
+    editables = [materialize_wildcard_visualizer(e, component_index) for e in (COMPONENTS_SEQUENCE.children or [])]
+
+    # Extract child_layout from the Sequence element in COMPONENTS_SECTION
+    child_layout: list = []
+    section_layout = COMPONENTS_SECTION.layout
+    if isinstance(section_layout, list) and section_layout:
+        first_element = section_layout[0]
+        if isinstance(first_element, Sequence):
+            raw = first_element.child_layout
+            if isinstance(raw, list):
+                child_layout = list(raw)
+
+    prefix = f"components[{component_index}]"
+    layout = _prefix_layout_children(child_layout, prefix)
+
+    return FormSection(
+        section_id=f"component-edit-{component_index}",
+        title="Component bewerken",
+        icon="puzzel",
+        description="Wijzig de instellingen van dit component",
+        enforcer=ComponentServicesEnforcer(),
+        editables=editables,
+        layout=layout,
+        post_save_action="process_project",
+    )
+
+
+def build_deployment_edit_section(
+    deployment_index: int,
+    component_count: int | None = None,
+) -> FormSection:
+    """Build a deployment edit section for editing component images and env vars.
+
+    Takes the DEPLOYMENT_COMPONENTS_SEQ visualizer and replaces the
+    ``deployments[*]`` segment with the concrete deployment index, keeping
+    ``components[*]`` as a sequence wildcard so items are iterable.
+
+    Args:
+        deployment_index: Which deployment to edit.
+        component_count: Total number of project-level components.
+            When set, limits the sequence to at most this many items
+            (a deployment cannot have more components than defined).
+    """
+    from opi.forms.editables.reindex import replace_segment_visualizer
+
+    old_seg = "deployments[*]"
+    new_seg = f"deployments[{deployment_index}]"
+
+    # Build a focused sequence with only the fields we want editable
+    ref_vis = replace_segment_visualizer(DEPLOYMENT_COMP_REFERENCE, old_seg, new_seg)
+    image_vis = replace_segment_visualizer(DEPLOYMENT_COMP_IMAGE, old_seg, new_seg)
+    env_vis = replace_segment_visualizer(DEPLOYMENT_COMP_USER_ENV_VARS, old_seg, new_seg)
+
+    seq_vis = replace_segment_visualizer(DEPLOYMENT_COMPONENTS_SEQ, old_seg, new_seg)
+
+    # Set max_items to the number of project components
+    if component_count is not None:
+        seq_ed = dataclasses.replace(seq_vis.editable, max_items=component_count)
+        seq_vis = dataclasses.replace(seq_vis, editable=seq_ed)
+
+    seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, env_vis])
+
+    return FormSection(
+        section_id=f"deployment-edit-{deployment_index}",
+        title="Deployment bewerken",
+        icon="server",
+        description="Wijzig container images en omgevingsvariabelen per component",
+        enforcer=UniqueReferencesEnforcer(),
+        editables=[seq_vis],
+        layout=[
+            Sequence(
+                field_name=f"deployments[{deployment_index}]/components",
+                child_layout=[
+                    "reference",
+                    "image",
+                    Fieldset(
+                        legend="Omgevingsvariabelen",
+                        description="Deployment-specifieke omgevingsvariabelen voor dit component.",
+                        children=["user-env-vars"],
+                    ),
+                ],
+            ),
+        ],
+        post_save_action="process_project",
+    )
+
 
 ALL_SECTIONS: list[FormSection] = [
     IDENTITY_SECTION,

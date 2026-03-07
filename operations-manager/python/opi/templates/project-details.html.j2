@@ -715,23 +715,23 @@
                     <c-layout-flow gap="md">
                         <div class="deployment-header">
                             <div>
-                                <c-heading type="h3" textContent="{{ deployment.name }}" />
-                                <div class="deployment-meta">
-                                    <span class="cluster-badge">{{ deployment.cluster|title }}</span>
-                                    <span class="namespace-badge">{{ deployment.namespace }}</span>
-                                    {% if deployment.get('clone-from') %}
-                                        <span class="clone-badge">Cloned from {{ deployment['clone-from'] }}</span>
-                                    {% endif %}
-                                    {% if deployment.get('domain-mode') == 'nice-url' and deployment.get('subdomain') and deployment.get('base-domain') %}
-                                        <span class="domain-badge" title="Nice URL">{{ deployment['subdomain'] }}.{{ deployment['base-domain'] }}</span>
-                                    {% endif %}
-                                </div>
+                                <c-heading type="h3">Deployment: {{ deployment.name }}</c-heading>
                             </div>
                             <div class="deployment-actions">
                                 {% if user_role in ['admin', 'owner'] %}
                                 <button type="button" class="edit-section-btn"
+                                    onclick="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Deployment bewerken — {{ deployment.name }}')"
+                                    title="Deployment bewerken">
+                                    <c-icon icon="bewerken" size="sm" />Bewerken
+                                </button>
+                                <button type="button" class="edit-section-btn"
                                     onclick="openEditModal('modal-edit-domain-{{ loop.index0 }}', 'Webadres bewerken — {{ deployment.name }}')">
-                                    <c-icon icon="bewerken" size="sm" />Webadres bewerken
+                                    <c-icon icon="wereldbol" size="sm" />Webadres
+                                </button>
+                                <button type="button" class="edit-section-btn" style="color: var(--rvo-color-rood-600);"
+                                    onclick="showDangerConfirmation('deployment', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt verwijderen? Dit verwijdert alle bijbehorende Kubernetes resources en ArgoCD configuratie.')"
+                                    title="Deployment verwijderen">
+                                    <c-icon icon="verwijderen" size="sm" color="rood" />Verwijderen
                                 </button>
                                 {% endif %}
                                 <div class="deployment-status">
@@ -953,9 +953,9 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
                 {% if user_role in ["admin", "owner"] %}
-                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-components', 'Components beheren')" title="Components bewerken">
-                    <c-icon icon="bewerken" size="sm" color="donkerblauw" />
-                    <span>Bewerken</span>
+                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen')" title="Component toevoegen">
+                    <c-icon icon="plus" size="sm" color="donkerblauw" />
+                    <span>Toevoegen</span>
                 </button>
                 {% endif %}
             </div>
@@ -968,10 +968,24 @@
                     <c-layout-flow gap="md">
                         <div class="component-header">
                             <c-icon icon="puzzel" size="lg" color="donkerblauw" />
-                            <div>
+                            <div style="flex: 1;">
                                 <c-heading type="h3" textContent="{{ component.name }}" />
                                 <div class="component-type">{{ component.type|title }}</div>
                             </div>
+                            {% if user_role in ["admin", "owner"] %}
+                            <div class="component-actions" style="display: flex; gap: var(--rvo-space-xs);">
+                                <button type="button" class="edit-section-btn"
+                                    onclick="openEditModal('modal-edit-component-{{ loop.index0 }}', 'Component bewerken — {{ component.name }}')"
+                                    title="Component bewerken">
+                                    <c-icon icon="bewerken" size="sm" color="donkerblauw" />
+                                </button>
+                                <button type="button" class="edit-section-btn" style="color: var(--rvo-color-rood-600);"
+                                    onclick="showDangerConfirmation('component', '{{ component.name }}', 'Weet u zeker dat u component &quot;{{ component.name }}&quot; wilt verwijderen?')"
+                                    title="Component verwijderen">
+                                    <c-icon icon="verwijderen" size="sm" color="rood" />
+                                </button>
+                            </div>
+                            {% endif %}
                         </div>
 
                         <div class="component-specs">
@@ -1324,7 +1338,50 @@
     </c-card>
     {% endif %}
 
+    {# Danger Zone Section #}
+    {% if user_role in ["admin", "owner"] %}
+    <c-card outline="true" padding="xl" backgroundColor="wit" style="border-color: var(--rvo-color-rood-300);">
+        <c-layout-flow gap="lg">
+            <c-heading type="h2" style="margin-bottom: 0; color: var(--rvo-color-rood-600);"><c-icon icon="waarschuwing" size="xl" color="rood" />Danger zone</c-heading>
+
+            <c-card padding="md" background="color" backgroundColor="grijs-050" outline="true" style="border-color: var(--rvo-color-rood-300);">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--rvo-space-md);">
+                    <div>
+                        <strong style="color: var(--rvo-color-rood-600);">Project "{{ project.display_name or project.name }}" verwijderen</strong>
+                        <p class="rvo-text--subtle rvo-text--sm" style="margin: 0;">Verwijdert het volledige project inclusief alle deployments, services en configuratie. Dit kan niet ongedaan worden gemaakt.</p>
+                    </div>
+                    <c-button kind="warning" size="sm"
+                              showIcon="before" icon="verwijderen"
+                              @click="showDangerConfirmation('project', '{{ project.name }}', 'Weet u zeker dat u het volledige project &quot;{{ project.display_name or project.name }}&quot; wilt verwijderen? Dit verwijdert ALLE deployments, services en configuratie.')">
+                        Project verwijderen
+                    </c-button>
+                </div>
+            </c-card>
+        </c-layout-flow>
+    </c-card>
+    {% endif %}
+
 </c-layout-flow>
+
+{# Danger Zone Confirmation Modal #}
+<div id="danger-confirm-backdrop" class="edit-section-backdrop" onclick="hideDangerConfirmation()"></div>
+<div id="danger-confirm-modal" class="edit-section-modal" role="dialog" aria-modal="true" style="width: 500px; max-width: 90vw; max-height: auto;">
+    <div style="padding: var(--rvo-space-xl);">
+        <c-layout-flow gap="lg">
+            <c-heading type="h3" id="danger-confirm-title"></c-heading>
+            <p id="danger-confirm-message"></p>
+            <div id="danger-confirm-error" style="display: none; color: var(--rvo-color-rood-600);"></div>
+            <div id="danger-confirm-progress" style="display: none;">
+                <p class="rvo-text--subtle">Bezig met verwijderen...</p>
+            </div>
+            <c-layout-flow gap="sm" row="true" id="danger-confirm-actions">
+                <c-button kind="secondary" @click="hideDangerConfirmation()">Annuleren</c-button>
+                <c-button kind="warning" id="danger-confirm-btn" showIcon="before" icon="verwijderen"
+                          @click="executeDangerAction()">Verwijderen</c-button>
+            </c-layout-flow>
+        </c-layout-flow>
+    </div>
+</div>
 
 {# Generic Edit Section Modal #}
 <div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
@@ -2545,9 +2602,9 @@
         background: var(--rvo-color-wit);
         border-radius: var(--rvo-border-radius-lg);
         box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-        width: 90%;
-        max-width: 760px;
-        max-height: 90vh;
+        width: 80%;
+        max-width: 80vw;
+        max-height: 80vh;
         overflow-y: auto;
         z-index: 1000;
         display: none;
@@ -3339,8 +3396,8 @@
     }
 
     function closeEditModal() {
-        if (isEditSubmitting) return;
         if (editPollTimer) { clearInterval(editPollTimer); editPollTimer = null; }
+        isEditSubmitting = false;
         document.getElementById('edit-section-backdrop').classList.remove('is-open');
         document.getElementById('edit-section-modal').classList.remove('is-open');
         document.body.style.overflow = '';
@@ -3441,6 +3498,9 @@
         })
         .catch(function(err) {
             console.error('Edit progress poll error:', err);
+            clearInterval(editPollTimer);
+            editPollTimer = null;
+            isEditSubmitting = false;
         });
     }
 
@@ -3451,7 +3511,10 @@
         if (progressEl) {
             showModalProgress(progressEl.dataset.taskId);
         }
-        // Initialize KV editors on newly swapped content
+    });
+
+    // Initialize KV editors after settle (DOM fully ready, attributes processed)
+    document.addEventListener('htmx:afterSettle', function(evt) {
         if (typeof initKvEditors === 'function') initKvEditors(evt.detail.target);
     });
 
@@ -3462,8 +3525,89 @@
             if (modal.classList.contains('is-open')) {
                 closeEditModal();
             }
+            var dangerModal = document.getElementById('danger-confirm-modal');
+            if (dangerModal && dangerModal.classList.contains('is-open')) {
+                hideDangerConfirmation();
+            }
         }
     });
+
+    /* -------------------------------------------------------------------
+     * Danger Zone — delete confirmation
+     * ------------------------------------------------------------------- */
+    var dangerActionType = '';
+    var dangerActionTarget = '';
+
+    function showDangerConfirmation(actionType, target, message) {
+        dangerActionType = actionType;
+        dangerActionTarget = target;
+
+        var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen' };
+        var title = titles[actionType] || 'Verwijderen';
+        document.getElementById('danger-confirm-title').textContent = title;
+        document.getElementById('danger-confirm-message').textContent = message;
+        document.getElementById('danger-confirm-error').style.display = 'none';
+        document.getElementById('danger-confirm-progress').style.display = 'none';
+        document.getElementById('danger-confirm-actions').style.display = '';
+
+        document.getElementById('danger-confirm-backdrop').classList.add('is-open');
+        document.getElementById('danger-confirm-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function hideDangerConfirmation() {
+        document.getElementById('danger-confirm-backdrop').classList.remove('is-open');
+        document.getElementById('danger-confirm-modal').classList.remove('is-open');
+        document.body.style.overflow = '';
+    }
+
+    async function executeDangerAction() {
+        var errorEl = document.getElementById('danger-confirm-error');
+        var progressEl = document.getElementById('danger-confirm-progress');
+        var actionsEl = document.getElementById('danger-confirm-actions');
+
+        errorEl.style.display = 'none';
+        progressEl.style.display = '';
+        actionsEl.style.display = 'none';
+
+        var url;
+        if (dangerActionType === 'project') {
+            url = '/projects/delete/' + encodeURIComponent('{{ project.name }}');
+        } else if (dangerActionType === 'deployment') {
+            url = '/projects/' + encodeURIComponent('{{ project.name }}') +
+                  '/delete-deployment/' + encodeURIComponent(dangerActionTarget);
+        } else if (dangerActionType === 'component') {
+            url = '/projects/' + encodeURIComponent('{{ project.name }}') +
+                  '/delete-component/' + encodeURIComponent(dangerActionTarget);
+        }
+
+        try {
+            var response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin'
+            });
+            var result = await response.json();
+
+            if (response.ok && result.success) {
+                if (dangerActionType === 'project') {
+                    window.location.href = '/projects';
+                } else {
+                    window.location.reload();
+                }
+            } else {
+                progressEl.style.display = 'none';
+                actionsEl.style.display = '';
+                errorEl.textContent = result.error || result.message || 'Onbekende fout';
+                errorEl.style.display = '';
+            }
+        } catch (err) {
+            progressEl.style.display = 'none';
+            actionsEl.style.display = '';
+            errorEl.textContent = 'Netwerkfout: ' + err.message;
+            errorEl.style.display = '';
+        }
+    }
 </script>
 {% endblock %}
 

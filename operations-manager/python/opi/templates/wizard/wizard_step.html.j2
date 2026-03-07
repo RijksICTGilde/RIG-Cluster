@@ -75,9 +75,14 @@
 
             <div class="wizard-step__actions-right">
                 {% if all_steps_completed and show_review and not steps.is_last %}
-                <c-button type="submit" kind="tertiary"
+                <c-button kind="tertiary"
                           showIcon="after" icon="delta-naar-rechts"
-                          hx-vals='{"_goto": "review"}'>
+                          hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
+                          hx-target="#wizard-step-content"
+                          hx-swap="innerHTML"
+                          hx-include="#wizard-step-form"
+                          hx-vals='{"_goto": "review"}'
+                          hx-ext="json-enc">
                     Naar samenvatting
                 </c-button>
                 {% endif %}

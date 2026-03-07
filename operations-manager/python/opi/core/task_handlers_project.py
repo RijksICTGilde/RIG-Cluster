@@ -204,8 +204,11 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
     components: list[dict[str, str]] = payload["components"]
-    clone_from: str | None = payload.get("clone_from")
-    force_clone: bool = payload.get("force_clone", False)
+    clone_from: str | None = payload.get("clone_from") or payload.get("cloneFrom")
+    force_clone: bool = payload.get("force_clone") or payload.get("forceClone", False)
+    domain_format: str | None = payload.get("domain_format")
+    subdomain: str | None = payload.get("subdomain")
+    base_domain: str | None = payload.get("base_domain")
 
     project_manager: ProjectManager | None = None
 
@@ -266,6 +269,9 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             components=component_objects,
             clone_from=clone_from,
             force_clone=force_clone,
+            domain_format=domain_format,
+            subdomain=subdomain,
+            base_domain=base_domain,
         )
 
         if not result["success"]:

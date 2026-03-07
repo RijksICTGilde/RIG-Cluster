@@ -10,6 +10,7 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMP_IMAGE_EDITABLE,
     DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     DEPLOYMENT_COMP_REFERENCE_EDITABLE,
+    DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
     DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
     DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
@@ -105,11 +106,23 @@ DEPLOYMENT_COMP_PULL_POLICY = EditableVisualizer(
     label="Pull policy",
 )
 
+DEPLOYMENT_COMP_USER_ENV_VARS = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
+    widget=WidgetType.KEY_VALUE,
+    label="Omgevingsvariabelen",
+    description="Deployment-specifieke omgevingsvariabelen voor dit component.",
+    help_text=(
+        "Overschrijft de omgevingsvariabelen uit de componentdefinitie voor deze deployment. "
+        "Bijvoorbeeld: API_URL=https://api.production.example.com"
+    ),
+    attributes={"kv_format": "env"},
+)
+
 DEPLOYMENT_COMPONENTS_SEQ = EditableVisualizer(
     editable=DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     widget=WidgetType.SEQUENCE,
     label="Deployment componenten",
-    children=[DEPLOYMENT_COMP_REFERENCE, DEPLOYMENT_COMP_IMAGE, DEPLOYMENT_COMP_PULL_POLICY],
+    children=[DEPLOYMENT_COMP_REFERENCE, DEPLOYMENT_COMP_IMAGE, DEPLOYMENT_COMP_PULL_POLICY, DEPLOYMENT_COMP_USER_ENV_VARS],
 )
 
 DEPLOYMENTS_SEQUENCE = EditableVisualizer(

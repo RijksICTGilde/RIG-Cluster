@@ -389,14 +389,16 @@ class FormRenderer:
                 c.get("name", "") for c in components if isinstance(c, dict) and c.get("name")
             ]
 
-        # Extract base_domain from first deployment (for DomainFormatOptionsProvider)
+        # Extract base_domain from deployments (for DomainFormatOptionsProvider)
+        # Check all deployments — in the edit flow, the edited deployment may not be [0]
         deployments = yaml_data.get("deployments", [])
-        if isinstance(deployments, list) and deployments:
-            first_dep = deployments[0]
-            if isinstance(first_dep, dict):
-                base_domain = first_dep.get("base-domain")
-                if base_domain:
-                    context["base_domain"] = base_domain
+        if isinstance(deployments, list):
+            for dep in deployments:
+                if isinstance(dep, dict):
+                    base_domain = dep.get("base-domain")
+                    if base_domain:
+                        context["base_domain"] = base_domain
+                        break
 
         return context
 
@@ -468,8 +470,17 @@ class FormRenderer:
             max_items=ed.max_items,
         )
 
+        # Detect per-item reference exclusion for ComponentReferenceOptionsProvider
+        ref_field_name, used_refs_by_index = self._detect_reference_exclusions(editable, items)
+
         children: list[FormField] = []
         for index in range(len(items)):
+            # Compute per-item provider context with reference exclusions
+            item_context = provider_context
+            if ref_field_name and used_refs_by_index:
+                other_refs = [r for i, r in used_refs_by_index.items() if i != index]
+                item_context = {**(provider_context or {}), "exclude_references": other_refs}
+
             item_children: list[FormField] = []
             for child_editable in editable.children or []:
                 if not should_render_editable(child_editable, yaml_data):
@@ -481,7 +492,7 @@ class FormRenderer:
                         errors,
                         edit_mode,
                         parent_index=index,
-                        provider_context=provider_context,
+                        provider_context=item_context,
                     )
                     item_children.append(nested_seq)
                 else:
@@ -491,7 +502,7 @@ class FormRenderer:
                         errors,
                         index=index,
                         edit_mode=edit_mode,
-                        provider_context=provider_context,
+                        provider_context=item_context,
                     )
                     item_children.append(child_field)
 
@@ -508,6 +519,37 @@ class FormRenderer:
 
         seq_field.children = children
         return seq_field
+
+    @staticmethod
+    def _detect_reference_exclusions(
+        editable: EditableVisualizer,
+        items: list[Any],
+    ) -> tuple[str | None, dict[int, str]]:
+        """Detect if a sequence has a ComponentReferenceOptionsProvider child.
+
+        If found, collects the used reference values per item index so the
+        provider can exclude already-selected references from other items.
+
+        Returns:
+            Tuple of (ref_field_name, {index: reference_value}).
+            Both are empty/None when no reference provider is found.
+        """
+        ref_field_name: str | None = None
+        for child in editable.children or []:
+            if child.editable.values_provider == "ComponentReferenceOptionsProvider":
+                # Extract the leaf field name from the yaml_path
+                ref_field_name = child.editable.yaml_path.rsplit("/", 1)[-1].split("[")[0]
+                break
+
+        used_refs: dict[int, str] = {}
+        if ref_field_name:
+            for idx, item in enumerate(items):
+                if isinstance(item, dict):
+                    ref = item.get(ref_field_name, "")
+                    if ref:
+                        used_refs[idx] = ref
+
+        return ref_field_name, used_refs
 
     def _build_nested_sequence_field(
         self,

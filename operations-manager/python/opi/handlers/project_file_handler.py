@@ -299,11 +299,12 @@ class ProjectFileHandler:
         changes = {"added": {}, "changed": {}, "deleted": {}}
 
         # Handle added items (dictionary_item_added, iterable_item_added)
+        # dictionary_item_added is a SetOrdered of path strings (no values);
+        # iterable_item_added is a dict of path -> value.
         if "dictionary_item_added" in diff:
-            for path, value in diff["dictionary_item_added"].items():
-                # Parse path like "root['deployments']['web-app']"
+            for path in diff["dictionary_item_added"]:
                 clean_path = self._parse_deepdiff_path(path)
-                changes["added"][clean_path] = value
+                changes["added"][clean_path] = self._resolve_deepdiff_value(current_yaml, path)
                 logger.debug(f"Added: {clean_path}")
 
         if "iterable_item_added" in diff:
@@ -313,10 +314,11 @@ class ProjectFileHandler:
                 logger.debug(f"Added (iterable): {clean_path}")
 
         # Handle removed items (dictionary_item_removed, iterable_item_removed)
+        # dictionary_item_removed is a SetOrdered (no values).
         if "dictionary_item_removed" in diff:
-            for path, value in diff["dictionary_item_removed"].items():
+            for path in diff["dictionary_item_removed"]:
                 clean_path = self._parse_deepdiff_path(path)
-                changes["deleted"][clean_path] = value
+                changes["deleted"][clean_path] = None
                 logger.debug(f"Deleted: {clean_path}")
 
         if "iterable_item_removed" in diff:
@@ -357,6 +359,26 @@ class ProjectFileHandler:
         clean_path = clean_path.lstrip(".")
 
         return clean_path
+
+    @staticmethod
+    def _resolve_deepdiff_value(data: dict[str, Any], deepdiff_path: str) -> Any:
+        """Resolve a DeepDiff path like ``root['key1']['key2']`` to the value in *data*."""
+        # Strip "root" prefix and extract bracket segments
+        segments = re.findall(r"\['([^']+)'\]|\[(\d+)\]", deepdiff_path)
+        current: Any = data
+        for str_key, int_key in segments:
+            if str_key:
+                if isinstance(current, dict):
+                    current = current.get(str_key)
+                else:
+                    return None
+            elif int_key:
+                idx = int(int_key)
+                if isinstance(current, list) and idx < len(current):
+                    current = current[idx]
+                else:
+                    return None
+        return current
 
     async def analyze_project_changes(
         self, git_connector: GitConnector, full_file_path: str, relative_file_path: str

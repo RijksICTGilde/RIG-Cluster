@@ -98,6 +98,33 @@ class TestComponentReferenceOptionsProvider:
         provider = ComponentReferenceOptionsProvider()
         assert provider.get_options() == []
 
+    def test_exclude_references_filters_used_components(self):
+        provider = ComponentReferenceOptionsProvider(
+            component_names=["web", "api", "worker"],
+            exclude_references=["web", "worker"],
+        )
+        options = provider.get_options()
+        assert len(options) == 1
+        assert options[0] == {"value": "api", "label": "api"}
+
+    def test_exclude_references_empty_list_shows_all(self):
+        provider = ComponentReferenceOptionsProvider(
+            component_names=["web", "api"],
+            exclude_references=[],
+        )
+        assert len(provider.get_options()) == 2
+
+    def test_exclude_references_with_include_empty(self):
+        provider = ComponentReferenceOptionsProvider(
+            component_names=["web", "api"],
+            include_empty=True,
+            exclude_references=["web"],
+        )
+        options = provider.get_options()
+        assert len(options) == 2  # empty option + "api"
+        assert options[0]["value"] == ""
+        assert options[1]["value"] == "api"
+
 
 class TestRepositoryOptionsProvider:
     def test_returns_repository_names(self):

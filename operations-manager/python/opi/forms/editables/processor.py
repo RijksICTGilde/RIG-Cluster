@@ -92,6 +92,9 @@ class EditableFormProcessor:
 
         for vis in editables:
             ed = vis.editable
+            # Skip validation for fields hidden by depends_on/show_when conditions
+            if not should_render_editable(vis, yaml_data):
+                continue
             if vis.widget == WidgetType.GROUP:
                 # Recurse into group children, then run parent enforcer
                 group_errors = await self.validate_editables(parsed, vis.children or [], yaml_data, ctx)
@@ -682,6 +685,97 @@ class EditableFormProcessor:
         parent = smart_get_value(data, parent_path)
         if isinstance(parent, dict):
             parent.pop(parts[-1], None)
+
+    def propagate_renames(
+        self,
+        original_data: dict[str, Any],
+        result_data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> list[str]:
+        """Detect renamed fields and cascade changes to all target references.
+
+        Compares old vs new values for editables with ``rename_targets``.
+        When a rename is detected, walks each target path (which may contain
+        ``[*]`` wildcards) and replaces old_name → new_name in-place.
+
+        Returns:
+            List of human-readable rename descriptions for logging.
+        """
+        renames: list[str] = []
+        for ed, concrete_path in self._collect_editables_with_paths(editables, result_data):
+            if not ed.rename_targets:
+                continue
+            old_value = smart_get_value(original_data, concrete_path)
+            new_value = smart_get_value(result_data, concrete_path)
+            if old_value and new_value and str(old_value) != str(new_value):
+                old_name = str(old_value)
+                new_name = str(new_value)
+                for target_path in ed.rename_targets:
+                    count = self._apply_rename(result_data, target_path, old_name, new_name)
+                    if count:
+                        renames.append(f"{old_name} → {new_name} in {target_path} ({count}x)")
+        return renames
+
+    @staticmethod
+    def _apply_rename(
+        data: dict[str, Any],
+        wildcard_path: str,
+        old_name: str,
+        new_name: str,
+    ) -> int:
+        """Walk a wildcard path and replace old_name → new_name at leaf positions.
+
+        Handles two kinds of leaf values:
+        - String field: ``"frontend"`` → ``"web-app"``
+        - List membership: ``["frontend", "backend"]`` → ``["web-app", "backend"]``
+
+        Returns the number of replacements made.
+        """
+        segments = wildcard_path.split("/")
+        count = 0
+
+        def _walk(current: Any, depth: int) -> int:
+            nonlocal count
+            if depth >= len(segments):
+                return count
+
+            seg = segments[depth]
+            is_last = depth == len(segments) - 1
+
+            # Parse segment: "key[*]", "key[0]", or plain "key"
+            if "[*]" in seg:
+                key = seg.replace("[*]", "")
+                items = current.get(key) if isinstance(current, dict) else None
+                if not isinstance(items, list):
+                    return count
+                if is_last:
+                    # The target IS the list itself — replace members
+                    for i, item in enumerate(items):
+                        if item == old_name:
+                            items[i] = new_name
+                            count += 1
+                else:
+                    for item in items:
+                        _walk(item, depth + 1)
+            else:
+                child = current.get(seg) if isinstance(current, dict) else None
+                if child is None:
+                    return count
+                if is_last:
+                    if isinstance(child, str) and child == old_name:
+                        current[seg] = new_name
+                        count += 1
+                    elif isinstance(child, list):
+                        for i, item in enumerate(child):
+                            if item == old_name:
+                                child[i] = new_name
+                                count += 1
+                else:
+                    _walk(child, depth + 1)
+            return count
+
+        _walk(data, 0)
+        return count
 
     def populate_deferred_fields(
         self,

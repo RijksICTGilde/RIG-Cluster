@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from opi.forms.editables.conditions import SentinelValueCondition
-from opi.forms.editables.converters import CustomDomainSelectConverter
+from opi.forms.editables.converters import CustomDomainSelectConverter, KeyValueConverter
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
     BaseDomainValidator,
     CustomDomainValidator,
     DomainFormatValidator,
+    KeyValueValidator,
     SubdomainValidator,
 )
 
@@ -58,6 +59,11 @@ DEPLOYMENT_COMP_PULL_POLICY_EDITABLE = Editable(
 )
 DEPLOYMENT_COMP_PATH_EDITABLE = Editable(yaml_path="deployments[*]/components[*]/paths")
 DEPLOYMENT_COMP_REWRITE_PATH_EDITABLE = Editable(yaml_path="deployments[*]/components[*]/rewrite-path")
+DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/user-env-vars",
+    converter=KeyValueConverter(fmt="env", write_as="string"),
+    validator=KeyValueValidator(),
+)
 
 DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
     yaml_path="deployments[*]/components",
@@ -68,6 +74,7 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
         DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
         DEPLOYMENT_COMP_PATH_EDITABLE,
         DEPLOYMENT_COMP_REWRITE_PATH_EDITABLE,
+        DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
     ],
 )
 

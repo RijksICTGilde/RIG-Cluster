@@ -14,6 +14,72 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
+def replace_segment_editable(ed: Editable, old_segment: str, new_segment: str) -> Editable:
+    """Replace a specific path segment in all editable paths.
+
+    Unlike ``materialize_wildcard_editable`` (which replaces *every* ``[*]``),
+    this targets a specific substring — e.g. ``"deployments[*]"`` →
+    ``"deployments[0]"`` — leaving other wildcards like ``components[*]``
+    intact.
+    """
+
+    def _replace(s: str | None) -> str | None:
+        return s.replace(old_segment, new_segment) if s else s
+
+    children = [replace_segment_editable(c, old_segment, new_segment) for c in ed.children] if ed.children else ed.children
+
+    return dataclasses.replace(
+        ed,
+        yaml_path=_replace(ed.yaml_path) or ed.yaml_path,
+        depends_on=_replace(ed.depends_on),
+        defers_to=_replace(ed.defers_to),
+        children=children,
+    )
+
+
+def replace_segment_visualizer(vis: EditableVisualizer, old_segment: str, new_segment: str) -> EditableVisualizer:
+    """Replace a specific path segment in a visualizer's editable and children."""
+    children = [replace_segment_visualizer(c, old_segment, new_segment) for c in vis.children] if vis.children else vis.children
+
+    return dataclasses.replace(
+        vis,
+        editable=replace_segment_editable(vis.editable, old_segment, new_segment),
+        children=children,
+    )
+
+
+def materialize_wildcard_editable(ed: Editable, index: int) -> Editable:
+    """Replace ``[*]`` with ``[index]`` in all editable paths.
+
+    Used when extracting a single item from a sequence for standalone editing.
+    """
+    target = f"[{index}]"
+
+    def _replace(s: str | None) -> str | None:
+        return s.replace("[*]", target) if s else s
+
+    children = [materialize_wildcard_editable(c, index) for c in ed.children] if ed.children else ed.children
+
+    return dataclasses.replace(
+        ed,
+        yaml_path=_replace(ed.yaml_path) or ed.yaml_path,
+        depends_on=_replace(ed.depends_on),
+        defers_to=_replace(ed.defers_to),
+        children=children,
+    )
+
+
+def materialize_wildcard_visualizer(vis: EditableVisualizer, index: int) -> EditableVisualizer:
+    """Replace ``[*]`` with ``[index]`` in a visualizer's editable and children."""
+    children = [materialize_wildcard_visualizer(c, index) for c in vis.children] if vis.children else vis.children
+
+    return dataclasses.replace(
+        vis,
+        editable=materialize_wildcard_editable(vis.editable, index),
+        children=children,
+    )
+
+
 def reindex_editable(ed: Editable, from_index: int, to_index: int) -> Editable:
     """Clone an Editable with all path references reindexed.
 

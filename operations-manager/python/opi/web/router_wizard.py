@@ -1546,6 +1546,16 @@ def _flatten_yaml_for_validation(
     return flat
 
 
+def _collect_all_editable_paths(editables) -> set[str]:
+    """Recursively collect yaml_paths from editables, including group children."""
+    paths: set[str] = set()
+    for vis in editables:
+        paths.add(vis.editable.yaml_path)
+        if vis.children:
+            paths.update(_collect_all_editable_paths(vis.children))
+    return paths
+
+
 def _section_has_errors(
     section_paths: set[str],
     errors: dict[str, list[str]],
@@ -1593,6 +1603,11 @@ async def _do_submit(
     # Merge all step data and do final validation
     yaml_data = state.get_merged_data()
     processor = EditableFormProcessor()
+
+    # Strip values for fields hidden by depends_on/show_when (e.g. subdomain
+    # when the selected domain-format doesn't use it)
+    processor.clear_hidden_depends_on(all_editables, yaml_data)
+
     flat = _flatten_yaml_for_validation(all_editables, yaml_data)
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
     errors = await processor.validate_editables(flat, all_editables, yaml_data, enforcer_context=enforcer_context)
@@ -1602,7 +1617,7 @@ async def _do_submit(
         logger.warning("Final validation failed: %s", errors)
         error_section = active_sections[0]
         for section in active_sections:
-            section_paths = {e.editable.yaml_path for e in section.editables}
+            section_paths = _collect_all_editable_paths(section.editables)
             if _section_has_errors(section_paths, errors):
                 error_section = section
                 break

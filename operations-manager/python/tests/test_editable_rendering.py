@@ -244,7 +244,7 @@ class TestNestedSequenceRendering:
         nested_seq = nested_seqs[0]
         first_comp = nested_seq.children[0]
         assert first_comp.widget_type == "sequence_item"
-        assert len(first_comp.children) == 3  # reference, image, pullPolicy
+        assert len(first_comp.children) == 4  # reference, image, pullPolicy, user-env-vars
 
 
 class TestDisplayCardRendering:

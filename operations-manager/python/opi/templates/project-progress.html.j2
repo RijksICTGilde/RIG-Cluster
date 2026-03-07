@@ -573,8 +573,9 @@
         } catch (error) {
             console.error('Error polling task status:', error);
             if (error.message.includes('404')) {
+                // Task cleaned up after completion — treat as success
                 clearInterval(pollTimer);
-                showError('Task niet gevonden');
+                showSuccess();
             }
         }
     }

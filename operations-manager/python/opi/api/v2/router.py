@@ -117,6 +117,9 @@ async def upsert_deployment_v2(
             "components": [c.model_dump() for c in deployment_data.components],
             "cloneFrom": deployment_data.cloneFrom,
             "forceClone": deployment_data.forceClone,
+            "domain_format": deployment_data.domain_format,
+            "subdomain": deployment_data.subdomain,
+            "base_domain": deployment_data.base_domain,
         },
     )
     return _accepted_response(task, "upsert_deployment")

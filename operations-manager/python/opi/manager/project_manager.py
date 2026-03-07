@@ -4001,10 +4001,14 @@ class ProjectManager:
         for component in components:
             # Get component reference and image from deployment
             component_reference = component.get("reference")
-            image_url = component.get("image", "nginxdemos/hello")
+            image_url = component.get("image", "")
 
             if not component_reference:
                 logger.warning(f"Component missing reference in deployment {deployment_name}, skipping")
+                continue
+
+            if not image_url:
+                logger.info(f"Component '{component_reference}' has no image in deployment {deployment_name}, skipping")
                 continue
 
             component_name = component_reference
@@ -5174,6 +5178,9 @@ class ProjectManager:
         components: list,  # ComponentReference objects from router
         clone_from: str | None = None,
         force_clone: bool = False,
+        domain_format: str | None = None,
+        subdomain: str | None = None,
+        base_domain: str | None = None,
     ) -> dict[str, Any]:
         """
         Create or update a deployment in the project YAML file.
@@ -5252,6 +5259,14 @@ class ProjectManager:
                                     f"Added new component '{component.reference}' with image '{normalized_image}'"
                                 )
 
+                        # Update domain settings if provided
+                        if domain_format is not None:
+                            deployment["domain-format"] = domain_format
+                        if subdomain is not None:
+                            deployment["subdomain"] = subdomain
+                        if base_domain is not None:
+                            deployment["base-domain"] = base_domain
+
                         # Handle clone_from only if force_clone is true
                         if clone_from and force_clone:
                             deployment["clone-from"] = {
@@ -5282,7 +5297,15 @@ class ProjectManager:
                 logger.info(f"Creating new deployment '{deployment_name}' in project '{project_name}'")
 
                 # Create new deployment object
-                new_deployment = {"name": deployment_name, "components": []}
+                new_deployment: dict[str, Any] = {"name": deployment_name, "components": []}
+
+                # Apply domain settings if provided
+                if domain_format:
+                    new_deployment["domain-format"] = domain_format
+                if subdomain:
+                    new_deployment["subdomain"] = subdomain
+                if base_domain:
+                    new_deployment["base-domain"] = base_domain
 
                 # Convert components from router objects to dict format
                 normalized_warnings_create: list[str] = []

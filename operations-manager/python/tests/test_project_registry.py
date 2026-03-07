@@ -86,7 +86,7 @@ class TestSequenceEditables:
         assert len(nested_seq) == 1
         assert nested_seq[0].editable.yaml_path == "deployments[*]/components"
         assert nested_seq[0].children is not None
-        assert len(nested_seq[0].children) == 3
+        assert len(nested_seq[0].children) == 4
 
 
 class TestReadonlyEditables:

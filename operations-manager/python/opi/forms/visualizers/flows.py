@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from opi.forms.editables.fields.config_generated import GENERATED_EDITABLES_PURE
 from opi.forms.visualizers.wizard_sections import (
@@ -184,6 +184,37 @@ SERVICE_CONFIG_MODAL_FLOWS: dict[str, str] = {
 }
 
 
+def build_deployment_edit_flow(
+    deployment_index: int,
+    component_count: int | None = None,
+) -> FormFlow:
+    """Build a modal edit flow for a specific deployment's components."""
+    from opi.forms.visualizers.wizard_sections import build_deployment_edit_section
+
+    section = build_deployment_edit_section(deployment_index, component_count=component_count)
+    return FormFlow(
+        flow_id=f"modal-edit-deployment-{deployment_index}",
+        title="Deployment bewerken",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+    )
+
+
+def build_component_edit_flow(component_index: int) -> FormFlow:
+    """Build a modal edit flow for a specific component."""
+    from opi.forms.visualizers.wizard_sections import build_component_edit_section
+
+    section = build_component_edit_section(component_index)
+    return FormFlow(
+        flow_id=f"modal-edit-component-{component_index}",
+        title="Component bewerken",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+    )
+
+
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config."""
     from opi.forms.visualizers.wizard_sections import build_domain_edit_section
@@ -193,16 +224,21 @@ def build_domain_edit_flow(deployment_index: int) -> FormFlow:
         flow_id=f"modal-edit-domain-{deployment_index}",
         title="Webadres bewerken",
         mode=FlowMode.WIZARD,
-        show_review=False,
+        show_review=True,
         sections=[section],
     )
 
 
-def get_flow(flow_id: str) -> FormFlow:
+def get_flow(flow_id: str, **context: Any) -> FormFlow:
     """Get a FormFlow by its ID.
 
     Supports both static registry flows and dynamic domain-edit flows
     (``modal-edit-domain-N`` where N is the deployment index).
+
+    Args:
+        flow_id: The flow identifier.
+        **context: Extra context forwarded to dynamic flow builders.
+            ``component_count`` is used by deployment edit flows.
 
     Raises:
         KeyError: If the flow_id is not registered.
@@ -215,5 +251,20 @@ def get_flow(flow_id: str) -> FormFlow:
         suffix = flow_id.removeprefix("modal-edit-domain-")
         if suffix.isdigit():
             return build_domain_edit_flow(int(suffix))
+
+    # Dynamic component edit flows: modal-edit-component-0, modal-edit-component-1, ...
+    if flow_id.startswith("modal-edit-component-"):
+        suffix = flow_id.removeprefix("modal-edit-component-")
+        if suffix.isdigit():
+            return build_component_edit_flow(int(suffix))
+
+    # Dynamic deployment edit flows: modal-edit-deployment-0, modal-edit-deployment-1, ...
+    if flow_id.startswith("modal-edit-deployment-"):
+        suffix = flow_id.removeprefix("modal-edit-deployment-")
+        if suffix.isdigit():
+            return build_deployment_edit_flow(
+                int(suffix),
+                component_count=context.get("component_count"),
+            )
 
     raise KeyError(f"Unknown flow: {flow_id}")

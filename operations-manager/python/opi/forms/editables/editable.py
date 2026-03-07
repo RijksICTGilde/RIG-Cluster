@@ -110,3 +110,11 @@ class Editable:
     defers_to: str | None = None
     defer_when: EditableCondition | None = None
     hooks: dict[str, Any] | None = field(default=None, repr=False)
+    rename_targets: list[str] | None = field(default=None, repr=False)
+    """Paths that reference this field's value and must be updated on rename.
+
+    Each path may contain ``[*]`` wildcards for iteration. The propagation
+    logic walks all matching items and replaces old_name → new_name:
+    - Direct string fields (e.g. ``deployments[*]/components[*]/reference``)
+    - List membership fields (e.g. ``components[*]/uses-components``)
+    """

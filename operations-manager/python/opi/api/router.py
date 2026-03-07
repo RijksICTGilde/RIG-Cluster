@@ -395,6 +395,34 @@ class UpsertDeploymentRequest(BaseModel):
         None, description="Deployment name to clone data from (only on create, or if forceClone is true)"
     )
     forceClone: bool = Field(False, description="Force clone even if target resources exist (runtime parameter)")
+    domain_format: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "URL format template ID that controls how hostnames are generated. "
+            "Dash variants: 'component-deployment-project', 'deployment-project', "
+            "'component-deployment-subdomain', 'deployment-subdomain', 'component-subdomain', 'subdomain'. "
+            "Dot variants (requires wildcard DNS): 'component.deployment.project', 'deployment.project', "
+            "'component.deployment.subdomain', 'deployment.subdomain', 'component.subdomain'. "
+            "Formats containing 'subdomain' require the subdomain field to be set."
+        ),
+        example="component-deployment-subdomain",
+    )
+    subdomain: str | None = Field(
+        None,
+        description=(
+            "Subdomain for URL generation. Required when domain_format contains 'subdomain'. "
+            "Must be a valid DNS label: lowercase letters, digits, and hyphens, starting with a letter."
+        ),
+        example="myapp",
+        max_length=63,
+    )
+    base_domain: str | None = Field(
+        None,
+        description="Base domain for URL generation (e.g., 'rijksapp.nl'). Must be a cluster-supported domain.",
+        example="rijksapp.nl",
+        max_length=255,
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -406,6 +434,9 @@ class UpsertDeploymentRequest(BaseModel):
                 ],
                 "cloneFrom": "staging",
                 "forceClone": False,
+                "domain_format": "component-deployment-subdomain",
+                "subdomain": "myapp",
+                "base_domain": "rijksapp.nl",
             }
         }
     }
@@ -1034,6 +1065,9 @@ async def upsert_deployment(
                 "components": [c.model_dump() for c in deployment_data.components],
                 "cloneFrom": deployment_data.cloneFrom,
                 "forceClone": deployment_data.forceClone,
+                "domain_format": deployment_data.domain_format,
+                "subdomain": deployment_data.subdomain,
+                "base_domain": deployment_data.base_domain,
             },
         )
         task_id = str(task["task_id"])
@@ -1055,6 +1089,9 @@ async def upsert_deployment(
             components=deployment_data.components,
             clone_from=deployment_data.cloneFrom,
             force_clone=deployment_data.forceClone,
+            domain_format=deployment_data.domain_format,
+            subdomain=deployment_data.subdomain,
+            base_domain=deployment_data.base_domain,
         )
 
         if result["success"]:
