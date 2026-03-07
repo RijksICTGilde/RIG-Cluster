@@ -3,11 +3,13 @@
 
   Expected context (via yaml_data):
     - _cluster_deployments: list of dicts with keys: name, namespace, resource_types (list of str)
+    - _backupable_labels: list of dicts with keys: label, name, color (from ServiceAdapter)
     - _current_cluster: str
     - _project_name: str
     - _selected_deployment: str (optional, set by HTMX on dropdown change)
 #}
 {% set deployments = _cluster_deployments | default([]) %}
+{% set labels = _backupable_labels | default([]) %}
 {% set selected = _selected_deployment | default(deployments[0].name if deployments else '') %}
 {% set ns = namespace(active_dep=none) %}
 {% for dep in deployments %}
@@ -19,6 +21,12 @@
     {% set ns.active_dep = deployments[0] %}
     {% set selected = ns.active_dep.name %}
 {% endif %}
+
+{# Build a lookup from label to metadata for easy access in the template #}
+{% set label_meta = {} %}
+{% for bl in labels %}
+    {% set _ = label_meta.update({bl.label: bl}) %}
+{% endfor %}
 
 {% if deployments %}
 <c-layout-flow gap="lg">
@@ -51,18 +59,14 @@
             Selecteer welke resource types u wilt back-uppen. Standaard worden alle beschikbare types geselecteerd.
         </p>
         {% for rt in ns.active_dep.resource_types %}
+        {% set meta = label_meta.get(rt, {}) %}
         <label style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer;">
             <input type="checkbox" name="resource_types" value="{{ rt }}" checked
                    style="margin: 0;" />
             <span style="display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 500;
-                {% if rt == 'pvc' %}background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw);
-                {% elif rt == 'database' %}background: var(--rvo-color-grasgroen-200); color: var(--rvo-color-grasgroen-800);
-                {% elif rt == 'minio' %}background: var(--rvo-color-oranje-200); color: var(--rvo-color-oranje-800);
-                {% endif %}">
-                {% if rt == 'pvc' %}PVC (Persistent Volumes)
-                {% elif rt == 'database' %}Database (PostgreSQL)
-                {% elif rt == 'minio' %}MinIO (Object Storage)
-                {% endif %}
+                background: var(--rvo-color-{{ meta.get('color', 'grijs-600') }}-200, var(--rvo-color-grijs-200));
+                color: var(--rvo-color-{{ meta.get('color', 'grijs-600') }}-800, var(--rvo-color-grijs-800));">
+                {{ meta.get('name', rt | upper) }}
             </span>
         </label>
         {% endfor %}

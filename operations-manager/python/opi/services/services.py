@@ -85,6 +85,15 @@ class ServiceDefinition:
                          deletion so they can be recovered (e.g. databases,
                          MinIO buckets).
     """
+    backup_label: str | None = None
+    """Short label used to identify this service in backup/restore flows.
+
+    When set, this service is considered backupable.  Multiple service types
+    can share the same label (e.g. ``POSTGRESQL_DATABASE`` and
+    ``NAMESPACE_POSTGRESQL_DATABASE`` both use ``"database"``).
+    The label is used as the ``resource_type`` value in backup runs and
+    as the form field value in the backup wizard.
+    """
 
 
 class DatabaseVariables(Enum):
@@ -344,6 +353,7 @@ class ServiceAdapter:
             icon="server",
             color="grijs-600",
             scope="component",
+            backup_label="pvc",
             storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
             variables=[var.value for var in StorageVariables if var.value.name == "DATA_PATH"],
         ),
@@ -365,6 +375,7 @@ class ServiceAdapter:
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
             cleanup_strategy="deferred",
+            backup_label="database",
         ),
         ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ServiceDefinition(
             name="Namespace PostgreSQL Database",
@@ -376,6 +387,7 @@ class ServiceAdapter:
             variables=[var.value for var in DatabaseVariables],
             hidden=True,
             cleanup_strategy="deferred",
+            backup_label="database",
         ),
         ServiceType.MINIO_STORAGE: ServiceDefinition(
             name="MinIO Object Storage",
@@ -386,6 +398,7 @@ class ServiceAdapter:
             secret_class="MinIOSecret",
             variables=[var.value for var in MinIOVariables],
             cleanup_strategy="deferred",
+            backup_label="minio",
         ),
         ServiceType.REDIS: ServiceDefinition(
             name="Redis Cache",
@@ -518,6 +531,36 @@ class ServiceAdapter:
     def filter_deployment_services(cls, services: list[ServiceType]) -> list[ServiceType]:
         """Filter services to only include deployment-shared ones."""
         return [service for service in services if cls.is_deployment_service(service)]
+
+    @classmethod
+    def get_backupable_labels(cls) -> list[dict[str, str]]:
+        """Get unique backup labels with display metadata from backupable services.
+
+        Returns a list of dicts with keys: label, name, color — one per unique
+        backup_label.  Order is stable (follows SERVICE_DEFINITIONS insertion order).
+        """
+        seen: set[str] = set()
+        result: list[dict[str, str]] = []
+        for definition in cls.SERVICE_DEFINITIONS.values():
+            if definition.backup_label and definition.backup_label not in seen:
+                seen.add(definition.backup_label)
+                result.append(
+                    {
+                        "label": definition.backup_label,
+                        "name": definition.name,
+                        "color": definition.color,
+                    }
+                )
+        return result
+
+    @classmethod
+    def get_service_types_for_backup_label(cls, backup_label: str) -> list[str]:
+        """Get all service type values that share the given backup_label."""
+        return [
+            svc_type.value
+            for svc_type, definition in cls.SERVICE_DEFINITIONS.items()
+            if definition.backup_label == backup_label
+        ]
 
     @classmethod
     def get_cleanable_service_types(cls) -> list[ServiceType]:

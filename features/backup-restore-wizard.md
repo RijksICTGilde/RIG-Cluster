@@ -49,7 +49,7 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 - **Custom post_save_action**: New action types `trigger_backup` and `trigger_restore` are handled in `_modal_do_submit()`, which creates background tasks instead of saving project files
 - **Async context building**: Backup run data is gathered asynchronously during wizard initialization
 - **HTMX deployment selection**: Changing the deployment dropdown triggers an HTMX GET to re-render the wizard step with updated resource type checkboxes for the selected deployment
-- **Backupable resource filtering**: Only deployments that actually use persistent storage, databases, or MinIO storage are shown; the resource type checkboxes only list types used by the selected deployment
+- **Backupable service registry**: Services declare backup support via `backup_label` on their `ServiceDefinition`. The wizard dynamically discovers backupable services from `ServiceAdapter.get_backupable_labels()` — no hardcoded service type checks in the wizard code. Adding backup support for a new service type only requires setting `backup_label` on its definition.
 
 ### Data Flow
 

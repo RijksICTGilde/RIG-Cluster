@@ -854,11 +854,16 @@ async def _build_backup_restore_context_async(
     from opi.core.cluster_config import get_prefixed_namespace
     from opi.core.config import settings
     from opi.handlers.project_file_handler import create_project_file_handler
-    from opi.services import ServiceType
+    from opi.services import ServiceAdapter
 
     current_cluster = settings.CLUSTER_MANAGER
     project_file_handler = create_project_file_handler()
-    context: dict[str, Any] = {"_current_cluster": current_cluster, "_project_name": project_name}
+    backupable_labels = ServiceAdapter.get_backupable_labels()
+    context: dict[str, Any] = {
+        "_current_cluster": current_cluster,
+        "_project_name": project_name,
+        "_backupable_labels": backupable_labels,
+    }
 
     # Build cluster deployments with available resource types
     deployments = project_data.get("deployments", [])
@@ -873,18 +878,10 @@ async def _build_backup_restore_context_async(
         k8s_ns = get_prefixed_namespace(dep_cluster, raw_ns) if raw_ns else ""
 
         resource_types: list[str] = []
-
-        pvc_types = [ServiceType.PERSISTENT_STORAGE.value]
-        if project_file_handler.deployment_uses_service(project_data, dep_name, pvc_types):
-            resource_types.append("pvc")
-
-        db_types = [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
-        if project_file_handler.deployment_uses_service(project_data, dep_name, db_types):
-            resource_types.append("database")
-
-        minio_types = [ServiceType.MINIO_STORAGE.value]
-        if project_file_handler.deployment_uses_service(project_data, dep_name, minio_types):
-            resource_types.append("minio")
+        for bl in backupable_labels:
+            svc_types = ServiceAdapter.get_service_types_for_backup_label(bl["label"])
+            if project_file_handler.deployment_uses_service(project_data, dep_name, svc_types):
+                resource_types.append(bl["label"])
 
         # Only include deployments that have backupable resources
         if not resource_types:
