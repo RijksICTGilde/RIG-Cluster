@@ -2574,9 +2574,11 @@ def extract_storage_from_component_services(component: dict[str, Any]) -> list[d
 
 def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
     """
-    Extract service names from a v2 component's services list.
+    Extract service names from a component's services list.
 
-    Handles the mixed string/dict format (same as root-level services).
+    Supports both v2 format (``services`` key with mixed string/dict entries)
+    and v1 format (``uses-services`` key with plain string entries).
+    When both keys exist, results are merged and deduplicated.
 
     Args:
         component: A component dict from project data
@@ -2584,7 +2586,19 @@ def extract_service_names_from_component(component: dict[str, Any]) -> list[str]
     Returns:
         List of service name strings
     """
-    return ServiceAdapter.extract_service_names_from_project_services(component.get("services", []))
+    v2_services = component.get("services", [])
+    v1_services = component.get("uses-services", [])
+
+    names = ServiceAdapter.extract_service_names_from_project_services(v2_services)
+
+    if v1_services:
+        existing = set(names)
+        for svc in v1_services:
+            if isinstance(svc, str) and svc not in existing:
+                names.append(svc)
+                existing.add(svc)
+
+    return names
 
 
 def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
