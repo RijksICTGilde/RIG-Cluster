@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from opi.forms.editables.fields.config_generated import GENERATED_EDITABLES_PURE
 from opi.forms.visualizers.wizard_sections import (
     AUTH_WALL_CONFIG_SECTION,
+    BACKUP_SELECT_SECTION,
     COMPONENTS_EDIT_SECTION,
     COMPONENTS_SECTION,
     CONFIG_DISPLAY_SECTION,
@@ -27,6 +28,8 @@ from opi.forms.visualizers.wizard_sections import (
     IDENTITY_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
+    RESTORE_SELECT_SECTION,
+    RESTORE_TARGET_SECTION,
     SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
     TEAM_SECTION,
@@ -164,6 +167,26 @@ MODAL_EDIT_AUTH_WALL_FLOW = FormFlow(
     sections=[AUTH_WALL_CONFIG_SECTION],
 )
 
+# ---------------------------------------------------------------------------
+# Backup & Restore modal flows
+# ---------------------------------------------------------------------------
+
+MODAL_BACKUP_FLOW = FormFlow(
+    flow_id="modal-backup",
+    title="Backup aanmaken",
+    mode=FlowMode.WIZARD,
+    show_review=True,
+    sections=[BACKUP_SELECT_SECTION],
+)
+
+MODAL_RESTORE_FLOW = FormFlow(
+    flow_id="modal-restore",
+    title="Backup herstellen",
+    mode=FlowMode.WIZARD,
+    show_review=True,
+    sections=[RESTORE_SELECT_SECTION, RESTORE_TARGET_SECTION],
+)
+
 FLOW_REGISTRY: dict[str, FormFlow] = {
     CREATE_FLOW.flow_id: CREATE_FLOW,
     EDIT_FLOW.flow_id: EDIT_FLOW,
@@ -174,6 +197,8 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_KEYCLOAK_FLOW.flow_id: MODAL_EDIT_KEYCLOAK_FLOW,
     MODAL_EDIT_POSTGRESQL_FLOW.flow_id: MODAL_EDIT_POSTGRESQL_FLOW,
     MODAL_EDIT_AUTH_WALL_FLOW.flow_id: MODAL_EDIT_AUTH_WALL_FLOW,
+    MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
+    MODAL_RESTORE_FLOW.flow_id: MODAL_RESTORE_FLOW,
 }
 
 # Lookup: service name → modal flow ID (for detail page config buttons)

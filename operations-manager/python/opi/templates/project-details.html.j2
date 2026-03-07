@@ -252,19 +252,32 @@
 
     {# Backups Section - Show backups per deployment for current cluster #}
     {% if backups_available and project.deployments %}
+    {% set ns = namespace(has_backups=false) %}
+    {% for deployment in project.deployments %}
+        {% if deployment.cluster == current_cluster and deployment_backups.get(deployment.name) %}
+            {% set ns.has_backups = true %}
+        {% endif %}
+    {% endfor %}
     <c-card outline="true" padding="xl" backgroundColor="wit">
         <c-layout-flow gap="lg">
-            <div>
-                <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
-                <p class="rvo-text--subtle">Beschikbare backups per deployment (alleen voor cluster: {{ current_cluster }})</p>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                    <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
+                    <p class="rvo-text--subtle">Beschikbare backups per deployment (alleen voor cluster: {{ current_cluster }})</p>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" class="edit-section-btn" onclick="openEditModal('modal-backup', 'Backup aanmaken')" title="Backup aanmaken">
+                        <c-icon icon="toevoegen" size="sm" color="groen" />
+                        <span>Backup aanmaken</span>
+                    </button>
+                    {% if ns.has_backups %}
+                    <button type="button" class="edit-section-btn" onclick="openEditModal('modal-restore', 'Backup herstellen')" title="Backup herstellen">
+                        <c-icon icon="verplaatsen" size="sm" color="hemelblauw" />
+                        <span>Herstellen</span>
+                    </button>
+                    {% endif %}
+                </div>
             </div>
-
-            {% set ns = namespace(has_backups=false) %}
-            {% for deployment in project.deployments %}
-                {% if deployment.cluster == current_cluster and deployment_backups.get(deployment.name) %}
-                    {% set ns.has_backups = true %}
-                {% endif %}
-            {% endfor %}
 
             {% if ns.has_backups %}
             <div>

@@ -759,7 +759,8 @@ class FormRenderer:
             from opi.core.templates import get_templates
 
             tmpl = get_templates().get_template(element.template)
-            return tmpl.render(element.context)
+            ctx = {**(yaml_data or {}), **element.context}
+            return tmpl.render(ctx)
 
         # Display block (server-rendered via HTMX)
         if isinstance(element, DisplayBlock):

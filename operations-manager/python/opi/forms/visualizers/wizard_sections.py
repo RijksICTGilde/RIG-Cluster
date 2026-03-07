@@ -510,6 +510,66 @@ def build_deployment_edit_section(
     )
 
 
+# ---------------------------------------------------------------------------
+# Backup & Restore sections (modal wizard, no editables — custom templates)
+# ---------------------------------------------------------------------------
+
+
+def _backup_summary(data: dict[str, Any]) -> str:
+    """Build review summary for backup wizard."""
+    dep = data.get("deployment_name", "-")
+    types = data.get("resource_types", [])
+    if isinstance(types, str):
+        types = [types]
+    types_str = ", ".join(t.upper() for t in types) if types else "alle"
+    return f"<p><strong>Deployment:</strong> {dep}</p><p><strong>Resource types:</strong> {types_str}</p>"
+
+
+def _restore_select_summary(data: dict[str, Any]) -> str:
+    """Build review summary for backup run selection."""
+    run_id = data.get("backup_run_id", "-")
+    return f"<p><strong>Backup run:</strong> <code>{run_id}</code></p>"
+
+
+def _restore_target_summary(data: dict[str, Any]) -> str:
+    """Build review summary for restore target selection."""
+    target = data.get("target_deployment", "-")
+    return f"<p><strong>Doel deployment:</strong> {target}</p>"
+
+
+BACKUP_SELECT_SECTION = FormSection(
+    section_id="backup-select",
+    title="Backup configuratie",
+    icon="database",
+    description="Selecteer een deployment en welke resources u wilt back-uppen",
+    editables=[],
+    layout=[TemplatePartial(template="wizard/partials/backup_select_deployment.html.j2")],
+    post_save_action="trigger_backup",
+    summary_fn=_backup_summary,
+)
+
+RESTORE_SELECT_SECTION = FormSection(
+    section_id="restore-select",
+    title="Backup selecteren",
+    icon="database",
+    description="Selecteer een backup run om te herstellen",
+    editables=[],
+    layout=[TemplatePartial(template="wizard/partials/restore_select_backup.html.j2")],
+    summary_fn=_restore_select_summary,
+)
+
+RESTORE_TARGET_SECTION = FormSection(
+    section_id="restore-target",
+    title="Doel selecteren",
+    icon="applicatie",
+    description="Kies waar de backup naartoe hersteld moet worden",
+    editables=[],
+    layout=[TemplatePartial(template="wizard/partials/restore_select_target.html.j2")],
+    post_save_action="trigger_restore",
+    summary_fn=_restore_target_summary,
+)
+
+
 ALL_SECTIONS: list[FormSection] = [
     IDENTITY_SECTION,
     SERVICES_SECTION,

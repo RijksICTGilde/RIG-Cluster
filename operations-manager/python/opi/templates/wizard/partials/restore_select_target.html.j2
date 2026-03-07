@@ -1,0 +1,41 @@
+{#
+  Restore wizard step 2: Select target deployment for restore.
+
+  Phase 1 scope: restore to the same deployment the backup came from.
+  The target is pre-selected and shown for confirmation.
+
+  Expected context (via yaml_data):
+    - _cluster_deployments: list of dicts with keys: name, namespace
+    - _current_cluster: str
+#}
+{% set deployments = _cluster_deployments | default([]) %}
+
+<c-layout-flow gap="lg">
+    <fieldset>
+        <legend class="rvo-form-field__label"><strong>Doel deployment</strong></legend>
+        <p class="rvo-text--sm rvo-text--subtle" style="margin-bottom: 8px;">
+            De backup wordt hersteld naar de oorspronkelijke deployment.
+        </p>
+        {% for dep in deployments %}
+        <label class="rvo-radio-option" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; margin-bottom: 8px; cursor: pointer;">
+            <input type="radio" name="target_deployment" value="{{ dep.name }}"
+                   {% if loop.first %}checked{% endif %}
+                   style="margin: 0;" />
+            <div>
+                <strong>{{ dep.name }}</strong>
+                <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 4px;">{{ dep.namespace }}</span>
+            </div>
+        </label>
+        {% endfor %}
+    </fieldset>
+
+    <c-card padding="md" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-oranje);">
+        <c-layout-row gap="sm" verticalSpacing="center">
+            <c-icon icon="info" size="md" color="oranje" />
+            <div>
+                <strong>Let op</strong>
+                <p class="rvo-text--sm">Het herstellen van een backup overschrijft de huidige data in de geselecteerde deployment. Dit kan niet ongedaan worden gemaakt.</p>
+            </div>
+        </c-layout-row>
+    </c-card>
+</c-layout-flow>

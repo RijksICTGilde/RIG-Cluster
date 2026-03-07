@@ -138,6 +138,29 @@ def _require_project_edit_access(request: Request, project_name: str):
     return project, user_email
 
 
+def _require_project_member_access(request: Request, project_name: str):
+    """Check auth for project member access (any role). Returns (project, user_email)."""
+    from opi.services.project_service import get_project_service
+
+    user = get_current_user(request)
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
+
+    user_email = user.get("email", "").lower()
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    return project, user_email
+
+
+def _is_backup_restore_flow(flow_id: str) -> bool:
+    """Check if a flow ID is a backup or restore flow."""
+    return flow_id in ("modal-backup", "modal-restore")
+
+
 def _flow_context_from_state(state, flow_id: str) -> dict[str, Any]:
     """Extract flow builder context from wizard state.
 
@@ -178,10 +201,13 @@ def _pad_sparse_submission(body: dict[str, Any], flow_id: str) -> dict[str, Any]
 
 
 def _determine_flow_action(flow, active_sections) -> str:
-    """Return 'process_project' if any active section needs deployment, else 'save_only'."""
+    """Return the post-save action for the flow.
+
+    Returns 'process_project', 'trigger_backup', 'trigger_restore', or 'save_only'.
+    """
     for section in active_sections:
-        if section.post_save_action == "process_project":
-            return "process_project"
+        if section.post_save_action in ("process_project", "trigger_backup", "trigger_restore"):
+            return section.post_save_action
     return "save_only"
 
 
@@ -308,7 +334,11 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize modal wizard and return the first step HTML."""
-    project, _user_email = _require_project_edit_access(request, project_name)
+    # Backup/restore flows only require project membership, not admin/owner
+    if _is_backup_restore_flow(flow_id):
+        project, _user_email = _require_project_member_access(request, project_name)
+    else:
+        project, _user_email = _require_project_edit_access(request, project_name)
 
     project_data = project.data or {}
 
@@ -359,6 +389,10 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         components = project_data.get("components", [])
         state.template_data = {"components": components}
 
+    # Inject backup/restore context into template_data for wizard partials
+    if _is_backup_restore_flow(flow_id):
+        state.template_data = await _build_backup_restore_context_async(flow_id, project_name, project_data)
+
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
         if step_data.get(section_id):
@@ -401,7 +435,10 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate step data and advance to next step, or complete the flow."""
-    _require_project_edit_access(request, project_name)
+    if _is_backup_restore_flow(flow_id):
+        _require_project_member_access(request, project_name)
+    else:
+        _require_project_edit_access(request, project_name)
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -430,7 +467,10 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         processor = EditableFormProcessor()
         padded_body = _pad_sparse_submission(body, flow_id)
         merged, _err = await processor.process_json_submission(
-            padded_body, section.editables, yaml_data, edit_mode=True,
+            padded_body,
+            section.editables,
+            yaml_data,
+            edit_mode=True,
         )
 
         items = smart_get_value(merged, seq_path) if seq_path else []
@@ -475,29 +515,36 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             )
             return HTMLResponse(content=rendered)
 
-    # Validate
-    processor = EditableFormProcessor()
-    yaml_data = state.get_merged_data()
-    submitted_yaml, errors = await processor.process_json_submission(
-        submitted_data, section.editables, yaml_data, edit_mode=True
-    )
+    # Backup/restore sections have no editables — store raw form data directly
+    if _is_backup_restore_flow(flow_id) and not section.editables:
+        state.store_step_data(section_id, submitted_data)
+        state.mark_completed(section_id)
+    else:
+        # Validate
+        processor = EditableFormProcessor()
+        yaml_data = state.get_merged_data()
+        submitted_yaml, errors = await processor.process_json_submission(
+            submitted_data, section.editables, yaml_data, edit_mode=True
+        )
 
-    # Auto-add service dependencies
-    if section_id == "services-edit" and isinstance(submitted_yaml.get("services"), list):
-        from opi.services.services import ServiceAdapter
+        # Auto-add service dependencies
+        if section_id == "services-edit" and isinstance(submitted_yaml.get("services"), list):
+            from opi.services.services import ServiceAdapter
 
-        submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
+            submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
 
-    if errors:
-        step_html = _render_section_html(section, submitted_yaml, errors=errors, locked_services=state.locked_services)
-        rendered = _render_modal_step(request, flow_id, section, step_html, project_name, errors=errors)
-        return HTMLResponse(content=rendered)
+        if errors:
+            step_html = _render_section_html(
+                section, submitted_yaml, errors=errors, locked_services=state.locked_services
+            )
+            rendered = _render_modal_step(request, flow_id, section, step_html, project_name, errors=errors)
+            return HTMLResponse(content=rendered)
 
-    # Store step data
-    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
-    section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
-    state.store_step_data(section_id, section_data)
-    state.mark_completed(section_id)
+        # Store step data
+        section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
+        section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
+        state.store_step_data(section_id, section_data)
+        state.mark_completed(section_id)
 
     # Re-render only (preview update) — stay on the same step
     if is_rerender:
@@ -546,7 +593,10 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 @requires_sso
 async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """'Later configureren' — save accumulated data and trigger deployment."""
-    _require_project_edit_access(request, project_name)
+    if _is_backup_restore_flow(flow_id):
+        _require_project_member_access(request, project_name)
+    else:
+        _require_project_edit_access(request, project_name)
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -559,7 +609,10 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
 @requires_sso
 async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Confirm after review — execute the final submit."""
-    _require_project_edit_access(request, project_name)
+    if _is_backup_restore_flow(flow_id):
+        _require_project_member_access(request, project_name)
+    else:
+        _require_project_edit_access(request, project_name)
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -627,6 +680,14 @@ async def _modal_do_submit(
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     active_sections = resolve_active_sections(flow, state.step_data)
 
+    # Determine post-save action
+    action = _determine_flow_action(flow, active_sections)
+    templates = get_templates()
+
+    # Backup/restore flows skip project file modification
+    if action in ("trigger_backup", "trigger_restore"):
+        return await _handle_backup_restore_submit(request, project_name, flow_id, action, state, templates)
+
     # Merge all step data
     merged_data = state.get_merged_data()
 
@@ -643,10 +704,6 @@ async def _modal_do_submit(
     save_project_file(project.filename, existing_data)
     project_service.load_project_from_data(existing_data, project.filename)
     logger.info("Project %s updated via modal wizard (flow=%s)", project_name, flow_id)
-
-    # Determine post-save action
-    action = _determine_flow_action(flow, active_sections)
-    templates = get_templates()
 
     if action == "process_project":
         task_id, bg_task = _start_deployment(project_name, existing_data)
@@ -674,6 +731,210 @@ async def _modal_do_submit(
     response = HTMLResponse(content=rendered)
     response.background = BackgroundTask(_commit_to_git, project_name, existing_data, flow_id)
     return response
+
+
+async def _handle_backup_restore_submit(
+    request: Request,
+    project_name: str,
+    flow_id: str,
+    action: str,
+    state,
+    templates,
+) -> HTMLResponse:
+    """Handle backup/restore wizard submission — no project file changes."""
+    from opi.core.backup_tasks import run_backup_task, run_restore_task
+    from opi.core.task_manager import create_task
+
+    merged_data = state.get_merged_data()
+    task_id = create_task(project_name)
+
+    if action == "trigger_backup":
+        deployment_name = merged_data.get("deployment_name", "")
+        resource_types = merged_data.get("resource_types", ["pvc", "database", "minio"])
+        if isinstance(resource_types, str):
+            resource_types = [resource_types]
+
+        logger.info(
+            "Starting backup for %s/%s (task=%s, types=%s)",
+            project_name,
+            deployment_name,
+            task_id,
+            resource_types,
+        )
+        bg_task = BackgroundTask(
+            run_backup_task,
+            task_id,
+            project_name,
+            deployment_name,
+            resource_types,
+        )
+
+    else:  # trigger_restore
+        backup_run_id = merged_data.get("backup_run_id", "")
+        target_deployment = merged_data.get("target_deployment", "")
+
+        # Get backup items for the selected run from template_data
+        backup_items = []
+        if state.template_data:
+            for run in state.template_data.get("_backup_runs", []):
+                if run.get("backup_run_id") == backup_run_id:
+                    backup_items = run.get("items", [])
+                    # If no explicit target, use the source deployment
+                    if not target_deployment:
+                        target_deployment = run.get("deployment_name", "")
+                    break
+
+        logger.info(
+            "Starting restore for %s/%s from run %s (task=%s, items=%d)",
+            project_name,
+            target_deployment,
+            backup_run_id,
+            task_id,
+            len(backup_items),
+        )
+        bg_task = BackgroundTask(
+            run_restore_task,
+            task_id,
+            project_name,
+            backup_run_id,
+            target_deployment,
+            backup_items,
+        )
+
+    rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
+        {"task_id": task_id, "project_name": project_name}
+    )
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    clear_modal_wizard_state(request)
+    response = HTMLResponse(content=rendered)
+    response.background = bg_task
+    return response
+
+
+async def _build_backup_restore_context_async(
+    flow_id: str,
+    project_name: str,
+    project_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Build template context for backup/restore wizard partials.
+
+    Populates _cluster_deployments with deployment info and resource types,
+    and _backup_runs with grouped backup data for restore flows.
+    """
+    from opi.core.cluster_config import get_prefixed_namespace
+    from opi.core.config import settings
+    from opi.handlers.project_file_handler import create_project_file_handler
+    from opi.services import ServiceType
+
+    current_cluster = settings.CLUSTER_MANAGER
+    project_file_handler = create_project_file_handler()
+    context: dict[str, Any] = {"_current_cluster": current_cluster}
+
+    # Build cluster deployments with available resource types
+    deployments = project_data.get("deployments", [])
+    cluster_deployments: list[dict[str, Any]] = []
+    for dep in deployments:
+        dep_name = dep.get("name", "")
+        dep_cluster = dep.get("cluster", "")
+        if dep_cluster != current_cluster:
+            continue
+
+        raw_ns = project_file_handler.extract_deployment_namespace(project_data, dep_name)
+        k8s_ns = get_prefixed_namespace(dep_cluster, raw_ns) if raw_ns else ""
+
+        resource_types: list[str] = []
+        resource_types.append("pvc")  # PVCs are always potentially available
+
+        db_types = [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
+        if project_file_handler.deployment_uses_service(project_data, dep_name, db_types):
+            resource_types.append("database")
+
+        minio_types = [ServiceType.MINIO_STORAGE.value]
+        if project_file_handler.deployment_uses_service(project_data, dep_name, minio_types):
+            resource_types.append("minio")
+
+        cluster_deployments.append(
+            {
+                "name": dep_name,
+                "namespace": k8s_ns,
+                "resource_types": resource_types,
+            }
+        )
+
+    context["_cluster_deployments"] = cluster_deployments
+
+    # For restore flows, also gather backup runs
+    if flow_id == "modal-restore":
+        context["_backup_runs"] = await _gather_backup_runs_async(project_name, project_data, current_cluster)
+
+    return context
+
+
+async def _gather_backup_runs_async(
+    project_name: str,
+    project_data: dict[str, Any],
+    current_cluster: str,
+) -> list[dict[str, Any]]:
+    """Gather backup runs grouped by backup_run_id for the restore wizard (async)."""
+    from opi.core.cluster_config import get_prefixed_namespace
+    from opi.manager.backup import BackupManager
+
+    backup_runs_map: dict[str, dict[str, Any]] = {}
+    try:
+        backup_manager = BackupManager()
+        deployments = project_data.get("deployments", [])
+
+        for dep in deployments:
+            dep_name = dep.get("name", "")
+            dep_cluster = dep.get("cluster", "")
+            base_ns = dep.get("namespace", "")
+
+            if dep_cluster != current_cluster or not dep_name or not base_ns:
+                continue
+
+            k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
+            try:
+                snapshots = await backup_manager.list_snapshots(dep_cluster, k8s_ns, project_name=project_name)
+                dep_snapshots = [s for s in snapshots if s.deployment_name == dep_name]
+
+                for s in dep_snapshots:
+                    run_id = s.backup_run_id or s.snapshot_id
+                    if run_id not in backup_runs_map:
+                        backup_runs_map[run_id] = {
+                            "backup_run_id": run_id,
+                            "timestamp": s.timestamp,
+                            "deployment_name": dep_name,
+                            "resource_count": 0,
+                            "resource_types": [],
+                            "items": [],
+                        }
+                    run = backup_runs_map[run_id]
+                    run["resource_count"] += 1
+                    rt = s.resource_type or "pvc"
+                    if rt not in run["resource_types"]:
+                        run["resource_types"].append(rt)
+                    run["items"].append(
+                        {
+                            "snapshot_id": s.snapshot_id,
+                            "resource_type": rt,
+                            "component_name": s.component_name,
+                            "storage_name": s.storage_name,
+                            "reference_name": s.storage_name or s.pvc_name,
+                            "generation": s.generation,
+                        }
+                    )
+            except Exception as e:
+                logger.warning("Failed to fetch backups for deployment %s: %s", dep_name, e)
+
+    except Exception:
+        logger.warning("Failed to gather backup runs for %s", project_name)
+
+    # Sort by timestamp descending
+    backup_runs = sorted(backup_runs_map.values(), key=lambda r: r.get("timestamp", ""), reverse=True)
+    return backup_runs
 
 
 def _get_section_from_flow(flow, section_id: str):
