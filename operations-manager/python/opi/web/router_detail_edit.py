@@ -621,6 +621,33 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
     return await _modal_do_submit(request, project_name, flow_id)
 
 
+@detail_edit_router.get(
+    "/{project_name}/modal-wizard/modal-backup/select-deployment",
+    response_class=HTMLResponse,
+)
+@requires_sso
+async def backup_select_deployment(request: Request, project_name: str) -> HTMLResponse:
+    """HTMX endpoint: re-render the backup step partial when deployment changes."""
+    _require_project_member_access(request, project_name)
+
+    state = get_modal_wizard_state(request)
+    if not state or state.flow_id != "modal-backup":
+        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+
+    selected = request.query_params.get("deployment_name", "")
+    if state.template_data:
+        state.template_data["_selected_deployment"] = selected
+        save_modal_wizard_state(request, state)
+
+    flow = get_flow("modal-backup")
+    section = _get_section_from_flow(flow, "backup-select")
+    yaml_data = state.get_merged_data()
+    step_html = _render_section_html(section, yaml_data, locked_services=state.locked_services)
+
+    rendered = _render_modal_step(request, "modal-backup", section, step_html, project_name)
+    return HTMLResponse(content=rendered)
+
+
 def _render_modal_review(
     request: Request,
     project_name: str,
@@ -831,7 +858,7 @@ async def _build_backup_restore_context_async(
 
     current_cluster = settings.CLUSTER_MANAGER
     project_file_handler = create_project_file_handler()
-    context: dict[str, Any] = {"_current_cluster": current_cluster}
+    context: dict[str, Any] = {"_current_cluster": current_cluster, "_project_name": project_name}
 
     # Build cluster deployments with available resource types
     deployments = project_data.get("deployments", [])
@@ -846,7 +873,10 @@ async def _build_backup_restore_context_async(
         k8s_ns = get_prefixed_namespace(dep_cluster, raw_ns) if raw_ns else ""
 
         resource_types: list[str] = []
-        resource_types.append("pvc")  # PVCs are always potentially available
+
+        pvc_types = [ServiceType.PERSISTENT_STORAGE.value]
+        if project_file_handler.deployment_uses_service(project_data, dep_name, pvc_types):
+            resource_types.append("pvc")
 
         db_types = [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
         if project_file_handler.deployment_uses_service(project_data, dep_name, db_types):
@@ -855,6 +885,10 @@ async def _build_backup_restore_context_async(
         minio_types = [ServiceType.MINIO_STORAGE.value]
         if project_file_handler.deployment_uses_service(project_data, dep_name, minio_types):
             resource_types.append("minio")
+
+        # Only include deployments that have backupable resources
+        if not resource_types:
+            continue
 
         cluster_deployments.append(
             {

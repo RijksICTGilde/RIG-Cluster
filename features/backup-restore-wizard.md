@@ -16,8 +16,8 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 ### Backup Flow
 
 1. User clicks "Backup aanmaken"
-2. Wizard shows deployments on the current cluster with available resource types
-3. User selects a deployment and resource types (PVC, Database, MinIO — all checked by default)
+2. Wizard shows a dropdown of deployments on the current cluster that have backupable resources (PVC, Database, or MinIO). Deployments without any backupable resources are excluded.
+3. User selects a deployment from the dropdown; the resource type checkboxes update dynamically via HTMX to show only the types available for that deployment (all checked by default)
 4. Review page shows confirmation summary
 5. On confirm, a background task runs the backup with progress tracking
 
@@ -48,6 +48,8 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 - **Template context via yaml_data**: `TemplatePartial` rendering was extended to pass `yaml_data` as template context, enabling dynamic data (deployments, backup runs) in wizard partials
 - **Custom post_save_action**: New action types `trigger_backup` and `trigger_restore` are handled in `_modal_do_submit()`, which creates background tasks instead of saving project files
 - **Async context building**: Backup run data is gathered asynchronously during wizard initialization
+- **HTMX deployment selection**: Changing the deployment dropdown triggers an HTMX GET to re-render the wizard step with updated resource type checkboxes for the selected deployment
+- **Backupable resource filtering**: Only deployments that actually use persistent storage, databases, or MinIO storage are shown; the resource type checkboxes only list types used by the selected deployment
 
 ### Data Flow
 

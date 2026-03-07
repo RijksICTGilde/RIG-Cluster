@@ -4,44 +4,53 @@
   Expected context (via yaml_data):
     - _cluster_deployments: list of dicts with keys: name, namespace, resource_types (list of str)
     - _current_cluster: str
+    - _project_name: str
+    - _selected_deployment: str (optional, set by HTMX on dropdown change)
 #}
 {% set deployments = _cluster_deployments | default([]) %}
+{% set selected = _selected_deployment | default(deployments[0].name if deployments else '') %}
+{% set ns = namespace(active_dep=none) %}
+{% for dep in deployments %}
+    {% if dep.name == selected %}
+        {% set ns.active_dep = dep %}
+    {% endif %}
+{% endfor %}
+{% if not ns.active_dep and deployments %}
+    {% set ns.active_dep = deployments[0] %}
+    {% set selected = ns.active_dep.name %}
+{% endif %}
 
 {% if deployments %}
 <c-layout-flow gap="lg">
-    <fieldset>
-        <legend class="rvo-form-field__label"><strong>Deployment</strong></legend>
+    <div class="rvo-form-field">
+        <label class="rvo-form-field__label" for="deployment_name"><strong>Deployment</strong></label>
         <p class="rvo-text--sm rvo-text--subtle" style="margin-bottom: 8px;">
             Selecteer de deployment waarvoor u een backup wilt aanmaken.
         </p>
-        {% for dep in deployments %}
-        <label class="rvo-radio-option" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; margin-bottom: 8px; cursor: pointer;">
-            <input type="radio" name="deployment_name" value="{{ dep.name }}"
-                   {% if loop.first %}checked{% endif %}
-                   style="margin: 0;" />
-            <div>
-                <strong>{{ dep.name }}</strong>
-                <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 4px;">{{ dep.namespace }}</span>
-                <div style="margin-top: 4px; display: flex; gap: 6px;">
-                    {% for rt in dep.resource_types %}
-                    <span style="display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 500;
-                        {% if rt == 'pvc' %}background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw);
-                        {% elif rt == 'database' %}background: var(--rvo-color-grasgroen-200); color: var(--rvo-color-grasgroen-800);
-                        {% elif rt == 'minio' %}background: var(--rvo-color-oranje-200); color: var(--rvo-color-oranje-800);
-                        {% endif %}">{{ rt | upper }}</span>
-                    {% endfor %}
-                </div>
-            </div>
-        </label>
-        {% endfor %}
-    </fieldset>
+        <select
+            id="deployment_name"
+            name="deployment_name"
+            class="rvo-select"
+            hx-get="/projects/{{ _project_name }}/modal-wizard/modal-backup/select-deployment"
+            hx-target="#edit-section-inner"
+            hx-include="[name='deployment_name']"
+            style="width: 100%; padding: 8px 12px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; font-size: 0.95rem;"
+        >
+            {% for dep in deployments %}
+            <option value="{{ dep.name }}" {% if dep.name == selected %}selected{% endif %}>
+                {{ dep.name }} ({{ dep.namespace }})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
 
+    {% if ns.active_dep %}
     <fieldset>
         <legend class="rvo-form-field__label"><strong>Resource types</strong></legend>
         <p class="rvo-text--sm rvo-text--subtle" style="margin-bottom: 8px;">
             Selecteer welke resource types u wilt back-uppen. Standaard worden alle beschikbare types geselecteerd.
         </p>
-        {% for rt in ['pvc', 'database', 'minio'] %}
+        {% for rt in ns.active_dep.resource_types %}
         <label style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer;">
             <input type="checkbox" name="resource_types" value="{{ rt }}" checked
                    style="margin: 0;" />
@@ -58,12 +67,13 @@
         </label>
         {% endfor %}
     </fieldset>
+    {% endif %}
 </c-layout-flow>
 {% else %}
 <c-card padding="md" outline="true" backgroundColor="grijs-050">
     <c-layout-row gap="md" verticalSpacing="center">
         <c-icon icon="info" size="md" color="grijs-500" />
-        <p>Geen deployments gevonden op het huidige cluster.</p>
+        <p>Geen deployments met backup-mogelijkheden gevonden op het huidige cluster. Alleen deployments met persistent storage, databases of MinIO storage kunnen worden geback-upt.</p>
     </c-layout-row>
 </c-card>
 {% endif %}
