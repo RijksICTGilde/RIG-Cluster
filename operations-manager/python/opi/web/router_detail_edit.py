@@ -838,8 +838,13 @@ async def _handle_backup_restore_submit(
         source_deployment = ""
         create_new_deployment = restore_mode == RestoreMode.NEW.value
 
+        # Extract deployment config from editables (new deployment step)
+        deployment_config: dict[str, Any] | None = None
         if create_new_deployment:
-            target_deployment = merged_data.get("new_deployment_name", "")
+            deployments = merged_data.get("deployments", [])
+            if deployments:
+                deployment_config = deployments[0]
+            target_deployment = deployment_config.get("name", "") if deployment_config else ""
         else:
             target_deployment = merged_data.get("target_deployment", "")
 
@@ -873,6 +878,7 @@ async def _handle_backup_restore_submit(
             backup_items,
             create_new_deployment=create_new_deployment,
             source_deployment=source_deployment,
+            deployment_config=deployment_config,
         )
 
     rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(

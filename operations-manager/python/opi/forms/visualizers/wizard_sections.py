@@ -21,10 +21,16 @@ from opi.forms.visualizers.display_blocks import compute_url_preview as _compute
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import (
+    DEPLOYMENT_BASE_DOMAIN,
+    DEPLOYMENT_CLONE_FROM,
     DEPLOYMENT_COMP_IMAGE,
     DEPLOYMENT_COMP_REFERENCE,
     DEPLOYMENT_COMP_USER_ENV_VARS,
     DEPLOYMENT_COMPONENTS_SEQ,
+    DEPLOYMENT_CUSTOM_BASE_DOMAIN,
+    DEPLOYMENT_DOMAIN_FORMAT,
+    DEPLOYMENT_NAME,
+    DEPLOYMENT_SUBDOMAIN,
     DEPLOYMENTS_SEQUENCE,
 )
 from opi.forms.visualizers.fields.domains import (
@@ -537,8 +543,7 @@ def _restore_target_summary(data: dict[str, Any]) -> str:
 
     restore_mode = data.get("restore_mode", RestoreMode.EXISTING.value)
     if restore_mode == RestoreMode.NEW.value:
-        target = data.get("new_deployment_name", "-")
-        return f"<p><strong>Nieuwe deployment:</strong> {target}</p>"
+        return "<p><strong>Modus:</strong> Nieuwe deployment</p>"
     target = data.get("target_deployment", "-")
     return f"<p><strong>Doel deployment:</strong> {target}</p>"
 
@@ -574,6 +579,55 @@ RESTORE_TARGET_SECTION = FormSection(
     post_save_action="trigger_restore",
     summary_fn=_restore_target_summary,
 )
+
+
+def _restore_new_deployment_summary(data: dict[str, Any]) -> str:
+    """Build review summary for new deployment configuration."""
+    deployments = data.get("deployments", [])
+    name = deployments[0].get("name", "-") if deployments else "-"
+    return f"<p><strong>Deployment:</strong> {name}</p>"
+
+
+def _build_restore_new_deployment_section() -> FormSection:
+    """Build the restore new deployment section with materialized editables.
+
+    Materializes deployment[*] visualizers to deployment[0] so the form
+    reads/writes a single deployment entry.
+    """
+    from opi.forms.editables.reindex import materialize_wildcard_visualizer
+
+    editables = [
+        materialize_wildcard_visualizer(vis, 0)
+        for vis in [
+            DEPLOYMENT_NAME,
+            DEPLOYMENT_CLONE_FROM,
+            DEPLOYMENT_SUBDOMAIN,
+            DEPLOYMENT_BASE_DOMAIN,
+            DEPLOYMENT_CUSTOM_BASE_DOMAIN,
+            DEPLOYMENT_DOMAIN_FORMAT,
+        ]
+    ]
+
+    return FormSection(
+        section_id="restore-new-deployment",
+        title="Deployment configuratie",
+        icon="server",
+        description="Configureer de nieuwe deployment",
+        visible=lambda data: data.get("restore_mode") == "new",
+        editables=editables,
+        layout=[
+            "deployments[0]/name",
+            "deployments[0]/clone-from",
+            "deployments[0]/subdomain",
+            "deployments[0]/base-domain",
+            "deployments[0]/base-domain:custom",
+            "deployments[0]/domain-format",
+        ],
+        summary_fn=_restore_new_deployment_summary,
+    )
+
+
+RESTORE_NEW_DEPLOYMENT_SECTION = _build_restore_new_deployment_section()
 
 
 ALL_SECTIONS: list[FormSection] = [

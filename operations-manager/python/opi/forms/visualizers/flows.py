@@ -28,6 +28,7 @@ from opi.forms.visualizers.wizard_sections import (
     IDENTITY_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
+    RESTORE_NEW_DEPLOYMENT_SECTION,
     RESTORE_SELECT_SECTION,
     RESTORE_TARGET_SECTION,
     SERVICES_EDIT_SECTION,
@@ -184,7 +185,7 @@ MODAL_RESTORE_FLOW = FormFlow(
     title="Backup herstellen",
     mode=FlowMode.WIZARD,
     show_review=True,
-    sections=[RESTORE_SELECT_SECTION, RESTORE_TARGET_SECTION],
+    sections=[RESTORE_SELECT_SECTION, RESTORE_TARGET_SECTION, RESTORE_NEW_DEPLOYMENT_SECTION],
 )
 
 FLOW_REGISTRY: dict[str, FormFlow] = {
