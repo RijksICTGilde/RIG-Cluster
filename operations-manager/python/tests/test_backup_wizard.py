@@ -168,6 +168,131 @@ class TestExtractServiceNamesFromComponent:
         result = extract_service_names_from_component(component)
         assert result == []
 
+    def test_dict_with_none_value_skipped(self) -> None:
+        """Empty placeholder entries like {"persistent-storage": null} are skipped."""
+        component = {
+            "name": "app",
+            "services": [
+                {"persistent-storage": None},
+                "publish-on-web",
+            ],
+        }
+        result = extract_service_names_from_component(component)
+        assert "persistent-storage" not in result
+        assert "publish-on-web" in result
+
+    def test_dict_with_empty_dict_value_skipped(self) -> None:
+        component = {
+            "name": "app",
+            "services": [{"persistent-storage": {}}, "keycloak"],
+        }
+        result = extract_service_names_from_component(component)
+        assert "persistent-storage" not in result
+        assert "keycloak" in result
+
+    def test_dict_with_empty_list_value_skipped(self) -> None:
+        component = {
+            "name": "app",
+            "services": [{"persistent-storage": []}, "keycloak"],
+        }
+        result = extract_service_names_from_component(component)
+        assert "persistent-storage" not in result
+
+    def test_dict_with_config_kept(self) -> None:
+        """Dict entries with actual config are kept."""
+        component = {
+            "name": "app",
+            "services": [
+                {"persistent-storage": {"config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]}},
+            ],
+        }
+        result = extract_service_names_from_component(component)
+        assert "persistent-storage" in result
+
+    def test_mixed_empty_and_configured(self) -> None:
+        """Only configured services are extracted."""
+        component = {
+            "name": "app",
+            "services": [
+                {"persistent-storage": None},
+                {"temp-storage": None},
+                {"minio-storage": {"config": {"bucket": "test"}}},
+                "publish-on-web",
+            ],
+        }
+        result = extract_service_names_from_component(component)
+        assert "persistent-storage" not in result
+        assert "temp-storage" not in result
+        assert "minio-storage" in result
+        assert "publish-on-web" in result
+
+
+# ---------------------------------------------------------------------------
+# _cleanup_empty_component_services tests
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupEmptyComponentServices:
+    """Tests for _cleanup_empty_component_services in wizard submission."""
+
+    def _cleanup(self, yaml_data: dict) -> dict:
+        from opi.web.router_wizard import _cleanup_empty_component_services
+
+        _cleanup_empty_component_services(yaml_data)
+        return yaml_data
+
+    def test_removes_none_value_entries(self) -> None:
+        data = {
+            "components": [
+                {
+                    "name": "app",
+                    "services": [
+                        {"persistent-storage": None},
+                        "publish-on-web",
+                    ],
+                }
+            ]
+        }
+        self._cleanup(data)
+        assert data["components"][0]["services"] == ["publish-on-web"]
+
+    def test_removes_empty_dict_entries(self) -> None:
+        data = {
+            "components": [
+                {
+                    "name": "app",
+                    "services": [{"temp-storage": {}}, "keycloak"],
+                }
+            ]
+        }
+        self._cleanup(data)
+        assert data["components"][0]["services"] == ["keycloak"]
+
+    def test_keeps_configured_entries(self) -> None:
+        data = {
+            "components": [
+                {
+                    "name": "app",
+                    "services": [
+                        {"persistent-storage": {"config": [{"name": "data"}]}},
+                        "publish-on-web",
+                    ],
+                }
+            ]
+        }
+        self._cleanup(data)
+        services = data["components"][0]["services"]
+        assert len(services) == 2
+        assert any(isinstance(s, dict) and "persistent-storage" in s for s in services)
+
+    def test_no_components_key(self) -> None:
+        data = {"name": "test"}
+        self._cleanup(data)  # should not raise
+
+    def test_no_services_key(self) -> None:
+        data = {"components": [{"name": "app"}]}
+        self._cleanup(data)  # should not raise
+
 
 # ---------------------------------------------------------------------------
 # deployment_uses_service integration tests

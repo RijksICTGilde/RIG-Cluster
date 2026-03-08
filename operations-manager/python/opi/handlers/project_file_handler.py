@@ -2580,13 +2580,16 @@ def extract_service_names_from_component(component: dict[str, Any]) -> list[str]
     and v1 format (``uses-services`` key with plain string entries).
     When both keys exist, results are merged and deduplicated.
 
+    Dict entries with ``None`` or empty values (e.g. ``{"persistent-storage": null}``)
+    are skipped — these are unconfigured placeholders left by the form system.
+
     Args:
         component: A component dict from project data
 
     Returns:
         List of service name strings
     """
-    v2_services = component.get("services", [])
+    v2_services = _filter_empty_service_entries(component.get("services", []))
     v1_services = component.get("uses-services", [])
 
     names = ServiceAdapter.extract_service_names_from_project_services(v2_services)
@@ -2599,6 +2602,28 @@ def extract_service_names_from_component(component: dict[str, Any]) -> list[str]
                 existing.add(svc)
 
     return names
+
+
+def _filter_empty_service_entries(services: list[str | dict]) -> list[str | dict]:
+    """Filter out dict service entries with None or empty values.
+
+    The form system can leave behind entries like ``{"persistent-storage": None}``
+    when a service was selected but not configured. These should not be treated
+    as active services.
+
+    String entries are always kept. Dict entries are kept only when their
+    value is not None and not an empty dict/list.
+    """
+    result: list[str | dict] = []
+    for entry in services:
+        if isinstance(entry, str):
+            result.append(entry)
+        elif isinstance(entry, dict):
+            for value in entry.values():
+                if value is not None and value != {} and value != []:
+                    result.append(entry)
+                break  # single-key dicts
+    return result
 
 
 def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:

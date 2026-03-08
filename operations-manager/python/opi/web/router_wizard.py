@@ -997,6 +997,28 @@ async def _handle_sequence_action(
     return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
 
+def _cleanup_empty_component_services(yaml_data: dict[str, Any]) -> None:
+    """Remove empty service dict entries from component services lists.
+
+    After ``clear_hidden_depends_on`` runs, storage services whose config
+    was cleared end up as ``{"persistent-storage": None}`` in the services
+    list.  These empty entries should be removed so they don't appear in
+    the project file as unconfigured placeholders.
+    """
+    for comp in yaml_data.get("components", []):
+        if not isinstance(comp, dict):
+            continue
+        services = comp.get("services")
+        if not isinstance(services, list):
+            continue
+        comp["services"] = [
+            entry
+            for entry in services
+            if isinstance(entry, str)
+            or (isinstance(entry, dict) and any(v is not None and v != {} and v != [] for v in entry.values()))
+        ]
+
+
 def _normalize_component_paths(final_data: dict[str, Any]) -> None:
     """Merge ``rewrite-path`` into ``path`` for each component.
 
@@ -1607,6 +1629,10 @@ async def _do_submit(
     # Strip values for fields hidden by depends_on/show_when (e.g. subdomain
     # when the selected domain-format doesn't use it)
     processor.clear_hidden_depends_on(all_editables, yaml_data)
+
+    # Remove empty storage service entries left by clear_hidden_depends_on
+    # (e.g. {"persistent-storage": null} when no storage was configured)
+    _cleanup_empty_component_services(yaml_data)
 
     flat = _flatten_yaml_for_validation(all_editables, yaml_data)
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
