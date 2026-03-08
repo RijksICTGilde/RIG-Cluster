@@ -28,9 +28,10 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 3. User selects a backup run
 4. User selects restore mode: **existing deployment** or **new deployment**
    - **Existing**: Select an existing deployment as restore target
-   - **New**: Enter a name; a new deployment is created by copying structure (components, services, cluster) from the source deployment. The `clone-from` type is set to `"backup"` so infrastructure managers create empty resources instead of live-cloning data
-5. Review page shows confirmation with warning about data overwrite
-6. On confirm, a background task runs:
+   - **New**: An info card explains the next step will configure the deployment
+5. *(Only for new deployment mode)* User configures the new deployment using standard editables: name, clone-from, subdomain, base-domain, custom base domain, and domain format. Components and services are copied from the source deployment.
+6. Review page shows confirmation with warning about data overwrite
+7. On confirm, a background task runs:
    - For **new deployment**: creates the deployment in the project file, pre-creates PVCs with backup data, provisions infrastructure via `process_project_from_git` (ArgoCD adopts existing PVCs), then restores non-PVC resources (database, MinIO)
    - For **existing deployment**: restores each resource with versioning and progress tracking
 
@@ -43,7 +44,8 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 | `opi/core/backup_tasks.py` | Background task wrappers (`run_backup_task`, `run_restore_task`) with `TaskProgressManager` |
 | `opi/templates/wizard/partials/backup_select_deployment.html.j2` | Deployment + resource type selection |
 | `opi/templates/wizard/partials/restore_select_backup.html.j2` | Backup run selection |
-| `opi/templates/wizard/partials/restore_select_target.html.j2` | Target deployment selection |
+| `opi/templates/wizard/partials/restore_select_target.html.j2` | Target deployment selection (mode toggle) |
+| `opi/forms/visualizers/wizard_sections.py` (`RESTORE_NEW_DEPLOYMENT_SECTION`) | New deployment config editables (step 3, conditional) |
 
 ### Key Design Decisions
 
