@@ -1,6 +1,10 @@
 """
 E2E test fixtures: app server, session signing, authenticated browser context.
 
+Supports two modes:
+- Local: starts FastAPI on a free port with mocked startup (default)
+- Sandbox: connects to a running sandbox cluster via E2E_BASE_URL env var
+
 The app starts with a known SECRET_KEY. We pre-sign a session cookie containing
 a test user, injecting it into the Playwright browser context. No production
 code changes needed.
@@ -8,9 +12,11 @@ code changes needed.
 
 import base64
 import json
+import os
 import socket
 import threading
 from collections.abc import Generator
+from urllib.parse import urlparse
 
 import pytest
 import uvicorn
@@ -19,10 +25,20 @@ from playwright.sync_api import BrowserContext, Page
 
 SECRET_KEY = "e2e-test-secret-key"
 
+# Sandbox config — override via environment variables
+E2E_BASE_URL = os.environ.get("E2E_BASE_URL", "")
+E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", "default-secret-key-for-development-change-in-production")
+
 TEST_USER = {
     "sub": "e2e-user",
     "email": "test@example.com",
     "name": "E2E Test User",
+}
+
+SANDBOX_TEST_USER = {
+    "sub": "sandbox-e2e-user",
+    "email": "admin@sandbox.rijksapp.dev",
+    "name": "Sandbox E2E User",
 }
 
 
@@ -100,8 +116,6 @@ def app_server() -> Generator[str]:
 @pytest.fixture
 def authenticated_context(app_server: str, browser: "BrowserContext") -> Generator[BrowserContext]:
     """Browser context with a pre-signed session cookie containing a test user."""
-    from urllib.parse import urlparse
-
     parsed = urlparse(app_server)
     context = browser.new_context()
     signed = _sign_session({"user": TEST_USER})
@@ -123,5 +137,44 @@ def authenticated_context(app_server: str, browser: "BrowserContext") -> Generat
 def auth_page(authenticated_context: BrowserContext) -> Generator[Page]:
     """New page from the authenticated browser context."""
     page = authenticated_context.new_page()
+    yield page
+    page.close()
+
+
+# --- Sandbox fixtures ---
+
+
+@pytest.fixture(scope="session")
+def sandbox_url() -> str:
+    """Base URL for sandbox cluster. Requires E2E_BASE_URL env var."""
+    if not E2E_BASE_URL:
+        pytest.skip("E2E_BASE_URL not set — sandbox tests require a running cluster")
+    return E2E_BASE_URL
+
+
+@pytest.fixture(scope="session")
+def sandbox_context(browser: "BrowserContext", sandbox_url: str) -> Generator[BrowserContext]:
+    """Authenticated browser context for sandbox cluster tests."""
+    context = browser.new_context(ignore_https_errors=True)
+    signed = _sign_session({"user": SANDBOX_TEST_USER}, secret=E2E_SECRET_KEY)
+    parsed = urlparse(sandbox_url)
+    context.add_cookies(
+        [
+            {
+                "name": "session",
+                "value": signed,
+                "domain": parsed.hostname or "localhost",
+                "path": "/",
+            }
+        ]
+    )
+    yield context
+    context.close()
+
+
+@pytest.fixture
+def sandbox_page(sandbox_context: BrowserContext) -> Generator[Page]:
+    """New page from the sandbox-authenticated browser context."""
+    page = sandbox_context.new_page()
     yield page
     page.close()

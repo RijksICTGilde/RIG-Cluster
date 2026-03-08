@@ -205,7 +205,8 @@ markers = [
    "slow: marks tests as slow",
    "enable_auth: marks tests that require authentication",
    "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)",
-   "e2e: marks end-to-end browser tests (require playwright and chromium)"
+   "e2e: marks end-to-end browser tests (require playwright and chromium)",
+   "sandbox: marks tests that require a running sandbox cluster"
 ]
 pythonpath = "."
 
