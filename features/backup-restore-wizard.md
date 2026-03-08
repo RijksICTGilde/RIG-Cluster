@@ -50,6 +50,8 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 - **Async context building**: Backup run data is gathered asynchronously during wizard initialization
 - **HTMX deployment selection**: Changing the deployment dropdown triggers an HTMX GET to re-render the wizard step with updated resource type checkboxes for the selected deployment
 - **Backupable service registry**: Services declare backup support via `backup_label` on their `ServiceDefinition`. The wizard dynamically discovers backupable services from `ServiceAdapter.get_backupable_labels()` — no hardcoded service type checks in the wizard code. Adding backup support for a new service type only requires setting `backup_label` on its definition.
+- **Empty service filtering**: Dict service entries with `None` or empty values (e.g. `{"persistent-storage": null}`) are skipped during backup detection — these are unconfigured placeholders left by the form system, not active services. The wizard submission also strips these entries to keep project files clean.
+- **v1/v2 compatibility**: Service detection works with both v2 (`services` key) and v1 (`uses-services` key) project file formats.
 
 ### Data Flow
 
