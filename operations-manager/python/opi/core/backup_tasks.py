@@ -499,7 +499,7 @@ async def _create_deployment_from_source(
     save_project_file(project.filename, project_data)
     project_service.load_project_from_data(project_data, project.filename)
 
-    git_connector = create_git_connector_for_project_files()
+    git_connector = await create_git_connector_for_project_files(project_name)
     yaml_instance = YAML()
     yaml_instance.preserve_quotes = True
     yaml_instance.width = 4096
@@ -839,7 +839,7 @@ async def _restore_single_resource(
             project_service.load_project_from_data(project.data, project.filename)
 
             # Commit to git
-            git_connector = create_git_connector_for_project_files()
+            git_connector = await create_git_connector_for_project_files(project_name)
             from io import StringIO
 
             from ruamel.yaml import YAML

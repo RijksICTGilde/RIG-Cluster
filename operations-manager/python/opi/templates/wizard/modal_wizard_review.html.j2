@@ -9,9 +9,9 @@
     - action_label: str (button text)
 #}
 
-{# Step indicator OOB swap (only for multi-step flows) #}
+{# Step indicator (only for multi-step flows) #}
 {% if steps.count > 1 %}
-<div id="modal-wizard-steps" hx-swap-oob="outerHTML">
+<div class="edit-step-indicator" id="modal-wizard-steps">
     {% include "wizard/wizard_steps_indicator.html.j2" %}
 </div>
 {% endif %}

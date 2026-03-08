@@ -80,10 +80,3 @@
         </div>
     </form>
 </div>
-
-{# OOB swap for step indicator (on HTMX step transitions) #}
-{% if steps.count > 1 %}
-<div id="modal-wizard-steps" hx-swap-oob="outerHTML">
-    {% include "wizard/wizard_steps_indicator.html.j2" %}
-</div>
-{% endif %}
