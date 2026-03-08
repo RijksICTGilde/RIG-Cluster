@@ -340,11 +340,14 @@ async def run_restore_task(
 
                 if all_success:
                     task_progress.complete_task(restore_task)
+                    task_progress.complete_project()
+                    logger.info("Restore task %s completed for %s/%s", task_id, project_name, target_deployment)
                 else:
                     task_progress.fail_task(restore_task, "Een of meer herstelbewerkingen zijn mislukt")
-
-            task_progress.complete_project()
-            logger.info("Restore task %s completed for %s/%s", task_id, project_name, target_deployment)
+                    task_progress.fail_project("Herstel gedeeltelijk mislukt")
+            else:
+                task_progress.complete_project()
+                logger.info("Restore task %s completed for %s/%s", task_id, project_name, target_deployment)
 
         else:
             # Existing deployment restore: restore all items normally
@@ -542,6 +545,7 @@ async def _pre_restore_pvcs(
         pvc_task_id: Parent task ID for subtask tracking
     """
     from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
+    from opi.core.config import settings
     from opi.handlers.project_file_handler import (
         create_project_file_handler,
         extract_storage_from_component_services,
@@ -567,6 +571,14 @@ async def _pre_restore_pvcs(
 
     if not raw_namespace or not deployment_cluster:
         msg = f"Namespace of cluster niet gevonden voor deployment '{target_deployment}'"
+        raise ValueError(msg)
+
+    current_cluster = settings.CLUSTER_MANAGER
+    if deployment_cluster != current_cluster:
+        msg = (
+            f"Deployment '{target_deployment}' is op cluster '{deployment_cluster}', "
+            f"maar deze operations-manager draait op '{current_cluster}'"
+        )
         raise ValueError(msg)
 
     app_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
