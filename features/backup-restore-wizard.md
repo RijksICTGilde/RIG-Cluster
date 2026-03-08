@@ -31,7 +31,7 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
    - **New**: Enter a name; a new deployment is created by copying structure (components, services, cluster) from the source deployment. The `clone-from` type is set to `"backup"` so infrastructure managers create empty resources instead of live-cloning data
 5. Review page shows confirmation with warning about data overwrite
 6. On confirm, a background task runs:
-   - For **new deployment**: creates the deployment in the project file, provisions infrastructure via `process_project_from_git`, then restores backup data
+   - For **new deployment**: creates the deployment in the project file, pre-creates PVCs with backup data, provisions infrastructure via `process_project_from_git` (ArgoCD adopts existing PVCs), then restores non-PVC resources (database, MinIO)
    - For **existing deployment**: restores each resource with versioning and progress tracking
 
 ## Architecture
@@ -72,6 +72,18 @@ Button click → openEditModal()
       → create_task() → BackgroundTask(run_backup/restore_task)
       → Return progress template with task_id for polling
 ```
+
+### PVC Pre-Restore for New Deployments
+
+When restoring to a new deployment, PVC backup data is pre-created **before** infrastructure provisioning. This avoids a window where the pod runs with empty storage:
+
+1. Deployment is created in the project file
+2. Namespace is created via `ProjectManager.check_and_create_namespaces()` (reusing existing method)
+3. PVCs are created and filled with backup data via `backup_manager.restore_to_project_pvc()`
+4. `process_project_from_git` runs — ArgoCD adopts the existing PVCs (the `Replace=false` sync-option on `pvc.yaml.jinja` prevents recreation)
+5. Non-PVC resources (database, MinIO) are restored after infrastructure is ready
+
+PVC naming for the new deployment uses generation 0 (no version suffix), while the source PVC name preserves the original generation for Kopia snapshot lookup.
 
 ### Clone-from Type "backup"
 

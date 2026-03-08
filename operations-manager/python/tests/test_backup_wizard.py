@@ -762,3 +762,118 @@ class TestRestoreTargetTemplate:
         assert "hx-get" in html
         assert "select-restore-mode" in html
         assert "my-project" in html
+
+
+# ---------------------------------------------------------------------------
+# PVC pre-restore naming tests
+# ---------------------------------------------------------------------------
+
+
+class TestPreRestorePvcNaming:
+    """Tests for PVC name calculation used in _pre_restore_pvcs."""
+
+    def test_source_pvc_name_gen0(self) -> None:
+        """Source PVC name with generation 0 has no version suffix."""
+        from opi.utils.naming import generate_pvc_name, generate_unique_name
+
+        unique = generate_unique_name("production", "webapp")
+        pvc_name = generate_pvc_name(unique, "data", 0)
+        assert pvc_name == "production-webapp-data-pvc"
+
+    def test_source_pvc_name_gen2(self) -> None:
+        """Source PVC name with generation > 0 has version suffix."""
+        from opi.utils.naming import generate_pvc_name, generate_unique_name
+
+        unique = generate_unique_name("production", "webapp")
+        pvc_name = generate_pvc_name(unique, "data", 2)
+        assert pvc_name == "production-webapp-data-pvc-v2"
+
+    def test_target_pvc_name_gen0_for_new_deployment(self) -> None:
+        """Target PVC for new deployment always uses generation 0 (no suffix)."""
+        from opi.utils.naming import generate_pvc_name, generate_unique_name
+
+        unique = generate_unique_name("staging-copy", "webapp")
+        pvc_name = generate_pvc_name(unique, "data", 0)
+        assert pvc_name == "staging-copy-webapp-data-pvc"
+
+    def test_source_and_target_differ_by_deployment_name(self) -> None:
+        """Source and target PVC names differ only in deployment prefix."""
+        from opi.utils.naming import generate_pvc_name, generate_unique_name
+
+        source_unique = generate_unique_name("production", "app")
+        source_pvc = generate_pvc_name(source_unique, "data", 0)
+
+        target_unique = generate_unique_name("test-copy", "app")
+        target_pvc = generate_pvc_name(target_unique, "data", 0)
+
+        assert source_pvc == "production-app-data-pvc"
+        assert target_pvc == "test-copy-app-data-pvc"
+
+    def test_source_gen_preserved_from_backup_item(self) -> None:
+        """Source generation from backup item is used for Kopia snapshot lookup."""
+        from opi.utils.naming import generate_pvc_name, generate_unique_name
+
+        backup_item = {
+            "resource_type": "pvc",
+            "component_name": "webapp",
+            "storage_name": "data",
+            "generation": 3,
+        }
+        source_gen = backup_item.get("generation", 0)
+        source_unique = generate_unique_name("production", backup_item["component_name"])
+        source_pvc = generate_pvc_name(source_unique, backup_item["storage_name"], source_gen)
+
+        target_unique = generate_unique_name("new-dep", backup_item["component_name"])
+        target_pvc = generate_pvc_name(target_unique, backup_item["storage_name"], 0)
+
+        assert source_pvc == "production-webapp-data-pvc-v3"
+        assert target_pvc == "new-dep-webapp-data-pvc"
+
+
+class TestBackupItemsSplitting:
+    """Tests for splitting backup_items into PVC and non-PVC groups."""
+
+    def test_split_pvc_items(self) -> None:
+        items = [
+            {"resource_type": "pvc", "component_name": "app", "storage_name": "data"},
+            {"resource_type": "database", "component_name": "app", "reference_name": "main"},
+            {"resource_type": "pvc", "component_name": "worker", "storage_name": "queue"},
+            {"resource_type": "bucket", "component_name": "app", "reference_name": "files"},
+        ]
+        pvc_items = [i for i in items if i.get("resource_type") == "pvc"]
+        non_pvc_items = [i for i in items if i.get("resource_type") != "pvc"]
+
+        assert len(pvc_items) == 2
+        assert len(non_pvc_items) == 2
+        assert all(i["resource_type"] == "pvc" for i in pvc_items)
+        assert all(i["resource_type"] != "pvc" for i in non_pvc_items)
+
+    def test_no_pvc_items(self) -> None:
+        items = [
+            {"resource_type": "database", "component_name": "app"},
+            {"resource_type": "bucket", "component_name": "app"},
+        ]
+        pvc_items = [i for i in items if i.get("resource_type") == "pvc"]
+        non_pvc_items = [i for i in items if i.get("resource_type") != "pvc"]
+
+        assert len(pvc_items) == 0
+        assert len(non_pvc_items) == 2
+
+    def test_only_pvc_items(self) -> None:
+        items = [
+            {"resource_type": "pvc", "component_name": "app", "storage_name": "data"},
+            {"resource_type": "pvc", "component_name": "worker", "storage_name": "logs"},
+        ]
+        pvc_items = [i for i in items if i.get("resource_type") == "pvc"]
+        non_pvc_items = [i for i in items if i.get("resource_type") != "pvc"]
+
+        assert len(pvc_items) == 2
+        assert len(non_pvc_items) == 0
+
+    def test_empty_items(self) -> None:
+        items: list[dict] = []
+        pvc_items = [i for i in items if i.get("resource_type") == "pvc"]
+        non_pvc_items = [i for i in items if i.get("resource_type") != "pvc"]
+
+        assert len(pvc_items) == 0
+        assert len(non_pvc_items) == 0
