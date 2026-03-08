@@ -239,12 +239,19 @@ def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:
         # {K} — set the value at dict[K]
         for i, item in enumerate(lst):
             if isinstance(item, str) and item == filt:
+                if value is None:
+                    return  # already a plain string, nothing to clear
                 lst[i] = {filt: value}
                 return
             if isinstance(item, dict) and filt in item:
+                if value is None:
+                    # Revert dict entry back to plain string
+                    lst[i] = filt
+                    return
                 item[filt] = value
                 return
-        lst.append({filt: value})
+        if value is not None:
+            lst.append({filt: value})
 
 
 def _filter_ensure(lst: list[Any], filt: str) -> dict[str, Any]:

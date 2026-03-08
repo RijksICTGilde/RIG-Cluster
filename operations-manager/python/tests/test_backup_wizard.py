@@ -8,6 +8,8 @@ Covers:
 - Backup wizard template renders correctly with jinja-roos-components
 """
 
+from typing import Any
+
 import pytest
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
@@ -228,70 +230,54 @@ class TestExtractServiceNamesFromComponent:
 
 
 # ---------------------------------------------------------------------------
-# _cleanup_empty_component_services tests
+# _filter_set_terminal tests (path system — prevents empty service dicts)
 # ---------------------------------------------------------------------------
 
 
-class TestCleanupEmptyComponentServices:
-    """Tests for _cleanup_empty_component_services in wizard submission."""
+class TestFilterSetTerminalNoneHandling:
+    """Tests that _filter_set_terminal does not create empty service entries."""
 
-    def _cleanup(self, yaml_data: dict) -> dict:
-        from opi.web.router_wizard import _cleanup_empty_component_services
+    def _set(self, lst: list, filt: str, value: Any) -> None:
+        from opi.forms.editables.path import _filter_set_terminal
 
-        _cleanup_empty_component_services(yaml_data)
-        return yaml_data
+        _filter_set_terminal(lst, filt, value)
 
-    def test_removes_none_value_entries(self) -> None:
-        data = {
-            "components": [
-                {
-                    "name": "app",
-                    "services": [
-                        {"persistent-storage": None},
-                        "publish-on-web",
-                    ],
-                }
-            ]
-        }
-        self._cleanup(data)
-        assert data["components"][0]["services"] == ["publish-on-web"]
+    def test_none_value_not_appended(self) -> None:
+        """Setting None on a missing filter key should not create a new entry."""
+        lst: list = ["publish-on-web", "keycloak"]
+        self._set(lst, "persistent-storage", None)
+        assert len(lst) == 2
+        assert "persistent-storage" not in lst
 
-    def test_removes_empty_dict_entries(self) -> None:
-        data = {
-            "components": [
-                {
-                    "name": "app",
-                    "services": [{"temp-storage": {}}, "keycloak"],
-                }
-            ]
-        }
-        self._cleanup(data)
-        assert data["components"][0]["services"] == ["keycloak"]
+    def test_none_clears_existing_dict_to_string(self) -> None:
+        """Setting None on an existing dict entry reverts it to a plain string."""
+        lst: list = ["publish-on-web", {"persistent-storage": {"config": [{"name": "data"}]}}]
+        self._set(lst, "persistent-storage", None)
+        assert lst == ["publish-on-web", "persistent-storage"]
 
-    def test_keeps_configured_entries(self) -> None:
-        data = {
-            "components": [
-                {
-                    "name": "app",
-                    "services": [
-                        {"persistent-storage": {"config": [{"name": "data"}]}},
-                        "publish-on-web",
-                    ],
-                }
-            ]
-        }
-        self._cleanup(data)
-        services = data["components"][0]["services"]
-        assert len(services) == 2
-        assert any(isinstance(s, dict) and "persistent-storage" in s for s in services)
+    def test_none_on_string_entry_is_noop(self) -> None:
+        """Setting None on an existing string entry does nothing."""
+        lst: list = ["publish-on-web", "persistent-storage"]
+        self._set(lst, "persistent-storage", None)
+        assert lst == ["publish-on-web", "persistent-storage"]
 
-    def test_no_components_key(self) -> None:
-        data = {"name": "test"}
-        self._cleanup(data)  # should not raise
+    def test_value_creates_dict_entry(self) -> None:
+        """Setting a real value on a missing key creates the dict entry."""
+        lst: list = ["publish-on-web"]
+        self._set(lst, "persistent-storage", {"config": [{"name": "data"}]})
+        assert lst == ["publish-on-web", {"persistent-storage": {"config": [{"name": "data"}]}}]
 
-    def test_no_services_key(self) -> None:
-        data = {"components": [{"name": "app"}]}
-        self._cleanup(data)  # should not raise
+    def test_value_promotes_string_to_dict(self) -> None:
+        """Setting a real value on a string entry promotes it to a dict."""
+        lst: list = ["persistent-storage"]
+        self._set(lst, "persistent-storage", {"config": [{"name": "data"}]})
+        assert lst == [{"persistent-storage": {"config": [{"name": "data"}]}}]
+
+    def test_value_updates_existing_dict(self) -> None:
+        """Setting a real value on an existing dict entry updates it."""
+        lst: list = [{"persistent-storage": {"config": [{"name": "old"}]}}]
+        self._set(lst, "persistent-storage", {"config": [{"name": "new"}]})
+        assert lst == [{"persistent-storage": {"config": [{"name": "new"}]}}]
 
 
 # ---------------------------------------------------------------------------
