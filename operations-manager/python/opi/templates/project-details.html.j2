@@ -3482,11 +3482,8 @@
                 var actionsEl = document.getElementById('edit-progress-actions');
                 if (actionsEl) {
                     actionsEl.innerHTML =
-                        '<button type="button" class="rvo-button rvo-button--primary" ' +
-                            'onclick="closeEditModalAndReload()">Sluiten</button>' +
-                        '<a href="/projects/progress/' + taskId + '" ' +
-                            'class="rvo-button rvo-button--tertiary" target="_blank" rel="noopener">' +
-                            'Bekijk volledige voortgang</a>';
+                        '<c-button kind="primary" label="Sluiten" @click="closeEditModalAndReload()"></c-button> ' +
+                        '<c-button kind="tertiary" label="Bekijk volledige voortgang" @click="window.open(\'/projects/progress/' + taskId + '\', \'_blank\')"></c-button>';
                     actionsEl.style.display = '';
                 }
             } else if (data.status === 'failed') {
@@ -3500,11 +3497,8 @@
                 var actionsEl = document.getElementById('edit-progress-actions');
                 if (actionsEl) {
                     actionsEl.innerHTML =
-                        '<button type="button" class="rvo-button rvo-button--primary" ' +
-                            'onclick="closeEditModalAndReload()">Sluiten</button>' +
-                        '<a href="/projects/progress/' + taskId + '" ' +
-                            'class="rvo-button rvo-button--tertiary" target="_blank" rel="noopener">' +
-                            'Bekijk details</a>';
+                        '<c-button kind="primary" label="Sluiten" @click="closeEditModalAndReload()"></c-button> ' +
+                        '<c-button kind="tertiary" label="Bekijk details" @click="window.open(\'/projects/progress/' + taskId + '\', \'_blank\')"></c-button>';
                     actionsEl.style.display = '';
                 }
             }

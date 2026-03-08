@@ -80,36 +80,21 @@
 
                 {# Actions — project details link shown after completion #}
                 <div id="actions-section">
-                    <c-action-group id="default-actions"
-                        :actions="[
-                            {
-                                'type': 'link',
-                                'kind': 'primary',
-                                'size': 'md',
-                                'label': 'Terug naar Dashboard',
-                                'url': '/dashboard',
-                                'icon': 'home'
-                            }
-                        ]"/>
-                    <c-action-group id="completed-actions" style="display: none;"
-                        :actions="[
-                            {
-                                'type': 'link',
-                                'kind': 'primary',
-                                'size': 'md',
-                                'label': 'Naar Projectdetails',
-                                'url': '/projects/details/{{ project_name }}',
-                                'icon': 'publicatie'
-                            },
-                            {
-                                'type': 'link',
-                                'kind': 'secondary',
-                                'size': 'md',
-                                'label': 'Terug naar Dashboard',
-                                'url': '/dashboard',
-                                'icon': 'home'
-                            }
-                        ]"/>
+                    <div id="default-actions">
+                        <c-button label="Terug naar Dashboard" kind="primary" size="md"
+                            showIcon="before" icon="home"
+                            @click="window.location.href='/dashboard'" />
+                    </div>
+                    <div id="completed-actions" style="display: none;">
+                        <c-layout-flow gap="sm" row="true">
+                            <c-button label="Naar Projectdetails" kind="primary" size="md"
+                                showIcon="before" icon="publicatie"
+                                @click="window.location.href='/projects/details/{{ project_name }}'" />
+                            <c-button label="Terug naar Dashboard" kind="secondary" size="md"
+                                showIcon="before" icon="home"
+                                @click="window.location.href='/dashboard'" />
+                        </c-layout-flow>
+                    </div>
                 </div>
             </c-layout-flow>
 </c-page>

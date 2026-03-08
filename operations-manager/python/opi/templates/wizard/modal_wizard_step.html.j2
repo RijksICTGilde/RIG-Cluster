@@ -69,7 +69,7 @@
             <div class="wizard-step__actions-right">
                 {% if steps.is_last %}
                 <c-button type="submit" kind="primary" showIcon="before" icon="publicatie">
-                    Opslaan
+                    {% if flow_id is defined and flow_id in ("modal-backup", "modal-restore") %}Verder{% else %}Opslaan{% endif %}
                 </c-button>
                 {% else %}
                 <c-button type="submit" kind="primary" showIcon="after" icon="delta-naar-rechts">
