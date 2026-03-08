@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
-from opi.services import ServiceType
+from opi.services import CloneFromType, ServiceType
 from opi.utils.naming import generate_database_name
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
@@ -498,7 +498,7 @@ class DatabaseManager:
         clone_source_ref: str | None = None
         if clone_from:
             clone_type = clone_from.get("type")
-            if clone_type == "remote-source":
+            if clone_type == CloneFromType.REMOTE_SOURCE.value:
                 # Handle remote source cloning directly
                 remote_source_name = clone_from.get("reference")
                 if project_data is None:
@@ -557,9 +557,16 @@ class DatabaseManager:
                     schema=target.get("schema", db_schema),
                     password=result.get("resolved_password", db_password),
                 )
-            elif clone_type == "deployment":
+            elif clone_type == CloneFromType.DEPLOYMENT.value:
                 # Local deployment clone - extract reference name
                 clone_source_ref = clone_from.get("reference")
+            elif clone_type == CloneFromType.BACKUP.value:
+                # Backup restore: skip live cloning, database will be filled by restore
+                logger.info(
+                    f"Clone-from type 'backup' for deployment '{deployment_name}': "
+                    "skipping live database clone, data will come from backup restore"
+                )
+                clone_from = None
             else:
                 raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
 

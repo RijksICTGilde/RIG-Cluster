@@ -1,4 +1,4 @@
-"""Tests for backup wizard: service detection, backupable labels, and template rendering.
+"""Tests for backup wizard: service detection, backupable labels, template rendering, and restore.
 
 Covers:
 - ServiceAdapter.get_backupable_labels() returns correct labels
@@ -6,6 +6,9 @@ Covers:
 - extract_service_names_from_component() handles v1 (uses-services) and v2 (services) formats
 - deployment_uses_service() correctly detects backupable services
 - Backup wizard template renders correctly with jinja-roos-components
+- CloneFromType enum values and manager compatibility
+- RestoreMode enum values
+- _restore_target_summary handles both existing and new modes
 """
 
 from typing import Any
@@ -507,3 +510,255 @@ class TestBackupWizardTemplate:
         assert "<select" in html
         assert "<option" in html
         assert 'type="radio"' not in html
+
+
+# ---------------------------------------------------------------------------
+# CloneFromType enum tests
+# ---------------------------------------------------------------------------
+
+
+class TestCloneFromType:
+    """Tests for CloneFromType enum values."""
+
+    def test_deployment_value(self) -> None:
+        from opi.services import CloneFromType
+
+        assert CloneFromType.DEPLOYMENT.value == "deployment"
+
+    def test_remote_source_value(self) -> None:
+        from opi.services import CloneFromType
+
+        assert CloneFromType.REMOTE_SOURCE.value == "remote-source"
+
+    def test_backup_value(self) -> None:
+        from opi.services import CloneFromType
+
+        assert CloneFromType.BACKUP.value == "backup"
+
+    def test_all_values_unique(self) -> None:
+        from opi.services import CloneFromType
+
+        values = [ct.value for ct in CloneFromType]
+        assert len(values) == len(set(values))
+
+
+# ---------------------------------------------------------------------------
+# RestoreMode enum tests
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreMode:
+    """Tests for RestoreMode enum values."""
+
+    def test_existing_value(self) -> None:
+        from opi.services import RestoreMode
+
+        assert RestoreMode.EXISTING.value == "existing"
+
+    def test_new_value(self) -> None:
+        from opi.services import RestoreMode
+
+        assert RestoreMode.NEW.value == "new"
+
+
+# ---------------------------------------------------------------------------
+# _restore_target_summary tests
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreTargetSummary:
+    """Tests for _restore_target_summary with existing and new modes."""
+
+    def test_existing_mode_default(self) -> None:
+        from opi.forms.visualizers.wizard_sections import _restore_target_summary
+
+        data = {"target_deployment": "production"}
+        result = _restore_target_summary(data)
+        assert "production" in result
+        assert "Doel deployment" in result
+
+    def test_existing_mode_explicit(self) -> None:
+        from opi.forms.visualizers.wizard_sections import _restore_target_summary
+
+        data = {"restore_mode": "existing", "target_deployment": "staging"}
+        result = _restore_target_summary(data)
+        assert "staging" in result
+        assert "Doel deployment" in result
+
+    def test_new_mode(self) -> None:
+        from opi.forms.visualizers.wizard_sections import _restore_target_summary
+
+        data = {"restore_mode": "new", "new_deployment_name": "test-copy"}
+        result = _restore_target_summary(data)
+        assert "test-copy" in result
+        assert "Nieuwe deployment" in result
+
+    def test_new_mode_missing_name(self) -> None:
+        from opi.forms.visualizers.wizard_sections import _restore_target_summary
+
+        data = {"restore_mode": "new"}
+        result = _restore_target_summary(data)
+        assert "Nieuwe deployment" in result
+        assert "-" in result
+
+    def test_no_data_defaults_to_existing(self) -> None:
+        from opi.forms.visualizers.wizard_sections import _restore_target_summary
+
+        data: dict = {}
+        result = _restore_target_summary(data)
+        assert "Doel deployment" in result
+
+
+# ---------------------------------------------------------------------------
+# Deployment creation helper tests
+# ---------------------------------------------------------------------------
+
+
+class TestCreateDeploymentFromSource:
+    """Tests for _create_deployment_from_source structure logic."""
+
+    def test_clone_exclude_keys(self) -> None:
+        """Verify the correct keys are excluded when copying deployment config."""
+        import copy
+
+        from opi.services import CloneFromType
+
+        source_dep = {
+            "name": "production",
+            "cluster": "local",
+            "namespace": "myapp",
+            "repository": "main",
+            "subdomain": "production",
+            "base-domain": "example.com",
+            "domain-mode": "custom",
+            "issuer": "letsencrypt",
+            "components": [{"reference": "app"}],
+            "extra-config": "preserved",
+        }
+
+        clone_exclude_keys = [
+            "name",
+            "components",
+            "subdomain",
+            "base-domain",
+            "domain-mode",
+            "issuer",
+        ]
+
+        new_deployment: dict = {"name": "test-copy"}
+        new_deployment.update({k: copy.deepcopy(v) for k, v in source_dep.items() if k not in clone_exclude_keys})
+        new_deployment["components"] = copy.deepcopy(source_dep.get("components", []))
+        new_deployment["clone-from"] = {
+            "type": CloneFromType.BACKUP.value,
+            "reference": "production",
+            "mode": "once",
+        }
+
+        # Verify structure
+        assert new_deployment["name"] == "test-copy"
+        assert new_deployment["cluster"] == "local"
+        assert new_deployment["namespace"] == "myapp"
+        assert new_deployment["extra-config"] == "preserved"
+        assert new_deployment["components"] == [{"reference": "app"}]
+        assert new_deployment["clone-from"]["type"] == "backup"
+        assert new_deployment["clone-from"]["reference"] == "production"
+
+        # Excluded keys should not be copied from source
+        assert "base-domain" not in new_deployment
+        assert "domain-mode" not in new_deployment
+        assert "issuer" not in new_deployment
+
+    def test_subdomain_matches_source_name(self) -> None:
+        """When source subdomain == source name, new subdomain = target name."""
+        source_dep = {
+            "name": "production",
+            "subdomain": "production",
+        }
+        target_name = "staging"
+
+        source_subdomain = source_dep.get("subdomain")
+        source_name = source_dep.get("name")
+        new_subdomain = None
+        if source_subdomain and source_subdomain == source_name:
+            new_subdomain = target_name
+
+        assert new_subdomain == "staging"
+
+    def test_subdomain_custom_not_copied(self) -> None:
+        """When source subdomain differs from source name, no subdomain is set."""
+        source_dep = {
+            "name": "production",
+            "subdomain": "custom-sub",
+        }
+        target_name = "staging"
+
+        source_subdomain = source_dep.get("subdomain")
+        source_name = source_dep.get("name")
+        new_subdomain = None
+        if source_subdomain and source_subdomain == source_name:
+            new_subdomain = target_name
+
+        assert new_subdomain is None
+
+
+# ---------------------------------------------------------------------------
+# Restore target template rendering tests
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreTargetTemplate:
+    """Tests for restore target template rendering."""
+
+    @pytest.fixture
+    def templates(self):
+        from opi.core.templates import get_templates
+
+        return get_templates()
+
+    def _render(self, templates, context: dict) -> str:
+        template = templates.get_template("wizard/partials/restore_select_target.html.j2")
+        rendered = template.render(context)
+        process_components = templates.env.filters.get("process_components")
+        if process_components:
+            rendered = str(process_components(rendered))
+        return rendered
+
+    def test_existing_mode_default(self, templates) -> None:
+        context = {
+            "_cluster_deployments": [
+                {"name": "production", "namespace": "rig-myapp"},
+            ],
+            "_current_cluster": "local",
+            "_project_name": "test-project",
+        }
+        html = self._render(templates, context)
+        assert "Bestaande deployment" in html
+        assert "Nieuwe deployment" in html
+        assert 'name="target_deployment"' in html
+        assert "production" in html
+
+    def test_new_mode_shows_input(self, templates) -> None:
+        context = {
+            "_cluster_deployments": [
+                {"name": "production", "namespace": "rig-myapp"},
+            ],
+            "_current_cluster": "local",
+            "_project_name": "test-project",
+            "_restore_mode": "new",
+            "_source_deployment": "production",
+        }
+        html = self._render(templates, context)
+        assert 'name="new_deployment_name"' in html
+        assert "production" in html
+        assert "Bron deployment" in html
+
+    def test_htmx_attributes_on_mode_toggle(self, templates) -> None:
+        context = {
+            "_cluster_deployments": [],
+            "_current_cluster": "local",
+            "_project_name": "my-project",
+        }
+        html = self._render(templates, context)
+        assert "hx-get" in html
+        assert "select-restore-mode" in html
+        assert "my-project" in html

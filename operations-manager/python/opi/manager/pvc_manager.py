@@ -5,6 +5,7 @@ import logging
 import os
 import re
 
+from opi.services import CloneFromType
 from opi.utils.naming import generate_manifest_name, generate_pvc_manifest_type
 
 logger = logging.getLogger(__name__)
@@ -258,14 +259,21 @@ class PVCManager:
                 clone_type = clone_from.get("type")
                 source_deployment: str | None = None
 
-                if clone_type == "deployment":
+                if clone_type == CloneFromType.DEPLOYMENT.value:
                     source_deployment = clone_from.get("reference")
-                elif clone_type == "remote-source":
+                elif clone_type == CloneFromType.REMOTE_SOURCE.value:
                     # PVC cannot clone from remote source (Kubernetes dataSource only works locally)
                     logger.warning(
                         f"PVC clone-from type 'remote-source' is not supported for {deployment_name}/{component_name}/{storage_name}. "
                         "Kubernetes PVC dataSource only supports local cloning. Skipping PVC clone."
                     )
+                elif clone_type == CloneFromType.BACKUP.value:
+                    # Backup restore: skip PVC cloning, data will come from backup restore
+                    logger.info(
+                        f"Clone-from type 'backup' for PVC {deployment_name}/{component_name}/{storage_name}: "
+                        "skipping live PVC clone, data will come from backup restore"
+                    )
+                    source_deployment = None
                 else:
                     raise ValueError(
                         f"Unknown clone-from type '{clone_type}' for PVC in deployment '{deployment_name}'"

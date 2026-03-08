@@ -26,9 +26,13 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 1. User clicks "Herstellen"
 2. Wizard lists available backup runs grouped by `backup_run_id`, showing timestamp, deployment, and resource types
 3. User selects a backup run
-4. User selects the target deployment (Phase 1: same deployment only)
+4. User selects restore mode: **existing deployment** or **new deployment**
+   - **Existing**: Select an existing deployment as restore target
+   - **New**: Enter a name; a new deployment is created by copying structure (components, services, cluster) from the source deployment. The `clone-from` type is set to `"backup"` so infrastructure managers create empty resources instead of live-cloning data
 5. Review page shows confirmation with warning about data overwrite
-6. On confirm, a background task restores each resource with versioning and progress tracking
+6. On confirm, a background task runs:
+   - For **new deployment**: creates the deployment in the project file, provisions infrastructure via `process_project_from_git`, then restores backup data
+   - For **existing deployment**: restores each resource with versioning and progress tracking
 
 ## Architecture
 
@@ -43,7 +47,7 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 
 ### Key Design Decisions
 
-- **No project file changes**: Backup/restore flows skip the YAML save step — they trigger operations directly
+- **No project file changes**: Backup/restore flows skip the YAML save step — they trigger operations directly (except when creating a new deployment, which modifies the project file)
 - **Member-level auth**: Any project member can create backups and restore, not just admins/owners
 - **Template context via yaml_data**: `TemplatePartial` rendering was extended to pass `yaml_data` as template context, enabling dynamic data (deployments, backup runs) in wizard partials
 - **Custom post_save_action**: New action types `trigger_backup` and `trigger_restore` are handled in `_modal_do_submit()`, which creates background tasks instead of saving project files
@@ -52,6 +56,7 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 - **Backupable service registry**: Services declare backup support via `backup_label` on their `ServiceDefinition`. The wizard dynamically discovers backupable services from `ServiceAdapter.get_backupable_labels()` — no hardcoded service type checks in the wizard code. Adding backup support for a new service type only requires setting `backup_label` on its definition.
 - **Empty service filtering**: Dict service entries with `None` or empty values (e.g. `{"persistent-storage": null}`) are skipped during backup detection — these are unconfigured placeholders left by the form system, not active services. The wizard submission also strips these entries to keep project files clean.
 - **v1/v2 compatibility**: Service detection works with both v2 (`services` key) and v1 (`uses-services` key) project file formats.
+- **Clone-from type enums**: Clone types (`deployment`, `remote-source`, `backup`) and restore modes (`existing`, `new`) use `CloneFromType` and `RestoreMode` enums from `opi.services.services_enums` for type-safe comparison instead of raw strings.
 
 ### Data Flow
 
@@ -68,14 +73,24 @@ Button click → openEditModal()
       → Return progress template with task_id for polling
 ```
 
-## Phase 1 Scope
+### Clone-from Type "backup"
+
+When restoring to a new deployment, the `clone-from` field is set to `type: "backup"`. This signals to infrastructure managers (`database_manager`, `minio_manager`, `pvc_manager`) that they should create empty resources rather than attempting to live-clone data from another deployment. The restore process then fills these resources with backup data.
+
+```yaml
+clone-from:
+  type: backup
+  reference: source-deployment-name
+  mode: once
+```
+
+## Scope
 
 - Create backup for any deployment on the current cluster
-- Restore backup to the **same** deployment it came from
+- Restore to the same deployment or a different existing deployment
+- Create a new deployment from a backup (copies source structure, restores data)
 - Progress tracking with subtasks per resource type
 
-## Phase 2 (Future)
+## Future
 
-- Restore to a different existing deployment
-- Clone deployment + restore (create new deployment from backup)
 - Cross-cluster restore

@@ -572,6 +572,11 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # More steps to go
         next_section = active_sections[current_idx + 1]
         state.current_step = next_section.section_id
+
+        # Enrich restore-target context with source deployment info
+        if next_section.section_id == "restore-target":
+            _enrich_restore_target_context(state)
+
         save_modal_wizard_state(request, state)
 
         yaml_data = state.get_merged_data()
@@ -645,6 +650,35 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
     step_html = _render_section_html(section, yaml_data, locked_services=state.locked_services)
 
     rendered = _render_modal_step(request, "modal-backup", section, step_html, project_name)
+    return HTMLResponse(content=rendered)
+
+
+@detail_edit_router.get(
+    "/{project_name}/modal-wizard/modal-restore/select-restore-mode",
+    response_class=HTMLResponse,
+)
+@requires_sso
+async def restore_select_mode(request: Request, project_name: str) -> HTMLResponse:
+    """HTMX endpoint: re-render the restore target step when mode changes."""
+    _require_project_member_access(request, project_name)
+
+    state = get_modal_wizard_state(request)
+    if not state or state.flow_id != "modal-restore":
+        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+
+    restore_mode = request.query_params.get("restore_mode", "existing")
+    if state.template_data:
+        state.template_data["_restore_mode"] = restore_mode
+
+    _enrich_restore_target_context(state)
+    save_modal_wizard_state(request, state)
+
+    flow = get_flow("modal-restore")
+    section = _get_section_from_flow(flow, "restore-target")
+    yaml_data = state.get_merged_data()
+    step_html = _render_section_html(section, yaml_data, locked_services=state.locked_services)
+
+    rendered = _render_modal_step(request, "modal-restore", section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
@@ -797,8 +831,17 @@ async def _handle_backup_restore_submit(
         )
 
     else:  # trigger_restore
+        from opi.services import RestoreMode
+
         backup_run_id = merged_data.get("backup_run_id", "")
-        target_deployment = merged_data.get("target_deployment", "")
+        restore_mode = merged_data.get("restore_mode", RestoreMode.EXISTING.value)
+        source_deployment = ""
+        create_new_deployment = restore_mode == RestoreMode.NEW.value
+
+        if create_new_deployment:
+            target_deployment = merged_data.get("new_deployment_name", "")
+        else:
+            target_deployment = merged_data.get("target_deployment", "")
 
         # Get backup items for the selected run from template_data
         backup_items = []
@@ -806,18 +849,20 @@ async def _handle_backup_restore_submit(
             for run in state.template_data.get("_backup_runs", []):
                 if run.get("backup_run_id") == backup_run_id:
                     backup_items = run.get("items", [])
+                    source_deployment = run.get("deployment_name", "")
                     # If no explicit target, use the source deployment
                     if not target_deployment:
-                        target_deployment = run.get("deployment_name", "")
+                        target_deployment = source_deployment
                     break
 
         logger.info(
-            "Starting restore for %s/%s from run %s (task=%s, items=%d)",
+            "Starting restore for %s/%s from run %s (task=%s, items=%d, new=%s)",
             project_name,
             target_deployment,
             backup_run_id,
             task_id,
             len(backup_items),
+            create_new_deployment,
         )
         bg_task = BackgroundTask(
             run_restore_task,
@@ -826,6 +871,8 @@ async def _handle_backup_restore_submit(
             backup_run_id,
             target_deployment,
             backup_items,
+            create_new_deployment=create_new_deployment,
+            source_deployment=source_deployment,
         )
 
     rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
@@ -966,6 +1013,28 @@ async def _gather_backup_runs_async(
     # Sort by timestamp descending
     backup_runs = sorted(backup_runs_map.values(), key=lambda r: r.get("timestamp", ""), reverse=True)
     return backup_runs
+
+
+def _enrich_restore_target_context(state) -> None:
+    """Derive _source_deployment from the selected backup_run_id in step data.
+
+    Called before rendering the restore-target step so the template knows
+    which deployment the backup originated from.
+    """
+    if not state.template_data:
+        return
+
+    # Get backup_run_id from step 1 (restore-select)
+    step1_data = state.step_data.get("restore-select", {})
+    backup_run_id = step1_data.get("backup_run_id", "")
+    if not backup_run_id:
+        return
+
+    # Find matching run in _backup_runs
+    for run in state.template_data.get("_backup_runs", []):
+        if run.get("backup_run_id") == backup_run_id:
+            state.template_data["_source_deployment"] = run.get("deployment_name", "")
+            break
 
 
 def _get_section_from_flow(flow, section_id: str):

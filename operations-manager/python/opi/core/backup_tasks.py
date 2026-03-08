@@ -236,16 +236,43 @@ async def run_restore_task(
     backup_run_id: str,
     target_deployment: str,
     backup_items: list[dict[str, Any]],
+    create_new_deployment: bool = False,
+    source_deployment: str = "",
 ) -> None:
     """Run a deployment restore as a background task with progress tracking.
 
     Restores all resources from a backup run to the target deployment.
     Each backup item in the run is restored individually with progress tracking.
+
+    When create_new_deployment is True, the target deployment is created first
+    by copying the structure from source_deployment, then infrastructure is
+    provisioned before restoring backup data.
     """
     task_progress = TaskProgressManager(task_id, project_name)
 
     try:
-        # Task 1: Resolve deployment info
+        if create_new_deployment:
+            # Step 1a: Create the new deployment in the project file
+            create_task = task_progress.add_task("Deployment aanmaken")
+            try:
+                await _create_deployment_from_source(project_name, target_deployment, source_deployment)
+            except Exception as e:
+                task_progress.fail_task(create_task, str(e))
+                task_progress.fail_project(str(e))
+                return
+            task_progress.complete_task(create_task)
+
+            # Step 1b: Provision infrastructure (namespace, PVC, database, MinIO)
+            infra_task = task_progress.add_task("Infrastructuur aanmaken")
+            try:
+                await _provision_deployment_infrastructure(project_name, target_deployment, task_progress)
+            except Exception as e:
+                task_progress.fail_task(infra_task, str(e))
+                task_progress.fail_project(str(e))
+                return
+            task_progress.complete_task(infra_task)
+
+        # Resolve deployment info (now that the deployment exists)
         resolve_task = task_progress.add_task("Project en deployment opzoeken")
         try:
             project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
@@ -299,6 +326,154 @@ async def run_restore_task(
     except Exception as e:
         logger.exception("Restore task %s failed unexpectedly", task_id)
         task_progress.fail_project(f"Onverwachte fout: {e}")
+
+
+async def _create_deployment_from_source(
+    project_name: str,
+    target_deployment: str,
+    source_deployment: str,
+) -> None:
+    """Create a new deployment by copying structure from a source deployment.
+
+    Copies the deployment configuration (cluster, namespace, services, etc.)
+    but sets clone-from type to "backup" so managers skip live data cloning.
+    """
+    import copy
+    from io import StringIO
+
+    from ruamel.yaml import YAML
+
+    from opi.connectors.git import create_git_connector_for_project_files
+    from opi.services import CloneFromType
+    from opi.services.project_service import get_project_service
+
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+    if not project or not project.data:
+        msg = f"Project '{project_name}' niet gevonden"
+        raise ValueError(msg)
+
+    project_data = project.data
+
+    # Find source deployment
+    source_dep = None
+    for dep in project_data.get("deployments", []):
+        if dep.get("name") == source_deployment:
+            source_dep = dep
+            break
+
+    if not source_dep:
+        msg = f"Bron deployment '{source_deployment}' niet gevonden in project '{project_name}'"
+        raise ValueError(msg)
+
+    # Copy structure, excluding fields that must be unique per deployment
+    clone_exclude_keys = [
+        "name",
+        "components",
+        "subdomain",
+        "base-domain",
+        "domain-mode",
+        "issuer",
+    ]
+    new_deployment: dict[str, Any] = {"name": target_deployment}
+    new_deployment.update(
+        {key: copy.deepcopy(value) for key, value in source_dep.items() if key not in clone_exclude_keys}
+    )
+
+    # Copy components from source
+    source_components = source_dep.get("components", [])
+    new_deployment["components"] = copy.deepcopy(source_components)
+
+    # If source subdomain matches source name, set new subdomain to target name
+    source_subdomain = source_dep.get("subdomain")
+    source_name = source_dep.get("name")
+    if source_subdomain and source_subdomain == source_name:
+        new_deployment["subdomain"] = target_deployment
+
+    # Set clone-from to type "backup" so managers skip live cloning
+    new_deployment["clone-from"] = {
+        "type": CloneFromType.BACKUP.value,
+        "reference": source_deployment,
+        "mode": "once",
+    }
+
+    # Auto-infer cluster if not set
+    if not new_deployment.get("cluster"):
+        project_clusters = project_data.get("clusters", [])
+        if len(project_clusters) == 1:
+            new_deployment["cluster"] = project_clusters[0]
+
+    # Auto-infer namespace if not set
+    if not new_deployment.get("namespace"):
+        new_deployment["namespace"] = project_name
+
+    # Auto-infer repository if not set
+    if not new_deployment.get("repository"):
+        repositories = project_data.get("repositories", [])
+        if len(repositories) == 1:
+            new_deployment["repository"] = repositories[0]["name"]
+
+    # Add deployment to project data
+    project_data["deployments"].append(new_deployment)
+
+    # Save and commit
+    from opi.handlers.project_file_handler import save_project_file
+
+    save_project_file(project.filename, project_data)
+    project_service.load_project_from_data(project_data, project.filename)
+
+    git_connector = create_git_connector_for_project_files()
+    yaml_instance = YAML()
+    yaml_instance.preserve_quotes = True
+    yaml_instance.width = 4096
+    yaml_output = StringIO()
+    yaml_instance.dump(project_data, yaml_output)
+
+    await git_connector.create_or_update_file(
+        f"projects/{project_name}.yaml",
+        yaml_output.getvalue(),
+        do_commit_and_push=True,
+        commit_message=(
+            f"Add deployment '{target_deployment}' to project '{project_name}' (restore from '{source_deployment}')"
+        ),
+    )
+    logger.info(
+        "Created deployment '%s' in project '%s' (cloned from '%s' for backup restore)",
+        target_deployment,
+        project_name,
+        source_deployment,
+    )
+
+
+async def _provision_deployment_infrastructure(
+    project_name: str,
+    target_deployment: str,
+    task_progress: TaskProgressManager,
+) -> None:
+    """Provision infrastructure for a newly created deployment.
+
+    Calls process_project_from_git to create namespace, PVC, database, MinIO
+    resources. Because clone-from type is "backup", managers will skip live
+    data cloning and create empty resources instead.
+    """
+    from opi.manager.project_manager import create_project_manager
+
+    project_manager = create_project_manager()
+    project_file_path = f"projects/{project_name}.yaml"
+    success = await project_manager.process_project_from_git(
+        project_file_path,
+        task_progress_manager=task_progress,
+        deployment_name=target_deployment,
+    )
+    if not success:
+        msg = f"Infrastructuur aanmaken mislukt voor deployment '{target_deployment}'"
+        raise RuntimeError(msg)
+
+    logger.info(
+        "Infrastructure provisioned for deployment '%s' in project '%s'",
+        target_deployment,
+        project_name,
+    )
 
 
 async def _resolve_deployment_info(

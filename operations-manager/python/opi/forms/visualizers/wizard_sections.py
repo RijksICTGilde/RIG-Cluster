@@ -533,6 +533,12 @@ def _restore_select_summary(data: dict[str, Any]) -> str:
 
 def _restore_target_summary(data: dict[str, Any]) -> str:
     """Build review summary for restore target selection."""
+    from opi.services import RestoreMode
+
+    restore_mode = data.get("restore_mode", RestoreMode.EXISTING.value)
+    if restore_mode == RestoreMode.NEW.value:
+        target = data.get("new_deployment_name", "-")
+        return f"<p><strong>Nieuwe deployment:</strong> {target}</p>"
     target = data.get("target_deployment", "-")
     return f"<p><strong>Doel deployment:</strong> {target}</p>"
 

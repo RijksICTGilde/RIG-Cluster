@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
-from opi.services import ServiceType
+from opi.services import CloneFromType, ServiceType
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import MinIOSecret
@@ -197,17 +197,22 @@ class MinioManager:
                 )
             else:
                 clone_type = clone_from.get("type")
-                if clone_type == "remote-source":
+                if clone_type == CloneFromType.REMOTE_SOURCE.value:
                     remote_source_name = clone_from.get("reference")
                     await self._handle_remote_source_clone(
                         project_name, deployment_name, remote_source_name, project_data, force_clone
                     )
                     return
-                elif clone_type == "deployment":
+                elif clone_type == CloneFromType.DEPLOYMENT.value:
                     source_deployment = clone_from.get("reference")
                     logger.info(f"Deployment {deployment_name} has clone-from deployment: {source_deployment}")
                     await self.clone_minio_from_deployment(project_data, deployment, source_deployment)
                     return
+                elif clone_type == CloneFromType.BACKUP.value:
+                    logger.info(
+                        f"Clone-from type 'backup' for deployment '{deployment_name}': "
+                        "skipping live MinIO clone, data will come from backup restore"
+                    )
                 else:
                     raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
 
