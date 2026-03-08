@@ -193,7 +193,7 @@ title = "opi"
 testpaths = [
     "tests"
 ]
-addopts = "--strict-markers -v -q -m 'not requires_infra'"
+addopts = "--strict-markers -v -q -m 'not requires_infra and not e2e'"
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::UserWarning"
@@ -204,7 +204,8 @@ faulthandler_timeout = 60
 markers = [
    "slow: marks tests as slow",
    "enable_auth: marks tests that require authentication",
-   "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)"
+   "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)",
+   "e2e: marks end-to-end browser tests (require playwright and chromium)"
 ]
 pythonpath = "."
 

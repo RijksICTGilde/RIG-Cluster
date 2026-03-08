@@ -1699,6 +1699,14 @@ tasks:
       - uv run pytest tests/ -v
     silent: false
 
+  test-e2e:
+    desc: "Run Playwright E2E browser tests"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      - uv run pytest tests/e2e/ -m e2e -v
+    silent: false
+
   test-coverage:
     desc: "Run tests with coverage report"
     dir: operations-manager/python
