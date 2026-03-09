@@ -74,36 +74,16 @@
     </c-card>
 
     {% elif restore_mode == "new" %}
-    {# New deployment creation #}
-    <fieldset>
-        <legend class="rvo-form-field__label"><strong>Nieuwe deployment</strong></legend>
-        <p class="rvo-text--sm rvo-text--subtle" style="margin-bottom: 8px;">
-            Er wordt een nieuwe deployment aangemaakt op basis van de structuur van
-            <strong>{{ source_deployment }}</strong>. De data komt uit de geselecteerde backup.
-        </p>
-        <div class="rvo-form-field" style="margin-top: 8px;">
-            <label class="rvo-form-field__label" for="new_deployment_name">Naam nieuwe deployment</label>
-            <input type="text" id="new_deployment_name" name="new_deployment_name"
-                   class="rvo-text-input" placeholder="bijv. staging, test, acceptatie"
-                   pattern="[a-z0-9][a-z0-9-]*[a-z0-9]" minlength="2" maxlength="63"
-                   required style="max-width: 400px;" />
-            <p class="rvo-text--sm rvo-text--subtle" style="margin-top: 4px;">
-                Alleen kleine letters, cijfers en koppeltekens. Moet beginnen en eindigen met een letter of cijfer.
-            </p>
-        </div>
-    </fieldset>
-
-    {% if source_deployment %}
+    {# New deployment — configuration fields are in the next step #}
     <c-card padding="md" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-hemelblauw);">
         <c-layout-row gap="sm" verticalSpacing="center">
             <c-icon icon="info" size="md" color="hemelblauw" />
             <div>
-                <strong>Bron deployment: {{ source_deployment }}</strong>
-                <p class="rvo-text--sm">De configuratie (componenten, services, cluster, namespace) wordt gekopieerd van deze deployment. Alleen de data wordt hersteld uit de backup.</p>
+                <strong>Nieuwe deployment aanmaken</strong>
+                <p class="rvo-text--sm">In de volgende stap configureert u de naam, het domein en andere instellingen voor de nieuwe deployment.{% if source_deployment %} De componenten en services worden overgenomen van <strong>{{ source_deployment }}</strong>.{% endif %}</p>
             </div>
         </c-layout-row>
     </c-card>
-    {% endif %}
     {% endif %}
 </c-layout-flow>
 </div>

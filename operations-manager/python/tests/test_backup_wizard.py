@@ -590,8 +590,8 @@ class TestRestoreTargetSummary:
 
         data = {"restore_mode": "new", "new_deployment_name": "test-copy"}
         result = _restore_target_summary(data)
-        assert "test-copy" in result
         assert "Nieuwe deployment" in result
+        assert "Modus" in result
 
     def test_new_mode_missing_name(self) -> None:
         from opi.forms.visualizers.wizard_sections import _restore_target_summary
@@ -599,7 +599,7 @@ class TestRestoreTargetSummary:
         data = {"restore_mode": "new"}
         result = _restore_target_summary(data)
         assert "Nieuwe deployment" in result
-        assert "-" in result
+        assert "Modus" in result
 
     def test_no_data_defaults_to_existing(self) -> None:
         from opi.forms.visualizers.wizard_sections import _restore_target_summary
@@ -737,7 +737,7 @@ class TestRestoreTargetTemplate:
         assert 'name="target_deployment"' in html
         assert "production" in html
 
-    def test_new_mode_shows_input(self, templates) -> None:
+    def test_new_mode_shows_info_card(self, templates) -> None:
         context = {
             "_cluster_deployments": [
                 {"name": "production", "namespace": "rig-myapp"},
@@ -748,9 +748,9 @@ class TestRestoreTargetTemplate:
             "_source_deployment": "production",
         }
         html = self._render(templates, context)
-        assert 'name="new_deployment_name"' in html
+        assert "Nieuwe deployment aanmaken" in html
         assert "production" in html
-        assert "Bron deployment" in html
+        assert "volgende stap" in html
 
     def test_htmx_attributes_on_mode_toggle(self, templates) -> None:
         context = {
@@ -877,3 +877,93 @@ class TestBackupItemsSplitting:
 
         assert len(pvc_items) == 0
         assert len(non_pvc_items) == 0
+
+
+# ---------------------------------------------------------------------------
+# RESTORE_NEW_DEPLOYMENT_SECTION tests
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreNewDeploymentSection:
+    """Tests for RESTORE_NEW_DEPLOYMENT_SECTION configuration."""
+
+    def test_section_exists(self) -> None:
+        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+
+        assert RESTORE_NEW_DEPLOYMENT_SECTION.section_id == "restore-new-deployment"
+
+    def test_section_has_editables(self) -> None:
+        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+
+        assert len(RESTORE_NEW_DEPLOYMENT_SECTION.editables) == 6
+
+    def test_section_visibility_new_mode(self) -> None:
+        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+
+        visible_fn = RESTORE_NEW_DEPLOYMENT_SECTION.visible
+        assert callable(visible_fn)
+        assert visible_fn({"restore_mode": "new"}) is True
+
+    def test_section_visibility_existing_mode(self) -> None:
+        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+
+        visible_fn = RESTORE_NEW_DEPLOYMENT_SECTION.visible
+        assert callable(visible_fn)
+        assert visible_fn({"restore_mode": "existing"}) is False
+
+    def test_section_visibility_no_mode(self) -> None:
+        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+
+        visible_fn = RESTORE_NEW_DEPLOYMENT_SECTION.visible
+        assert callable(visible_fn)
+        assert visible_fn({}) is False
+
+    def test_editables_have_materialized_paths(self) -> None:
+        """Editables should use [0] not [*] in their paths."""
+        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+
+        for vis in RESTORE_NEW_DEPLOYMENT_SECTION.editables:
+            path = vis.editable.yaml_path
+            assert "[*]" not in path, f"Editable {path} still has wildcard"
+            assert "[0]" in path, f"Editable {path} not materialized to [0]"
+
+    def test_layout_uses_index_0(self) -> None:
+        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+
+        layout = RESTORE_NEW_DEPLOYMENT_SECTION.layout
+        assert isinstance(layout, list)
+        for item in layout:
+            if isinstance(item, str):
+                assert "[0]" in item
+
+    def test_section_in_restore_flow(self) -> None:
+        from opi.forms.visualizers.flows import MODAL_RESTORE_FLOW
+
+        section_ids = [s.section_id for s in MODAL_RESTORE_FLOW.sections]
+        assert "restore-new-deployment" in section_ids
+        assert section_ids.index("restore-new-deployment") == 2
+
+
+class TestRestoreNewDeploymentSummary:
+    """Tests for _restore_new_deployment_summary."""
+
+    def test_with_deployment_name(self) -> None:
+        from opi.forms.visualizers.wizard_sections import _restore_new_deployment_summary
+
+        data: dict[str, Any] = {"deployments": [{"name": "my-staging"}]}
+        result = _restore_new_deployment_summary(data)
+        assert "my-staging" in result
+
+    def test_without_deployments(self) -> None:
+        from opi.forms.visualizers.wizard_sections import _restore_new_deployment_summary
+
+        data: dict[str, Any] = {}
+        result = _restore_new_deployment_summary(data)
+        assert "-" in result
+
+    def test_empty_deployments_list(self) -> None:
+        from opi.forms.visualizers.wizard_sections import _restore_new_deployment_summary
+
+        data: dict[str, Any] = {"deployments": []}
+        result = _restore_new_deployment_summary(data)
+        assert "-" in result

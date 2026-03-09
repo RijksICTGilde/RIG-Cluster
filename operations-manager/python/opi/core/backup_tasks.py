@@ -238,6 +238,7 @@ async def run_restore_task(
     backup_items: list[dict[str, Any]],
     create_new_deployment: bool = False,
     source_deployment: str = "",
+    deployment_config: dict[str, Any] | None = None,
 ) -> None:
     """Run a deployment restore as a background task with progress tracking.
 
@@ -260,7 +261,9 @@ async def run_restore_task(
             # Step 1: Create the new deployment in the project file
             create_task = task_progress.add_task("Deployment aanmaken")
             try:
-                await _create_deployment_from_source(project_name, target_deployment, source_deployment)
+                await _create_deployment_from_source(
+                    project_name, target_deployment, source_deployment, deployment_config=deployment_config
+                )
             except Exception as e:
                 task_progress.fail_task(create_task, str(e))
                 task_progress.fail_project(str(e))
@@ -409,11 +412,16 @@ async def _create_deployment_from_source(
     project_name: str,
     target_deployment: str,
     source_deployment: str,
+    deployment_config: dict[str, Any] | None = None,
 ) -> None:
     """Create a new deployment by copying structure from a source deployment.
 
     Copies the deployment configuration (cluster, namespace, services, etc.)
     but sets clone-from type to "backup" so managers skip live data cloning.
+
+    When deployment_config is provided (from the wizard editables), the user's
+    choices for domain fields (subdomain, base-domain, domain-format) and
+    clone-from are used instead of copying from source.
     """
     import copy
     from io import StringIO
@@ -450,7 +458,9 @@ async def _create_deployment_from_source(
         "subdomain",
         "base-domain",
         "domain-mode",
+        "domain-format",
         "issuer",
+        "clone-from",
     ]
     new_deployment: dict[str, Any] = {"name": target_deployment}
     new_deployment.update(
@@ -461,18 +471,36 @@ async def _create_deployment_from_source(
     source_components = source_dep.get("components", [])
     new_deployment["components"] = copy.deepcopy(source_components)
 
-    # If source subdomain matches source name, set new subdomain to target name
-    source_subdomain = source_dep.get("subdomain")
-    source_name = source_dep.get("name")
-    if source_subdomain and source_subdomain == source_name:
-        new_deployment["subdomain"] = target_deployment
+    # Apply user-provided deployment config from wizard editables
+    if deployment_config:
+        for field in ("subdomain", "base-domain", "domain-format"):
+            if field in deployment_config:
+                new_deployment[field] = deployment_config[field]
 
-    # Set clone-from to type "backup" so managers skip live cloning
-    new_deployment["clone-from"] = {
-        "type": CloneFromType.BACKUP.value,
-        "reference": source_deployment,
-        "mode": "once",
-    }
+        # Handle clone-from: if user selected a deployment, use it; otherwise use backup type
+        user_clone_from = deployment_config.get("clone-from")
+        if user_clone_from and user_clone_from.get("type") == CloneFromType.DEPLOYMENT.value:
+            new_deployment["clone-from"] = user_clone_from
+        else:
+            new_deployment["clone-from"] = {
+                "type": CloneFromType.BACKUP.value,
+                "reference": source_deployment,
+                "mode": "once",
+            }
+    else:
+        # Legacy path: no deployment_config provided
+        # If source subdomain matches source name, set new subdomain to target name
+        source_subdomain = source_dep.get("subdomain")
+        source_name = source_dep.get("name")
+        if source_subdomain and source_subdomain == source_name:
+            new_deployment["subdomain"] = target_deployment
+
+        # Set clone-from to type "backup" so managers skip live cloning
+        new_deployment["clone-from"] = {
+            "type": CloneFromType.BACKUP.value,
+            "reference": source_deployment,
+            "mode": "once",
+        }
 
     # Auto-infer cluster if not set
     if not new_deployment.get("cluster"):
@@ -499,7 +527,7 @@ async def _create_deployment_from_source(
     save_project_file(project.filename, project_data)
     project_service.load_project_from_data(project_data, project.filename)
 
-    git_connector = create_git_connector_for_project_files()
+    git_connector = await create_git_connector_for_project_files(project_name)
     yaml_instance = YAML()
     yaml_instance.preserve_quotes = True
     yaml_instance.width = 4096
@@ -839,7 +867,7 @@ async def _restore_single_resource(
             project_service.load_project_from_data(project.data, project.filename)
 
             # Commit to git
-            git_connector = create_git_connector_for_project_files()
+            git_connector = await create_git_connector_for_project_files(project_name)
             from io import StringIO
 
             from ruamel.yaml import YAML
