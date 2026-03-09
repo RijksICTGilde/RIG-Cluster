@@ -1,0 +1,94 @@
+{# Keycloak Section #}
+{% if user_role in ["admin", "owner"] and project.config and project.config.get('keycloak') %}
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="beveiligingsscan" size="xl" color="hemelblauw" />Keycloak</c-heading>
+        <p class="rvo-text--subtle">Keycloak realm configuratie en admin toegang</p>
+
+        <div class="config-section">
+            {% for kc_config in project.config.keycloak %}
+            {% if not loop.first %}
+            <div style="margin-top: var(--rvo-space-lg); padding-top: var(--rvo-space-lg); border-top: 1px solid var(--rvo-color-grijs-200);"></div>
+            {% endif %}
+            <c-heading type="h3" style="margin-bottom: var(--rvo-space-md);"><c-icon icon="beveiligingsscan" size="md" color="hemelblauw" />Realm: {{ kc_config.realm }}</c-heading>
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="server" size="md" color="hemelblauw" />
+                    <strong>Admin Console</strong>
+                </div>
+                <div class="config-value config-value--inline">
+                    <code class="config-code">{{ kc_config.host }}</code>
+                    <c-button
+                        kind="tertiary"
+                        size="sm"
+                        showIcon="before"
+                        icon="document-blanco"
+                        class="copy-btn"
+                        aria-label="Kopieer host"
+                        @click="copyToClipboard('.config-code', event, '.config-item')">
+                        <span class="copy-btn__label">Kopieer</span>
+                        <span class="copy-btn__copied">Gekopieerd!</span>
+                    </c-button>
+                </div>
+                <c-button
+                    label="Open Admin Console"
+                    kind="secondary"
+                    size="sm"
+                    showIcon="after"
+                    icon="externe-link"
+                    @click="window.open('{{ kc_config.host }}/admin/master/console/#/{{ kc_config.realm }}', '_blank')" />
+            </div>
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="applicatie" size="md" color="grijs-600" />
+                    <strong>Realm</strong>
+                </div>
+                <div class="config-value config-value--inline">
+                    <code class="config-code">{{ kc_config.realm }}</code>
+                    <c-button
+                        kind="tertiary"
+                        size="sm"
+                        showIcon="before"
+                        icon="document-blanco"
+                        class="copy-btn"
+                        aria-label="Kopieer realm"
+                        @click="copyToClipboard('.config-code', event, '.config-item')">
+                        <span class="copy-btn__label">Kopieer</span>
+                        <span class="copy-btn__copied">Gekopieerd!</span>
+                    </c-button>
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="user" size="md" color="grijs-600" />
+                    <strong>Admin Gebruikersnaam</strong>
+                </div>
+                <div class="config-value config-value--inline">
+                    <code class="config-code">{{ kc_config.username }}</code>
+                    <c-button
+                        kind="tertiary"
+                        size="sm"
+                        showIcon="before"
+                        icon="document-blanco"
+                        class="copy-btn"
+                        aria-label="Kopieer gebruikersnaam"
+                        @click="copyToClipboard('.config-code', event, '.config-item')">
+                        <span class="copy-btn__label">Kopieer</span>
+                        <span class="copy-btn__copied">Gekopieerd!</span>
+                    </c-button>
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="sleutel" size="md" color="rood" />
+                    <strong>Admin Wachtwoord</strong>
+                </div>
+                <div class="config-value">
+                    <c-secret-field value="{{ kc_config.password }}" />
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </c-layout-flow>
+</c-card>
+{% endif %}

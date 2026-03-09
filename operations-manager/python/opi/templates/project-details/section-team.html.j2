@@ -1,0 +1,31 @@
+{# Team & Toegang Section #}
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
+            {% if user_role in ["admin", "owner"] %}
+            <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-team', 'Projectleden beheren')" title="Leden bewerken">
+                <c-icon icon="bewerken" size="sm" color="hemelblauw" />
+                <span>Bewerken</span>
+            </button>
+            {% endif %}
+        </div>
+        <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>
+
+        <c-grid columns="three" gap="md">
+            {% for user in project.users %}
+            <c-card padding="md" outline="true" backgroundColor="grijs-050">
+                <c-layout-row gap="md" verticalSpacing="center">
+                    <div style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--rvo-color-hemelblauw); color: white; font-weight: 600; font-size: 1.125rem;">
+                        {{ user.email[:2]|upper }}
+                    </div>
+                    <c-layout-flow gap="xs">
+                        <div style="font-weight: 500; color: var(--rvo-color-grijs-900);">{{ user.email }}</div>
+                        <div style="font-size: 0.875rem; color: var(--rvo-color-grijs-700); text-transform: capitalize;">{{ user.role|title }}</div>
+                    </c-layout-flow>
+                </c-layout-row>
+            </c-card>
+            {% endfor %}
+        </c-grid>
+    </c-layout-flow>
+</c-card>

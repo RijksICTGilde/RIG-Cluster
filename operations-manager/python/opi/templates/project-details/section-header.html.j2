@@ -1,0 +1,19 @@
+{# Page Header — project name, description, badge #}
+<div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--rvo-space-md);">
+        <div>
+            <c-heading type="h1" textContent="{{ project.display_name }}" />
+            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                <p class="rvo-text--lg" style="margin: 0;">{{ project.description }}</p>
+                {% if user_role in ["admin", "owner"] %}
+                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" title="Beschrijving bewerken">
+                    <c-icon icon="bewerken" size="sm" color="hemelblauw" />
+                </button>
+                {% endif %}
+            </div>
+            <div style="margin-top: var(--rvo-space-sm);">
+                <span class="project-badge">{{ project.name }}</span>
+            </div>
+        </div>
+    </div>
+</div>

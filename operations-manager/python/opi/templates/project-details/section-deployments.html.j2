@@ -1,0 +1,253 @@
+{# Deployments Section #}
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="server" size="xl" color="oranje" />Deployments</c-heading>
+            {% if user_role in ["admin", "owner"] %}
+            <button type="button" class="edit-section-btn" onclick="openEditModal('modal-add-deployment-{{ project.deployments|length if project.deployments else 0 }}', 'Deployment toevoegen')" title="Deployment toevoegen">
+                <c-icon icon="plus" size="sm" color="oranje" />
+                <span>Toevoegen</span>
+            </button>
+            {% endif %}
+        </div>
+        <p class="rvo-text--subtle">Applicatie deployments per omgeving</p>
+
+        {% if project.deployments %}
+        <div class="deployments-section">
+            {% for deployment in project.deployments %}
+            <div class="deployment-section" id="deployment-{{ deployment.name }}"
+                 {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
+            <c-card class="deployment-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
+                <c-layout-flow gap="md">
+                    <div class="deployment-header">
+                        <div>
+                            <c-heading type="h3">Deployment: {{ deployment.name }}</c-heading>
+                        </div>
+                        <div class="deployment-actions">
+                            {% if user_role in ['admin', 'owner'] %}
+                            <button type="button" class="edit-section-btn"
+                                onclick="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Deployment bewerken — {{ deployment.name }}')"
+                                title="Deployment bewerken">
+                                <c-icon icon="bewerken" size="sm" />Bewerken
+                            </button>
+                            <button type="button" class="edit-section-btn"
+                                onclick="openEditModal('modal-edit-domain-{{ loop.index0 }}', 'Webadres bewerken — {{ deployment.name }}')">
+                                <c-icon icon="wereldbol" size="sm" />Webadres
+                            </button>
+                            <button type="button" class="edit-section-btn" style="color: var(--rvo-color-rood-600);"
+                                onclick="showDangerConfirmation('deployment', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt verwijderen? Dit verwijdert alle bijbehorende Kubernetes resources en ArgoCD configuratie.')"
+                                title="Deployment verwijderen">
+                                <c-icon icon="verwijderen" size="sm" color="rood" />Verwijderen
+                            </button>
+                            {% endif %}
+                            <div class="deployment-status">
+                                <div class="status-badge status-running">
+                                    <c-icon icon="applicatie" size="sm" />
+                                    <span>Running</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {# Components in this deployment #}
+                    {% if deployment.components %}
+                    <div class="deployment-components">
+                        <c-heading type="h4" textContent="Components" />
+                        <div class="component-list">
+                            {% for component in deployment.components %}
+                            <div class="component-item">
+                                <c-icon icon="puzzel" size="md" color="donkerblauw" />
+                                <div class="component-details">
+                                    <div class="component-name">{{ component.reference }}</div>
+                                    <div class="component-image">{{ component.image }}</div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {# Helm Charts in this deployment #}
+                    {% if deployment.get('helm-charts') %}
+                    <div class="deployment-helm-charts" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                        <c-heading type="h4"><c-icon icon="applicatie" size="md" color="groen" />Helm Charts</c-heading>
+                        <c-layout-flow gap="md">
+                            {% for helm_chart in deployment.get('helm-charts', []) %}
+                            <c-card padding="md" backgroundColor="wit" outline="true">
+                                <c-layout-flow gap="sm">
+                                    <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                        <c-icon icon="applicatie" size="sm" color="groen" />
+                                        <strong>{{ helm_chart.reference }}</strong>
+                                    </div>
+                                    {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping %}
+                                    <div class="helm-values-section">
+                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                                            <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                                            <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
+                                            <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
+                                        </div>
+                                        <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" />
+                                    </div>
+                                    {% endif %}
+                                </c-layout-flow>
+                            </c-card>
+                            {% endfor %}
+                        </c-layout-flow>
+                    </div>
+                    {% endif %}
+
+                    {# Helmfile in this deployment #}
+                    {% if deployment.get('helmfile') %}
+                    <div class="deployment-helmfile" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                        <c-heading type="h4"><c-icon icon="applicatie" size="md" color="oranje" />Helmfile</c-heading>
+                        <c-layout-flow gap="md">
+                            {% for helmfile in deployment.get('helmfile', []) %}
+                            <c-card padding="md" backgroundColor="wit" outline="true">
+                                <c-layout-flow gap="sm">
+                                    <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                        <c-icon icon="applicatie" size="sm" color="oranje" />
+                                        <strong>{{ helmfile.reference }}</strong>
+                                    </div>
+                                    {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping %}
+                                    <div class="helm-values-section">
+                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                                            <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                                            <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
+                                            <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
+                                        </div>
+                                        <c-secret-field
+                                            value="{{ helmfile['helm-values'] | tojson(indent=2) }}"
+                                            valueType="json"
+                                            contentWidth="lg" />
+                                    </div>
+                                    {% endif %}
+                                </c-layout-flow>
+                            </c-card>
+                            {% endfor %}
+                        </c-layout-flow>
+                    </div>
+                    {% endif %}
+
+                    {# Public ingress links for this deployment #}
+                    {% if deployment.ingress_links %}
+                    <c-layout-flow gap="sm">
+                        <c-heading type="h4"><c-icon icon="externe-link" size="md" color="hemelblauw" />Publieke links</c-heading>
+                        <c-layout-row gap="sm">
+                            {% for link in deployment.ingress_links %}
+                            <c-button
+                                label="{{ link.component_name }}"
+                                kind="secondary"
+                                size="sm"
+                                showIcon="after"
+                                icon="externe-link"
+                                @click="window.open('{{ link.url }}', '_blank')" />
+                            {% endfor %}
+                        </c-layout-row>
+                    </c-layout-flow>
+                    {% endif %}
+
+                    {# Deployment Configuration Variables #}
+                    {% if deployment.configuration %}
+                    <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                        <c-heading type="h4" textContent="Configuratie Variabelen" />
+                        <c-layout-flow gap="md">
+                            {% set variables = deployment.configuration.get('variables', {}) %}
+                            {% if variables %}
+                                {% for key, value in variables.items() %}
+                                <c-card padding="sm" backgroundColor="wit" outline="true">
+                                    <c-layout-flow gap="xs">
+                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                            <c-icon icon="sleutel" size="sm" color="grijs-600" />
+                                            <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
+                                        </div>
+                                        <div style="margin-left: var(--rvo-space-lg);">
+                                            <c-secret-field value="{{ value }}" />
+                                        </div>
+                                    </c-layout-flow>
+                                </c-card>
+                                {% endfor %}
+
+                                {% set metadata = deployment.configuration.get('metadata', {}) %}
+                                {% if metadata.get('updated_on') %}
+                                <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-sm); border-top: 1px solid var(--rvo-color-grijs-100);">
+                                    <small class="rvo-text--xs" style="display: flex; align-items: center; gap: var(--rvo-space-xs); color: var(--rvo-color-grijs-500);">
+                                        <c-icon icon="info" size="sm" color="grijs-500" />
+                                        Laatste update: {{ metadata.updated_on }}
+                                    </small>
+                                </div>
+                                {% endif %}
+                            {% else %}
+                            <div class="empty-state">
+                                <c-icon icon="info" size="lg" color="grijs-050" />
+                                <p class="rvo-text--md">Geen configuratie variabelen beschikbaar</p>
+                            </div>
+                            {% endif %}
+                        </c-layout-flow>
+                    </div>
+                    {% endif %}
+
+                    {# User Configuration Variables for components in this deployment #}
+                    {% set deployment_components = deployment.components %}
+                    {% if deployment_components %}
+                    {% set has_user_vars = false %}
+                    {% for component in deployment_components %}
+                        {% for project_component in project.components %}
+                            {% if project_component.name == component.reference and project_component.get('user-env-vars') %}
+                                {% set has_user_vars = true %}
+                            {% endif %}
+                        {% endfor %}
+                    {% endfor %}
+
+                    {% if has_user_vars %}
+                    <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                        <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="user" size="md" color="donkerblauw" />Gebruikers configuratie</c-heading>
+                        <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor deze deployment</p>
+
+                        <c-layout-flow gap="md">
+                            {% for component in deployment_components %}
+                            {% for project_component in project.components %}
+                            {% if project_component.name == component.reference and project_component.get('user-env-vars') %}
+                            <c-card padding="sm" backgroundColor="grijs-050" outline="true">
+                                <c-layout-flow gap="md">
+                                    <c-layout-row gap="sm">
+                                        <c-icon icon="puzzel" size="sm" color="donkerblauw" />
+                                        <c-heading type="h5" textContent="Component: {{ component.reference }}" />
+                                    </c-layout-row>
+
+                                    <c-layout-flow gap="sm">
+                                        {% for key, value in project_component['user-env-vars'].items() %}
+                                        <c-card padding="sm" backgroundColor="wit" outline="true">
+                                            <c-layout-flow gap="xs">
+                                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                                    <c-icon icon="sleutel" size="sm" color="grijs-600" />
+                                                    <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
+                                                </div>
+                                                <div style="margin-left: var(--rvo-space-lg);">
+                                                    <c-secret-field value="{{ value }}" />
+                                                </div>
+                                            </c-layout-flow>
+                                        </c-card>
+                                        {% endfor %}
+                                    </c-layout-flow>
+                                </c-layout-flow>
+                            </c-card>
+                            {% endif %}
+                            {% endfor %}
+                            {% endfor %}
+                        </c-layout-flow>
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                </c-layout-flow>
+            </c-card>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <c-icon icon="info" size="lg" color="grijs-050" />
+            <p class="rvo-text--md">Geen deployments geconfigureerd</p>
+        </div>
+        {% endif %}
+    </c-layout-flow>
+</c-card>
