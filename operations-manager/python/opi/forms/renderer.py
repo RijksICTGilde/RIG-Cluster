@@ -321,7 +321,7 @@ class FormRenderer:
                 smart_set_value(yaml_data, editable.editable.yaml_path, True)
 
         for editable in editables:
-            if not should_render_editable(editable, yaml_data):
+            if not should_render_editable(editable, yaml_data, siblings=editables):
                 continue
 
             if editable.widget == WidgetType.GROUP:
@@ -419,8 +419,9 @@ class FormRenderer:
         from opi.forms.visualizers.bridge import editable_to_form_field, should_render_editable
 
         fields: dict[str, FormField] = {}
-        for child in editable.children or []:
-            if not should_render_editable(child, yaml_data):
+        group_children = editable.children or []
+        for child in group_children:
+            if not should_render_editable(child, yaml_data, siblings=group_children):
                 continue
             if child.widget == WidgetType.GROUP:
                 fields.update(self._build_group_fields(child, yaml_data, errors, edit_mode, provider_context))
@@ -482,8 +483,9 @@ class FormRenderer:
                 item_context = {**(provider_context or {}), "exclude_references": other_refs}
 
             item_children: list[FormField] = []
-            for child_editable in editable.children or []:
-                if not should_render_editable(child_editable, yaml_data):
+            seq_children = editable.children or []
+            for child_editable in seq_children:
+                if not should_render_editable(child_editable, yaml_data, siblings=seq_children):
                     continue
                 if child_editable.widget == WidgetType.SEQUENCE:
                     nested_seq = self._build_nested_sequence_field(

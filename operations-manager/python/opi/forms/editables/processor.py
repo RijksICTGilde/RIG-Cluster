@@ -93,7 +93,7 @@ class EditableFormProcessor:
         for vis in editables:
             ed = vis.editable
             # Skip validation for fields hidden by depends_on/show_when conditions
-            if not should_render_editable(vis, yaml_data):
+            if not should_render_editable(vis, yaml_data, siblings=editables):
                 continue
             if vis.widget == WidgetType.GROUP:
                 # Recurse into group children, then run parent enforcer
@@ -218,7 +218,7 @@ class EditableFormProcessor:
                 continue
             if not ed.depends_on:
                 continue
-            if not should_render_editable(vis, yaml_data):
+            if not should_render_editable(vis, yaml_data, siblings=editables):
                 # Remove the value from YAML
                 smart_set_value(yaml_data, ed.yaml_path, None)
 
@@ -315,11 +315,12 @@ class EditableFormProcessor:
         if not isinstance(items, list):
             return
         for index in range(len(items)):
-            for child_vis in vis.children or []:
+            seq_children = vis.children or []
+            for child_vis in seq_children:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                if not should_render_editable(child_vis, yaml_data):
+                if not should_render_editable(child_vis, yaml_data, siblings=seq_children):
                     continue
                 if child_vis.widget == WidgetType.SEQUENCE:
                     self._apply_nested_sequence_to_yaml(child_vis, parsed, yaml_data, edit_mode, parent_index=index)
@@ -464,11 +465,12 @@ class EditableFormProcessor:
         errors_before = len(errors)
 
         # Process each child through the same dispatch logic
-        for child_vis in vis.children or []:
+        group_children = vis.children or []
+        for child_vis in group_children:
             child_ed = child_vis.editable
             if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                 continue
-            if not should_render_editable(child_vis, result):
+            if not should_render_editable(child_vis, result, siblings=group_children):
                 continue
 
             if child_vis.widget == WidgetType.GROUP:
@@ -523,12 +525,13 @@ class EditableFormProcessor:
         # Write the submitted items into result (correct count + raw values)
         smart_set_value(result, ed.yaml_path, copy.deepcopy(items))
 
+        seq_children_json = vis.children or []
         for index in range(len(items)):
-            for child_vis in vis.children or []:
+            for child_vis in seq_children_json:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                if not should_render_editable(child_vis, result):
+                if not should_render_editable(child_vis, result, siblings=seq_children_json):
                     continue
                 if child_vis.widget == WidgetType.SEQUENCE:
                     self._process_nested_sequence_json(

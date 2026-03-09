@@ -121,6 +121,7 @@ def should_render_editable(
     editable: EditableVisualizer,
     yaml_data: dict[str, Any],
     index: int | None = None,
+    siblings: list[EditableVisualizer] | None = None,
 ) -> bool:
     """Check if an editable should be rendered based on its dependencies.
 
@@ -133,6 +134,11 @@ def should_render_editable(
        - {"contains_any": [...]} -> dep_value is list and any match
        - {"field": ["val1", "val2"]} -> dep_value in ["val1", "val2"]
        - {"field": "value"} -> dep_value == "value"
+
+    When *siblings* is provided, the dependency value is passed through the
+    dependency field's converter (if any) before comparison.  This is needed
+    when a converter maps stored values to sentinel display values (e.g.
+    ``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` → ``"__custom__"``).
     """
     ed = editable.editable
     depends_on = ed.depends_on
@@ -142,6 +148,13 @@ def should_render_editable(
         return True
 
     dep_value = smart_get_value(yaml_data, depends_on)
+
+    # Apply the dependency field's converter so show_when compares against
+    # the display value (e.g. "__custom__") rather than the raw stored value.
+    if siblings and show_when and dep_value is not None:
+        dep_converter = _find_converter_for_path(siblings, depends_on)
+        if dep_converter and hasattr(dep_converter, "view"):
+            dep_value = dep_converter.view(dep_value)
 
     if show_when is None:
         return bool(dep_value)
@@ -181,6 +194,22 @@ def resolve_options_for_editable(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _find_converter_for_path(
+    siblings: list[EditableVisualizer],
+    yaml_path: str,
+) -> Any | None:
+    """Find the converter for the editable whose yaml_path matches *yaml_path*."""
+    for sib in siblings:
+        if sib.editable.yaml_path == yaml_path:
+            return sib.editable.converter
+        # Recurse into groups
+        if sib.children:
+            result = _find_converter_for_path(sib.children, yaml_path)
+            if result is not None:
+                return result
+    return None
 
 
 def _resolve_options(
