@@ -61,9 +61,68 @@ def _render_step_html(
     edit_mode: bool = False,
 ) -> str:
     """Render the form fields for a single wizard step."""
+    import copy
+
+    from opi.forms.editables.service_path import smart_get_value, smart_set_value
+
     renderer = _create_renderer()
     if not section.layout:
         return ""
+
+    # General solution: restore transient fields from their parent values before rendering.
+    # When a transient field is deferred to a parent, the transient is stripped from saved state.
+    # But for rendering, we need the transient field value so the input shows the correct value.
+    # For each transient field with a depends_on relationship, restore from the dependency.
+    render_data = copy.deepcopy(yaml_data)
+
+    if section.section_id == "domains":
+        logger.debug("[domains render START] processing %d editables", len(section.editables))
+
+    def _restore_transient_fields(editables: list[Any], data: dict[str, Any]) -> None:
+        """Recursively restore transient fields from their dependencies, including children."""
+        for editable in editables:
+            ed = editable.editable
+
+            if section.section_id == "domains":
+                logger.debug(
+                    "[domains render] checking editable: path=%s, transient=%s, depends_on=%s, has_children=%s",
+                    ed.yaml_path,
+                    ed.transient,
+                    ed.depends_on,
+                    bool(editable.children),
+                )
+
+            # Recursively process children (for GROUP editables)
+            if editable.children:
+                _restore_transient_fields(editable.children, data)
+
+            # Check if this is a transient field that depends on another field
+            if ed.transient and ed.depends_on:
+                # Get the dependency value (the parent field value)
+                dep_value = smart_get_value(data, ed.depends_on)
+
+                if section.section_id == "domains":
+                    logger.debug(
+                        "[domains render] FOUND transient field %s, dep_value=%s",
+                        ed.yaml_path,
+                        dep_value,
+                    )
+
+                # If the parent has a non-sentinel value, it's a custom value - restore it to the transient for display
+                if dep_value and dep_value != "__custom__":
+                    # Restore this transient field from the parent for display
+                    smart_set_value(data, ed.yaml_path, dep_value)
+                    logger.debug(
+                        "[domains render] RESTORED transient field %s from dependency %s (value=%s)",
+                        ed.yaml_path,
+                        ed.depends_on,
+                        dep_value,
+                    )
+
+    _restore_transient_fields(section.editables, render_data)
+
+    yaml_data = render_data
+
     return renderer.render_fields_from_editables(
         editables=section.editables,
         yaml_data=yaml_data,
@@ -705,6 +764,16 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         enforcer_context=enforcer_context,
     )
 
+    # CENTRALIZED VALIDATION LOGGING - field-level validation
+    if errors:
+        logger.warning(
+            "[%s validation FAILED] field-level errors: %s",
+            section_id,
+            errors,
+        )
+    else:
+        logger.info("[%s validation PASSED] field-level validation ok", section_id)
+
     # Handle re-render request (e.g., toggle changed): save values, clear hidden
     # depends_on fields, and re-render the same step without advancing.
     if is_rerender:
@@ -748,7 +817,14 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Forward navigation: run section-level enforcer for cross-field validation
     if is_forward and section.enforcer:
         global_errors = await processor.enforce_sections(submitted_yaml, [section], enforcer_context)
+
+        # CENTRALIZED VALIDATION LOGGING - section-level (enforcer) validation
         if global_errors:
+            logger.warning(
+                "[%s validation FAILED] section-level (enforcer) errors: %s",
+                section_id,
+                global_errors,
+            )
             step_html = _render_step_html(
                 section,
                 yaml_data=submitted_yaml,
@@ -764,10 +840,20 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 global_errors=global_errors,
             )
             return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        else:
+            logger.info("[%s validation PASSED] section-level (enforcer) validation ok", section_id)
 
     # Store converted YAML-format data for this section
     section_data = _extract_section_data(section.editables, submitted_yaml)
     state.store_step_data(section_id, section_data)
+
+    # CENTRALIZED LOGGING - navigation decision point
+    logger.info(
+        "[%s] All validations passed. Forward navigation: is_forward=%s, goto=%r",
+        section_id,
+        is_forward,
+        goto,
+    )
     if is_forward:
         state.mark_completed(section_id)
 
@@ -1661,7 +1747,17 @@ async def _do_submit(
 
     # Build final YAML — use flattened data so apply_to_yaml can find
     # sequence child values via their concrete paths.
-    final_data = processor.apply_to_yaml(flat, all_editables, yaml_data)
+    # Apply deferral and strip transients for the final output:
+    # - resolve_deferrals=True: copy transient values to parent fields
+    # - strip_transients=True: remove transient fields from final YAML
+    final_data = processor.apply_to_yaml(
+        flat,
+        all_editables,
+        yaml_data,
+        resolve_deferrals=True,
+        strip_transients=True,
+    )
+    logger.info("[wizard submit] Applied deferral and stripped transient fields for final output")
 
     # Merge rewrite-path into path field for each component
     _normalize_component_paths(final_data)

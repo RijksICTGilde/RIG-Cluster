@@ -253,6 +253,8 @@ class EditableFormProcessor:
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
         edit_mode: bool = False,
+        resolve_deferrals: bool = True,
+        strip_transients: bool = True,
     ) -> dict[str, Any]:
         """
         Write validated form values back into the YAML dict.
@@ -261,6 +263,16 @@ class EditableFormProcessor:
         - Skips readonly fields
         - Skips readonly_on_edit fields when edit_mode=True
         - Applies converter.write() before set_value()
+        - Optionally resolves defers_to relationships (copy transient → parent)
+        - Optionally strips transient fields from output
+
+        Args:
+            resolve_deferrals: If True, copy deferred transient values to their parent fields.
+                              For wizard steps, set False to preserve both values.
+                              For final output, set True to merge them.
+            strip_transients: If True, remove transient fields from final output.
+                             For wizard steps, set False to keep both values.
+                             For final output, set True to clean up.
 
         Returns:
             New yaml_data dict with values applied.
@@ -276,7 +288,7 @@ class EditableFormProcessor:
 
             if vis.widget == WidgetType.GROUP:
                 # Groups are transparent — recurse into children
-                self.apply_to_yaml(parsed, vis.children or [], result, edit_mode)
+                self.apply_to_yaml(parsed, vis.children or [], result, edit_mode, resolve_deferrals, strip_transients)
             elif vis.widget == WidgetType.SEQUENCE:
                 self._apply_sequence_to_yaml(vis, parsed, result, edit_mode)
             elif vis.widget == WidgetType.CHECKBOX:
@@ -298,8 +310,11 @@ class EditableFormProcessor:
                         value = ed.converter.write(value)
                     smart_set_value(result, ed.yaml_path, value)
 
-        self._resolve_deferrals(result, editables)
-        self._strip_transients(result, editables)
+        if resolve_deferrals:
+            self._resolve_deferrals(result, editables)
+        if strip_transients:
+            self._strip_transients(result, editables)
+
         return result
 
     def _apply_sequence_to_yaml(
@@ -442,7 +457,14 @@ class EditableFormProcessor:
                     smart_set_value(result, ed.yaml_path, value)
 
         self._resolve_deferrals(result, editables)
-        self._strip_transients(result, editables)
+
+        # IMPORTANT: For wizard steps, DON'T strip transient fields.
+        # We need BOTH values to persist in wizard state:
+        #   - Parent field: "__custom__" (form logic indicator)
+        #   - Transient field: "mydomain.nl" (actual value)
+        # Only strip transients at final project submission, not during wizard.
+        # self._strip_transients(result, editables)
+
         return result, errors
 
     async def _process_group_json(
@@ -640,10 +662,23 @@ class EditableFormProcessor:
         condition is met on the current value. If so, copies the value from
         the deferred (transient) field path into this editable's path.
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         for ed, concrete_path in self._collect_editables_with_paths(editables, data):
             if not ed.defers_to or not ed.defer_when:
                 continue
             current_value = smart_get_value(data, concrete_path)
+
+            # CENTRALIZED DEFERRAL LOGGING
+            logger.debug(
+                "[deferral check] path=%s, current_value=%s, defers_to=%s",
+                concrete_path,
+                current_value,
+                ed.defers_to,
+            )
+
             if ed.defer_when.check(current_value):
                 # Resolve the deferred path with the same index context
                 deferred_path = ed.defers_to
@@ -655,8 +690,69 @@ class EditableFormProcessor:
                     if m:
                         deferred_path = deferred_path.replace("[*]", f"[{m.group(1)}]", 1)
                 deferred_value = smart_get_value(data, deferred_path)
+
+                # CENTRALIZED DEFERRAL LOGGING
+                logger.debug(
+                    "[deferral execute] %s -> %s (deferred_value=%s)",
+                    deferred_path,
+                    concrete_path,
+                    deferred_value,
+                )
+
                 if deferred_value is not None:
                     smart_set_value(data, concrete_path, deferred_value)
+                    logger.info(
+                        "[deferral SUCCESS] copied %s to %s (value=%s)",
+                        deferred_path,
+                        concrete_path,
+                        deferred_value,
+                    )
+                else:
+                    logger.warning(
+                        "[deferral SKIPPED] deferred_value is None at path %s",
+                        deferred_path,
+                    )
+
+    def _restore_sentinel_values(
+        self,
+        data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> None:
+        """Restore sentinel values after deferral for wizard state preservation.
+
+        After deferral copies the transient value to the parent, we restore the
+        parent back to its sentinel value (e.g., "__custom__") so that:
+        1. Form display logic can detect the sentinel
+        2. Transient field value can be restored during form rendering
+        3. Both values are preserved in wizard state for navigation
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
+            if not ed.defers_to or not ed.defer_when:
+                continue
+
+            # Get the transient field value (what was copied TO the parent)
+            deferred_path = ed.defers_to
+            transient_value = smart_get_value(data, deferred_path)
+
+            # If the transient has a value, restore parent to sentinel
+            if transient_value is not None:
+                # Determine the sentinel value (usually "__custom__")
+                sentinel = "__custom__"
+                if isinstance(ed.defer_when, object) and hasattr(ed.defer_when, "sentinel"):
+                    sentinel = ed.defer_when.sentinel
+
+                smart_set_value(data, concrete_path, sentinel)
+                logger.debug(
+                    "[restore_sentinel] restored %s -> %s (sentinel=%s, kept transient=%s)",
+                    concrete_path,
+                    sentinel,
+                    sentinel,
+                    transient_value,
+                )
 
     def _strip_transients(
         self,

@@ -504,22 +504,32 @@ class DomainFormatOptionsProvider:
         self.cluster = cluster
 
     def get_options(self) -> list[dict[str, Any]]:
+        import logging
+
         from opi.core.cluster_config import get_domain_supports_dots
         from opi.core.config import settings
 
+        logger = logging.getLogger(__name__)
         cluster = self.cluster or settings.CLUSTER_MANAGER
         supports_dots = False
 
+        logger.debug(f"DomainFormatOptionsProvider.get_options(): base_domain={self.base_domain!r}, cluster={cluster}")
+
         if self.base_domain == "__custom__":
             supports_dots = True
+            logger.debug("Custom domain selected, supports_dots=True")
         elif self.base_domain and cluster:
             supports_dots = get_domain_supports_dots(cluster, self.base_domain)
+            logger.debug(f"Domain {self.base_domain!r} supports_dots={supports_dots}")
+        else:
+            logger.debug(f"base_domain={self.base_domain!r}, cluster={cluster}, no supports_dots check")
 
         format_ids = list(self._DASH_FORMATS)
         if supports_dots:
             format_ids.extend(self._DOT_FORMATS)
 
         format_ids.sort()
+        logger.debug(f"DomainFormatOptionsProvider returning {len(format_ids)} formats: {format_ids}")
         return [{"value": f, "label": f"{f}.domein"} for f in format_ids]
 
 

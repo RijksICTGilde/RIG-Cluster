@@ -361,7 +361,12 @@ class FormRenderer:
           checkbox group to project-enabled services.
         - ``component_names``: list of component names, used by
           ``ComponentReferenceOptionsProvider`` for deployment references.
+        - ``base_domain``: the base domain value for DomainFormatOptionsProvider
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         context: dict[str, Any] = {}
 
         # Extract project services
@@ -396,8 +401,13 @@ class FormRenderer:
             for dep in deployments:
                 if isinstance(dep, dict):
                     base_domain = dep.get("base-domain")
+                    custom_domain = dep.get("base-domain:custom")
                     if base_domain:
                         context["base_domain"] = base_domain
+                        logger.debug(
+                            f"_build_provider_context: base_domain={base_domain!r}, "
+                            f"base_domain:custom={custom_domain!r}"
+                        )
                         break
 
         return context

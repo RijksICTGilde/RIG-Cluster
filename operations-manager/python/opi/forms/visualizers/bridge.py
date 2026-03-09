@@ -222,6 +222,10 @@ def _resolve_options(
 
     kwargs = _filter_provider_kwargs(provider_name, context or {})
     try:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.debug(f"_resolve_options: provider={provider_name!r}, filtered_kwargs={kwargs}")
         provider = get_provider(provider_name, **kwargs)
         return provider.get_options()
     except KeyError:

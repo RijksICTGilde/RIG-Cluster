@@ -113,6 +113,8 @@ class DomainConfigEnforcer:
     """
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        from opi.core.cluster_config import get_domain_supports_dots
+        from opi.core.config import settings
         from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
         deployments = value.get("deployments", [])
@@ -125,18 +127,38 @@ class DomainConfigEnforcer:
             return value
 
         base_domain = dep.get("base-domain")
+        custom_domain = dep.get("base-domain:custom")
         subdomain = dep.get("subdomain")
 
+        # When base-domain is "__custom__", user selected custom domain input
+        # Validate that they actually filled it in
         if base_domain == "__custom__":
-            raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
+            if not custom_domain:
+                raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
+            # Use custom domain for further validation
+            actual_domain = custom_domain
+        else:
+            # Standard domain was selected
+            actual_domain = base_domain
 
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
         if "{subdomain}" in template and not subdomain:
             raise ValueError("Een subdomein is vereist voor het gekozen URL-formaat")
 
+        # Check if domain format (with dots) is compatible with the selected domain
+        if actual_domain and "." in domain_format:
+            cluster = settings.CLUSTER_MANAGER
+            supports_dots = get_domain_supports_dots(cluster, actual_domain)
+            if not supports_dots:
+                raise ValueError(
+                    f"Het gekozen URL-formaat ondersteunt geen punten in de domeinnaam. "
+                    f"Dit domein ({actual_domain}) ondersteunt punten niet. "
+                    f"Kies een ander URL-formaat of een ander domein."
+                )
+
         # Check subdomain availability for nice-URL formats
-        if subdomain and base_domain and "{subdomain}" in template:
-            await self._check_subdomain_availability(subdomain, base_domain, context)
+        if subdomain and actual_domain and "{subdomain}" in template:
+            await self._check_subdomain_availability(subdomain, actual_domain, context)
 
         return value
 

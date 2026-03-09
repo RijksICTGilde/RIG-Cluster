@@ -455,6 +455,10 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
         mock_exec.return_value = mock_process
 
         connector = KubectlConnector()
+        # Cancel any background retry task started by __init__
+        if connector._retry_task:
+            connector._retry_task.cancel()
+            connector._retry_task = None
 
         with patch.object(KubectlConnector, "isConnected", True):
             result = await connector.stream_deployment_logs(
