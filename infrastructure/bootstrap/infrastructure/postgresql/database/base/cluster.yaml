@@ -36,6 +36,8 @@ spec:
     parameters:
       max_connections: "250"
       reserved_connections: "10"
+      # Logging: stream to Kubernetes (don't accumulate on disk)
+      logging_collector: "off"  # Disable disk logging; use stdout instead
 
   # Resource limits
   resources:
