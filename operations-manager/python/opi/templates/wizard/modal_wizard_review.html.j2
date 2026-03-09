@@ -7,6 +7,7 @@
     - project_name: str
     - section_summaries: list of dicts with section_id, title, icon, summary_html
     - action_label: str (button text)
+    - warnings: list of warning strings (optional)
 #}
 
 {# Step indicator (only for multi-step flows) #}
@@ -26,6 +27,14 @@
             Controleer de wijzigingen hieronder voordat u verdergaat.
         </p>
     </div>
+
+    {% if warnings %}
+    {% for warning in warnings %}
+    <c-alert kind="warning" heading="Let op">
+        {{ warning }}
+    </c-alert>
+    {% endfor %}
+    {% endif %}
 
     <c-layout-flow gap="lg">
         {% for section in section_summaries %}

@@ -187,17 +187,26 @@ class KeyValueConverter:
     - ``"string"``: Keeps the raw text as a string literal.
       Used for ``user-env-vars`` which are stored as a string
       (and later AGE-encrypted by a generator).
+
+    When the stored value is AGE-encrypted, ``read()`` and ``view()``
+    auto-detect the encryption and decrypt transparently using the
+    project's private key (resolved from ``yaml_data``).
     """
 
     def __init__(self, fmt: str = "env", write_as: str = "dict") -> None:
         self.fmt = fmt  # "env" or "yaml"
         self.write_as = write_as  # "dict" or "string"
 
-    def read(self, value: Any) -> str:
-        """Return the stored text for display in the editor."""
+    def read(self, value: Any, yaml_data: dict[str, Any] | None = None) -> str:
+        """Return the stored text for display in the editor.
+
+        If the value is AGE-encrypted and ``yaml_data`` is provided,
+        the value is decrypted first using the project's private key.
+        """
         logger.info(
             "[KeyValueConverter.read] write_as=%s, input type=%s, value=%r", self.write_as, type(value).__name__, value
         )
+        value = self._maybe_decrypt(value, yaml_data)
         if isinstance(value, dict):
             if not value:
                 return ""
@@ -255,8 +264,46 @@ class KeyValueConverter:
                 result[key.strip()] = val.strip()
         return result
 
-    def view(self, value: Any) -> str:
-        return self.read(value)
+    @staticmethod
+    def _maybe_decrypt(value: Any, yaml_data: dict[str, Any] | None) -> Any:
+        """Decrypt AGE-encrypted value using the project's private key.
+
+        Returns the original value unchanged when:
+        - value is not a string or not AGE-encrypted
+        - yaml_data is not provided (e.g. during wizard flow with plaintext data)
+        - decryption fails for any reason
+        """
+        if not isinstance(value, str) or "BEGIN AGE ENCRYPTED FILE" not in value:
+            return value
+        if not yaml_data:
+            return value
+        try:
+            from opi.core.config import settings
+            from opi.utils.age import decrypt_age_content_sync
+
+            system_private_key = settings.SOPS_AGE_PRIVATE_KEY
+            if not system_private_key:
+                logger.warning("[KeyValueConverter] No system AGE private key available")
+                return value
+            encoded_project_key = yaml_data.get("config", {}).get("age-private-key")
+            if not encoded_project_key:
+                logger.warning("[KeyValueConverter] No project age-private-key in yaml_data")
+                return value
+            project_private_key = decrypt_age_content_sync(encoded_project_key, system_private_key)
+            if not project_private_key:
+                logger.warning("[KeyValueConverter] Failed to decrypt project private key")
+                return value
+            decrypted = decrypt_age_content_sync(value, project_private_key)
+            if decrypted is not None:
+                logger.debug("[KeyValueConverter] Successfully decrypted AGE-encrypted value")
+                return decrypted
+            return value
+        except Exception:
+            logger.warning("[KeyValueConverter] AGE decryption failed, returning raw value", exc_info=True)
+            return value
+
+    def view(self, value: Any, yaml_data: dict[str, Any] | None = None) -> str:
+        return self.read(value, yaml_data=yaml_data)
 
 
 class ContainerImageConverter:

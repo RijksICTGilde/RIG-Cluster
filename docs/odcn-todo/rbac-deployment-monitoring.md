@@ -25,7 +25,7 @@ in the namespace "rig-prd-{project}"
 
 The `namespace-manager` service account in the `rig-prd-operations` namespace needs **read-only** access to `deployments` in the `apps` API group, across all `rig-prd-*` user namespaces.
 
-### Required RBAC Rule
+### Required RBAC Rules
 
 ```yaml
 - apiGroups:
@@ -35,6 +35,14 @@ The `namespace-manager` service account in the `rig-prd-operations` namespace ne
   verbs:
     - get
     - list
+- apiGroups:
+    - ""
+  resources:
+    - events
+  verbs:
+    - get
+    - list
+    - watch
 ```
 
 This should be added as a **ClusterRole** (or scoped to `rig-prd-*` namespaces if ODCN uses namespace-scoped Roles).
@@ -59,5 +67,5 @@ The ODCN production overlay (`overlays/odcn-production/`) does **not** include t
 ## Sandbox Fix
 
 Already applied in this repository:
-- `overlays/local/cluster-role.yaml` — added `apps/deployments` get+list
-- `overlays/sandboxed-local/cluster-role.yaml` — added `apps/deployments` get+list
+- `overlays/local/cluster-role.yaml` — added `apps/deployments` get+list, `events` get+list+watch
+- `overlays/sandboxed-local/cluster-role.yaml` — added `apps/deployments` get+list, `events` get+list+watch

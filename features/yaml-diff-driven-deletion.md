@@ -38,11 +38,28 @@ Each `ServiceDefinition` declares a `cleanup_strategy`:
 
 | Strategy | Services | Behavior |
 |----------|----------|----------|
-| `deferred` | postgresql-database, namespace-postgresql-database, minio-storage | Mark for deferred deletion (data is precious) |
+| `deferred` | postgresql-database, namespace-postgresql-database, minio-storage, persistent-storage | Mark for deferred deletion (data is precious) |
 | `immediate` | redis, namespace-redis, keycloak | Delete right away (ephemeral/recreatable) |
-| `none` | publish-on-web, authorization-wall, persistent-storage, temp-storage | No server-side resources to clean up |
+| `none` | publish-on-web, authorization-wall, temp-storage | No server-side resources to clean up |
 
 Each service manager owns its cleanup logic via `handle_service_removal()`, which decides internally whether to mark or delete based on the availability of a `MarkedForDeletionService`. The orchestrator (`cleanup_removed_services_from_yaml_change`) iterates cleanable services, detects removals using `deployment_uses_service()`, and delegates to the appropriate manager.
+
+### PVC Deferred Deletion (GitOps-based)
+
+PVCs require special handling because they are managed by ArgoCD through manifest files in git. Unlike databases and buckets (which are external resources deleted via connectors), PVCs are deleted by removing their manifest — ArgoCD then prunes the Kubernetes resource.
+
+**Mark phase** (`PVCManager.handle_service_removal`):
+1. The PVC manifest file is **renamed** with a `.marked-for-deletion.yaml` suffix (e.g., `webapp-data-pvc.yaml` → `webapp-data-pvc.marked-for-deletion.yaml`)
+2. The renamed file stays in the kustomize directory — ArgoCD keeps syncing it, so the PVC stays alive
+3. Normal manifest generation won't touch the renamed file (it uses different filenames)
+4. A record is inserted into `marked_for_deletion` with the exact filename and deployment path in metadata
+
+**Purge phase** (reconciliation `_purge_pvc`):
+1. After the grace period, the reconciliation job loads the project via `ProjectManager`
+2. Checks out the deployment git repo
+3. Deletes the `.marked-for-deletion.yaml` file
+4. Regenerates `kustomization.yaml` (so the file is no longer listed as a resource)
+5. Commits and pushes — ArgoCD syncs and prunes the PVC
 
 ### Reconciliation
 

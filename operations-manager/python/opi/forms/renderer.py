@@ -394,9 +394,15 @@ class FormRenderer:
                 c.get("name", "") for c in components if isinstance(c, dict) and c.get("name")
             ]
 
+        # Extract deployment names (for DeploymentCloneFromOptionsProvider)
+        deployments = yaml_data.get("deployments", [])
+        if isinstance(deployments, list):
+            context["deployment_names"] = [
+                d.get("name", "") for d in deployments if isinstance(d, dict) and d.get("name")
+            ]
+
         # Extract base_domain from deployments (for DomainFormatOptionsProvider)
         # Check all deployments — in the edit flow, the edited deployment may not be [0]
-        deployments = yaml_data.get("deployments", [])
         if isinstance(deployments, list):
             for dep in deployments:
                 if isinstance(dep, dict):

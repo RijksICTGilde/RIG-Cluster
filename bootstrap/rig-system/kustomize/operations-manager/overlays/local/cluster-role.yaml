@@ -52,6 +52,15 @@ rules:
     verbs:
       - get
       - list
+  # Events listing for deployment monitoring and progress reporting
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - get
+      - list
+      - watch
   # ==========================================================================
   # PVC Backup System Permissions
   # See: features/pvc-backup-system.md for documentation

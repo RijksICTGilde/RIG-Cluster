@@ -356,6 +356,7 @@ class ServiceAdapter:
             backup_label="pvc",
             storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
             variables=[var.value for var in StorageVariables if var.value.name == "DATA_PATH"],
+            cleanup_strategy="deferred",
         ),
         ServiceType.TEMP_STORAGE: ServiceDefinition(
             name="Tijdelijke schijfruimte",

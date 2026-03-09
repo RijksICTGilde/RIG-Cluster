@@ -13,6 +13,7 @@ from typing import Any
 from opi.forms.editables.enforcers import (
     ComponentServicesEnforcer,
     DomainConfigEnforcer,
+    UniqueDeploymentNameEnforcer,
     UniqueReferencesEnforcer,
     extract_service_names,
 )
@@ -380,7 +381,7 @@ def build_domain_edit_section(deployment_index: int) -> FormSection:
         title="Webadres bewerken",
         icon="wereldbol",
         description="Wijzig het webadres voor deze deployment",
-        enforcer=DomainConfigEnforcer(),
+        enforcer=DomainConfigEnforcer(deployment_index=deployment_index),
         editables=editables,
         layout=layout,
         post_save_action="process_project",
@@ -581,11 +582,35 @@ RESTORE_TARGET_SECTION = FormSection(
 )
 
 
-def _restore_new_deployment_summary(data: dict[str, Any]) -> str:
+def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> str:
     """Build review summary for new deployment configuration."""
     deployments = data.get("deployments", [])
-    name = deployments[0].get("name", "-") if deployments else "-"
+    name = deployments[deployment_index].get("name", "-") if deployment_index < len(deployments) else "-"
     return f"<p><strong>Deployment:</strong> {name}</p>"
+
+
+def _materialize_new_deployment_fields(
+    deployment_index: int,
+    visualizers: list,
+) -> list:
+    """Materialize deployment[*] visualizers to a concrete deployment index.
+
+    Shared helper used by both the restore-new-deployment section and the
+    add-deployment wizard.
+    """
+    from opi.forms.editables.reindex import materialize_wildcard_visualizer
+
+    return [materialize_wildcard_visualizer(vis, deployment_index) for vis in visualizers]
+
+
+# The base set of visualizers for creating a new deployment (info + domain).
+_NEW_DEPLOYMENT_INFO_VISUALIZERS = [DEPLOYMENT_NAME, DEPLOYMENT_CLONE_FROM]
+_NEW_DEPLOYMENT_DOMAIN_VISUALIZERS = [
+    DEPLOYMENT_SUBDOMAIN,
+    DEPLOYMENT_BASE_DOMAIN,
+    DEPLOYMENT_CUSTOM_BASE_DOMAIN,
+    DEPLOYMENT_DOMAIN_FORMAT,
+]
 
 
 def _build_restore_new_deployment_section() -> FormSection:
@@ -594,19 +619,9 @@ def _build_restore_new_deployment_section() -> FormSection:
     Materializes deployment[*] visualizers to deployment[0] so the form
     reads/writes a single deployment entry.
     """
-    from opi.forms.editables.reindex import materialize_wildcard_visualizer
-
-    editables = [
-        materialize_wildcard_visualizer(vis, 0)
-        for vis in [
-            DEPLOYMENT_NAME,
-            DEPLOYMENT_CLONE_FROM,
-            DEPLOYMENT_SUBDOMAIN,
-            DEPLOYMENT_BASE_DOMAIN,
-            DEPLOYMENT_CUSTOM_BASE_DOMAIN,
-            DEPLOYMENT_DOMAIN_FORMAT,
-        ]
-    ]
+    editables = _materialize_new_deployment_fields(
+        0, _NEW_DEPLOYMENT_INFO_VISUALIZERS + _NEW_DEPLOYMENT_DOMAIN_VISUALIZERS
+    )
 
     return FormSection(
         section_id="restore-new-deployment",
@@ -623,11 +638,69 @@ def _build_restore_new_deployment_section() -> FormSection:
             "deployments[0]/base-domain:custom",
             "deployments[0]/domain-format",
         ],
-        summary_fn=_restore_new_deployment_summary,
+        summary_fn=_new_deployment_summary,
     )
 
 
 RESTORE_NEW_DEPLOYMENT_SECTION = _build_restore_new_deployment_section()
+
+
+# ---------------------------------------------------------------------------
+# Add deployment sections (multi-step wizard from detail page)
+# ---------------------------------------------------------------------------
+
+
+def build_deployment_add_info_section(deployment_index: int) -> FormSection:
+    """Build the info section for adding a new deployment (name + clone-from).
+
+    Overrides readonly_on_edit on the name visualizer so the name field
+    is editable even though the modal wizard uses edit_mode=True.
+    """
+    editables = _materialize_new_deployment_fields(deployment_index, _NEW_DEPLOYMENT_INFO_VISUALIZERS)
+
+    # The name visualizer has readonly_on_edit=True — override for add flows
+    name_vis = editables[0]
+    editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
+
+    return FormSection(
+        section_id=f"add-deployment-info-{deployment_index}",
+        title="Deployment informatie",
+        icon="server",
+        description="Kies een naam en optioneel een bron-deployment om van te klonen",
+        enforcer=UniqueDeploymentNameEnforcer(deployment_index=deployment_index),
+        editables=editables,
+        layout=[
+            f"deployments[{deployment_index}]/name",
+            f"deployments[{deployment_index}]/clone-from",
+        ],
+        summary_fn=lambda data, idx=deployment_index: _new_deployment_summary(data, idx),
+    )
+
+
+def build_deployment_add_components_section(
+    deployment_index: int,
+    component_count: int | None = None,
+) -> FormSection:
+    """Build the components section for adding a new deployment.
+
+    Reuses the same logic as build_deployment_edit_section.
+    """
+    section = build_deployment_edit_section(deployment_index, component_count=component_count)
+    return dataclasses.replace(
+        section,
+        section_id=f"add-deployment-components-{deployment_index}",
+        title="Components",
+        description="Selecteer de components en container images voor deze deployment",
+    )
+
+
+def build_deployment_add_domain_section(deployment_index: int) -> FormSection:
+    """Build the domain section for adding a new deployment.
+
+    Reuses build_domain_edit_section which already has the full DOMAIN_SECTION
+    with URL preview, info partial, root-component, and DomainConfigEnforcer.
+    """
+    return build_domain_edit_section(deployment_index)
 
 
 ALL_SECTIONS: list[FormSection] = [

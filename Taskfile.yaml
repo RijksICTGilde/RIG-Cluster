@@ -2501,6 +2501,84 @@ tasks:
         echo "Infrastructure sync complete"
     silent: true
 
+  sandbox:import-project:
+    desc: "Import production project files into sandbox Forgejo (re-encrypts secrets, transforms cluster config)"
+    cmds:
+      - |
+        if [ -z "{{.CLI_ARGS}}" ]; then
+          echo "Usage: task sandbox:import-project -- <project-name> [project-name...]"
+          echo ""
+          echo "Examples:"
+          echo "  task sandbox:import-project -- amt-dev"
+          echo "  task sandbox:import-project -- amt-dev wies regel-k4c"
+          echo ""
+          echo "Available projects:"
+          ls "{{.IMPORT_SOURCE_DIR}}" 2>/dev/null | sed 's/.yaml$//' | column
+          exit 1
+        fi
+
+        OUTPUT_DIR=$(mktemp -d)
+
+        # Run migration script
+        echo "Transforming project files..."
+        cd operations-manager/python
+        uv run python -m scripts.migrate_project_to_sandbox \
+          --source-dir "{{.IMPORT_SOURCE_DIR}}" \
+          --output-dir "$OUTPUT_DIR" \
+          {{.CLI_ARGS}}
+
+        if [ $? -ne 0 ]; then
+          echo "Migration script failed"
+          rm -rf "$OUTPUT_DIR"
+          exit 1
+        fi
+
+        # Check if any files were produced
+        if [ -z "$(ls -A "$OUTPUT_DIR" 2>/dev/null)" ]; then
+          echo "No output files produced"
+          rm -rf "$OUTPUT_DIR"
+          exit 1
+        fi
+
+        # Clone zad-projects from Forgejo and push transformed files
+        echo ""
+        echo "Pushing to Forgejo zad-projects..."
+        FORGEJO_REPO="https://rig-admin:admin1234@forgejo.sandbox.rijksapp.dev/rig-admin/zad-projects.git"
+        CLONE_DIR=$(mktemp -d)
+
+        git clone "$FORGEJO_REPO" "$CLONE_DIR" 2>/dev/null || {
+          echo "Failed to clone from Forgejo. Is the sandbox running and forgejo.sandbox.rijksapp.dev reachable?"
+          rm -rf "$OUTPUT_DIR" "$CLONE_DIR"
+          exit 1
+        }
+
+        # Ensure projects/ directory exists in the repo
+        mkdir -p "$CLONE_DIR/projects"
+
+        # Copy transformed files
+        cp "$OUTPUT_DIR"/*.yaml "$CLONE_DIR/projects/"
+
+        # Commit and push
+        cd "$CLONE_DIR"
+        git add -A
+        git diff --cached --quiet || {
+          IMPORTED=$(ls "$OUTPUT_DIR" | sed 's/.yaml$//' | tr '\n' ', ' | sed 's/,$//')
+          git -c user.name="sandbox-import" -c user.email="import@sandbox" \
+            commit -m "Import production projects: $IMPORTED"
+          git push origin main
+          echo "Pushed to Forgejo: $IMPORTED"
+        }
+        cd -
+
+        # Clean up
+        rm -rf "$OUTPUT_DIR" "$CLONE_DIR"
+
+        echo ""
+        echo "Import complete. Trigger a project refresh in OPI to process the changes."
+    silent: true
+    vars:
+      IMPORT_SOURCE_DIR: '{{.IMPORT_SOURCE_DIR | default "/Users/robbertuittenbroek/IdeaProjects/rig-cluster-test-git-repositories/rig-cluster-projects-github/projects"}}'
+
   sandbox:update-dns:
     desc: "Configure dnsmasq to resolve *.sandbox.rijksapp.dev to 127.0.0.1"
     cmds:

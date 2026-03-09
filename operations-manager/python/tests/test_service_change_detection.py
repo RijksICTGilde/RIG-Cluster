@@ -26,6 +26,7 @@ class TestCleanupStrategyDefinitions:
             ServiceType.POSTGRESQL_DATABASE,
             ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
             ServiceType.MINIO_STORAGE,
+            ServiceType.PERSISTENT_STORAGE,
         ]
         for svc_type in deferred:
             defn = ServiceAdapter.get_service_definition(svc_type)
@@ -44,7 +45,6 @@ class TestCleanupStrategyDefinitions:
     def test_none_services(self) -> None:
         none_services = [
             ServiceType.PUBLISH_ON_WEB,
-            ServiceType.PERSISTENT_STORAGE,
             ServiceType.TEMP_STORAGE,
             ServiceType.AUTHORIZATION_WALL,
         ]
@@ -62,7 +62,8 @@ class TestCleanupStrategyDefinitions:
         assert "keycloak" in cleanable_values
         # Should NOT include none-strategy services
         assert "publish-on-web" not in cleanable_values
-        assert "persistent-storage" not in cleanable_values
+        # persistent-storage is now deferred (PVC protection)
+        assert "persistent-storage" in cleanable_values
 
 
 # ---------------------------------------------------------------------------

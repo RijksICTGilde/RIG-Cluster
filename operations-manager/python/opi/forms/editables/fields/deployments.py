@@ -46,7 +46,10 @@ DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = Editable(
     values_provider="DomainFormatOptionsProvider",
     validator=DomainFormatValidator(),
 )
-DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(yaml_path="deployments[*]/clone-from")
+DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(
+    yaml_path="deployments[*]/clone-from",
+    values_provider="DeploymentCloneFromOptionsProvider",
+)
 
 DEPLOYMENT_COMP_REFERENCE_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/reference",

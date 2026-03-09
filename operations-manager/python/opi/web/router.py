@@ -1957,7 +1957,10 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
                         step_minutes=5,
                     )
                     if pvc_data:
-                        pvc_storage = pvc_data
+                        # Filter PVCs to only those belonging to this deployment
+                        # PVC names follow the pattern: {deployment_name}-{component_name}-...
+                        prefix = f"{deployment_name}-"
+                        pvc_storage = {name: data for name, data in pvc_data.items() if name.startswith(prefix)}
                 except Exception as pvc_error:
                     logging.getLogger(__name__).warning(
                         f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}"

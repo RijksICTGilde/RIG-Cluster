@@ -13,6 +13,7 @@ Deletion ordering:
 """
 
 import logging
+import os
 from typing import Any
 
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
@@ -206,6 +207,11 @@ async def _purge_marks(
     # Backup data (Kopia snapshots)
     for mark in backup_marks:
         await _purge_backup_data(mark, service, results, dry_run)
+
+    # PVCs (remove manifest from git, regenerate kustomization, let ArgoCD prune)
+    pvc_marks = [m for m in marks if m["resource_type"] == "pvc"]
+    for mark in pvc_marks:
+        await _purge_pvc(mark, service, results, dry_run)
 
     # Namespaces (only when all conditions met)
     for mark in namespace_marks:
@@ -527,6 +533,110 @@ async def _purge_backup_data(
 
     except Exception as e:
         error_msg = f"Failed to purge backup data for '{resource_name}': {e}"
+        logger.exception(error_msg)
+        results["errors"].append(error_msg)
+
+
+async def _purge_pvc(
+    mark: dict,
+    service: MarkedForDeletionService,
+    results: dict[str, list],
+    dry_run: bool,
+) -> None:
+    """Purge a PVC by removing its manifest from the deployment git repo.
+
+    The manifest file was previously renamed with a ``.marked-for-deletion.yaml``
+    suffix by ``PVCManager.handle_service_removal``.  This function:
+
+    1. Checks out the deployment git repo via a ProjectManager.
+    2. Deletes the marked manifest file.
+    3. Regenerates ``kustomization.yaml`` so the file is no longer listed.
+    4. Commits and pushes — ArgoCD will then prune the PVC.
+    """
+    resource_name = mark["resource_name"]
+    project_name = mark["project_name"]
+    metadata = mark.get("metadata", {})
+    if isinstance(metadata, str):
+        import json
+
+        metadata = json.loads(metadata)
+
+    deployment_path = metadata.get("deployment_path", "")
+    deployment_name = mark.get("deployment_name", "")
+
+    if not deployment_path:
+        error_msg = (
+            f"PVC mark '{resource_name}' for project '{project_name}' "
+            "has no deployment_path in metadata - cannot locate manifest file"
+        )
+        logger.warning(error_msg)
+        results["errors"].append(error_msg)
+        return
+
+    try:
+        if dry_run:
+            logger.info("[DRY RUN] Would purge PVC manifest: %s (project=%s)", resource_name, project_name)
+            results["purged"].append({"type": "pvc", "name": resource_name})
+            return
+
+        from opi.manager.project_manager import ProjectManager
+        from opi.services.project_service import get_project_service
+
+        project = get_project_service().get_project(project_name)
+        if not project:
+            error_msg = f"Project '{project_name}' not found - cannot purge PVC manifest '{resource_name}'"
+            logger.warning(error_msg)
+            results["errors"].append(error_msg)
+            return
+
+        async with ProjectManager(project_file_relative_path=f"projects/{project.filename}") as pm:
+            project_data = await pm.get_contents()
+            repositories = project_data.get("repositories", [])
+            repo_config = repositories[0] if repositories else {}
+            repo_name = repo_config.get("name", "") if isinstance(repo_config, dict) else ""
+
+            git_connector = await pm.get_git_connector_for_deployment(repo_name, repo_config)
+
+            working_dir = await git_connector.get_working_dir()
+            full_output_dir = os.path.join(working_dir, deployment_path)
+            manifest_path = os.path.join(full_output_dir, resource_name)
+
+            if not os.path.exists(manifest_path):
+                logger.info(
+                    "PVC manifest '%s' already removed from git - cleaning up mark",
+                    resource_name,
+                )
+                await service.delete_mark(mark["id"])
+                results["purged"].append({"type": "pvc", "name": resource_name})
+                return
+
+            # Delete the manifest file
+            os.remove(manifest_path)
+            logger.info("Deleted PVC manifest: %s", manifest_path)
+
+            # Regenerate kustomization.yaml so the deleted file is no longer listed
+            sops_files, regular_files = pm._manifest_generator.collect_manifest_files(
+                full_output_dir, include_subfolders=False
+            )
+            pm._manifest_generator.create_kustomization_files(
+                output_dir=full_output_dir,
+                sops_files=sops_files,
+                regular_files=regular_files,
+            )
+            logger.info("Regenerated kustomization.yaml for %s", deployment_path)
+
+            # Commit and push
+            await git_connector.commit_and_push(
+                f"Purge deferred PVC manifest {resource_name} for {project_name}/{deployment_name}"
+            )
+
+            await service.delete_mark(mark["id"])
+            logger.info("Purged PVC manifest: %s (project=%s)", resource_name, project_name)
+
+        results["purged"].append({"type": "pvc", "name": resource_name})
+
+    except Exception as e:
+        error_msg = f"Failed to purge PVC manifest '{resource_name}': {e}"
         logger.exception(error_msg)
         results["errors"].append(error_msg)
 

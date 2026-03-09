@@ -135,7 +135,7 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
     flow_id="modal-edit-services",
     title="Services beheren",
     mode=FlowMode.WIZARD,
-    show_review=False,
+    show_review=True,
     sections=[
         SERVICES_EDIT_SECTION,
         KEYCLOAK_CONFIG_SECTION,
@@ -241,6 +241,30 @@ def build_component_edit_flow(component_index: int) -> FormFlow:
     )
 
 
+def build_deployment_add_flow(
+    deployment_index: int,
+    component_count: int | None = None,
+) -> FormFlow:
+    """Build a multi-step wizard for adding a new deployment."""
+    from opi.forms.visualizers.wizard_sections import (
+        build_deployment_add_components_section,
+        build_deployment_add_domain_section,
+        build_deployment_add_info_section,
+    )
+
+    return FormFlow(
+        flow_id=f"modal-add-deployment-{deployment_index}",
+        title="Deployment toevoegen",
+        mode=FlowMode.WIZARD,
+        show_review=True,
+        sections=[
+            build_deployment_add_info_section(deployment_index),
+            build_deployment_add_components_section(deployment_index, component_count),
+            build_deployment_add_domain_section(deployment_index),
+        ],
+    )
+
+
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config."""
     from opi.forms.visualizers.wizard_sections import build_domain_edit_section
@@ -289,6 +313,15 @@ def get_flow(flow_id: str, **context: Any) -> FormFlow:
         suffix = flow_id.removeprefix("modal-edit-deployment-")
         if suffix.isdigit():
             return build_deployment_edit_flow(
+                int(suffix),
+                component_count=context.get("component_count"),
+            )
+
+    # Dynamic add-deployment flows: modal-add-deployment-0, modal-add-deployment-1, ...
+    if flow_id.startswith("modal-add-deployment-"):
+        suffix = flow_id.removeprefix("modal-add-deployment-")
+        if suffix.isdigit():
+            return build_deployment_add_flow(
                 int(suffix),
                 component_count=context.get("component_count"),
             )

@@ -459,6 +459,22 @@ class RootComponentOptionsProvider(ComponentReferenceOptionsProvider):
         super().__init__(component_names=component_names, include_empty=True)
 
 
+class DeploymentCloneFromOptionsProvider:
+    """Provides existing deployment names as clone-from options.
+
+    Used when adding a new deployment to select a source deployment
+    to clone data (databases, storage) from.
+    """
+
+    def __init__(self, deployment_names: list[str] | None = None) -> None:
+        self.deployment_names = deployment_names or []
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = [{"value": "", "label": "Niet klonen"}]
+        options.extend({"value": name, "label": name} for name in self.deployment_names)
+        return options
+
+
 class RepositoryOptionsProvider:
     """
     Provides repository names from the project as select options.
@@ -552,6 +568,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
+    "DeploymentCloneFromOptionsProvider": DeploymentCloneFromOptionsProvider,
     "RootComponentOptionsProvider": RootComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
     "DomainFormatOptionsProvider": DomainFormatOptionsProvider,

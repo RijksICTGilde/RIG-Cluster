@@ -103,6 +103,30 @@ class ComponentServicesEnforcer:
         return value
 
 
+class UniqueDeploymentNameEnforcer:
+    """Ensures a new deployment name does not collide with existing deployments.
+
+    Only checks the deployment at ``deployment_index``, not all deployments
+    in the data (which includes pre-existing ones).
+    """
+
+    def __init__(self, deployment_index: int = 0) -> None:
+        self.deployment_index = deployment_index
+
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        deployments = value.get("deployments", []) if isinstance(value, dict) else []
+        if self.deployment_index >= len(deployments):
+            return value
+        dep = deployments[self.deployment_index]
+        if not isinstance(dep, dict):
+            return value
+        name = dep.get("name")
+        existing_names = context.get("existing_deployment_names", [])
+        if name and name in existing_names:
+            raise ValueError(f"Er bestaat al een deployment met de naam '{name}'")
+        return value
+
+
 class DomainConfigEnforcer:
     """Section-level enforcer: validates cross-field domain configuration.
 
@@ -112,16 +136,20 @@ class DomainConfigEnforcer:
     - subdomain + base-domain combination is available (async DB check)
     """
 
+    def __init__(self, deployment_index: int = 0) -> None:
+        self.deployment_index = deployment_index
+
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         from opi.core.cluster_config import get_domain_supports_dots
         from opi.core.config import settings
         from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
         deployments = value.get("deployments", [])
-        if not deployments or not isinstance(deployments[0], dict):
+        if len(deployments) <= self.deployment_index:
             return value
-
-        dep = deployments[0]
+        dep = deployments[self.deployment_index]
+        if not isinstance(dep, dict):
+            return value
         domain_format = dep.get("domain-format")
         if not domain_format:
             return value

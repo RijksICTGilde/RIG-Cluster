@@ -1981,6 +1981,7 @@ class DeleteProjectManager:
         ServiceType.REDIS: "redis",
         ServiceType.NAMESPACE_REDIS: "redis",
         ServiceType.KEYCLOAK: "keycloak",
+        ServiceType.PERSISTENT_STORAGE: "pvc",
     }
 
     async def _get_manager_for_service(self, manager_key: str) -> Any:
@@ -1993,6 +1994,8 @@ class DeleteProjectManager:
             return self.project_manager._redis_manager
         if manager_key == "keycloak":
             return self.project_manager._keycloak_manager
+        if manager_key == "pvc":
+            return self.project_manager._pvc_manager
         raise ValueError(f"Unknown manager key: {manager_key}")
 
     async def cleanup_removed_services_from_yaml_change(

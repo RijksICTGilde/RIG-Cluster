@@ -59,10 +59,13 @@ def editable_to_form_field(
     if raw_value is None and default is not None:
         raw_value = default
 
-    # 3. Apply converter for display
+    # 3. Apply converter for display (pass yaml_data for converters that need it, e.g. AGE decryption)
     display_value = raw_value
     if converter:
-        display_value = converter.view(raw_value)
+        try:
+            display_value = converter.view(raw_value, yaml_data=yaml_data)
+        except TypeError:
+            display_value = converter.view(raw_value)
 
     # 3b. Auto-detect KV format from stored value so the toggle matches
     if converter and hasattr(converter, "detect_format") and raw_value is not None:
