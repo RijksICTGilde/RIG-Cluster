@@ -26,7 +26,9 @@ def replace_segment_editable(ed: Editable, old_segment: str, new_segment: str) -
     def _replace(s: str | None) -> str | None:
         return s.replace(old_segment, new_segment) if s else s
 
-    children = [replace_segment_editable(c, old_segment, new_segment) for c in ed.children] if ed.children else ed.children
+    children = (
+        [replace_segment_editable(c, old_segment, new_segment) for c in ed.children] if ed.children else ed.children
+    )
 
     return dataclasses.replace(
         ed,
@@ -39,7 +41,11 @@ def replace_segment_editable(ed: Editable, old_segment: str, new_segment: str) -
 
 def replace_segment_visualizer(vis: EditableVisualizer, old_segment: str, new_segment: str) -> EditableVisualizer:
     """Replace a specific path segment in a visualizer's editable and children."""
-    children = [replace_segment_visualizer(c, old_segment, new_segment) for c in vis.children] if vis.children else vis.children
+    children = (
+        [replace_segment_visualizer(c, old_segment, new_segment) for c in vis.children]
+        if vis.children
+        else vis.children
+    )
 
     return dataclasses.replace(
         vis,

@@ -447,9 +447,7 @@ class ComponentReferenceOptionsProvider:
         if self.include_empty:
             options.append({"value": "", "label": self.empty_label})
         options.extend(
-            {"value": name, "label": name}
-            for name in self.component_names
-            if name not in self.exclude_references
+            {"value": name, "label": name} for name in self.component_names if name not in self.exclude_references
         )
         return options
 

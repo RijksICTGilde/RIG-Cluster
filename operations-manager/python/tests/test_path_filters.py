@@ -2,10 +2,10 @@
 
 from opi.forms.editables.path import get_value, resolve_path, set_value
 
-
 # ---------------------------------------------------------------------------
 # Sample data matching v2 project YAML
 # ---------------------------------------------------------------------------
+
 
 def _sample_component():
     return {
@@ -15,17 +15,21 @@ def _sample_component():
                 "services": [
                     "publish-on-web",
                     "keycloak",
-                    {"persistent-storage": {
-                        "config": [
-                            {"name": "data", "size": "250Mi", "mount-path": "/data"},
-                            {"name": "uploads", "size": "1Gi", "mount-path": "/uploads"},
-                        ],
-                    }},
-                    {"temp-storage": {
-                        "config": [
-                            {"name": "cache", "size": "100Mi", "mount-path": "/tmp/cache"},
-                        ],
-                    }},
+                    {
+                        "persistent-storage": {
+                            "config": [
+                                {"name": "data", "size": "250Mi", "mount-path": "/data"},
+                                {"name": "uploads", "size": "1Gi", "mount-path": "/uploads"},
+                            ],
+                        }
+                    },
+                    {
+                        "temp-storage": {
+                            "config": [
+                                {"name": "cache", "size": "100Mi", "mount-path": "/tmp/cache"},
+                            ],
+                        }
+                    },
                 ],
             },
         ],
@@ -46,6 +50,7 @@ def _sample_services():
 # ===================================================================
 # get_value — {K} dict-key filter
 # ===================================================================
+
 
 class TestGetValueDictKeyFilter:
     def test_find_dict_entry_in_mixed_list(self):
@@ -91,6 +96,7 @@ class TestGetValueDictKeyFilter:
 # get_value — {F=V} field-match filter
 # ===================================================================
 
+
 class TestGetValueFieldMatchFilter:
     def test_find_by_name_field(self):
         data = _sample_component()
@@ -109,13 +115,15 @@ class TestGetValueFieldMatchFilter:
 
     def test_find_component_by_name(self):
         data = {
-            "deployments": [{
-                "name": "staging",
-                "components": [
-                    {"reference": "frontend", "image": "nginx:latest"},
-                    {"reference": "api", "image": "python:3.13"},
-                ],
-            }],
+            "deployments": [
+                {
+                    "name": "staging",
+                    "components": [
+                        {"reference": "frontend", "image": "nginx:latest"},
+                        {"reference": "api", "image": "python:3.13"},
+                    ],
+                }
+            ],
         }
         result = get_value(data, "deployments[0]/components{reference=frontend}/image")
         assert result == "nginx:latest"
@@ -134,6 +142,7 @@ class TestGetValueFieldMatchFilter:
 # ===================================================================
 # set_value — {K} dict-key filter
 # ===================================================================
+
 
 class TestSetValueDictKeyFilter:
     def test_set_existing_service_config(self):
@@ -178,6 +187,7 @@ class TestSetValueDictKeyFilter:
 # set_value — {F=V} field-match filter
 # ===================================================================
 
+
 class TestSetValueFieldMatchFilter:
     def test_set_field_on_existing_item(self):
         data = _sample_component()
@@ -212,6 +222,7 @@ class TestSetValueFieldMatchFilter:
 # Combined: chained filters
 # ===================================================================
 
+
 class TestChainedFilters:
     def test_dict_key_then_field_match(self):
         """services{persistent-storage}/config{name=data}/size — full chain."""
@@ -231,6 +242,7 @@ class TestChainedFilters:
 # ===================================================================
 # Backward compatibility
 # ===================================================================
+
 
 class TestBackwardCompatibility:
     """Existing path syntax still works exactly as before."""

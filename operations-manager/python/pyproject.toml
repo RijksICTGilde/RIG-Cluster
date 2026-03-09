@@ -227,6 +227,7 @@ authorized_licenses = [
     "BSD",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "3-Clause BSD",
     "CNRI-Python",
     "GNU General Public License v2 or later (GPLv2+)",
     "GNU General Public License v3 or later (GPLv3+)",

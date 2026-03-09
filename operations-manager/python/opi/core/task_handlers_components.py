@@ -46,8 +46,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
         sanitized_name = sanitize_kubernetes_name(component_name)
         if sanitized_name != component_name.lower():
             error_msg = (
-                f"Invalid component name. Use lowercase letters, numbers, and "
-                f"hyphens only. Suggested: {sanitized_name}"
+                f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}"
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)
@@ -190,8 +189,7 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
         sanitized_name = sanitize_kubernetes_name(component_name)
         if sanitized_name != component_name.lower():
             error_msg = (
-                f"Invalid component name. Use lowercase letters, numbers, and "
-                f"hyphens only. Suggested: {sanitized_name}"
+                f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}"
             )
             progress.fail_task(validate_task, error_msg)
             progress.fail_project(error_msg)

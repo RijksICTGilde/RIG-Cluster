@@ -616,7 +616,9 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
 
-        logger.info(f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}")
+        logger.info(
+            f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}"
+        )
 
         project_service = get_project_service()
 
