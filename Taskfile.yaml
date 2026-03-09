@@ -1699,6 +1699,24 @@ tasks:
       - uv run pytest tests/ -v
     silent: false
 
+  test-e2e:
+    desc: "Run Playwright E2E browser tests (local app server, no sandbox needed)"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
+    silent: false
+
+  test-e2e-sandbox:
+    desc: "Run E2E browser tests against running sandbox cluster"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      - >-
+        E2E_BASE_URL=${E2E_BASE_URL:-https://zad.sandbox.rijksapp.dev}
+        uv run pytest tests/e2e/ -m "e2e and sandbox" -v --timeout=300
+    silent: false
+
   test-coverage:
     desc: "Run tests with coverage report"
     dir: operations-manager/python
@@ -1844,8 +1862,8 @@ tasks:
           echo "Cluster rig-sandbox already exists"
           exit 0
         fi
-        kind create cluster --name rig-sandbox --config sandboxed-local/kind-config.yaml
-        echo "Cluster rig-sandbox created successfully"
+        envsubst < sandboxed-local/kind-config.yaml | kind create cluster --name rig-sandbox --config -
+        echo "Cluster rig-sandbox created successfully (HTTP port: ${KIND_HTTP_PORT:-80}, HTTPS port: ${KIND_HTTPS_PORT:-443})"
     silent: true
 
   sandbox:install-csi-snapshot:
