@@ -62,29 +62,6 @@ class EncryptedPrivateKeyGenerator:
         return encrypted
 
 
-class DomainModeGenerator:
-    """Derive domain-mode from the selected domain-format.
-
-    Uses the reverse of DOMAIN_MODE_DEFAULT_FORMAT so the backend
-    domain-mode stays in sync when domain-format is the primary UI control.
-    """
-
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from opi.utils.naming import DOMAIN_MODE_DEFAULT_FORMAT
-
-        deployments = yaml_data.get("deployments", [])
-        if not deployments or not isinstance(deployments[0], dict):
-            return "component-specific"
-        domain_format = deployments[0].get("domain-format", "component-deployment-project")
-        # Dot format IDs use dots as separators; normalize to dash equivalent
-        # for the legacy mode lookup (e.g. "deployment.subdomain" -> "deployment-subdomain").
-        normalized = domain_format.replace(".", "-")
-        for mode, fmt in DOMAIN_MODE_DEFAULT_FORMAT.items():
-            if fmt in (domain_format, normalized):
-                return mode
-        return "component-specific"
-
-
 class EncryptedAPIKeyGenerator:
     """Generate an API key and encrypt it with the project's public key."""
 

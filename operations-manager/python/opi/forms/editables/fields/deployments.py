@@ -50,6 +50,7 @@ DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(
     yaml_path="deployments[*]/clone-from",
     values_provider="DeploymentCloneFromOptionsProvider",
     converter=EmptyToNoneConverter(),
+    remove_when_none=True,
 )
 
 DEPLOYMENT_COMP_REFERENCE_EDITABLE = Editable(

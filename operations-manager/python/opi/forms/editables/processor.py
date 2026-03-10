@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.path import get_value, resolve_path
-from opi.forms.editables.service_path import smart_get_value, smart_set_value
+from opi.forms.editables.service_path import smart_delete_value, smart_get_value, smart_set_value
 from opi.forms.visualizers.bridge import should_render_editable
 
 logger = logging.getLogger(__name__)
@@ -227,8 +227,7 @@ class EditableFormProcessor:
             if not ed.depends_on:
                 continue
             if not should_render_editable(vis, yaml_data, siblings=editables):
-                # Remove the value from YAML
-                smart_set_value(yaml_data, ed.yaml_path, None)
+                smart_delete_value(yaml_data, ed.yaml_path)
 
     def apply_generators(
         self,
@@ -293,6 +292,8 @@ class EditableFormProcessor:
                 continue
             if vis.readonly_on_edit and edit_mode:
                 continue
+            if not should_render_editable(vis, result, siblings=editables):
+                continue
 
             if vis.widget == WidgetType.GROUP:
                 # Groups are transparent — recurse into children
@@ -305,7 +306,10 @@ class EditableFormProcessor:
                 value: Any = bool(raw) if raw else False
                 if ed.converter:
                     value = _converter_write(ed.converter, value, result)
-                smart_set_value(result, ed.yaml_path, value)
+                if not value and ed.remove_when_none:
+                    smart_delete_value(result, ed.yaml_path)
+                else:
+                    smart_set_value(result, ed.yaml_path, value)
             elif vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(parsed.get(ed.yaml_path))
                 if ed.converter:
@@ -316,7 +320,10 @@ class EditableFormProcessor:
                 if value is not None:
                     if ed.converter:
                         value = _converter_write(ed.converter, value, result)
-                    smart_set_value(result, ed.yaml_path, value)
+                    if not value and ed.remove_when_none:
+                        smart_delete_value(result, ed.yaml_path)
+                    else:
+                        smart_set_value(result, ed.yaml_path, value)
 
         if resolve_deferrals:
             self._resolve_deferrals(result, editables)
@@ -359,7 +366,10 @@ class EditableFormProcessor:
                     if value is not None:
                         if child_ed.converter:
                             value = _converter_write(child_ed.converter, value, yaml_data)
-                        smart_set_value(yaml_data, concrete_path, value)
+                        if not value and child_ed.remove_when_none:
+                            smart_delete_value(yaml_data, concrete_path)
+                        else:
+                            smart_set_value(yaml_data, concrete_path, value)
 
     def _apply_nested_sequence_to_yaml(
         self,
@@ -554,8 +564,26 @@ class EditableFormProcessor:
         if not isinstance(items, list):
             items = []
 
+        # Save existing items so we can restore readonly fields after overwriting
+        original_items = smart_get_value(result, ed.yaml_path) or []
+
         # Write the submitted items into result (correct count + raw values)
         smart_set_value(result, ed.yaml_path, copy.deepcopy(items))
+
+        # In edit mode, readonly fields aren't rendered in the form and are
+        # therefore absent from the submission.  Restore their values from
+        # the original data so they don't get silently dropped.
+        if edit_mode and isinstance(original_items, list):
+            result_items = smart_get_value(result, ed.yaml_path) or []
+            for i in range(min(len(result_items), len(original_items))):
+                if not (isinstance(result_items[i], dict) and isinstance(original_items[i], dict)):
+                    continue
+                for child_vis in vis.children or []:
+                    if not (child_vis.readonly or child_vis.readonly_on_edit):
+                        continue
+                    last_seg = child_vis.editable.yaml_path.rsplit("/", 1)[-1]
+                    if last_seg in original_items[i]:
+                        result_items[i][last_seg] = copy.deepcopy(original_items[i][last_seg])
 
         seq_children_json = vis.children or []
         for index in range(len(items)):

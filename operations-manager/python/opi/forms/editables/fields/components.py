@@ -99,18 +99,21 @@ COMPONENT_PATH_EDITABLE = Editable(
 COMPONENT_REWRITE_PATH_EDITABLE = Editable(
     yaml_path="components[*]/rewrite-path",
     validator=PathValidator(),
+    remove_when_none=True,
 )
 
 COMPONENT_ALIASES_EDITABLE = Editable(
     yaml_path="components[*]/aliases",
     converter=KeyValueConverter(fmt="env"),
     validator=KeyValueValidator(),
+    remove_when_none=True,
 )
 
 COMPONENT_USER_ENV_VARS_EDITABLE = Editable(
     yaml_path="components[*]/user-env-vars",
     converter=KeyValueConverter(fmt="env", write_as="string"),
     validator=KeyValueValidator(),
+    remove_when_none=True,
 )
 
 PERSISTENT_STORAGE_NAME_EDITABLE = Editable(

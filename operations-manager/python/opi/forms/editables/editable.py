@@ -109,6 +109,11 @@ class Editable:
     transient: bool = False
     defers_to: str | None = None
     defer_when: EditableCondition | None = None
+    remove_when_none: bool = False
+    """When True, the processor removes this key from YAML output if the
+    (possibly converter-produced) value is empty (None, empty string,
+    False, etc.).  Use on optional fields where an empty value should
+    result in the key being absent."""
     hooks: dict[str, Any] | None = field(default=None, repr=False)
     rename_targets: list[str] | None = field(default=None, repr=False)
     """Paths that reference this field's value and must be updated on rename.

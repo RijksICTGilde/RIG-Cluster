@@ -1388,6 +1388,7 @@ async def project_details(request: Request, project_name: str):
                     subdomain = deployment.get("subdomain")
                     base_domain = deployment.get("base-domain")
                     hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                    domain_format = deployment.get("domain-format")
 
                     for component in deployment.get("components", []):
                         component_name = component.get("reference")
@@ -1406,6 +1407,7 @@ async def project_details(request: Request, project_name: str):
                                     subdomain=subdomain,
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
+                                    domain_format=domain_format,
                                 )
 
                                 # Create links for all ingress hostnames
@@ -1446,6 +1448,7 @@ async def project_details(request: Request, project_name: str):
                                 subdomain = deployment.get("subdomain")
                                 base_domain = deployment.get("base-domain")
                                 hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                                domain_format = deployment.get("domain-format")
 
                                 ingress_map = get_component_ingress_map(
                                     component_name=component_name,
@@ -1455,6 +1458,7 @@ async def project_details(request: Request, project_name: str):
                                     subdomain=subdomain,
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
+                                    domain_format=domain_format,
                                 )
 
                                 # Create links for all ingress hostnames
@@ -1741,6 +1745,7 @@ async def project_details(request: Request, project_name: str):
                     subdomain = deployment.get("subdomain")
                     base_domain = deployment.get("base-domain")
                     hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                    domain_format = deployment.get("domain-format")
 
                     # Generate ingress links for each component in this deployment
                     for component in deployment.get("components", []):
@@ -1761,6 +1766,7 @@ async def project_details(request: Request, project_name: str):
                                     subdomain=subdomain,
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
+                                    domain_format=domain_format,
                                 )
 
                                 for ingress_name, hostname in ingress_map.items():
@@ -1796,6 +1802,7 @@ async def project_details(request: Request, project_name: str):
                             subdomain = deployment.get("subdomain")
                             base_domain = deployment.get("base-domain")
                             hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                            domain_format = deployment.get("domain-format")
 
                             ingress_map = get_component_ingress_map(
                                 component_name=component["name"],
@@ -1805,6 +1812,7 @@ async def project_details(request: Request, project_name: str):
                                 subdomain=subdomain,
                                 base_domain=base_domain,
                                 hostname_format=hostname_format,
+                                domain_format=domain_format,
                             )
 
                             for ingress_name, hostname in ingress_map.items():

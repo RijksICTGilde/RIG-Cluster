@@ -11,7 +11,6 @@ from __future__ import annotations
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.generators import (
     AGEKeyPairGenerator,
-    DomainModeGenerator,
     EncryptedAPIKeyGenerator,
     EncryptedPrivateKeyGenerator,
     ProjectNameGenerator,
@@ -40,11 +39,6 @@ API_KEY_GEN_EDITABLE = Editable(
     generator=EncryptedAPIKeyGenerator(),
 )
 
-DOMAIN_MODE_GEN_EDITABLE = Editable(
-    yaml_path="deployments[0]/domain-mode",
-    generator=DomainModeGenerator(),
-)
-
 USER_ENV_VARS_ENCRYPT_GEN_EDITABLE = Editable(
     yaml_path="_generated/user-env-vars-encrypted",
     generator=UserEnvVarsEncryptGenerator(),
@@ -56,5 +50,4 @@ GENERATED_EDITABLES_PURE: list[Editable] = [
     AGE_PRIVATE_KEY_GEN_EDITABLE,
     API_KEY_GEN_EDITABLE,
     USER_ENV_VARS_ENCRYPT_GEN_EDITABLE,
-    DOMAIN_MODE_GEN_EDITABLE,
 ]

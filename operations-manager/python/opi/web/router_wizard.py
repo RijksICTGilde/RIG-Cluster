@@ -1083,6 +1083,23 @@ async def _handle_sequence_action(
     return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
 
+def _prune_empty_dicts(data: Any) -> None:
+    """Recursively remove empty dict values from nested data structures.
+
+    After field removal (e.g. restrict-access/enabled deleted via
+    remove_when_none), empty parent dicts like ``restrict-access: {}``
+    may remain.  This cleans them up so the YAML output stays tidy.
+    """
+    if isinstance(data, dict):
+        for key in list(data.keys()):
+            _prune_empty_dicts(data[key])
+            if isinstance(data[key], dict) and not data[key]:
+                del data[key]
+    elif isinstance(data, list):
+        for item in data:
+            _prune_empty_dicts(item)
+
+
 def _normalize_component_paths(final_data: dict[str, Any]) -> None:
     """Merge ``rewrite-path`` into ``path`` for each component.
 
@@ -1762,6 +1779,9 @@ async def _do_submit(
     )
     logger.info("[wizard submit] Applied deferral and stripped transient fields for final output")
 
+    # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
+    _prune_empty_dicts(final_data)
+
     # Merge rewrite-path into path field for each component
     _normalize_component_paths(final_data)
 
@@ -1888,9 +1908,10 @@ def _apply_literal_scalars(data: dict[str, Any]) -> None:
         if isinstance(comp, dict):
             _literalize(comp, "user-env-vars")
 
-    # Deployment component-level user-env-vars (edit/add flows)
+    # Deployment-level configuration and component-level user-env-vars (edit/add flows)
     for dep in data.get("deployments", []):
         if isinstance(dep, dict):
+            _literalize(dep, "configuration")
             for comp in dep.get("components", []):
                 if isinstance(comp, dict):
                     _literalize(comp, "user-env-vars")

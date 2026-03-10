@@ -33,7 +33,7 @@ def compute_url_preview(yaml_data: dict[str, Any]) -> dict[str, Any]:
     # Resolve the domain: use custom if sentinel, else base_domain, else placeholder
     domain = custom_domain or "voorbeeld.nl" if base_domain == "__custom__" else base_domain or "domein.nl"
 
-    project_name = yaml_data.get("display-name", "project") or "project"
+    project_name = "project-id"
 
     # Get component names from yaml_data
     components = yaml_data.get("components", [])

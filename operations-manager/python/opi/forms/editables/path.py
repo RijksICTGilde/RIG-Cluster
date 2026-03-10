@@ -174,6 +174,38 @@ def set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any
     return data
 
 
+def delete_value(data: dict[str, Any], yaml_path: str) -> None:
+    """Remove a key from a YAML dict at the given path.
+
+    Navigates to the parent container and removes the terminal key.
+    No-op if the path does not exist.  Does NOT support ``[*]`` wildcards.
+    """
+    if not yaml_path or "[*]" in yaml_path:
+        return
+
+    parts = yaml_path.split("/")
+    current: Any = data
+
+    # Navigate to the parent of the terminal key
+    for part in parts[:-1]:
+        key, idx, filt = _parse_segment(part)
+        if not isinstance(current, dict):
+            return
+        current = current.get(key)
+        if current is None:
+            return
+        if idx is not None:
+            index = int(idx)
+            if not isinstance(current, list) or index >= len(current):
+                return
+            current = current[index]
+
+    # Remove the terminal key
+    last_key, last_idx, _last_filt = _parse_segment(parts[-1])
+    if isinstance(current, dict) and last_idx is None:
+        current.pop(last_key, None)
+
+
 def _set_terminal(
     current: dict[str, Any],
     key: str,

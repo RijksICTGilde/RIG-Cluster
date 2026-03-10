@@ -74,8 +74,8 @@ CREATE_FLOW = FormFlow(
         AUTH_WALL_CONFIG_SECTION,
         TEAM_SECTION,
         COMPONENTS_SECTION,
-        DOMAIN_SECTION,
         WIZARD_DEPLOYMENT_SECTION,
+        DOMAIN_SECTION,
     ],
     show_review=True,
     htmx_base_url="/forms/wizard",
@@ -237,7 +237,7 @@ def build_component_edit_flow(component_index: int, is_new: bool = False) -> For
         flow_id=f"modal-edit-component-{component_index}",
         title=title,
         mode=FlowMode.WIZARD,
-        show_review=False,
+        show_review=True,
         sections=[section],
     )
 

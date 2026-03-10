@@ -166,10 +166,15 @@ def _flow_context_from_state(state, flow_id: str) -> dict[str, Any]:
 
     Deployment edit flows need ``component_count`` so the sequence
     enforces a max-items limit matching the number of project components.
+    Component add flows need ``is_new`` so the name field is editable.
     """
-    if flow_id.startswith("modal-edit-deployment-") and state and state.template_data:
+    if not state or not state.template_data:
+        return {}
+    if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
         components = state.template_data.get("components", [])
         return {"component_count": len(components)}
+    if flow_id.startswith("modal-edit-component-") and state.template_data.get("is_new"):
+        return {"is_new": True}
     return {}
 
 
@@ -199,6 +204,58 @@ def _pad_sparse_submission(body: dict[str, Any], flow_id: str) -> dict[str, Any]
                     return {**body, key: padded}
             break
     return body
+
+
+def _detect_list_target(flow_id: str, state: Any) -> tuple[str, int, bool] | None:
+    """Detect if a flow targets a single item in a list.
+
+    Returns (list_key, index, is_new) or None for non-list flows.
+    """
+    for prefix, list_key in [
+        ("modal-edit-component-", "components"),
+        ("modal-edit-deployment-", "deployments"),
+        ("modal-add-deployment-", "deployments"),
+        ("modal-edit-domain-", "deployments"),
+    ]:
+        if flow_id.startswith(prefix):
+            suffix = flow_id.removeprefix(prefix)
+            if suffix.isdigit():
+                idx = int(suffix)
+                is_new = prefix in ("modal-add-deployment-",) or (
+                    prefix == "modal-edit-component-" and state and (state.template_data or {}).get("is_new", False)
+                )
+                return list_key, idx, is_new
+    return None
+
+
+def _apply_list_item_merge(
+    existing_data: dict[str, Any],
+    merged_data: dict[str, Any],
+    list_key: str,
+    idx: int,
+    is_new: bool,
+) -> None:
+    """Merge a single list item into the existing project data.
+
+    For add: appends the new item to the list.
+    For edit: updates the item at the given index in-place, preserving
+    fields the form didn't touch (e.g. readonly ``name``).
+    """
+    import copy
+
+    source_list = merged_data.get(list_key)
+    if not isinstance(source_list, list) or idx >= len(source_list):
+        return
+
+    item_data = copy.deepcopy(source_list[idx])
+    existing_list = existing_data.setdefault(list_key, [])
+
+    if is_new:
+        existing_list.append(item_data)
+    elif idx < len(existing_list) and isinstance(existing_list[idx], dict):
+        existing_list[idx].update(item_data)
+    elif idx < len(existing_list):
+        existing_list[idx] = item_data
 
 
 def _determine_flow_action(flow, active_sections) -> str:
@@ -401,6 +458,10 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     # Always include config in template_data so converters can access project keys (e.g. for AGE decryption)
     state.template_data = {"config": project_data.get("config", {})}
+
+    # Store is_new flag so _detect_list_target can distinguish add vs edit
+    if flow_id.startswith("modal-edit-component-") and flow_context.get("is_new"):
+        state.template_data["is_new"] = True
 
     # Component edit flows need project-level services for the FilteredServiceOptionsProvider
     if flow_id.startswith("modal-edit-component-"):
@@ -815,6 +876,15 @@ async def _modal_do_submit(
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
     existing_data = project.data or {}
+
+    # Targeted list merge for flows that operate on a single list item.
+    # Instead of replacing the entire list, we add or update one entry.
+    list_target = _detect_list_target(flow_id, state)
+    if list_target:
+        list_key, idx, is_new = list_target
+        _apply_list_item_merge(existing_data, merged_data, list_key, idx, is_new)
+        merged_data.pop(list_key, None)
+
     existing_data.update(merged_data)
 
     # Ensure AGE-encrypted multiline values use literal block scalars

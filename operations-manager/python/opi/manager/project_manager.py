@@ -836,6 +836,9 @@ class ProjectManager:
         for component in components:
             component_name = component["reference"]
             component_definition = await self._get_by_json_path(f"$.components[?@.name=='{component_name}']")
+            if not component_definition:
+                logger.warning("Component '%s' referenced in deployment but not found in project", component_name)
+                continue
             component_aliases = component_definition.get("aliases", {})
 
             if not component_aliases:

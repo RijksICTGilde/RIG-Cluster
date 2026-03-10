@@ -9,14 +9,12 @@ Tests the configurable hostname template system:
 - Backward compatibility (domain_format=None)
 - DomainFormatOptionsProvider
 - DomainFormatValidator
-- DomainModeGenerator
 - Per-domain dot support
 - Cross-step visibility (path/rewrite-path)
 """
 
 import pytest
 from opi.core.cluster_config import get_domain_supports_dots, get_nice_url_supported_domains
-from opi.forms.editables.generators import DomainModeGenerator
 from opi.forms.editables.validators import DomainFormatValidator
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
 from opi.utils.naming import (
@@ -383,57 +381,6 @@ class TestDomainFormatTemplates:
     def test_default_format_values_are_valid(self):
         for mode, fmt in DOMAIN_MODE_DEFAULT_FORMAT.items():
             assert fmt in DOMAIN_FORMAT_TEMPLATES, f"Default format '{fmt}' for mode '{mode}' not in templates"
-
-
-# ---------------------------------------------------------------------------
-# DomainModeGenerator
-# ---------------------------------------------------------------------------
-
-
-class TestDomainModeGenerator:
-    def test_derives_component_specific(self):
-        gen = DomainModeGenerator()
-        data = {"deployments": [{"domain-format": "component-deployment-project"}]}
-        assert gen.generate(data) == "component-specific"
-
-    def test_derives_nice_url(self):
-        gen = DomainModeGenerator()
-        data = {"deployments": [{"domain-format": "component-deployment-subdomain"}]}
-        assert gen.generate(data) == "nice-url"
-
-    def test_derives_deployment_name(self):
-        gen = DomainModeGenerator()
-        data = {"deployments": [{"domain-format": "deployment-project"}]}
-        assert gen.generate(data) == "deployment-name"
-
-    def test_derives_custom(self):
-        gen = DomainModeGenerator()
-        data = {"deployments": [{"domain-format": "deployment-subdomain"}]}
-        assert gen.generate(data) == "custom"
-
-    def test_defaults_when_no_deployments(self):
-        gen = DomainModeGenerator()
-        assert gen.generate({}) == "component-specific"
-        assert gen.generate({"deployments": []}) == "component-specific"
-
-    def test_defaults_when_no_format(self):
-        gen = DomainModeGenerator()
-        data = {"deployments": [{}]}
-        assert gen.generate(data) == "component-specific"
-
-    def test_unknown_format_defaults(self):
-        gen = DomainModeGenerator()
-        data = {"deployments": [{"domain-format": "unknown-format"}]}
-        assert gen.generate(data) == "component-specific"
-
-    def test_dot_format_maps_to_same_mode(self):
-        gen = DomainModeGenerator()
-        assert (
-            gen.generate({"deployments": [{"domain-format": "component.deployment.project"}]}) == "component-specific"
-        )
-        assert gen.generate({"deployments": [{"domain-format": "component.deployment.subdomain"}]}) == "nice-url"
-        assert gen.generate({"deployments": [{"domain-format": "deployment.project"}]}) == "deployment-name"
-        assert gen.generate({"deployments": [{"domain-format": "deployment.subdomain"}]}) == "custom"
 
 
 # ---------------------------------------------------------------------------

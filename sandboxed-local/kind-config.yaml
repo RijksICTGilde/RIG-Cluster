@@ -31,11 +31,11 @@ nodes:
         node-labels: "ingress-ready=true"
 
   extraPortMappings:
-  # HTTP — override with KIND_HTTP_PORT env var (default: 80)
+  # HTTP
   - containerPort: 80
-    hostPort: ${KIND_HTTP_PORT:-80}
+    hostPort: ${KIND_HTTP_PORT}
     protocol: TCP
-  # HTTPS — override with KIND_HTTPS_PORT env var (default: 443)
+  # HTTPS
   - containerPort: 443
-    hostPort: ${KIND_HTTPS_PORT:-443}
+    hostPort: ${KIND_HTTPS_PORT}
     protocol: TCP

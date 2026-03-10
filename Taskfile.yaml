@@ -1862,8 +1862,12 @@ tasks:
           echo "Cluster rig-sandbox already exists"
           exit 0
         fi
+        read -p "HTTP port for ingress [80]: " http_port
+        export KIND_HTTP_PORT="${http_port:-80}"
+        read -p "HTTPS port for ingress [443]: " https_port
+        export KIND_HTTPS_PORT="${https_port:-443}"
         envsubst < sandboxed-local/kind-config.yaml | kind create cluster --name rig-sandbox --config -
-        echo "Cluster rig-sandbox created successfully (HTTP port: ${KIND_HTTP_PORT:-80}, HTTPS port: ${KIND_HTTPS_PORT:-443})"
+        echo "Cluster rig-sandbox created successfully (HTTP port: ${KIND_HTTP_PORT}, HTTPS port: ${KIND_HTTPS_PORT})"
     silent: true
 
   sandbox:install-csi-snapshot:
