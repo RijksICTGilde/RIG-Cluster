@@ -1596,62 +1596,6 @@ async def submit_wizard(request: Request, flow_id: str) -> HTMLResponse | Redire
     return await _do_submit(request, flow_id, templates)
 
 
-def _flatten_yaml_for_validation(
-    editables: list[Any],
-    yaml_data: dict[str, Any],
-) -> dict[str, Any]:
-    """Flatten structured YAML data into form-style flat keys for validation.
-
-    The processor's validate_editables() expects flat keys like
-    ``users[0]/email``, but merged YAML data is nested.  This function
-    walks the editables, resolves each path against the YAML structure,
-    and returns a flat dict that the processor can validate.
-
-    Fields hidden via ``should_render_editable`` are excluded so they
-    are not validated.
-    """
-    from opi.forms.editables.path import resolve_path
-    from opi.forms.editables.service_path import smart_get_value
-    from opi.forms.visualizers.bridge import should_render_editable
-
-    flat: dict[str, Any] = {}
-
-    def _collect_flat(vis_list: list[Any]) -> None:
-        for editable in vis_list:
-            if not should_render_editable(editable, yaml_data):
-                continue
-
-            if str(editable.widget) == "group":
-                _collect_flat(editable.children or [])
-            elif str(editable.widget) == "sequence":
-                items = smart_get_value(yaml_data, editable.editable.yaml_path) or []
-                if not isinstance(items, list):
-                    continue
-                for index in range(len(items)):
-                    for child in editable.children or []:
-                        if not should_render_editable(child, yaml_data):
-                            continue
-                        if str(child.widget) == "sequence":
-                            # Nested sequence
-                            parent_path = resolve_path(child.editable.yaml_path, index)
-                            nested_items = smart_get_value(yaml_data, parent_path) or []
-                            if not isinstance(nested_items, list):
-                                continue
-                            for ci in range(len(nested_items)):
-                                for gc in child.children or []:
-                                    gc_path = resolve_path(gc.editable.yaml_path, index)
-                                    gc_path = resolve_path(gc_path, ci)
-                                    flat[gc_path] = smart_get_value(yaml_data, gc_path)
-                        else:
-                            concrete = resolve_path(child.editable.yaml_path, index)
-                            flat[concrete] = smart_get_value(yaml_data, concrete)
-            else:
-                flat[editable.editable.yaml_path] = smart_get_value(yaml_data, editable.editable.yaml_path)
-
-    _collect_flat(editables)
-    return flat
-
-
 def _collect_all_editable_paths(editables) -> set[str]:
     """Recursively collect yaml_paths from editables, including group children."""
     paths: set[str] = set()
@@ -1714,9 +1658,20 @@ async def _do_submit(
     # when the selected domain-format doesn't use it)
     processor.clear_hidden_depends_on(all_editables, yaml_data)
 
-    flat = _flatten_yaml_for_validation(all_editables, yaml_data)
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
-    errors = await processor.validate_editables(flat, all_editables, yaml_data, enforcer_context=enforcer_context)
+
+    # Validate and build final YAML in a single pass.
+    # The merged yaml_data is both the "submitted" values and the base —
+    # process_json_submission reads from it, validates, converts, and
+    # strips transients for the final output.
+    final_data, errors = await processor.process_json_submission(
+        yaml_data,
+        all_editables,
+        yaml_data,
+        edit_mode=state.project_name is not None,
+        enforcer_context=enforcer_context,
+        strip_transients=True,
+    )
 
     if errors:
         # Find the first section with errors and navigate there
@@ -1764,20 +1719,6 @@ async def _do_submit(
             global_errors=global_errors,
         )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
-
-    # Build final YAML — use flattened data so apply_to_yaml can find
-    # sequence child values via their concrete paths.
-    # Apply deferral and strip transients for the final output:
-    # - resolve_deferrals=True: copy transient values to parent fields
-    # - strip_transients=True: remove transient fields from final YAML
-    final_data = processor.apply_to_yaml(
-        flat,
-        all_editables,
-        yaml_data,
-        resolve_deferrals=True,
-        strip_transients=True,
-    )
-    logger.info("[wizard submit] Applied deferral and stripped transient fields for final output")
 
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)

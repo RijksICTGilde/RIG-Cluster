@@ -128,12 +128,13 @@ PERSISTENT_STORAGE_SIZE_EDITABLE = Editable(
 
 PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config[*]/mount-path",
+    validator=PathValidator(),
     required=True,
 )
 
 PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config",
-    depends_on="services",
+    depends_on="components[*]/services",
     show_when={"contains": "persistent-storage"},
     children=[
         PERSISTENT_STORAGE_NAME_EDITABLE,
@@ -154,12 +155,13 @@ TEMP_STORAGE_SIZE_EDITABLE = Editable(
 
 TEMP_STORAGE_MOUNT_PATH_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config[*]/mount-path",
+    validator=PathValidator(),
     required=True,
 )
 
 TEMP_STORAGE_SEQUENCE_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config",
-    depends_on="services",
+    depends_on="components[*]/services",
     show_when={"contains": "temp-storage"},
     children=[
         TEMP_STORAGE_NAME_EDITABLE,

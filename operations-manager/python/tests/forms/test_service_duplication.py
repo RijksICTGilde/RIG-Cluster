@@ -3,15 +3,14 @@
 Reproduces the bug: browser JSON is clean, but the final project file
 has duplicate persistent-storage/temp-storage entries.
 
-Tests the exact _do_submit pipeline:
-  yaml_data (merged) → _flatten_yaml_for_validation → apply_to_yaml → YAML output
+Tests the pipeline:
+  yaml_data → process_json_submission → YAML output
 """
 
 from __future__ import annotations
 
 import copy
 from io import StringIO
-from typing import Any
 
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
@@ -25,48 +24,6 @@ def _count_service_entries(services: list, service_name: str) -> int:
         if (isinstance(item, str) and item == service_name) or (isinstance(item, dict) and service_name in item):
             count += 1
     return count
-
-
-def _flatten_yaml_for_validation(
-    editables: list[Any],
-    yaml_data: dict[str, Any],
-) -> dict[str, Any]:
-    """Exact copy of the function from router_wizard.py."""
-    from opi.forms.editables.path import resolve_path
-    from opi.forms.editables.service_path import smart_get_value
-    from opi.forms.visualizers.bridge import should_render_editable
-
-    flat: dict[str, Any] = {}
-
-    for editable in editables:
-        if not should_render_editable(editable, yaml_data):
-            continue
-
-        if str(editable.widget) == "sequence":
-            items = smart_get_value(yaml_data, editable.editable.yaml_path) or []
-            if not isinstance(items, list):
-                continue
-            for index in range(len(items)):
-                for child in editable.children or []:
-                    if not should_render_editable(child, yaml_data):
-                        continue
-                    if str(child.widget) == "sequence":
-                        parent_path = resolve_path(child.editable.yaml_path, index)
-                        nested_items = smart_get_value(yaml_data, parent_path) or []
-                        if not isinstance(nested_items, list):
-                            continue
-                        for ci in range(len(nested_items)):
-                            for gc in child.children or []:
-                                gc_path = resolve_path(gc.editable.yaml_path, index)
-                                gc_path = resolve_path(gc_path, ci)
-                                flat[gc_path] = smart_get_value(yaml_data, gc_path)
-                    else:
-                        concrete = resolve_path(child.editable.yaml_path, index)
-                        flat[concrete] = smart_get_value(yaml_data, concrete)
-        else:
-            flat[editable.editable.yaml_path] = smart_get_value(yaml_data, editable.editable.yaml_path)
-
-    return flat
 
 
 def _to_yaml_string(data: dict) -> str:
@@ -137,19 +94,19 @@ def _make_merged_data_with_plain_strings() -> dict:
 
 
 class TestFinalProjectYaml:
-    """Test the full _do_submit pipeline using the REAL visualizers."""
+    """Test the full pipeline using the REAL visualizers."""
 
-    def _run_pipeline(self, yaml_data: dict) -> dict:
-        """Run the exact _do_submit pipeline: flatten → apply_to_yaml."""
+    async def _run_pipeline(self, yaml_data: dict) -> dict:
+        """Run the pipeline: process_json_submission."""
         editables = [COMPONENTS_SEQUENCE]
-        flat = _flatten_yaml_for_validation(editables, yaml_data)
         processor = EditableFormProcessor()
-        return processor.apply_to_yaml(flat, editables, yaml_data)
+        result, _errors = await processor.process_json_submission(yaml_data, editables, yaml_data)
+        return result
 
-    def test_promoted_dicts_no_duplication(self):
+    async def test_promoted_dicts_no_duplication(self):
         """Services already promoted to dicts should not be duplicated."""
         yaml_data = _make_merged_data_with_promoted_dicts()
-        result = self._run_pipeline(yaml_data)
+        result = await self._run_pipeline(yaml_data)
 
         services = result["components"][0]["services"]
         assert _count_service_entries(services, "persistent-storage") == 1, (
@@ -157,10 +114,10 @@ class TestFinalProjectYaml:
         )
         assert _count_service_entries(services, "temp-storage") == 1, f"temp-storage duplicated! services = {services}"
 
-    def test_plain_strings_no_duplication(self):
+    async def test_plain_strings_no_duplication(self):
         """Services as plain strings — storage config processing should not add dicts."""
         yaml_data = _make_merged_data_with_plain_strings()
-        result = self._run_pipeline(yaml_data)
+        result = await self._run_pipeline(yaml_data)
 
         services = result["components"][0]["services"]
         assert _count_service_entries(services, "persistent-storage") == 1, (
@@ -169,7 +126,7 @@ class TestFinalProjectYaml:
         assert _count_service_entries(services, "temp-storage") == 1, f"temp-storage duplicated! services = {services}"
 
     async def test_json_then_flat_pipeline(self):
-        """Full flow: JSON submission → store → merge → flatten → apply → YAML."""
+        """Full flow: JSON submission → store → merge → process_json_submission → YAML."""
         processor = EditableFormProcessor()
         editables = [COMPONENTS_SEQUENCE]
 
@@ -217,8 +174,8 @@ class TestFinalProjectYaml:
         merged = copy.deepcopy(initial_yaml)
         merged.update(section_data)
 
-        # Phase 4: flatten → apply_to_yaml
-        result = self._run_pipeline(merged)
+        # Phase 4: process_json_submission
+        result = await self._run_pipeline(merged)
 
         services = result["components"][0]["services"]
         assert _count_service_entries(services, "persistent-storage") == 1, (
@@ -226,10 +183,10 @@ class TestFinalProjectYaml:
         )
         assert _count_service_entries(services, "temp-storage") == 1, f"temp-storage duplicated! services = {services}"
 
-    def test_final_yaml_output(self):
+    async def test_final_yaml_output(self):
         """Check the actual YAML string output for duplicates."""
         yaml_data = _make_merged_data_with_promoted_dicts()
-        result = self._run_pipeline(yaml_data)
+        result = await self._run_pipeline(yaml_data)
 
         yaml_str = _to_yaml_string(result)
 
@@ -242,48 +199,7 @@ class TestFinalProjectYaml:
         )
         assert ts_count <= 2, f"temp-storage appears {ts_count} times in YAML:\n{yaml_str}"
 
-    def test_inspect_flat_dict(self):
-        """Inspect what _flatten_yaml_for_validation produces — useful for debugging."""
-        yaml_data = _make_merged_data_with_promoted_dicts()
-        editables = [COMPONENTS_SEQUENCE]
-        flat = _flatten_yaml_for_validation(editables, yaml_data)
-
-        # Print flat dict for inspection
-        for k, v in sorted(flat.items()):
-            print(f"  {k} = {v!r}")
-
-        # The services flat entry should contain the full list
-        services_value = flat.get("components[0]/services")
-        assert services_value is not None, "components[0]/services missing from flat dict"
-        assert isinstance(services_value, list), f"Expected list, got {type(services_value)}"
-
-    def test_inspect_apply_to_yaml_step_by_step(self):
-        """Step through apply_to_yaml with logging to find where duplication occurs."""
-        yaml_data = _make_merged_data_with_promoted_dicts()
-        editables = [COMPONENTS_SEQUENCE]
-        flat = _flatten_yaml_for_validation(editables, yaml_data)
-
-        # Deep copy like apply_to_yaml does
-        result = copy.deepcopy(yaml_data)
-        services_before = result["components"][0]["services"]
-        print(f"\nBefore apply_to_yaml: {len(services_before)} services")
-        for i, s in enumerate(services_before):
-            print(f"  [{i}] {s!r}")
-
-        # Run apply_to_yaml
-        processor = EditableFormProcessor()
-        result = processor.apply_to_yaml(flat, editables, yaml_data)
-
-        services_after = result["components"][0]["services"]
-        print(f"\nAfter apply_to_yaml: {len(services_after)} services")
-        for i, s in enumerate(services_after):
-            print(f"  [{i}] {s!r}")
-
-        assert len(services_after) == len(services_before), (
-            f"Service count changed from {len(services_before)} to {len(services_after)}: {services_after}"
-        )
-
-    def test_full_create_flow_all_sections(self):
+    async def test_full_create_flow_all_sections(self):
         """Test with ALL active sections from the CREATE_FLOW — the exact _do_submit setup."""
         from opi.forms.visualizers.flows import CREATE_FLOW
 
@@ -331,9 +247,8 @@ class TestFinalProjectYaml:
             "deployments": [{"domain-mode": "nice-url", "subdomain": "test"}],
         }
 
-        flat = _flatten_yaml_for_validation(all_editables, yaml_data)
         processor = EditableFormProcessor()
-        result = processor.apply_to_yaml(flat, all_editables, yaml_data)
+        result, _errors = await processor.process_json_submission(yaml_data, all_editables, yaml_data)
 
         # Check component-level services
         comp_services = result["components"][0]["services"]

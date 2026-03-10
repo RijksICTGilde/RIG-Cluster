@@ -139,4 +139,4 @@ To add "select with other" to any field:
 
 - **Custom domain not persisting**: Check that the parent editable has `defers_to` and `defer_when` configured, and the transient child has `transient=True`.
 - **Text field not showing in edit mode**: Ensure `populate_deferred_fields()` is called before `_split_data_across_sections()` in the router.
-- **`__custom__` appearing in saved YAML**: The processor's `_resolve_deferrals` should run before output. Check that the editables list passed to `apply_to_yaml` or `process_json_submission` includes both the parent and transient child.
+- **`__custom__` appearing in saved YAML**: The processor's `_resolve_deferrals` should run before output. Check that the editables list passed to `process_json_submission` includes both the parent and transient child.

@@ -15,7 +15,6 @@ from opi.api.router import (
     AddServiceRequest,
     CloneBucketFromExternalRequest,
     CloneDatabaseFromExternalRequest,
-    SelfServiceProjectRequest,
     UpdateImageRequest,
     UpsertDeploymentRequest,
 )
@@ -23,7 +22,6 @@ from opi.api.v2.models import AsyncTaskAcceptedResponse
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
-    CREATE_PROJECT_DOMAIN_VALIDATORS,
     UPDATE_IMAGE_VALIDATORS,
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
@@ -125,46 +123,48 @@ async def upsert_deployment_v2(
     return _accepted_response(task, "upsert_deployment")
 
 
+# NOTE: create_project_v2 removed — there is no project (and therefore no API
+# token) to authenticate against before the project exists.  Project creation
+# is handled exclusively through the web UI wizard.
+
+
 @v2_router.post(
-    "/projects",
+    "/projects/{project_name}/:refresh",
     tags=["v2", "projects"],
     responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
 )
-async def create_project_v2(
+@validate_api_token
+async def refresh_project_v2(
     request: Request,
-    project_data: SelfServiceProjectRequest = Body(...),
+    project_name: str,
+    force_clone: bool = Query(default=False, description="Force clone even if target resources exist"),
 ) -> JSONResponse:
-    """Create a new project (async).
+    """Refresh a project from git (async).
 
+    Re-runs provisioning steps for all deployments in the project.
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
-    """
-    logger.info("V2 create project: %s", project_data.project_name)
 
-    if not validate_project_name(project_data.project_name):
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    logger.info("V2 refresh project: %s (force_clone=%s)", project_name, force_clone)
+
+    if not validate_project_name(project_name):
         raise HTTPException(
             status_code=400,
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-    # Validate domain fields using editable validators
-    if project_data.domain_format:
-        await validate_api_payload(
-            {
-                "domain_format": project_data.domain_format,
-                "subdomain": project_data.subdomain,
-                "base_domain": project_data.base_domain,
-                "deployment_name": project_data.deployment_name,
-            },
-            CREATE_PROJECT_DOMAIN_VALIDATORS,
-        )
-
     task = await create_async_task(
         request=request,
-        task_type="create_project",
-        project_name=project_data.project_name,
-        payload=project_data.model_dump(),
+        task_type="refresh_project",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "force_clone": force_clone,
+        },
     )
-    return _accepted_response(task, "create_project")
+    return _accepted_response(task, "refresh_project")
 
 
 @v2_router.delete(

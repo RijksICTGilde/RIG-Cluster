@@ -162,7 +162,8 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                         if dep_name:
                             schedule_oom_check(project_name, dep_name)
 
-            progress.update_current_step(f"Project {project_name} succesvol geimplementeerd - monitoring actief")
+            progress.update_current_step(f"Project {project_name} succesvol geimplementeerd")
+            progress.complete_project()
 
             elapsed_time = time.time() - start_time
             result: dict[str, Any] = {

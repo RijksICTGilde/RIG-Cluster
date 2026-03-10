@@ -50,95 +50,13 @@ def _converter_write(converter: Any, value: Any, yaml_data: dict[str, Any] | Non
 class EditableFormProcessor:
     """Processes form submissions through the editables pipeline."""
 
-    def parse_form_data(
-        self,
-        form_data: Any,
-        editables: list[EditableVisualizer],
-    ) -> dict[str, Any]:
-        """
-        Parse flat HTML form data into a dict keyed by YAML paths.
-
-        HTML form names use the YAML path format (e.g., "users[0]/email",
-        "components[1]/ports/inbound"). Multi-value fields (checkboxes)
-        use "path[]" naming convention.
-
-        Returns:
-            dict mapping yaml_path -> submitted value
-        """
-        parsed: dict[str, Any] = {}
-
-        for key in form_data:
-            if key.endswith("[]"):
-                parsed[key.rstrip("[]")] = form_data.getlist(key)
-            else:
-                parsed[key] = form_data.get(key)
-
-        return parsed
-
-    async def validate_editables(
-        self,
-        parsed: dict[str, Any],
-        editables: list[EditableVisualizer],
-        yaml_data: dict[str, Any],
-        enforcer_context: dict[str, Any] | None = None,
-    ) -> dict[str, list[str]]:
-        """
-        Run each editable's validator on the parsed form data.
-
-        For sequence editables, validates each item's child editables.
-
-        Args:
-            enforcer_context: Optional metadata for enforcers (e.g. project_name,
-                edit_mode). Separate from yaml_data to avoid polluting form data.
-
-        Returns:
-            dict mapping yaml_path -> list of error messages.
-            Empty dict means no errors.
-        """
-        errors: dict[str, list[str]] = {}
-        ctx = enforcer_context or {}
-
-        for vis in editables:
-            ed = vis.editable
-            # Skip validation for fields hidden by depends_on/show_when conditions
-            if not should_render_editable(vis, yaml_data, siblings=editables):
-                continue
-            if vis.widget == WidgetType.GROUP:
-                # Recurse into group children, then run parent enforcer
-                group_errors = await self.validate_editables(parsed, vis.children or [], yaml_data, ctx)
-                errors.update(group_errors)
-                if not group_errors and ed.enforcer:
-                    try:
-                        await ed.enforcer.enforce(yaml_data, ctx)
-                    except ValueError as e:
-                        errors.setdefault(ed.yaml_path, []).append(str(e))
-            elif vis.widget == WidgetType.SEQUENCE:
-                items = smart_get_value(yaml_data, ed.yaml_path) or []
-                if not isinstance(items, list):
-                    logger.debug("validate: %s not a list in yaml_data, skipping", ed.yaml_path)
-                    continue
-                logger.debug("validate: %s has %d items", ed.yaml_path, len(items))
-                for index in range(len(items)):
-                    for child_vis in vis.children or []:
-                        child_ed = child_vis.editable
-                        if child_vis.widget == WidgetType.SEQUENCE:
-                            self._validate_nested_sequence(child_vis, parsed, yaml_data, errors, parent_index=index)
-                        else:
-                            concrete_path = resolve_path(child_ed.yaml_path, index)
-                            value = parsed.get(concrete_path)
-                            self._validate_field(child_vis, concrete_path, value, errors)
-            else:
-                value = parsed.get(ed.yaml_path)
-                self._validate_field(vis, ed.yaml_path, value, errors)
-
-        return errors
-
     @staticmethod
     def _validate_field(
         vis: EditableVisualizer,
         path: str,
         value: Any,
         errors: dict[str, list[str]],
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Validate a single field for required and custom validator rules."""
         ed = vis.editable
@@ -146,33 +64,12 @@ class EditableFormProcessor:
             errors.setdefault(path, []).append("Dit veld is verplicht")
             return
         if ed.validator:
-            field_errors = ed.validator.validate(value)
+            try:
+                field_errors = ed.validator.validate(value, context=context or {})
+            except TypeError:
+                field_errors = ed.validator.validate(value)
             if field_errors:
                 errors.setdefault(path, []).extend(field_errors)
-
-    def _validate_nested_sequence(
-        self,
-        vis: EditableVisualizer,
-        parsed: dict[str, Any],
-        yaml_data: dict[str, Any],
-        errors: dict[str, list[str]],
-        parent_index: int,
-    ) -> None:
-        """Validate children of a nested sequence."""
-        ed = vis.editable
-        concrete_path = resolve_path(ed.yaml_path, parent_index)
-        items = smart_get_value(yaml_data, concrete_path) or []
-        if not isinstance(items, list):
-            logger.debug("validate_nested: %s not a list, skipping", concrete_path)
-            return
-        logger.debug("validate_nested: %s has %d items", concrete_path, len(items))
-        for child_index in range(len(items)):
-            for child_vis in vis.children or []:
-                child_ed = child_vis.editable
-                child_path = resolve_path(child_ed.yaml_path, parent_index)
-                child_path = resolve_path(child_path, child_index)
-                value = parsed.get(child_path)
-                self._validate_field(child_vis, child_path, value, errors)
 
     async def enforce_sections(
         self,
@@ -198,15 +95,6 @@ class EditableFormProcessor:
                 except ValueError as e:
                     global_errors.append(str(e))
         return global_errors
-
-    async def enforce_parts(
-        self,
-        yaml_data: dict[str, Any],
-        sections: list[FormSection],
-        enforcer_context: dict[str, Any] | None = None,
-    ) -> list[str]:
-        """Backward compatibility alias for enforce_sections."""
-        return await self.enforce_sections(yaml_data, sections, enforcer_context)
 
     def clear_hidden_depends_on(
         self,
@@ -254,153 +142,31 @@ class EditableFormProcessor:
         result.pop("_generated", None)
         return result
 
-    def apply_to_yaml(
-        self,
-        parsed: dict[str, Any],
-        editables: list[EditableVisualizer],
-        yaml_data: dict[str, Any],
-        edit_mode: bool = False,
-        resolve_deferrals: bool = True,
-        strip_transients: bool = True,
-    ) -> dict[str, Any]:
-        """
-        Write validated form values back into the YAML dict.
-
-        - Deep-copies yaml_data first (preserves original)
-        - Skips readonly fields
-        - Skips readonly_on_edit fields when edit_mode=True
-        - Applies converter.write() before set_value()
-        - Optionally resolves defers_to relationships (copy transient → parent)
-        - Optionally strips transient fields from output
-
-        Args:
-            resolve_deferrals: If True, copy deferred transient values to their parent fields.
-                              For wizard steps, set False to preserve both values.
-                              For final output, set True to merge them.
-            strip_transients: If True, remove transient fields from final output.
-                             For wizard steps, set False to keep both values.
-                             For final output, set True to clean up.
-
-        Returns:
-            New yaml_data dict with values applied.
-        """
-        result = copy.deepcopy(yaml_data)
-
-        for vis in editables:
-            ed = vis.editable
-            if vis.readonly:
-                continue
-            if vis.readonly_on_edit and edit_mode:
-                continue
-            if not should_render_editable(vis, result, siblings=editables):
-                continue
-
-            if vis.widget == WidgetType.GROUP:
-                # Groups are transparent — recurse into children
-                self.apply_to_yaml(parsed, vis.children or [], result, edit_mode, resolve_deferrals, strip_transients)
-            elif vis.widget == WidgetType.SEQUENCE:
-                self._apply_sequence_to_yaml(vis, parsed, result, edit_mode)
-            elif vis.widget == WidgetType.CHECKBOX:
-                # Unchecked checkboxes are absent from form data; treat as False.
-                raw = parsed.get(ed.yaml_path)
-                value: Any = bool(raw) if raw else False
-                if ed.converter:
-                    value = _converter_write(ed.converter, value, result)
-                if not value and ed.remove_when_none:
-                    smart_delete_value(result, ed.yaml_path)
-                else:
-                    smart_set_value(result, ed.yaml_path, value)
-            elif vis.widget == WidgetType.CHECKBOX_GROUP:
-                value = _coerce_to_list(parsed.get(ed.yaml_path))
-                if ed.converter:
-                    value = _converter_write(ed.converter, value, result)
-                smart_set_value(result, ed.yaml_path, value)
-            else:
-                value = parsed.get(ed.yaml_path)
-                if value is not None:
-                    if ed.converter:
-                        value = _converter_write(ed.converter, value, result)
-                    if not value and ed.remove_when_none:
-                        smart_delete_value(result, ed.yaml_path)
-                    else:
-                        smart_set_value(result, ed.yaml_path, value)
-
-        if resolve_deferrals:
-            self._resolve_deferrals(result, editables)
-        if strip_transients:
-            self._strip_transients(result, editables)
-
-        return result
-
-    def _apply_sequence_to_yaml(
-        self,
-        vis: EditableVisualizer,
-        parsed: dict[str, Any],
-        yaml_data: dict[str, Any],
-        edit_mode: bool,
-    ) -> None:
-        """Apply sequence field values back to YAML."""
-        ed = vis.editable
-        items = smart_get_value(yaml_data, ed.yaml_path) or []
-        if not isinstance(items, list):
-            return
-        for index in range(len(items)):
-            seq_children = vis.children or []
-            for child_vis in seq_children:
-                child_ed = child_vis.editable
-                if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
-                    continue
-                if not should_render_editable(child_vis, yaml_data, siblings=seq_children):
-                    continue
-                if child_vis.widget == WidgetType.SEQUENCE:
-                    self._apply_nested_sequence_to_yaml(child_vis, parsed, yaml_data, edit_mode, parent_index=index)
-                elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
-                    concrete_path = resolve_path(child_ed.yaml_path, index)
-                    value = _coerce_to_list(parsed.get(concrete_path))
-                    if child_ed.converter:
-                        value = _converter_write(child_ed.converter, value, yaml_data)
-                    smart_set_value(yaml_data, concrete_path, value)
-                else:
-                    concrete_path = resolve_path(child_ed.yaml_path, index)
-                    value = parsed.get(concrete_path)
-                    if value is not None:
-                        if child_ed.converter:
-                            value = _converter_write(child_ed.converter, value, yaml_data)
-                        if not value and child_ed.remove_when_none:
-                            smart_delete_value(yaml_data, concrete_path)
-                        else:
-                            smart_set_value(yaml_data, concrete_path, value)
-
-    def _apply_nested_sequence_to_yaml(
-        self,
-        vis: EditableVisualizer,
-        parsed: dict[str, Any],
-        yaml_data: dict[str, Any],
-        edit_mode: bool,
-        parent_index: int,
-    ) -> None:
-        """Apply nested sequence values back to YAML."""
-        ed = vis.editable
-        concrete_path = resolve_path(ed.yaml_path, parent_index)
-        items = smart_get_value(yaml_data, concrete_path) or []
-        if not isinstance(items, list):
-            return
-        for child_index in range(len(items)):
-            for child_vis in vis.children or []:
-                child_ed = child_vis.editable
-                if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
-                    continue
-                child_path = resolve_path(child_ed.yaml_path, parent_index)
-                child_path = resolve_path(child_path, child_index)
-                value = parsed.get(child_path)
-                if value is not None:
-                    if child_ed.converter:
-                        value = _converter_write(child_ed.converter, value, yaml_data)
-                    smart_set_value(yaml_data, child_path, value)
-
     # ------------------------------------------------------------------
     # JSON submission pipeline (nested structure, no flat intermediate)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _write_field(
+        editable: Editable,
+        path: str,
+        value: Any,
+        data: dict[str, Any],
+    ) -> None:
+        """Convert and write a single field value, respecting remove_when_none.
+
+        Centralises the convert-then-write logic so ``remove_when_none``,
+        converter dispatch, and ``smart_set_value`` / ``smart_delete_value``
+        live in exactly one place.
+        """
+        if value is None:
+            return
+        if editable.converter:
+            value = _converter_write(editable.converter, value, data)
+        if not value and editable.remove_when_none:
+            smart_delete_value(data, path)
+        else:
+            smart_set_value(data, path, value)
 
     async def process_json_submission(
         self,
@@ -409,6 +175,7 @@ class EditableFormProcessor:
         yaml_data: dict[str, Any],
         edit_mode: bool = False,
         enforcer_context: dict[str, Any] | None = None,
+        strip_transients: bool = False,
     ) -> tuple[dict[str, Any], dict[str, list[str]]]:
         """Process a nested JSON form submission in a single pass.
 
@@ -417,12 +184,15 @@ class EditableFormProcessor:
         and writes to a deep-copy of *yaml_data* using ``smart_set_value``
         (which correctly handles the mixed services list format).
 
-        The key improvement over the flat-key pipeline: **sequence item
-        counts come from the submitted data** (the form's truth), not
-        from stale session state.
+        Sequence item counts come from the submitted data (the form's
+        truth), not from stale session state.
 
         Args:
             enforcer_context: Optional metadata for enforcers (e.g. project_name).
+            strip_transients: When True, remove transient fields from the
+                output. Use for final project submission; leave False for
+                wizard steps where both parent and transient values must
+                persist in session state.
 
         Returns:
             ``(result_yaml, errors)`` tuple.
@@ -453,37 +223,26 @@ class EditableFormProcessor:
                     result,
                     errors,
                     edit_mode,
+                    enforcer_context,
                 )
             elif vis.widget == WidgetType.CHECKBOX:
-                # Unchecked checkboxes are absent from JSON; treat as False.
                 raw = get_value(submitted, ed.yaml_path)
                 value: Any = bool(raw) if raw else False
-                self._validate_field(vis, ed.yaml_path, value, errors)
-                if ed.converter:
-                    value = _converter_write(ed.converter, value, result)
-                smart_set_value(result, ed.yaml_path, value)
+                self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(ed, ed.yaml_path, value, result)
             elif vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(get_value(submitted, ed.yaml_path))
-                self._validate_field(vis, ed.yaml_path, value, errors)
-                if ed.converter:
-                    value = _converter_write(ed.converter, value, result)
-                smart_set_value(result, ed.yaml_path, value)
+                self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(ed, ed.yaml_path, value, result)
             else:
                 value = get_value(submitted, ed.yaml_path)
-                self._validate_field(vis, ed.yaml_path, value, errors)
-                if value is not None:
-                    if ed.converter:
-                        value = _converter_write(ed.converter, value, result)
-                    smart_set_value(result, ed.yaml_path, value)
+                self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(ed, ed.yaml_path, value, result)
 
         self._resolve_deferrals(result, editables)
 
-        # IMPORTANT: For wizard steps, DON'T strip transient fields.
-        # We need BOTH values to persist in wizard state:
-        #   - Parent field: "__custom__" (form logic indicator)
-        #   - Transient field: "mydomain.nl" (actual value)
-        # Only strip transients at final project submission, not during wizard.
-        # self._strip_transients(result, editables)
+        if strip_transients:
+            self._strip_transients(result, editables)
 
         return result, errors
 
@@ -520,23 +279,16 @@ class EditableFormProcessor:
             elif child_vis.widget == WidgetType.CHECKBOX:
                 raw = get_value(submitted, child_ed.yaml_path)
                 value: Any = bool(raw) if raw else False
-                self._validate_field(child_vis, child_ed.yaml_path, value, errors)
-                if child_ed.converter:
-                    value = _converter_write(child_ed.converter, value, result)
-                smart_set_value(result, child_ed.yaml_path, value)
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(child_ed, child_ed.yaml_path, value, result)
             elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(get_value(submitted, child_ed.yaml_path))
-                self._validate_field(child_vis, child_ed.yaml_path, value, errors)
-                if child_ed.converter:
-                    value = _converter_write(child_ed.converter, value, result)
-                smart_set_value(result, child_ed.yaml_path, value)
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(child_ed, child_ed.yaml_path, value, result)
             else:
                 value = get_value(submitted, child_ed.yaml_path)
-                self._validate_field(child_vis, child_ed.yaml_path, value, errors)
-                if value is not None:
-                    if child_ed.converter:
-                        value = _converter_write(child_ed.converter, value, result)
-                    smart_set_value(result, child_ed.yaml_path, value)
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(child_ed, child_ed.yaml_path, value, result)
 
         # Run parent enforcer only if children introduced no new errors
         if len(errors) == errors_before and ed.enforcer:
@@ -552,6 +304,7 @@ class EditableFormProcessor:
         result: dict[str, Any],
         errors: dict[str, list[str]],
         edit_mode: bool,
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Process a sequence editable from nested JSON.
 
@@ -591,7 +344,7 @@ class EditableFormProcessor:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                if not should_render_editable(child_vis, result, siblings=seq_children_json):
+                if not should_render_editable(child_vis, result, index=index, siblings=seq_children_json):
                     continue
                 if child_vis.widget == WidgetType.SEQUENCE:
                     self._process_nested_sequence_json(
@@ -601,28 +354,18 @@ class EditableFormProcessor:
                         errors,
                         edit_mode,
                         index,
+                        context,
                     )
                 elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
                     value = _coerce_to_list(get_value(submitted, concrete_path))
-                    self._validate_field(child_vis, concrete_path, value, errors)
-                    if child_ed.converter:
-                        value = _converter_write(child_ed.converter, value, result)
-                    smart_set_value(result, concrete_path, value)
+                    self._validate_field(child_vis, concrete_path, value, errors, context)
+                    self._write_field(child_ed, concrete_path, value, result)
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
                     value = get_value(submitted, concrete_path)
-                    logger.info(
-                        "[process_seq_json] child path=%s, value type=%s, value=%r",
-                        concrete_path,
-                        type(value).__name__,
-                        value,
-                    )
-                    self._validate_field(child_vis, concrete_path, value, errors)
-                    if value is not None:
-                        if child_ed.converter:
-                            value = _converter_write(child_ed.converter, value, result)
-                        smart_set_value(result, concrete_path, value)
+                    self._validate_field(child_vis, concrete_path, value, errors, context)
+                    self._write_field(child_ed, concrete_path, value, result)
 
     def _process_nested_sequence_json(
         self,
@@ -632,6 +375,7 @@ class EditableFormProcessor:
         errors: dict[str, list[str]],
         edit_mode: bool,
         parent_index: int,
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Process a nested sequence from JSON (e.g. additional-clients[0]/redirect-uris)."""
         ed = vis.editable
@@ -651,11 +395,8 @@ class EditableFormProcessor:
                 child_path = resolve_path(child_ed.yaml_path, parent_index)
                 child_path = resolve_path(child_path, child_index)
                 value = get_value(submitted, child_path)
-                self._validate_field(child_vis, child_path, value, errors)
-                if value is not None:
-                    if child_ed.converter:
-                        value = _converter_write(child_ed.converter, value, result)
-                    smart_set_value(result, child_path, value)
+                self._validate_field(child_vis, child_path, value, errors, context)
+                self._write_field(child_ed, child_path, value, result)
 
     # ------------------------------------------------------------------
     # Deferral and transient field handling

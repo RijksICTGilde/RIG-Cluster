@@ -48,6 +48,7 @@ async def main() -> None:
         handle_clone_bucket,
         handle_clone_database,
         handle_refresh_deployment,
+        handle_refresh_project,
     )
     from opi.core.task_handlers_project import (
         handle_create_project,
@@ -61,6 +62,7 @@ async def main() -> None:
     worker.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
     worker.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
     worker.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+    worker.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
     worker.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
     worker.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
     worker.register_handler(TaskType.ADD_SERVICE, handle_add_service)

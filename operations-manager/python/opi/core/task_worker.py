@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import traceback
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
@@ -170,12 +169,11 @@ class TaskWorker:
                 raise
 
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
-            logger.error("Task %s failed: %s", task_id, e)
+            logger.exception("Task %s failed: %s", task_id, e)
 
             await self._task_service.fail_task(
                 task_id=task_id,
-                error_message=str(e),
+                error_message=f"{type(e).__name__}: {e}",
                 attempt_count=task.get("attempt_count", 0),
                 max_attempts=task.get("max_attempts", settings.TASK_WORKER_MAX_ATTEMPTS),
             )

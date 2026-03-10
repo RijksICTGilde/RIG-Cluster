@@ -128,50 +128,45 @@ def _make_editable_pair() -> tuple[Editable, Editable, list[EditableVisualizer]]
 
 
 class TestProcessorDeferral:
-    def test_defers_when_sentinel(self):
+    async def test_defers_when_sentinel(self):
         """When parent has sentinel value, transient value replaces it."""
         _parent_ed, _child_ed, editables = _make_editable_pair()
         processor = EditableFormProcessor()
         data = {"items": [{"domain": "__custom__", "domain:custom": "mijnapp.nl"}]}
-
-        result = processor.apply_to_yaml(
-            {"items[0]/domain": "__custom__", "items[0]/domain:custom": "mijnapp.nl"},
+        result, _errors = await processor.process_json_submission(
+            data,
             editables,
             data,
+            strip_transients=True,
         )
-
-        # Deferral should copy custom value to domain
         assert result["items"][0]["domain"] == "mijnapp.nl"
-        # Transient should be stripped
         assert "domain:custom" not in result["items"][0]
 
-    def test_no_defer_when_regular_value(self):
+    async def test_no_defer_when_regular_value(self):
         """When parent has a regular value, no deferral happens."""
         _parent_ed, _child_ed, editables = _make_editable_pair()
         processor = EditableFormProcessor()
         data = {"items": [{"domain": "rijksapp.nl"}]}
-
-        result = processor.apply_to_yaml(
-            {"items[0]/domain": "rijksapp.nl"},
+        result, _errors = await processor.process_json_submission(
+            data,
             editables,
             data,
+            strip_transients=True,
         )
-
         assert result["items"][0]["domain"] == "rijksapp.nl"
         assert "domain:custom" not in result["items"][0]
 
-    def test_transient_always_stripped(self):
+    async def test_transient_always_stripped(self):
         """Transient fields are stripped even when deferral doesn't trigger."""
         _parent_ed, _child_ed, editables = _make_editable_pair()
         processor = EditableFormProcessor()
         data = {"items": [{"domain": "rijksapp.nl", "domain:custom": "leftover"}]}
-
-        result = processor.apply_to_yaml(
-            {"items[0]/domain": "rijksapp.nl", "items[0]/domain:custom": "leftover"},
+        result, _errors = await processor.process_json_submission(
+            data,
             editables,
             data,
+            strip_transients=True,
         )
-
         assert "domain:custom" not in result["items"][0]
 
 
@@ -238,7 +233,7 @@ def _make_sequence_pair() -> list[EditableVisualizer]:
 
 
 class TestSequenceDeferral:
-    def test_defers_within_sequence_items(self):
+    async def test_defers_within_sequence_items(self):
         """Deferral works per-item in a sequence."""
         editables = _make_sequence_pair()
         processor = EditableFormProcessor()
@@ -248,14 +243,12 @@ class TestSequenceDeferral:
                 {"base-domain": "rijksapp.nl"},
             ]
         }
-        parsed = {
-            "deployments[0]/base-domain": "__custom__",
-            "deployments[0]/base-domain:custom": "custom1.nl",
-            "deployments[1]/base-domain": "rijksapp.nl",
-        }
-
-        result = processor.apply_to_yaml(parsed, editables, data)
-
+        result, _errors = await processor.process_json_submission(
+            data,
+            editables,
+            data,
+            strip_transients=True,
+        )
         assert result["deployments"][0]["base-domain"] == "custom1.nl"
         assert "base-domain:custom" not in result["deployments"][0]
         assert result["deployments"][1]["base-domain"] == "rijksapp.nl"

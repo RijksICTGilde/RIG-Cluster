@@ -86,9 +86,12 @@ class ComponentNameValidator:
     Validates component names: lowercase letters and digits only, max 12 chars.
 
     Pattern: ^[a-z][a-z0-9]{0,11}$
+
+    When called with context containing ``existing_component_names``,
+    also checks uniqueness.
     """
 
-    def validate(self, value: Any) -> list[str]:
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
         if not value:
             return []
         value_str = str(value)
@@ -96,6 +99,8 @@ class ComponentNameValidator:
             return ["Componentnaam mag maximaal 12 tekens bevatten"]
         if not re.match(r"^[a-z][a-z0-9]*$", value_str):
             return ["Moet beginnen met een kleine letter en mag alleen kleine letters en cijfers bevatten"]
+        if context and value_str in context.get("existing_component_names", []):
+            return [f"Er bestaat al een component met de naam '{value_str}'"]
         return []
 
 

@@ -229,16 +229,25 @@ def build_deployment_edit_flow(
 
 def build_component_edit_flow(component_index: int, is_new: bool = False) -> FormFlow:
     """Build a modal edit flow for a specific component."""
-    from opi.forms.visualizers.wizard_sections import build_component_edit_section
+    from opi.forms.visualizers.wizard_sections import (
+        build_component_deployment_select_section,
+        build_component_edit_section,
+    )
 
     section = build_component_edit_section(component_index, is_new=is_new)
     title = "Component toevoegen" if is_new else "Component bewerken"
+    sections = [section]
+
+    # When adding a new component, ask which deployments should reference it
+    if is_new:
+        sections.append(build_component_deployment_select_section(component_index))
+
     return FormFlow(
         flow_id=f"modal-edit-component-{component_index}",
         title=title,
         mode=FlowMode.WIZARD,
         show_review=True,
-        sections=[section],
+        sections=sections,
     )
 
 

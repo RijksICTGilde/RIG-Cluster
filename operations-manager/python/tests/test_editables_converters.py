@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from opi.forms.editables.converters import (
+    AGEEncryptConverter,
     CloneFromDisplayConverter,
     ContainerImageConverter,
     DeploymentServicesDisplayConverter,
@@ -11,7 +14,11 @@ from opi.forms.editables.converters import (
     ServiceListConverter,
     TruncateConverter,
 )
+from opi.forms.editables.generators import UserEnvVarsEncryptGenerator
 from opi.forms.editables.validators import KeyValueValidator
+
+FAKE_AGE_ENCRYPTED = "-----BEGIN AGE ENCRYPTED FILE-----\nencrypted\n-----END AGE ENCRYPTED FILE-----"
+FAKE_PUBLIC_KEY = "age1testpublickey"
 
 
 class TestEncryptedDisplayConverter:
@@ -276,3 +283,162 @@ class TestKeyValueValidator:
         """Lists are not valid env var values — only scalars allowed."""
         errors = KeyValueValidator().validate("ITEMS:\n  - one\n  - two")
         assert len(errors) == 1
+
+
+class TestKeyValueConverterEncryption:
+    """Verify that KeyValueConverter(write_as='string') encrypts user-env-vars."""
+
+    def test_write_string_encrypts_with_project_key(self):
+        """Plain text must be AGE-encrypted when yaml_data has a project public key."""
+        conv = KeyValueConverter(fmt="env", write_as="string")
+        yaml_data = {"config": {"age-public-key": FAKE_PUBLIC_KEY}}
+
+        with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED) as mock:
+            result = conv.write("DB_HOST=localhost", yaml_data=yaml_data)
+
+        mock.assert_called_once_with("DB_HOST=localhost", FAKE_PUBLIC_KEY)
+        assert "BEGIN AGE ENCRYPTED FILE" in str(result)
+
+    def test_write_string_skips_already_encrypted(self):
+        """Already-encrypted values must not be double-encrypted."""
+        conv = KeyValueConverter(fmt="env", write_as="string")
+        yaml_data = {"config": {"age-public-key": FAKE_PUBLIC_KEY}}
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            result = conv.write(FAKE_AGE_ENCRYPTED, yaml_data=yaml_data)
+
+        mock.assert_not_called()
+        assert result == FAKE_AGE_ENCRYPTED
+
+    def test_write_string_without_yaml_data_returns_plain(self):
+        """Without yaml_data, encryption cannot happen — value is returned as-is."""
+        conv = KeyValueConverter(fmt="env", write_as="string")
+        result = conv.write("SECRET=value")
+        assert result == "SECRET=value"
+
+    def test_write_string_without_public_key_returns_plain(self):
+        """Without a project public key in yaml_data, value is returned as-is."""
+        conv = KeyValueConverter(fmt="env", write_as="string")
+        result = conv.write("SECRET=value", yaml_data={"config": {}})
+        assert result == "SECRET=value"
+
+    def test_write_dict_mode_does_not_encrypt(self):
+        """write_as='dict' mode should never attempt encryption."""
+        conv = KeyValueConverter(fmt="env", write_as="dict")
+        yaml_data = {"config": {"age-public-key": FAKE_PUBLIC_KEY}}
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            result = conv.write("KEY=value", yaml_data=yaml_data)
+
+        mock.assert_not_called()
+        assert isinstance(result, dict)
+
+
+class TestUserEnvVarsEncryptGenerator:
+    """Verify that the create-wizard generator encrypts all component user-env-vars."""
+
+    def test_encrypts_plain_user_env_vars(self):
+        """Plain-text user-env-vars on components must be encrypted."""
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [
+                {"name": "frontend", "user-env-vars": "API_URL=https://api.example.nl"},
+                {"name": "backend", "user-env-vars": "DB_PASS=secret123"},
+            ],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED):
+            UserEnvVarsEncryptGenerator().generate(yaml_data)
+
+        for comp in yaml_data["components"]:
+            assert "BEGIN AGE ENCRYPTED FILE" in comp["user-env-vars"], (
+                f"user-env-vars for {comp['name']} should be encrypted"
+            )
+
+    def test_skips_already_encrypted(self):
+        """Already-encrypted user-env-vars must not be re-encrypted."""
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [{"name": "frontend", "user-env-vars": FAKE_AGE_ENCRYPTED}],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            UserEnvVarsEncryptGenerator().generate(yaml_data)
+
+        mock.assert_not_called()
+
+    def test_skips_empty_user_env_vars(self):
+        """Components without user-env-vars should be left alone."""
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [
+                {"name": "frontend"},
+                {"name": "backend", "user-env-vars": ""},
+            ],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            UserEnvVarsEncryptGenerator().generate(yaml_data)
+
+        mock.assert_not_called()
+
+    def test_skips_when_no_public_key(self):
+        """Without a project public key, generator should skip (not crash)."""
+        yaml_data = {
+            "config": {},
+            "components": [{"name": "frontend", "user-env-vars": "SECRET=value"}],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            UserEnvVarsEncryptGenerator().generate(yaml_data)
+
+        mock.assert_not_called()
+        # Value stays plain — this is a known limitation when no key exists
+        assert yaml_data["components"][0]["user-env-vars"] == "SECRET=value"
+
+
+class TestAGEEncryptConverter:
+    """Verify that AGEEncryptConverter encrypts/decrypts field values."""
+
+    def test_write_encrypts_plain_value(self):
+        """Plain text must be encrypted with the system AGE key."""
+        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
+
+        with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED):
+            result = conv.write("my-secret-value")
+
+        assert "BEGIN AGE ENCRYPTED FILE" in result
+
+    def test_write_skips_already_encrypted(self):
+        """Already-encrypted values must not be double-encrypted."""
+        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            result = conv.write(FAKE_AGE_ENCRYPTED)
+
+        mock.assert_not_called()
+        assert result == FAKE_AGE_ENCRYPTED
+
+    def test_write_empty_returns_empty(self):
+        """Empty values should return empty string, not attempt encryption."""
+        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
+        assert conv.write("") == ""
+        assert conv.write(None) == ""
+
+    def test_read_decrypts_encrypted_value(self):
+        """Encrypted values should be decrypted for form display."""
+        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
+
+        with patch("opi.utils.age.decrypt_age_content_sync", return_value="decrypted-secret"):
+            with patch("opi.core.config.settings") as mock_settings:
+                mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1TEST"
+                result = conv.read(FAKE_AGE_ENCRYPTED)
+
+        assert result == "decrypted-secret"
+
+    def test_view_always_masked(self):
+        """View should never reveal the actual value."""
+        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
+        assert conv.view(FAKE_AGE_ENCRYPTED) == "********"
+        assert conv.view("plain-text") == "********"
+        assert conv.view(None) == "Niet geconfigureerd"

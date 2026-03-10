@@ -549,6 +549,20 @@ class DomainFormatOptionsProvider:
         return [{"value": f, "label": f"{f}.domein"} for f in format_ids]
 
 
+class DeploymentSelectOptionsProvider:
+    """Provides deployment names as checkbox options.
+
+    Used when adding a component to select which deployments should
+    receive a reference to the new component.
+    """
+
+    def __init__(self, deployment_names: list[str] | None = None) -> None:
+        self.deployment_names = deployment_names or []
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [{"value": name, "label": name} for name in self.deployment_names]
+
+
 # Registry of all available providers
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
@@ -572,6 +586,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "RootComponentOptionsProvider": RootComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
     "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
+    "DeploymentSelectOptionsProvider": DeploymentSelectOptionsProvider,
 }
 
 

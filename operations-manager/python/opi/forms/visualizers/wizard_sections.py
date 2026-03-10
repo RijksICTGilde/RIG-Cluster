@@ -470,6 +470,72 @@ def build_component_edit_section(component_index: int, is_new: bool = False) -> 
     )
 
 
+def build_component_deployment_select_section(component_index: int) -> FormSection:
+    """Build a section for selecting which deployments receive the new component.
+
+    Shows a checkbox group with all deployment names (all checked by default).
+    The ``post_merge`` hook distributes the component reference to each
+    selected deployment using ``ListDistributor``.
+    """
+    from opi.forms.editables.distributors import ListDistributor
+    from opi.forms.editables.editable import Editable, WidgetType
+    from opi.forms.visualizers.visualizer import EditableVisualizer
+
+    target_deployments_editable = Editable(
+        yaml_path="_target_deployments",
+        transient=True,
+        default="__all__",
+        values_provider="DeploymentSelectOptionsProvider",
+    )
+    target_deployments_vis = EditableVisualizer(
+        editable=target_deployments_editable,
+        widget=WidgetType.CHECKBOX_GROUP,
+        label="Deployments",
+        description="Selecteer de deployments waaraan dit component wordt toegevoegd.",
+    )
+
+    distributor = ListDistributor(
+        source_key="_component_refs",
+        target_path="deployments",
+        match_field="name",
+        merge_field="components",
+    )
+
+    def post_merge(project_data: dict[str, Any], wizard_data: dict[str, Any]) -> None:
+        """Build component references and distribute to selected deployments."""
+        selected = wizard_data.get("_target_deployments", [])
+        if not isinstance(selected, list) or not selected:
+            return
+
+        # Get the new component's data
+        components = project_data.get("components", [])
+        if component_index >= len(components):
+            return
+        component = components[component_index]
+        comp_name = component.get("name")
+        comp_image = component.get("image")
+        if not comp_name:
+            return
+
+        ref: dict[str, Any] = {"reference": comp_name}
+        if comp_image:
+            ref["image"] = comp_image
+
+        # Build the temp structure for the distributor
+        wizard_data["_component_refs"] = [{"name": dep_name, "components": [ref.copy()]} for dep_name in selected]
+        distributor(project_data, wizard_data)
+
+    return FormSection(
+        section_id="component-deployment-select",
+        title="Deployments",
+        icon="raket",
+        description="Kies in welke deployments dit component wordt opgenomen.",
+        editables=[target_deployments_vis],
+        layout=["_target_deployments"],
+        post_merge=post_merge,
+    )
+
+
 def build_deployment_edit_section(
     deployment_index: int,
     component_count: int | None = None,

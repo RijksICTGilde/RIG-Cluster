@@ -501,7 +501,7 @@ class FormRenderer:
             item_children: list[FormField] = []
             seq_children = editable.children or []
             for child_editable in seq_children:
-                if not should_render_editable(child_editable, yaml_data, siblings=seq_children):
+                if not should_render_editable(child_editable, yaml_data, index=index, siblings=seq_children):
                     continue
                 if child_editable.widget == WidgetType.SEQUENCE:
                     nested_seq = self._build_nested_sequence_field(

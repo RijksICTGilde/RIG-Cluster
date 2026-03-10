@@ -236,17 +236,10 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
                 )
 
                 task_progress_manager.complete_task(deploy_task)
-                # Don't mark project as completed - keep it as running for ongoing monitoring
-                # task_progress_manager.complete_project()  # Commented out to keep polling active
-
-                # Update project status to indicate deployment is complete
-                # Monitoring is already handled by _monitor_project_progress in task_manager.py
-                if task_id in _projects:
-                    _projects[
-                        task_id
-                    ].current_step = (
-                        f"Project {project_data.project_name} succesvol geimplementeerd - monitoring actief"
-                    )
+                task_progress_manager.update_current_step(
+                    f"Project {project_data.project_name} succesvol geimplementeerd"
+                )
+                task_progress_manager.complete_project()
 
                 # Calculate final result
                 elapsed_time = time.time() - start_time
@@ -359,11 +352,10 @@ async def process_project_yaml_background(task_id: str, project_name: str, yaml_
                 await _monitor_argocd_and_deployment(task_id, project_name, task_progress_manager, monitor_task)
 
                 task_progress_manager.complete_task(deploy_task)
-
-                if task_id in _projects:
-                    _projects[
-                        task_id
-                    ].current_step = f"Project {project_name} succesvol geimplementeerd - monitoring actief"
+                task_progress_manager.update_current_step(
+                    f"Project {project_name} succesvol geimplementeerd"
+                )
+                task_progress_manager.complete_project()
 
                 elapsed_time = time.time() - start_time
                 logger.info(

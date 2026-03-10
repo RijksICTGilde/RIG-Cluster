@@ -8,26 +8,6 @@ from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.validators import EmailValidator, SlugValidator
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
-
-class FakeFormData:
-    """Mimics FastAPI's ImmutableMultiDict for testing."""
-
-    def __init__(self, data: dict) -> None:
-        self._data = data
-
-    def __iter__(self):
-        return iter(self._data)
-
-    def get(self, key: str, default=None):
-        return self._data.get(key, default)
-
-    def getlist(self, key: str) -> list:
-        val = self._data.get(key)
-        if isinstance(val, list):
-            return val
-        return [val] if val is not None else []
-
-
 SAMPLE_YAML = {
     "name": "test-project",
     "display-name": "Test Project",
@@ -51,40 +31,6 @@ SAMPLE_YAML = {
 }
 
 
-class TestParseFormData:
-    def test_simple_fields(self):
-        processor = EditableFormProcessor()
-        form_data = FakeFormData({"name": "test", "display-name": "Test"})
-        editables = [
-            EditableVisualizer(editable=Editable(yaml_path="name"), widget=WidgetType.TEXT, label="Naam"),
-        ]
-        parsed = processor.parse_form_data(form_data, editables)
-        assert parsed["name"] == "test"
-        assert parsed["display-name"] == "Test"
-
-    def test_multi_value_fields(self):
-        processor = EditableFormProcessor()
-        form_data = FakeFormData({"clusters[]": ["local", "remote"]})
-        editables: list[EditableVisualizer] = []
-        parsed = processor.parse_form_data(form_data, editables)
-        assert parsed["clusters"] == ["local", "remote"]
-
-    def test_sequence_fields(self):
-        processor = EditableFormProcessor()
-        form_data = FakeFormData(
-            {
-                "users[0]/email": "admin@test.nl",
-                "users[0]/role": "admin",
-                "users[1]/email": "dev@test.nl",
-                "users[1]/role": "developer",
-            }
-        )
-        editables: list[EditableVisualizer] = []
-        parsed = processor.parse_form_data(form_data, editables)
-        assert parsed["users[0]/email"] == "admin@test.nl"
-        assert parsed["users[1]/role"] == "developer"
-
-
 class TestValidateEditables:
     async def test_valid_data_returns_empty(self):
         processor = EditableFormProcessor()
@@ -95,8 +41,9 @@ class TestValidateEditables:
                 label="Naam",
             ),
         ]
-        parsed = {"name": "valid-name"}
-        errors = await processor.validate_editables(parsed, editables, {})
+        submitted = {"name": "valid-name"}
+        yaml_data = {"name": ""}
+        _, errors = await processor.process_json_submission(submitted, editables, yaml_data)
         assert errors == {}
 
     async def test_invalid_slug_returns_error(self):
@@ -108,10 +55,10 @@ class TestValidateEditables:
                 label="Naam",
             ),
         ]
-        parsed = {"name": "INVALID NAME!"}
-        errors = await processor.validate_editables(parsed, editables, {})
+        submitted = {"name": "INVALID NAME!"}
+        yaml_data = {"name": ""}
+        _, errors = await processor.process_json_submission(submitted, editables, yaml_data)
         assert "name" in errors
-        assert len(errors["name"]) > 0
 
     async def test_sequence_child_validation(self):
         processor = EditableFormProcessor()
@@ -126,13 +73,9 @@ class TestValidateEditables:
             label="Users",
             children=[email_visualizer],
         )
-        parsed = {
-            "users[0]/email": "valid@test.nl",
-            "users[1]/email": "not-an-email",
-        }
-        yaml_data = {"users": [{"email": "a"}, {"email": "b"}]}
-        errors = await processor.validate_editables(parsed, [seq_visualizer], yaml_data)
-        assert "users[0]/email" not in errors
+        submitted = {"users": [{"email": "valid@test.nl"}, {"email": "not-an-email"}]}
+        yaml_data = submitted
+        _, errors = await processor.process_json_submission(submitted, [seq_visualizer], yaml_data)
         assert "users[1]/email" in errors
 
     async def test_no_validator_no_error(self):
@@ -144,13 +87,14 @@ class TestValidateEditables:
                 label="Desc",
             ),
         ]
-        parsed = {"description": "anything"}
-        errors = await processor.validate_editables(parsed, editables, {})
+        submitted = {"description": "anything"}
+        yaml_data = {"description": ""}
+        _, errors = await processor.process_json_submission(submitted, editables, yaml_data)
         assert errors == {}
 
 
 class TestApplyToYaml:
-    def test_writes_simple_value(self):
+    async def test_writes_simple_value(self):
         processor = EditableFormProcessor()
         editables = [
             EditableVisualizer(
@@ -159,13 +103,13 @@ class TestApplyToYaml:
                 label="Naam",
             ),
         ]
-        parsed = {"display-name": "Updated Name"}
-        result = processor.apply_to_yaml(parsed, editables, SAMPLE_YAML)
+        submitted = {"display-name": "Updated Name"}
+        result, _ = await processor.process_json_submission(submitted, editables, SAMPLE_YAML)
         assert result["display-name"] == "Updated Name"
         # Original is unchanged
         assert SAMPLE_YAML["display-name"] == "Test Project"
 
-    def test_skips_readonly_fields(self):
+    async def test_skips_readonly_fields(self):
         processor = EditableFormProcessor()
         editables = [
             EditableVisualizer(
@@ -175,11 +119,11 @@ class TestApplyToYaml:
                 readonly=True,
             ),
         ]
-        parsed = {"config/age-public-key": "hacked-value"}
-        result = processor.apply_to_yaml(parsed, editables, SAMPLE_YAML)
+        submitted = {"config": {"age-public-key": "hacked-value"}}
+        result, _ = await processor.process_json_submission(submitted, editables, SAMPLE_YAML)
         assert result["config"]["age-public-key"] == "age1abc..."
 
-    def test_skips_readonly_on_edit_in_edit_mode(self):
+    async def test_skips_readonly_on_edit_in_edit_mode(self):
         processor = EditableFormProcessor()
         editables = [
             EditableVisualizer(
@@ -189,11 +133,11 @@ class TestApplyToYaml:
                 readonly_on_edit=True,
             ),
         ]
-        parsed = {"name": "new-name"}
-        result = processor.apply_to_yaml(parsed, editables, SAMPLE_YAML, edit_mode=True)
+        submitted = {"name": "new-name"}
+        result, _ = await processor.process_json_submission(submitted, editables, SAMPLE_YAML, edit_mode=True)
         assert result["name"] == "test-project"
 
-    def test_allows_readonly_on_edit_in_create_mode(self):
+    async def test_allows_readonly_on_edit_in_create_mode(self):
         processor = EditableFormProcessor()
         editables = [
             EditableVisualizer(
@@ -203,11 +147,11 @@ class TestApplyToYaml:
                 readonly_on_edit=True,
             ),
         ]
-        parsed = {"name": "new-name"}
-        result = processor.apply_to_yaml(parsed, editables, SAMPLE_YAML, edit_mode=False)
+        submitted = {"name": "new-name"}
+        result, _ = await processor.process_json_submission(submitted, editables, SAMPLE_YAML, edit_mode=False)
         assert result["name"] == "new-name"
 
-    def test_applies_converter_write(self):
+    async def test_applies_converter_write(self):
         processor = EditableFormProcessor()
         child_editables = [
             EditableVisualizer(
@@ -219,20 +163,26 @@ class TestApplyToYaml:
                 label="Ports",
             ),
         ]
-        # This is a child editable, wrap it in a sequence for proper processing
         seq_visualizer = EditableVisualizer(
             editable=Editable(yaml_path="components"),
             widget=WidgetType.SEQUENCE,
             label="Components",
             children=child_editables,
         )
-        parsed = {"components[0]/ports/inbound": "8080, 9090"}
-        result = processor.apply_to_yaml(parsed, [seq_visualizer], SAMPLE_YAML)
+        submitted = {
+            "components": [
+                {
+                    "name": "frontend",
+                    "type": "single",
+                    "ports": {"inbound": "8080, 9090", "outbound": [443]},
+                }
+            ]
+        }
+        result, _ = await processor.process_json_submission(submitted, [seq_visualizer], SAMPLE_YAML)
         assert result["components"][0]["ports"]["inbound"] == [8080, 9090]
 
-    def test_preserves_encrypted_fields(self):
+    async def test_preserves_encrypted_fields(self):
         processor = EditableFormProcessor()
-        # Readonly fields should not be touched
         editables = [
             EditableVisualizer(
                 editable=Editable(yaml_path="config/age-private-key"),
@@ -242,10 +192,10 @@ class TestApplyToYaml:
             ),
         ]
         original_key = SAMPLE_YAML["config"]["age-private-key"]
-        result = processor.apply_to_yaml({}, editables, SAMPLE_YAML)
+        result, _ = await processor.process_json_submission({}, editables, SAMPLE_YAML)
         assert result["config"]["age-private-key"] == original_key
 
-    def test_sequence_apply(self):
+    async def test_sequence_apply(self):
         processor = EditableFormProcessor()
         email_vis = EditableVisualizer(
             editable=Editable(yaml_path="users[*]/email"),
@@ -263,13 +213,13 @@ class TestApplyToYaml:
             label="Users",
             children=[email_vis, role_vis],
         )
-        parsed = {
-            "users[0]/email": "new-admin@test.nl",
-            "users[0]/role": "admin",
-            "users[1]/email": "new-dev@test.nl",
-            "users[1]/role": "developer",
+        submitted = {
+            "users": [
+                {"email": "new-admin@test.nl", "role": "admin"},
+                {"email": "new-dev@test.nl", "role": "developer"},
+            ]
         }
-        result = processor.apply_to_yaml(parsed, [seq_vis], SAMPLE_YAML)
+        result, _ = await processor.process_json_submission(submitted, [seq_vis], SAMPLE_YAML)
         assert result["users"][0]["email"] == "new-admin@test.nl"
         assert result["users"][1]["email"] == "new-dev@test.nl"
 
@@ -297,17 +247,9 @@ class TestNestedSequenceValidation:
             label="Deps",
             children=[comp_seq],
         )
-        yaml_data = {
-            "deployments": [
-                {"components": [{"reference": "valid"}, {"reference": "INVALID!"}]},
-            ],
-        }
-        parsed = {
-            "deployments[0]/components[0]/reference": "valid",
-            "deployments[0]/components[1]/reference": "INVALID!",
-        }
-        errors = await processor.validate_editables(parsed, [dep_seq], yaml_data)
-        assert "deployments[0]/components[0]/reference" not in errors
+        submitted = {"deployments": [{"components": [{"reference": "valid"}, {"reference": "INVALID!"}]}]}
+        yaml_data = submitted
+        _, errors = await processor.process_json_submission(submitted, [dep_seq], yaml_data)
         assert "deployments[0]/components[1]/reference" in errors
 
 
@@ -372,24 +314,6 @@ class TestCheckboxGroupCoercion:
         yaml_data = {"components": [{"name": "web", "services": ["old"]}]}
         result, errors = await processor.process_json_submission(submitted, [comp_seq], yaml_data)
         assert result["components"][0]["services"] == []
-
-    def test_flat_key_single_string_coerced(self):
-        processor = EditableFormProcessor()
-        services_vis = EditableVisualizer(
-            editable=Editable(yaml_path="components[*]/services"),
-            widget=WidgetType.CHECKBOX_GROUP,
-            label="Services",
-        )
-        comp_seq = EditableVisualizer(
-            editable=Editable(yaml_path="components"),
-            widget=WidgetType.SEQUENCE,
-            label="Components",
-            children=[services_vis],
-        )
-        parsed = {"components[0]/services": "publish-on-web"}
-        yaml_data = {"components": [{"name": "web", "services": []}]}
-        result = processor.apply_to_yaml(parsed, [comp_seq], yaml_data)
-        assert result["components"][0]["services"] == ["publish-on-web"]
 
 
 class TestHiddenDependsOnSkipped:

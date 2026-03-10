@@ -21,6 +21,7 @@ class TaskType(StrEnum):
     CLONE_DATABASE = "clone_database"
     CLONE_BUCKET = "clone_bucket"
     REFRESH_DEPLOYMENT = "refresh_deployment"
+    REFRESH_PROJECT = "refresh_project"
     CREATE_PROJECT = "create_project"
     ADD_COMPONENT = "add_component"
     ADD_COMPONENT_TO_DEPLOYMENT = "add_component_to_deployment"
@@ -36,10 +37,15 @@ class AsyncTaskStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+_JSONB_COLUMNS = {"payload", "result", "subtasks"}
+
+
 def _row_to_dict(row: Any) -> dict:
     """Convert an asyncpg Record to a dict with serializable types.
 
-    UUID objects are converted to strings and datetime objects to ISO format strings.
+    UUID objects are converted to strings, datetime objects to ISO format
+    strings, and jsonb columns (returned as strings by asyncpg) are
+    deserialized back to their Python equivalents.
     """
     if row is None:
         return None
@@ -49,6 +55,8 @@ def _row_to_dict(row: Any) -> dict:
             result[key] = str(value)
         elif isinstance(value, datetime):
             result[key] = value.isoformat()
+        elif key in _JSONB_COLUMNS and isinstance(value, str):
+            result[key] = json.loads(value)
     # Alias 'id' as 'task_id' for API consistency
     if "id" in result:
         result["task_id"] = result["id"]

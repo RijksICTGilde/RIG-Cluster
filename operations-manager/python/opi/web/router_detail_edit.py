@@ -406,12 +406,14 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     # When adding a new component, ensure the components list has the target slot
     if flow_id.startswith("modal-edit-component-"):
+        from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
+
         idx = int(flow_id.removeprefix("modal-edit-component-"))
         components = list(project_data.get("components", []))
         if idx >= len(components):
             flow_context["is_new"] = True
             while len(components) <= idx:
-                components.append({})
+                components.append(_empty_sequence_item(COMPONENTS_SEQUENCE))
             project_data = {**project_data, "components": components}
 
     flow = get_flow(flow_id, **flow_context)
@@ -462,10 +464,16 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # Store is_new flag so _detect_list_target can distinguish add vs edit
     if flow_id.startswith("modal-edit-component-") and flow_context.get("is_new"):
         state.template_data["is_new"] = True
+        # Existing component names for uniqueness validation
+        existing_components = (project.data or {}).get("components", [])
+        state.template_data["existing_component_names"] = [
+            c.get("name") for c in existing_components if isinstance(c, dict) and c.get("name")
+        ]
 
-    # Component edit flows need project-level services for the FilteredServiceOptionsProvider
+    # Component edit flows need project-level services and deployments
     if flow_id.startswith("modal-edit-component-"):
         state.template_data["services"] = project_data.get("services", [])
+        state.template_data["deployments"] = project_data.get("deployments", [])
 
     # Deployment edit/add flows need component names for the reference provider
     if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
@@ -591,10 +599,12 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         processor = EditableFormProcessor()
         yaml_data = state.get_merged_data()
 
-        # Build enforcer context from template_data (e.g. existing_deployment_names)
+        # Build enforcer context from template_data (e.g. existing names for uniqueness)
         enforcer_ctx: dict[str, Any] = {"project_name": project_name}
         if state.template_data and "existing_deployment_names" in state.template_data:
             enforcer_ctx["existing_deployment_names"] = state.template_data["existing_deployment_names"]
+        if state.template_data and "existing_component_names" in state.template_data:
+            enforcer_ctx["existing_component_names"] = state.template_data["existing_component_names"]
 
         submitted_yaml, errors = await processor.process_json_submission(
             submitted_data,
@@ -886,6 +896,11 @@ async def _modal_do_submit(
         merged_data.pop(list_key, None)
 
     existing_data.update(merged_data)
+
+    # Run post_merge hooks (e.g. distribute component refs to deployments)
+    for section in active_sections:
+        if section.post_merge:
+            section.post_merge(existing_data, merged_data)
 
     # Ensure AGE-encrypted multiline values use literal block scalars
     from opi.web.router_wizard import _apply_literal_scalars

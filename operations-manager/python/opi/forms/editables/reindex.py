@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 def replace_segment_editable(ed: Editable, old_segment: str, new_segment: str) -> Editable:
     """Replace a specific path segment in all editable paths.
 
-    Unlike ``materialize_wildcard_editable`` (which replaces *every* ``[*]``),
+    Unlike ``materialize_wildcard_editable`` (which replaces the *first* ``[*]``),
     this targets a specific substring — e.g. ``"deployments[*]"`` →
     ``"deployments[0]"`` — leaving other wildcards like ``components[*]``
     intact.
@@ -55,14 +55,16 @@ def replace_segment_visualizer(vis: EditableVisualizer, old_segment: str, new_se
 
 
 def materialize_wildcard_editable(ed: Editable, index: int) -> Editable:
-    """Replace ``[*]`` with ``[index]`` in all editable paths.
+    """Replace the first ``[*]`` with ``[index]`` in editable paths.
 
     Used when extracting a single item from a sequence for standalone editing.
+    Only the first wildcard is replaced so nested sequences (e.g. ports within
+    a component) keep their ``[*]`` for the sequence renderer to iterate.
     """
     target = f"[{index}]"
 
     def _replace(s: str | None) -> str | None:
-        return s.replace("[*]", target) if s else s
+        return s.replace("[*]", target, 1) if s else s
 
     children = [materialize_wildcard_editable(c, index) for c in ed.children] if ed.children else ed.children
 

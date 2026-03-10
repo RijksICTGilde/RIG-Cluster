@@ -150,6 +150,10 @@ def should_render_editable(
     if not depends_on:
         return True
 
+    # Resolve [*] wildcard in depends_on when rendering inside a sequence
+    if index is not None and "[*]" in depends_on:
+        depends_on = depends_on.replace("[*]", f"[{index}]", 1)
+
     dep_value = smart_get_value(yaml_data, depends_on)
 
     # Apply the dependency field's converter so show_when compares against

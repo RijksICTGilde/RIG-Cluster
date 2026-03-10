@@ -407,3 +407,107 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     finally:
         if project_manager:
             await project_manager.close()
+
+
+async def handle_refresh_project(payload: dict, progress: Any) -> dict:
+    """Handle async project refresh task.
+
+    Refreshes all deployments in a project by reprocessing from the project
+    YAML file. This is the async V2 equivalent of the V1 GET /:refresh endpoint.
+
+    Args:
+        payload: Task payload containing:
+            - project_name: Project name
+            - force_clone: Whether to force clone even if target resources exist
+        progress: PersistentTaskProgressManager for reporting progress.
+
+    Returns:
+        Dict with status, message, project info, urls, and processing details.
+    """
+    from typing import Any
+
+    from opi.manager.project_manager import create_project_manager
+    from opi.services.project_service import get_project_service
+    from opi.utils.project_utils import validate_project_name
+
+    project_name: str = payload["project_name"]
+    force_clone: bool = payload.get("force_clone", False)
+
+    if not validate_project_name(project_name):
+        error_msg = (
+            "Invalid project name format. Must start with lowercase letter, "
+            "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+        )
+        progress.fail_project(error_msg)
+        raise ValueError(error_msg)
+
+    project_manager = None
+    try:
+        # Task 1: Look up project
+        lookup_task = progress.add_task("Looking up project")
+        logger.info("Project refresh request for: %s (force_clone=%s)", project_name, force_clone)
+
+        project_service = get_project_service()
+        project = project_service.get_project(project_name)
+
+        if not project:
+            error_msg = f"Project '{project_name}' not found in project registry"
+            progress.fail_task(lookup_task, error_msg)
+            progress.fail_project(error_msg)
+            raise ValueError(error_msg)
+
+        progress.complete_task(lookup_task)
+
+        # Task 2: Process project (all deployments)
+        process_task = progress.add_task("Processing project")
+        project_manager = create_project_manager()
+        project_file_path = f"projects/{project.filename}"
+
+        processing_result = await project_manager.process_project_from_git(
+            project_file_path,
+            task_progress_manager=progress,
+            force_clone=force_clone,
+        )
+
+        if processing_result:
+            logger.info("Project refresh completed successfully: %s", project_name)
+
+            # Collect deployment results (URLs, cluster info)
+            urls: dict[str, dict[str, Any]] = {}
+            deployment_results = project_manager.get_deployment_results()
+            for dep_name, dep_result in deployment_results.items():
+                urls[dep_name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
+                for url_name, url_value in (dep_result.urls or {}).items():
+                    progress.update_component_web_address(url_name, url_value)
+
+            progress.complete_task(process_task)
+
+            return {
+                "status": "success",
+                "message": f"Project '{project_name}' refreshed and processed successfully",
+                "project": {"name": project_name, "file_path": project_file_path},
+                "urls": urls,
+                "processing": {
+                    "status": "completed",
+                    "message": "All project resources processed successfully",
+                    "result": processing_result,
+                },
+            }
+        else:
+            processing_error = project_manager.get_processing_error()
+            error_msg = processing_error or f"Failed to process project '{project_name}'"
+            logger.warning("Project refresh failed: %s", project_name)
+            progress.fail_task(process_task, error_msg)
+            progress.fail_project(error_msg)
+            raise RuntimeError(error_msg)
+
+    except Exception as exc:
+        if not isinstance(exc, ValueError | RuntimeError):
+            progress.fail_project(str(exc))
+        raise
+    finally:
+        if project_manager:
+            await project_manager.close()
