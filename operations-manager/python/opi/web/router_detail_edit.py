@@ -347,25 +347,31 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
         flow_context["component_count"] = len(project_data.get("components", []))
 
-    flow = get_flow(flow_id, **flow_context)
-
     # When adding a new component, ensure the components list has the target slot
     if flow_id.startswith("modal-edit-component-"):
         idx = int(flow_id.removeprefix("modal-edit-component-"))
         components = list(project_data.get("components", []))
         if idx >= len(components):
+            flow_context["is_new"] = True
             while len(components) <= idx:
                 components.append({})
             project_data = {**project_data, "components": components}
 
-    # When adding a new deployment, pad the deployments list with an empty slot
+    flow = get_flow(flow_id, **flow_context)
+
+    # When adding a new deployment, ensure an empty slot at the target index.
+    # Always use len(deployments) as the actual index — the URL index may be
+    # stale if the page wasn't reloaded after a previous add.
     if flow_id.startswith("modal-add-deployment-"):
-        idx = int(flow_id.removeprefix("modal-add-deployment-"))
+        from opi.core.config import settings
+
         deployments = list(project_data.get("deployments", []))
-        if idx >= len(deployments):
-            while len(deployments) <= idx:
-                deployments.append({})
-            project_data = {**project_data, "deployments": deployments}
+        idx = len(deployments)
+        deployments.append({"cluster": settings.CLUSTER_MANAGER})
+        project_data = {**project_data, "deployments": deployments}
+        # Rebuild flow with the correct index
+        flow_id = f"modal-add-deployment-{idx}"
+        flow = get_flow(flow_id, **flow_context)
 
     # Populate transient fields for deferred editables (e.g. custom domain text input)
     processor = EditableFormProcessor()
@@ -395,6 +401,10 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     # Always include config in template_data so converters can access project keys (e.g. for AGE decryption)
     state.template_data = {"config": project_data.get("config", {})}
+
+    # Component edit flows need project-level services for the FilteredServiceOptionsProvider
+    if flow_id.startswith("modal-edit-component-"):
+        state.template_data["services"] = project_data.get("services", [])
 
     # Deployment edit/add flows need component names for the reference provider
     if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
@@ -789,6 +799,15 @@ async def _modal_do_submit(
     # Merge all step data
     merged_data = state.get_merged_data()
 
+    # Strip template-only keys: template_data provides context for rendering
+    # and validation (e.g. config for AGE decryption, existing_deployment_names
+    # for uniqueness checks) but should not overwrite existing project data.
+    # JSON session round-trip also strips ruamel.yaml types (LiteralScalarString).
+    step_produced_keys = {k for sd in state.step_data.values() for k in sd}
+    template_only_keys = set(state.template_data or {}) - step_produced_keys
+    for key in template_only_keys:
+        merged_data.pop(key, None)
+
     # Merge with existing project data (preserve system-managed fields)
     project_service = get_project_service()
     project = project_service.get_project(project_name)
@@ -797,6 +816,11 @@ async def _modal_do_submit(
 
     existing_data = project.data or {}
     existing_data.update(merged_data)
+
+    # Ensure AGE-encrypted multiline values use literal block scalars
+    from opi.web.router_wizard import _apply_literal_scalars
+
+    _apply_literal_scalars(existing_data)
 
     # Save
     save_project_file(project.filename, existing_data)

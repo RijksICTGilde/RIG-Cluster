@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from opi.forms.editables.conditions import SentinelValueCondition
-from opi.forms.editables.converters import CustomDomainSelectConverter, KeyValueConverter
+from opi.forms.editables.converters import CustomDomainSelectConverter, EmptyToNoneConverter, KeyValueConverter
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
     BaseDomainValidator,
@@ -49,6 +49,7 @@ DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = Editable(
 DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(
     yaml_path="deployments[*]/clone-from",
     values_provider="DeploymentCloneFromOptionsProvider",
+    converter=EmptyToNoneConverter(),
 )
 
 DEPLOYMENT_COMP_REFERENCE_EDITABLE = Editable(

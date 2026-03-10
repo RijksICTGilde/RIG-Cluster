@@ -227,14 +227,15 @@ def build_deployment_edit_flow(
     )
 
 
-def build_component_edit_flow(component_index: int) -> FormFlow:
+def build_component_edit_flow(component_index: int, is_new: bool = False) -> FormFlow:
     """Build a modal edit flow for a specific component."""
     from opi.forms.visualizers.wizard_sections import build_component_edit_section
 
-    section = build_component_edit_section(component_index)
+    section = build_component_edit_section(component_index, is_new=is_new)
+    title = "Component toevoegen" if is_new else "Component bewerken"
     return FormFlow(
         flow_id=f"modal-edit-component-{component_index}",
-        title="Component bewerken",
+        title=title,
         mode=FlowMode.WIZARD,
         show_review=False,
         sections=[section],
@@ -306,7 +307,7 @@ def get_flow(flow_id: str, **context: Any) -> FormFlow:
     if flow_id.startswith("modal-edit-component-"):
         suffix = flow_id.removeprefix("modal-edit-component-")
         if suffix.isdigit():
-            return build_component_edit_flow(int(suffix))
+            return build_component_edit_flow(int(suffix), is_new=context.get("is_new", False))
 
     # Dynamic deployment edit flows: modal-edit-deployment-0, modal-edit-deployment-1, ...
     if flow_id.startswith("modal-edit-deployment-"):

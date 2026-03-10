@@ -421,16 +421,26 @@ def _prefix_layout_children(items: list, prefix: str) -> list:
     return result
 
 
-def build_component_edit_section(component_index: int) -> FormSection:
+def build_component_edit_section(component_index: int, is_new: bool = False) -> FormSection:
     """Build a component edit section targeting a specific component.
 
     Extracts child editables from COMPONENTS_SEQUENCE, materialises
     ``[*]`` wildcards to ``[component_index]``, and prefixes layout
     paths so the form reads/writes to the correct component slot.
+
+    When *is_new* is True, the name field is made editable despite
+    the modal wizard running in edit_mode (same pattern as add-deployment).
     """
     from opi.forms.editables.reindex import materialize_wildcard_visualizer
 
     editables = [materialize_wildcard_visualizer(e, component_index) for e in (COMPONENTS_SEQUENCE.children or [])]
+
+    # For new components, allow name editing (override readonly_on_edit)
+    if is_new:
+        for i, vis in enumerate(editables):
+            if vis.editable.yaml_path.endswith("/name"):
+                editables[i] = dataclasses.replace(vis, readonly_on_edit=False)
+                break
 
     # Extract child_layout from the Sequence element in COMPONENTS_SECTION
     child_layout: list = []
@@ -445,11 +455,14 @@ def build_component_edit_section(component_index: int) -> FormSection:
     prefix = f"components[{component_index}]"
     layout = _prefix_layout_children(child_layout, prefix)
 
+    title = "Component toevoegen" if is_new else "Component bewerken"
+    description = "Configureer het nieuwe component" if is_new else "Wijzig de instellingen van dit component"
+
     return FormSection(
         section_id=f"component-edit-{component_index}",
-        title="Component bewerken",
+        title=title,
         icon="puzzel",
-        description="Wijzig de instellingen van dit component",
+        description=description,
         enforcer=ComponentServicesEnforcer(),
         editables=editables,
         layout=layout,

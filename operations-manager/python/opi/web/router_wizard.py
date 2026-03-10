@@ -1381,7 +1381,7 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
                 parts.append(_build_sequence_summary(editable, yaml_data))
             else:
                 value = smart_get_value(yaml_data, editable.editable.yaml_path)
-                display = _format_value(editable, value)
+                display = _format_value(editable, value, yaml_data)
                 if display is not None:
                     parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
 
@@ -1444,7 +1444,7 @@ def _build_sequence_summary(
             # Extract the child key from yaml_path (last segment without [*])
             child_key = _child_key(child)
             value = _nested_get(item, child_key)
-            display = _format_value(child, value)
+            display = _format_value(child, value, yaml_data)
             if display is not None:
                 item_parts.append(f"<dt>{child.label}</dt><dd>{display}</dd>")
 
@@ -1509,7 +1509,7 @@ def _nested_get(data: dict[str, Any], path: str) -> Any:
     return current
 
 
-def _format_value(editable: Any, value: Any) -> str | None:
+def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> str | None:
     """Format a value for display in the summary.
 
     Returns None if the value is empty/unset and should be omitted.
@@ -1520,7 +1520,10 @@ def _format_value(editable: Any, value: Any) -> str | None:
     # Apply converter.view() for display if available (e.g. ServiceListConverter
     # extracts service names from mixed str/dict lists)
     if editable.editable.converter:
-        value = editable.editable.converter.view(value)
+        try:
+            value = editable.editable.converter.view(value, yaml_data=yaml_data)
+        except TypeError:
+            value = editable.editable.converter.view(value)
 
     # Resolve option labels for select/radio/checkbox_group/service_cards fields
     if editable.editable.values_provider and str(editable.widget) in (
@@ -1867,15 +1870,27 @@ def _apply_literal_scalars(data: dict[str, Any]) -> None:
     """
     from ruamel.yaml.scalarstring import LiteralScalarString
 
+    def _literalize(d: dict, key: str) -> None:
+        value = d.get(key)
+        if isinstance(value, str) and "\n" in value:
+            d[key] = LiteralScalarString(value)
+
     config = data.get("config", {})
     for key in ("age-private-key", "api-key"):
-        value = config.get(key)
-        if isinstance(value, str) and "\n" in value:
-            config[key] = LiteralScalarString(value)
+        _literalize(config, key)
 
-    # Also handle repository passwords
     for repo in data.get("repositories", []):
         if isinstance(repo, dict):
-            password = repo.get("password")
-            if isinstance(password, str) and "\n" in password:
-                repo["password"] = LiteralScalarString(password)
+            _literalize(repo, "password")
+
+    # Component-level user-env-vars (create flow)
+    for comp in data.get("components", []):
+        if isinstance(comp, dict):
+            _literalize(comp, "user-env-vars")
+
+    # Deployment component-level user-env-vars (edit/add flows)
+    for dep in data.get("deployments", []):
+        if isinstance(dep, dict):
+            for comp in dep.get("components", []):
+                if isinstance(comp, dict):
+                    _literalize(comp, "user-env-vars")

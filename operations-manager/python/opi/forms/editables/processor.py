@@ -39,6 +39,14 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
+def _converter_write(converter: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> Any:
+    """Call converter.write() passing yaml_data when accepted."""
+    try:
+        return converter.write(value, yaml_data=yaml_data)
+    except TypeError:
+        return converter.write(value)
+
+
 class EditableFormProcessor:
     """Processes form submissions through the editables pipeline."""
 
@@ -296,18 +304,18 @@ class EditableFormProcessor:
                 raw = parsed.get(ed.yaml_path)
                 value: Any = bool(raw) if raw else False
                 if ed.converter:
-                    value = ed.converter.write(value)
+                    value = _converter_write(ed.converter, value, result)
                 smart_set_value(result, ed.yaml_path, value)
             elif vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(parsed.get(ed.yaml_path))
                 if ed.converter:
-                    value = ed.converter.write(value)
+                    value = _converter_write(ed.converter, value, result)
                 smart_set_value(result, ed.yaml_path, value)
             else:
                 value = parsed.get(ed.yaml_path)
                 if value is not None:
                     if ed.converter:
-                        value = ed.converter.write(value)
+                        value = _converter_write(ed.converter, value, result)
                     smart_set_value(result, ed.yaml_path, value)
 
         if resolve_deferrals:
@@ -343,14 +351,14 @@ class EditableFormProcessor:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
                     value = _coerce_to_list(parsed.get(concrete_path))
                     if child_ed.converter:
-                        value = child_ed.converter.write(value)
+                        value = _converter_write(child_ed.converter, value, yaml_data)
                     smart_set_value(yaml_data, concrete_path, value)
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
                     value = parsed.get(concrete_path)
                     if value is not None:
                         if child_ed.converter:
-                            value = child_ed.converter.write(value)
+                            value = _converter_write(child_ed.converter, value, yaml_data)
                         smart_set_value(yaml_data, concrete_path, value)
 
     def _apply_nested_sequence_to_yaml(
@@ -377,7 +385,7 @@ class EditableFormProcessor:
                 value = parsed.get(child_path)
                 if value is not None:
                     if child_ed.converter:
-                        value = child_ed.converter.write(value)
+                        value = _converter_write(child_ed.converter, value, yaml_data)
                     smart_set_value(yaml_data, child_path, value)
 
     # ------------------------------------------------------------------
@@ -416,6 +424,8 @@ class EditableFormProcessor:
             ed = vis.editable
             if vis.readonly or (vis.readonly_on_edit and edit_mode):
                 continue
+            if not should_render_editable(vis, result, siblings=editables):
+                continue
 
             if vis.widget == WidgetType.GROUP:
                 await self._process_group_json(
@@ -440,20 +450,20 @@ class EditableFormProcessor:
                 value: Any = bool(raw) if raw else False
                 self._validate_field(vis, ed.yaml_path, value, errors)
                 if ed.converter:
-                    value = ed.converter.write(value)
+                    value = _converter_write(ed.converter, value, result)
                 smart_set_value(result, ed.yaml_path, value)
             elif vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(get_value(submitted, ed.yaml_path))
                 self._validate_field(vis, ed.yaml_path, value, errors)
                 if ed.converter:
-                    value = ed.converter.write(value)
+                    value = _converter_write(ed.converter, value, result)
                 smart_set_value(result, ed.yaml_path, value)
             else:
                 value = get_value(submitted, ed.yaml_path)
                 self._validate_field(vis, ed.yaml_path, value, errors)
                 if value is not None:
                     if ed.converter:
-                        value = ed.converter.write(value)
+                        value = _converter_write(ed.converter, value, result)
                     smart_set_value(result, ed.yaml_path, value)
 
         self._resolve_deferrals(result, editables)
@@ -502,20 +512,20 @@ class EditableFormProcessor:
                 value: Any = bool(raw) if raw else False
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors)
                 if child_ed.converter:
-                    value = child_ed.converter.write(value)
+                    value = _converter_write(child_ed.converter, value, result)
                 smart_set_value(result, child_ed.yaml_path, value)
             elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(get_value(submitted, child_ed.yaml_path))
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors)
                 if child_ed.converter:
-                    value = child_ed.converter.write(value)
+                    value = _converter_write(child_ed.converter, value, result)
                 smart_set_value(result, child_ed.yaml_path, value)
             else:
                 value = get_value(submitted, child_ed.yaml_path)
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors)
                 if value is not None:
                     if child_ed.converter:
-                        value = child_ed.converter.write(value)
+                        value = _converter_write(child_ed.converter, value, result)
                     smart_set_value(result, child_ed.yaml_path, value)
 
         # Run parent enforcer only if children introduced no new errors
@@ -569,7 +579,7 @@ class EditableFormProcessor:
                     value = _coerce_to_list(get_value(submitted, concrete_path))
                     self._validate_field(child_vis, concrete_path, value, errors)
                     if child_ed.converter:
-                        value = child_ed.converter.write(value)
+                        value = _converter_write(child_ed.converter, value, result)
                     smart_set_value(result, concrete_path, value)
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
@@ -583,7 +593,7 @@ class EditableFormProcessor:
                     self._validate_field(child_vis, concrete_path, value, errors)
                     if value is not None:
                         if child_ed.converter:
-                            value = child_ed.converter.write(value)
+                            value = _converter_write(child_ed.converter, value, result)
                         smart_set_value(result, concrete_path, value)
 
     def _process_nested_sequence_json(
@@ -616,7 +626,7 @@ class EditableFormProcessor:
                 self._validate_field(child_vis, child_path, value, errors)
                 if value is not None:
                     if child_ed.converter:
-                        value = child_ed.converter.write(value)
+                        value = _converter_write(child_ed.converter, value, result)
                     smart_set_value(result, child_path, value)
 
     # ------------------------------------------------------------------

@@ -49,6 +49,25 @@ class TruncateConverter:
         return value_str
 
 
+class EmptyToNoneConverter:
+    """Maps empty strings to None so the YAML key is omitted.
+
+    Use on optional select fields where the empty option (value="")
+    should result in the key being absent from the project file.
+    """
+
+    def read(self, value: Any) -> Any:
+        return value or ""
+
+    def write(self, value: Any) -> Any:
+        if not value:
+            return None
+        return value
+
+    def view(self, value: Any) -> str:
+        return str(value) if value else ""
+
+
 class EnsureListConverter:
     """Coerces any scalar or None value to a list.
 
@@ -215,15 +234,19 @@ class KeyValueConverter:
             return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
         return str(value or "")
 
-    def write(self, value: Any) -> dict[str, str] | str | None:
+    def write(self, value: Any, yaml_data: dict[str, Any] | None = None) -> dict[str, str] | str | None:
         """Convert form input to the appropriate YAML storage format.
 
         Returns None for empty input so the YAML key is omitted.
+        When ``write_as="string"`` and *yaml_data* contains a project
+        AGE public key, the result is AGE-encrypted automatically.
         """
         logger.info(
             "[KeyValueConverter.write] write_as=%s, input type=%s, value=%r", self.write_as, type(value).__name__, value
         )
         result = self._write_as_string(value) if self.write_as == "string" else self._write_as_dict(value)
+        if result and self.write_as == "string" and isinstance(result, str):
+            result = self._maybe_encrypt(result, yaml_data)
         logger.info(
             "[KeyValueConverter.write] result type=%s, result=%r",
             type(result).__name__ if result is not None else "None",
@@ -300,6 +323,35 @@ class KeyValueConverter:
             return value
         except Exception:
             logger.warning("[KeyValueConverter] AGE decryption failed, returning raw value", exc_info=True)
+            return value
+
+    @staticmethod
+    def _maybe_encrypt(value: str, yaml_data: dict[str, Any] | None) -> str:
+        """Encrypt a plain-text value using the project's AGE public key.
+
+        Returns the original value unchanged when:
+        - value is already AGE-encrypted
+        - yaml_data is not provided or has no project public key
+        - encryption fails
+        """
+        if "BEGIN AGE ENCRYPTED FILE" in value:
+            return value
+        if not yaml_data:
+            return value
+        try:
+            from ruamel.yaml.scalarstring import LiteralScalarString
+
+            from opi.utils.age import encrypt_age_content_sync
+
+            public_key = yaml_data.get("config", {}).get("age-public-key")
+            if not public_key:
+                logger.debug("[KeyValueConverter] No project AGE public key, skipping encryption")
+                return value
+            encrypted = encrypt_age_content_sync(value, public_key)
+            logger.debug("[KeyValueConverter] Encrypted user-env-vars with project AGE key")
+            return LiteralScalarString(encrypted)
+        except Exception:
+            logger.warning("[KeyValueConverter] AGE encryption failed, returning plain value", exc_info=True)
             return value
 
     def view(self, value: Any, yaml_data: dict[str, Any] | None = None) -> str:
