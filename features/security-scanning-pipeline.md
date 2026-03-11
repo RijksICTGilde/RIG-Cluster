@@ -54,6 +54,15 @@ Results appear in the **GitHub Security tab** (SARIF upload).
 
 Schedule: weekly, Monday before 9am.
 
+## Setup
+
+### TODO
+
+- [ ] Install the [Renovate GitHub App](https://github.com/apps/renovate) on the repository
+- [ ] Verify GHCR packages write permission for GitHub Actions (`Settings > Actions > General > Workflow permissions`)
+- [ ] Review first Renovate onboarding PR (auto-created after app installation)
+- [ ] Check GitHub Security tab after first `security.yml` run for SARIF results
+
 ## Local Usage
 
 ```bash
