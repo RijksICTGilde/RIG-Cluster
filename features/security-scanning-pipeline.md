@@ -18,7 +18,7 @@ Automated security scanning in GitHub Actions covering:
 Automated build on push to main and PRs.
 
 - **Workflow**: `.github/workflows/docker.yml`
-- **Registry**: `ghcr.io/minbzk/base-images/operations-manager`
+- **Registry**: `ghcr.io/rijksictgilde/zad/operations-manager`
 - **Versioning**: CalVer (`YYYY.M.PATCH`) on main, `pr-N-sha-X` on PRs
 - **Platforms**: linux/amd64, linux/arm64
 
@@ -62,6 +62,10 @@ Schedule: weekly, Monday before 9am.
 - [ ] Verify GHCR packages write permission for GitHub Actions (`Settings > Actions > General > Workflow permissions`)
 - [ ] Review first Renovate onboarding PR (auto-created after app installation)
 - [ ] Check GitHub Security tab after first `security.yml` run for SARIF results
+- [ ] Migrate Taskfile publish tasks from `ghcr.io/minbzk/base-images/` to `ghcr.io/rijksictgilde/zad/`
+- [ ] Update image references in `bootstrap/` deployment patches (operations-manager, cmp-kustomize-sops)
+- [ ] Update image references in `infrastructure/` manifests (rig-backup, etc.)
+- [ ] Update Skaffold configs (`operations-manager/skaffold*.yaml`) to new registry path
 
 ## Local Usage
 

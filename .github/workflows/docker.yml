@@ -17,7 +17,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/minbzk/base-images/operations-manager
+  IMAGE_NAME: ghcr.io/rijksictgilde/zad/operations-manager
 
 jobs:
   build:

@@ -45,7 +45,7 @@ jobs:
     if: inputs.image == 'rig-backup' || inputs.image == 'all'
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: ghcr.io/minbzk/base-images/rig-backup
+      IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-backup
     steps:
       - uses: actions/checkout@v4
 
@@ -79,7 +79,7 @@ jobs:
     if: inputs.image == 'cmp-kustomize-sops' || inputs.image == 'all'
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops
+      IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-cmp-argo-kustomize-sops
     steps:
       - uses: actions/checkout@v4
 
@@ -113,7 +113,7 @@ jobs:
     if: inputs.image == 'postgresql-with-dictionaries' || inputs.image == 'all'
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: ghcr.io/minbzk/base-images/postgresql-with-dictionaries
+      IMAGE_NAME: ghcr.io/rijksictgilde/zad/postgresql-with-dictionaries
     steps:
       - uses: actions/checkout@v4
 
