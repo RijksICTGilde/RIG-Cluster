@@ -4,6 +4,12 @@
 
 ## Sandbox Setup
 
+### Forgejo pod restart causing sandbox:sync failure (fixed)
+
+The `sandbox:sync` task could fail with `unable to forward port because pod is not running. Current status=Pending` when the Forgejo pod restarted between `sandbox:init-forgejo` and `sandbox:sync`. The init step (creating admin user and 4 repositories) can cause memory pressure or liveness probe failure, causing the pod to restart. The port-forward fallback in `sandbox:sync` had no wait logic, so it would immediately fail if the pod wasn't Running.
+
+**Fix:** Added `kubectl wait --for=condition=Ready` before the port-forward attempt, giving the pod up to 120s to become Ready again.
+
 ### GHCR egress limit causing ArgoCD repo server timeout
 
 During setup, the ArgoCD repo server rollout can time out if GitHub Container Registry returns a `503 Egress is over the account limit` error when pulling `ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest`. This happens because the image uses the `latest` tag with `imagePullPolicy: Always`, so Kubernetes attempts a fresh pull even when the image is already cached on the node.
