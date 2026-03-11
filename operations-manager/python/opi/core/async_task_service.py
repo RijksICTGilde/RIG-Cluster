@@ -29,6 +29,16 @@ class TaskType(StrEnum):
 
 
 class AsyncTaskStatus(StrEnum):
+    """Task lifecycle: pending → claimed → running → completed/failed.
+
+    - pending: task created, waiting for a worker to pick it up.
+    - claimed: a worker has reserved the task but hasn't started execution yet.
+    - running: the worker is actively executing the task.
+    - completed: task finished successfully (result contains output).
+    - failed: task finished with an error (result contains error details).
+    - cancelled: task was cancelled before completion.
+    """
+
     PENDING = "pending"
     CLAIMED = "claimed"
     RUNNING = "running"

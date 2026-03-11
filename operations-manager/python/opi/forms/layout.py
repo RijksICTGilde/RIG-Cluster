@@ -229,15 +229,19 @@ class DisplayBlock(LayoutElement):
     Attributes:
         display_id: Unique identifier, used as both the endpoint lookup
             key and the HTML element id for HTMX targeting.
-        compute: Callable that receives ``yaml_data`` (dict) and returns
-            a template context dict.
+        compute: Callable that receives ``yaml_data`` (dict) and a
+            ``context`` dict, and returns a template context dict.
+            The context dict comes from the DisplayBlock's inherited
+            ``context`` field and can carry configuration such as
+            ``deployment_index``.
         template: Jinja2 template path (relative to templates dir) that
             renders the computed context into an HTML fragment.
     """
 
     display_id: str = ""
-    compute: Callable[[dict[str, Any]], dict[str, Any]] = field(default_factory=lambda: lambda d: {})
+    compute: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] = field(default_factory=lambda: lambda d, c: {})
     template: str = ""
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

@@ -945,25 +945,25 @@ class TestRestoreNewDeploymentSection:
 
 
 class TestRestoreNewDeploymentSummary:
-    """Tests for _restore_new_deployment_summary."""
+    """Tests for _new_deployment_summary."""
 
     def test_with_deployment_name(self) -> None:
-        from opi.forms.visualizers.wizard_sections import _restore_new_deployment_summary
+        from opi.forms.visualizers.wizard_sections import _new_deployment_summary
 
         data: dict[str, Any] = {"deployments": [{"name": "my-staging"}]}
-        result = _restore_new_deployment_summary(data)
+        result = _new_deployment_summary(data)
         assert "my-staging" in result
 
     def test_without_deployments(self) -> None:
-        from opi.forms.visualizers.wizard_sections import _restore_new_deployment_summary
+        from opi.forms.visualizers.wizard_sections import _new_deployment_summary
 
         data: dict[str, Any] = {}
-        result = _restore_new_deployment_summary(data)
+        result = _new_deployment_summary(data)
         assert "-" in result
 
     def test_empty_deployments_list(self) -> None:
-        from opi.forms.visualizers.wizard_sections import _restore_new_deployment_summary
+        from opi.forms.visualizers.wizard_sections import _new_deployment_summary
 
         data: dict[str, Any] = {"deployments": []}
-        result = _restore_new_deployment_summary(data)
+        result = _new_deployment_summary(data)
         assert "-" in result

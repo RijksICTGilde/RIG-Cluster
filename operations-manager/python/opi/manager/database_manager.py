@@ -697,12 +697,11 @@ class DatabaseManager:
 
             # Record revision in project file (handles both generation and revision tracking)
             if project_data:
-                initial_gen = final_generation if final_generation is not None else 1
                 self.project_manager._revision_manager.record_clone(
                     project_data=project_data,
                     deployment_name=deployment_name,
                     service_type=service_type,
-                    generation=initial_gen,
+                    generation=final_generation,
                     resource_name=db_database,
                     source=f"deployment:{clone_source_ref}",
                 )

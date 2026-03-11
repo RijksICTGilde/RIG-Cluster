@@ -334,7 +334,8 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 
-        # Seed the components step with one default component
+        # Seed the components step with one default component including
+        # default storage volumes (persistent /data and temporary /tmp/app).
         state.store_step_data(
             "components",
             {
@@ -347,18 +348,27 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
                             "cpu": {"request": "50m", "limit": "1"},
                             "memory": {"request": "256Mi", "limit": "1Gi"},
                         },
+                        "services": [
+                            {
+                                "persistent-storage": {
+                                    "config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]
+                                }
+                            },
+                            {"temp-storage": {"config": [{"name": "tmp", "size": "1Gi", "mount-path": "/tmp/app"}]}},
+                        ],
                     },
                 ],
             },
         )
 
-        # Seed the domains step with default deployment
+        # Seed the domains step with default domain mode only.
+        # Do NOT include "name" here — it comes from the deployment step
+        # and the index-based merge in get_merged_data() would overwrite it.
         state.store_step_data(
             "domains",
             {
                 "deployments": [
                     {
-                        "name": "productie",
                         "domain-mode": "component-specific",
                     },
                 ],

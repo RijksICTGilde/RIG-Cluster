@@ -23,7 +23,8 @@
     </c-tabs>
 
     {# ==================== PROJECT TAB ==================== #}
-    <div id="tab-project">
+    <c-layout-flow id="tab-project" gap="lg">
+        {% include "project-details/section-actions.html.j2" %}
         {% include "project-details/section-deployment-status.html.j2" %}
         {% include "project-details/section-team.html.j2" %}
         {% include "project-details/section-config.html.j2" %}
@@ -34,10 +35,10 @@
         {% include "project-details/section-helmfile.html.j2" %}
         {% include "project-details/section-repositories.html.j2" %}
         {% include "project-details/section-danger-zone.html.j2" %}
-    </div>
+    </c-layout-flow>
 
     {# ==================== DEPLOYMENTS TAB ==================== #}
-    <div id="tab-deployments" style="display: none;">
+    <c-layout-flow id="tab-deployments" gap="lg" style="display: none;">
         {# Deployment Selector #}
         {% if project.deployments|length > 1 %}
         <div class="deployment-global-selector">
@@ -55,7 +56,7 @@
         {% include "project-details/section-deployments.html.j2" %}
         {% include "project-details/section-backups.html.j2" %}
         {% include "project-details/section-env-vars.html.j2" %}
-    </div>
+    </c-layout-flow>
 
 </c-layout-flow>
 
@@ -714,7 +715,6 @@
         flex-direction: column;
         transform: translateX(100%);
         transition: transform 0.3s ease-out;
-        box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
     }
 
     .log-viewer-panel.is-open {

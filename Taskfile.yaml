@@ -1843,6 +1843,8 @@ tasks:
       # Phase 5: Wait for everything to be deployed and ready
       - task: sandbox:wait-ready
       - |
+        kubectl config set-context --current --namespace=rig-system
+      - |
         echo ""
         echo "========================================="
         echo "Sandboxed local cluster setup complete!"

@@ -18,98 +18,86 @@ logger = logging.getLogger(__name__)
 
 
 async def _monitor_argocd_and_deployment(
-    task_id: str, project_name: str, task_progress_manager: TaskProgressManager, monitor_task: str
+    _task_id: str, project_name: str, task_progress_manager: TaskProgressManager, monitor_task: str
 ) -> None:
-    """
-    Monitor ArgoCD for user-applications sync and then check namespace for events and pod logs.
+    """Monitor the project's own ArgoCD applications until they are synced and healthy.
 
-    This checks if the user application is deployed via ArgoCD and monitors the actual deployment.
+    The ``user-applications`` App-of-Apps creates individual ArgoCD
+    Application resources for each project deployment (e.g.
+    ``myproject-staging``).  Those project apps are what we care about —
+    the parent ``user-applications`` syncs on its own schedule and may
+    stay ``OutOfSync`` long after the project apps are ready.
     """
     try:
         logger.info(f"Starting ArgoCD monitoring for project: {project_name}")
 
-        # Step 1: Check ArgoCD for user-applications sync
         from opi.connectors.argo import create_argo_connector
 
         argo_connector = create_argo_connector()
 
-        # Give ArgoCD time to detect new project files (it polls git repos periodically)
+        # Give ArgoCD time to pick up the git changes and create the project apps
         await asyncio.sleep(5)
 
-        # The ProjectManager already triggered ArgoCD syncs, so we just need to wait for completion
         argo_subtask = task_progress_manager.add_subtask(monitor_task, "Wachten op ArgoCD sync voltooiing")
 
-        # Give ArgoCD applications time to sync (ProjectManager already triggered the syncs)
-        await asyncio.sleep(8)  # Allow time for the syncs triggered by ProjectManager
+        # Allow the triggered syncs to propagate
+        await asyncio.sleep(8)
 
-        max_argo_retries = 10  # Wait up to 20 seconds for ArgoCD applications
+        max_retries = 15  # Wait up to ~30 seconds for project apps
         argo_synced = False
 
-        for attempt in range(max_argo_retries):
+        for attempt in range(max_retries):
             try:
-                logger.debug(f"Checking ArgoCD applications status, attempt {attempt + 1}/{max_argo_retries}")
+                logger.debug(f"Checking project ArgoCD apps, attempt {attempt + 1}/{max_retries}")
 
-                # Check user-applications first
-                user_app_status = await argo_connector.get_application_status("user-applications")
-                user_app_healthy = False
+                all_apps = await argo_connector.list_applications()
+                project_apps = [
+                    app for app in all_apps if app.get("metadata", {}).get("name", "").startswith(f"{project_name}-")
+                ]
 
-                if user_app_status:
-                    sync_status = user_app_status.get("status", {}).get("sync", {}).get("status", "Unknown")
-                    health_status = user_app_status.get("status", {}).get("health", {}).get("status", "Unknown")
+                if not project_apps:
+                    logger.debug(f"No ArgoCD apps found yet for {project_name}")
+                    await asyncio.sleep(2)
+                    continue
 
-                    logger.debug(f"user-applications - Sync: {sync_status}, Health: {health_status}")
-                    user_app_healthy = sync_status == "Synced" and health_status in ["Healthy", "Progressing"]
+                logger.debug(f"Found {len(project_apps)} app(s) for {project_name}")
 
-                # Check for project-specific applications (e.g., project_name-app)
-                project_apps_healthy = True
-                try:
-                    # Look for applications starting with the project name
-                    all_apps = await argo_connector.list_applications()
-                    project_apps = [
-                        app
-                        for app in all_apps
-                        if app.get("metadata", {}).get("name", "").startswith(f"{project_name}-")
-                    ]
+                all_healthy = True
+                for app in project_apps:
+                    app_name = app.get("metadata", {}).get("name", "")
+                    app_sync = app.get("status", {}).get("sync", {}).get("status", "Unknown")
+                    app_health = app.get("status", {}).get("health", {}).get("status", "Unknown")
+                    logger.debug(f"  {app_name} - Sync: {app_sync}, Health: {app_health}")
 
-                    if project_apps:
-                        logger.debug(f"Found {len(project_apps)} project applications for {project_name}")
-                        for app in project_apps:
-                            app_name = app.get("metadata", {}).get("name", "")
-                            app_sync = app.get("status", {}).get("sync", {}).get("status", "Unknown")
-                            app_health = app.get("status", {}).get("health", {}).get("status", "Unknown")
+                    if not (app_sync == "Synced" and app_health in ["Healthy", "Progressing"]):
+                        all_healthy = False
+                        break
 
-                            logger.debug(f"{app_name} - Sync: {app_sync}, Health: {app_health}")
-                            if not (app_sync == "Synced" and app_health in ["Healthy", "Progressing"]):
-                                project_apps_healthy = False
-                                break
-                except Exception as e:
-                    logger.debug(f"Could not check project applications: {e}")
-                    # If we can't check project apps, just rely on user-applications
-
-                # Consider ArgoCD ready if user-applications is healthy
-                if user_app_healthy:
+                if all_healthy:
                     argo_synced = True
-                    logger.info(f"ArgoCD applications are healthy for project {project_name}")
+                    app_names = [app.get("metadata", {}).get("name", "") for app in project_apps]
+                    logger.info(f"All project ArgoCD apps healthy for {project_name}: {app_names}")
                     break
 
                 await asyncio.sleep(2)
 
             except Exception as e:
-                logger.warning(f"Error checking ArgoCD applications (attempt {attempt + 1}): {e}")
+                logger.warning(f"Error checking ArgoCD apps (attempt {attempt + 1}): {e}")
                 await asyncio.sleep(2)
 
         if argo_synced:
             task_progress_manager.complete_task(argo_subtask)
-
-            # Step 2: Skip namespace monitoring during deployment - it will happen after project creation
         else:
-            logger.warning("ArgoCD sync did not complete in time, marking as failed")
-            task_progress_manager.fail_task(argo_subtask, "ArgoCD sync timeout - user-applications not synced")
+            logger.warning(f"ArgoCD sync timeout - project apps for {project_name} not ready")
+            task_progress_manager.fail_task(
+                argo_subtask,
+                f"ArgoCD sync timeout - project apps for {project_name} not synced",
+            )
 
         task_progress_manager.complete_task(monitor_task)
 
     except Exception as e:
-        logger.error(f"Error monitoring ArgoCD and deployment for {project_name}: {e}")
+        logger.error(f"Error monitoring ArgoCD for {project_name}: {e}")
         task_progress_manager.fail_task(monitor_task, f"Monitoring failed: {e}")
 
 
@@ -352,9 +340,7 @@ async def process_project_yaml_background(task_id: str, project_name: str, yaml_
                 await _monitor_argocd_and_deployment(task_id, project_name, task_progress_manager, monitor_task)
 
                 task_progress_manager.complete_task(deploy_task)
-                task_progress_manager.update_current_step(
-                    f"Project {project_name} succesvol geimplementeerd"
-                )
+                task_progress_manager.update_current_step(f"Project {project_name} succesvol geimplementeerd")
                 task_progress_manager.complete_project()
 
                 elapsed_time = time.time() - start_time

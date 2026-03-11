@@ -32,6 +32,41 @@ from opi.utils.naming import (
 logger = logging.getLogger(__name__)
 
 
+def parse_retention_period_hours(value: str | None) -> int:
+    """Parse a data-retention-period value into hours.
+
+    Accepted formats: ``<number>h`` (hours) or ``<number>d`` (days).
+    Returns 0 for ``None``, empty strings, or ``0h``/``0d``.
+    Maximum is 7 days (168 hours).
+
+    Raises:
+        ValueError: If the format is invalid or exceeds maximum.
+    """
+    if not value:
+        return 0
+
+    value = value.strip().lower()
+    if not value:
+        return 0
+
+    if value.endswith("d"):
+        days = int(value[:-1])
+        hours = days * 24
+    elif value.endswith("h"):
+        hours = int(value[:-1])
+    else:
+        raise ValueError(
+            f"Invalid data-retention-period format: '{value}'. Use '<number>h' or '<number>d' (e.g., '0h', '3d')."
+        )
+
+    if hours < 0:
+        raise ValueError(f"data-retention-period cannot be negative: '{value}'")
+    if hours > 168:
+        raise ValueError(f"data-retention-period cannot exceed 7 days (168 hours): '{value}'")
+
+    return hours
+
+
 class DeleteProjectManager:
     """Manager for project and deployment deletion operations."""
 
@@ -886,7 +921,7 @@ class DeleteProjectManager:
             HTTPException: If critical operations fail (unless force=True)
         """
 
-        deletion_results = {
+        deletion_results: dict[str, Any] = {
             "project": project_name,
             "deployment": deployment_name,
             "operations": [],
@@ -1292,7 +1327,7 @@ class DeleteProjectManager:
             # Step 6: Delete service resources (calls service managers)
             logger.info(f"Deleting service resources for {project_name}/{deployment_name}")
 
-            # Delete Keycloak resources
+            # Delete Keycloak resources (always immediate — ephemeral)
             keycloak_results = await self.project_manager._keycloak_manager.delete_resources_for_deployment(
                 project_data, deployment
             )
@@ -1301,13 +1336,48 @@ class DeleteProjectManager:
             if keycloak_results["errors"]:
                 deletion_results["errors"].extend(keycloak_results["errors"])
 
-            # Delete database resources (using lazy-initialized manager with correct database)
+            # Determine if data resources should be marked for deferred deletion
+            # based on the deployment's data-retention-period setting
+            retention_period = deployment.get("data-retention-period")
+            retention_hours = 0
+            try:
+                retention_hours = parse_retention_period_hours(retention_period)
+            except ValueError as e:
+                logger.warning(f"Invalid data-retention-period for {deployment_name}: {e}, using immediate deletion")
+
+            marked_for_deletion_service: MarkedForDeletionService | None = None
+            if retention_hours > 0:
+                try:
+                    from opi.core.database_pools import get_database_pool
+                    from opi.services.marked_for_deletion_service import MarkedForDeletionService
+
+                    pool = get_database_pool("main")
+                    marked_for_deletion_service = MarkedForDeletionService(pool)
+                    logger.info(
+                        f"Using deferred deletion for {project_name}/{deployment_name} "
+                        f"(data-retention-period: {retention_period}, {retention_hours}h)"
+                    )
+                except (KeyError, ValueError):
+                    logger.warning(
+                        "Database pool not available — cannot use deferred deletion, falling back to immediate deletion"
+                    )
+
+            # Delete/mark database resources
             try:
                 db_manager = await self.project_manager._ensure_database_manager()
-                database_results = await db_manager.delete_resources_for_deployment(project_data, deployment)
+                if marked_for_deletion_service is not None:
+                    database_results = await db_manager.handle_service_removal(
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        deployment_data=deployment,
+                        project_data=project_data,
+                        marked_for_deletion_service=marked_for_deletion_service,
+                    )
+                else:
+                    database_results = await db_manager.delete_resources_for_deployment(project_data, deployment)
                 deletion_results["service_results"]["database"] = database_results
-                deletion_results["operations"].extend(database_results["operations"])
-                if database_results["errors"]:
+                deletion_results["operations"].extend(database_results.get("operations", []))
+                if database_results.get("errors"):
                     deletion_results["errors"].extend(database_results["errors"])
             except Exception as db_error:
                 if force:
@@ -1329,13 +1399,22 @@ class DeleteProjectManager:
                 else:
                     raise
 
-            # Delete MinIO resources
-            minio_results = await self.project_manager._minio_manager.delete_resources_for_deployment(
-                project_data, deployment
-            )
+            # Delete/mark MinIO resources
+            if marked_for_deletion_service is not None:
+                minio_results = await self.project_manager._minio_manager.handle_service_removal(
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    deployment_data=deployment,
+                    project_data=project_data,
+                    marked_for_deletion_service=marked_for_deletion_service,
+                )
+            else:
+                minio_results = await self.project_manager._minio_manager.delete_resources_for_deployment(
+                    project_data, deployment
+                )
             deletion_results["service_results"]["minio"] = minio_results
-            deletion_results["operations"].extend(minio_results["operations"])
-            if minio_results["errors"]:
+            deletion_results["operations"].extend(minio_results.get("operations", []))
+            if minio_results.get("errors"):
                 deletion_results["errors"].extend(minio_results["errors"])
 
             # Step 7: Delete deployment folders from git repositories

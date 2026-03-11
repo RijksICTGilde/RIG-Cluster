@@ -18,6 +18,19 @@ from opi.api.router import (
     UpdateImageRequest,
     UpsertDeploymentRequest,
 )
+from opi.api.task_models import (
+    AddComponentResult,
+    AddComponentToDeploymentResult,
+    AddServiceResult,
+    CloneBucketResult,
+    CloneDatabaseResult,
+    DeleteDeploymentResult,
+    RefreshDeploymentResult,
+    RefreshProjectResult,
+    TaskResponse,
+    UpdateImageResult,
+    UpsertDeploymentResult,
+)
 from opi.api.v2.models import AsyncTaskAcceptedResponse
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -63,7 +76,10 @@ def _accepted_response(task: dict, task_type: str) -> JSONResponse:
 @v2_router.post(
     "/projects/{project_name}/:upsert-deployment",
     tags=["v2", "deployments"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[UpsertDeploymentResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def upsert_deployment_v2(
@@ -131,7 +147,10 @@ async def upsert_deployment_v2(
 @v2_router.post(
     "/projects/{project_name}/:refresh",
     tags=["v2", "projects"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[RefreshProjectResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def refresh_project_v2(
@@ -170,7 +189,10 @@ async def refresh_project_v2(
 @v2_router.delete(
     "/projects/{project_name}/{deployment_name}",
     tags=["v2", "deployments"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[DeleteDeploymentResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def delete_deployment_v2(
@@ -203,7 +225,10 @@ async def delete_deployment_v2(
 @v2_router.put(
     "/projects/{project_name}/deployments/{deployment_name}/image",
     tags=["v2", "deployments"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[UpdateImageResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def update_image_v2(
@@ -253,7 +278,10 @@ async def update_image_v2(
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:clone-database",
     tags=["v2", "operations"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[CloneDatabaseResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def clone_database_v2(
@@ -288,7 +316,10 @@ async def clone_database_v2(
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:clone-bucket",
     tags=["v2", "operations"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[CloneBucketResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def clone_bucket_v2(
@@ -323,7 +354,10 @@ async def clone_bucket_v2(
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:refresh",
     tags=["v2", "deployments"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[RefreshDeploymentResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def refresh_deployment_v2(
@@ -365,7 +399,10 @@ async def refresh_deployment_v2(
 @v2_router.post(
     "/projects/{project_name}/components",
     tags=["v2", "components"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[AddComponentResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def add_component_v2(
@@ -427,7 +464,10 @@ async def add_component_v2(
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/components",
     tags=["v2", "components"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[AddComponentToDeploymentResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def add_component_to_deployment_v2(
@@ -487,7 +527,10 @@ async def add_component_to_deployment_v2(
 @v2_router.post(
     "/projects/{project_name}/services",
     tags=["v2", "services"],
-    responses={202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"}},
+    responses={
+        200: {"model": TaskResponse[AddServiceResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
 )
 @validate_api_token
 async def add_service_v2(

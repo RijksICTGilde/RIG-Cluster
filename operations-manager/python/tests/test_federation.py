@@ -353,7 +353,7 @@ class TestTaskRouterFederationProxy:
         mock_task_service.get_task = AsyncMock(return_value=None)
         app.state.task_service = mock_task_service
 
-        # Mock federation_service (returns a remote task)
+        # Mock federation_service (returns a remote task with project_name)
         mock_fed_service = AsyncMock()
         mock_fed_service.get_task_status = AsyncMock(
             return_value={
@@ -363,14 +363,26 @@ class TestTaskRouterFederationProxy:
                 "progress_percent": 42,
                 "current_step": "deploying",
                 "created_at": "2026-03-01T10:00:00",
+                "project_name": "test-project",
             }
         )
         app.state.federation_service = mock_fed_service
 
+        # Mock project service for API key validation
+        mock_project = MagicMock()
+        mock_project.api_key = "test-api-key"
+        mock_project.name = "test-project"
+        mock_project_service = MagicMock()
+        mock_project_service.get_project.return_value = mock_project
+
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # Use a valid UUID
-            resp = await client.get("/api/tasks/00000000-0000-0000-0000-000000000001")
+        with patch("opi.api.task_router.get_project_service", return_value=mock_project_service):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                # Use a valid UUID with API key
+                resp = await client.get(
+                    "/api/tasks/00000000-0000-0000-0000-000000000001",
+                    headers={"X-API-Key": "test-api-key"},
+                )
 
         assert resp.status_code == 202
         body = resp.json()

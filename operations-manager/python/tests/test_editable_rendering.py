@@ -191,7 +191,18 @@ class TestSequenceRendering:
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
         editables = get_all_project_editables()
-        yaml_with_storage = {**SAMPLE_YAML, "services": [*SAMPLE_YAML["services"], "persistent-storage"]}
+        # Add persistent-storage to both project-level and component-level services,
+        # since storage sequence visibility depends on components[*]/services.
+        yaml_with_storage = {
+            **SAMPLE_YAML,
+            "services": [*SAMPLE_YAML["services"], "persistent-storage"],
+            "components": [
+                {
+                    **SAMPLE_YAML["components"][0],
+                    "services": [*SAMPLE_YAML["components"][0]["services"], "persistent-storage"],
+                },
+            ],
+        }
         fields = renderer._build_fields_from_editables(
             editables=editables,
             yaml_data=yaml_with_storage,

@@ -110,9 +110,21 @@ class PersistentTaskProgressManager:
             for subtask_id, info in self._subtasks.items()
         ]
 
+        # Calculate progress_percent from subtask completion ratio
+        progress_percent: int | None = None
+        if self._subtasks:
+            total = len(self._subtasks)
+            done = sum(
+                1
+                for info in self._subtasks.values()
+                if info["status"] in (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value)
+            )
+            progress_percent = min(int((done / total) * 100), 99)  # cap at 99; 100 is set by complete_task
+
         await self._task_service.update_progress(
             task_id=self._task_id,
             current_step=self._current_step,
+            progress_percent=progress_percent,
             subtasks=subtask_list or None,
             logs=self._logs or None,
             events=self._events or None,

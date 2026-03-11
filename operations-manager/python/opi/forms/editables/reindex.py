@@ -131,11 +131,15 @@ def reindex_visualizer(vis: EditableVisualizer, from_index: int, to_index: int) 
 def reindex_layout(layout: list[Any], from_index: int, to_index: int) -> list[Any]:
     """Clone a layout list with string path references reindexed.
 
-    Non-string layout elements (DisplayBlock, TemplatePartial, Fieldset, etc.)
-    are kept as-is — they don't contain index-specific paths.
+    String paths have ``[from_index]`` replaced with ``[to_index]``.
+    DisplayBlock elements with a ``deployment_index`` in their context
+    are cloned with the updated index so that their compute function
+    reads the correct deployment.
     """
     if from_index == to_index:
         return layout
+
+    from opi.forms.layout import DisplayBlock
 
     old = f"[{from_index}]"
     new = f"[{to_index}]"
@@ -143,6 +147,8 @@ def reindex_layout(layout: list[Any], from_index: int, to_index: int) -> list[An
     for item in layout:
         if isinstance(item, str):
             result.append(item.replace(old, new))
+        elif isinstance(item, DisplayBlock) and "deployment_index" in item.context:
+            result.append(dataclasses.replace(item, context={**item.context, "deployment_index": to_index}))
         else:
             result.append(item)
     return result

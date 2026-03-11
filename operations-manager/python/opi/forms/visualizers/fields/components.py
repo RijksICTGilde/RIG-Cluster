@@ -118,6 +118,7 @@ COMPONENT_SERVICES = EditableVisualizer(
     label="Gebruikte services",
     description="Selecteer welke services dit component gebruikt. Standaard zijn alle services geselecteerd.",
     help_text="Hiermee worden de juiste omgevingsvariabelen en netwerktoegang geconfigureerd.",
+    attributes={"data-rerender": "true"},
 )
 
 COMPONENT_PATH = EditableVisualizer(

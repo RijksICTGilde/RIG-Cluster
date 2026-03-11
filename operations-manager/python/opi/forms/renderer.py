@@ -395,8 +395,12 @@ class FormRenderer:
             ]
 
         # Extract deployment names (for DeploymentCloneFromOptionsProvider)
+        # Prefer _original_deployment_names (set by add-deployment flow to exclude the new slot)
         deployments = yaml_data.get("deployments", [])
-        if isinstance(deployments, list):
+        original_names = yaml_data.get("_original_deployment_names")
+        if isinstance(original_names, list):
+            context["deployment_names"] = original_names
+        elif isinstance(deployments, list):
             context["deployment_names"] = [
                 d.get("name", "") for d in deployments if isinstance(d, dict) and d.get("name")
             ]
@@ -784,7 +788,7 @@ class FormRenderer:
         if isinstance(element, DisplayBlock):
             from opi.core.templates import get_templates
 
-            context = element.compute(yaml_data or {})
+            context = element.compute(yaml_data or {}, element.context)
             tmpl = get_templates().get_template(element.template)
             inner = tmpl.render(context)
             return f'<div id="display-{element.display_id}">{inner}</div>'

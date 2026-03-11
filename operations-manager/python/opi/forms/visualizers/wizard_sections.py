@@ -271,6 +271,7 @@ DOMAIN_SECTION = FormSection(
             display_id="url-preview",
             compute=_compute_url_preview,
             template="wizard/partials/url_preview.html.j2",
+            context={"deployment_index": 0},
         ),
     ],
 )

@@ -241,7 +241,7 @@ class TestClearHiddenDependsOn:
         yaml_data = {"toggle": False, "dependent-field": "should-be-cleared"}
         processor = EditableFormProcessor()
         processor.clear_hidden_depends_on(editables, yaml_data)
-        assert yaml_data["dependent-field"] is None
+        assert "dependent-field" not in yaml_data
 
     def test_keeps_when_dependency_on(self):
         from opi.forms.editables.processor import EditableFormProcessor

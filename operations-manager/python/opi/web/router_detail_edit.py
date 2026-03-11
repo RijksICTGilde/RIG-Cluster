@@ -258,6 +258,63 @@ def _apply_list_item_merge(
         existing_list[idx] = item_data
 
 
+def _seed_components_from_clone_source(state: Any, flow_id: str) -> None:
+    """Pre-fill the components step when adding a new deployment.
+
+    Always seeds ALL project-level components. When clone-from is set,
+    images are copied from the source deployment's components. Otherwise
+    image fields are left empty.
+    """
+    # Extract deployment index from flow_id
+    suffix = flow_id.removeprefix("modal-add-deployment-")
+    if not suffix.isdigit():
+        return
+    dep_idx = int(suffix)
+
+    merged = state.get_merged_data()
+    deployments = merged.get("deployments", [])
+    if dep_idx >= len(deployments):
+        return
+
+    project_components = merged.get("components", [])
+    if not project_components:
+        return
+
+    # clone-from may be a string ("staging") or dict ({"type": ..., "reference": "staging", ...})
+    clone_from_raw = deployments[dep_idx].get("clone-from")
+    clone_ref = ""
+    if isinstance(clone_from_raw, dict):
+        clone_ref = clone_from_raw.get("reference", "")
+    elif isinstance(clone_from_raw, str):
+        clone_ref = clone_from_raw
+
+    # Build image lookup from the source deployment
+    source_images: dict[str, str] = {}
+    if clone_ref:
+        source_dep = next(
+            (d for d in deployments if isinstance(d, dict) and d.get("name") == clone_ref),
+            None,
+        )
+        if source_dep and source_dep.get("components"):
+            source_images = {
+                c.get("reference", ""): c.get("image", "") for c in source_dep["components"] if isinstance(c, dict)
+            }
+
+    # Seed all project components, filling images from clone source when available
+    seeded_components = [
+        {"reference": c.get("name", ""), "image": source_images.get(c.get("name", ""), "")}
+        for c in project_components
+        if isinstance(c, dict) and c.get("name")
+    ]
+
+    if not seeded_components:
+        return
+
+    components_section_id = f"add-deployment-components-{dep_idx}"
+    seed: dict[str, Any] = {"deployments": [{} for _ in range(dep_idx)] + [{"components": seeded_components}]}
+    state.store_step_data(components_section_id, seed)
+
+
 def _determine_flow_action(flow, active_sections) -> str:
     """Return the post-save action for the flow.
 
@@ -481,11 +538,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         state.template_data["components"] = components
 
     # Add-deployment flows need existing names for uniqueness validation
+    # and original deployment names for clone-from options (excluding the new slot)
     if flow_id.startswith("modal-add-deployment-"):
         existing_deployments = (project.data or {}).get("deployments", [])
-        state.template_data["existing_deployment_names"] = [
-            d.get("name") for d in existing_deployments if isinstance(d, dict) and d.get("name")
-        ]
+        existing_names = [d.get("name") for d in existing_deployments if isinstance(d, dict) and d.get("name")]
+        state.template_data["existing_deployment_names"] = existing_names
+        state.template_data["_original_deployment_names"] = existing_names
 
     # Inject backup/restore context into template_data for wizard partials
     if _is_backup_restore_flow(flow_id):
@@ -678,6 +736,14 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # Enrich restore-target context with source deployment info
         if next_section.section_id == "restore-target":
             _enrich_restore_target_context(state)
+
+        # Pre-fill components from clone source when adding a deployment
+        if (
+            flow_id.startswith("modal-add-deployment-")
+            and section_id.startswith("add-deployment-info-")
+            and next_section.section_id.startswith("add-deployment-components-")
+        ):
+            _seed_components_from_clone_source(state, flow_id)
 
         save_modal_wizard_state(request, state)
 
@@ -894,6 +960,24 @@ async def _modal_do_submit(
         list_key, idx, is_new = list_target
         _apply_list_item_merge(existing_data, merged_data, list_key, idx, is_new)
         merged_data.pop(list_key, None)
+
+        # New deployments need system-managed fields that the form doesn't
+        # collect. Copy cluster/namespace/repository from an existing deployment
+        # or fall back to sensible defaults.
+        if list_key == "deployments" and is_new:
+            deployments = existing_data.get("deployments", [])
+            if deployments and isinstance(deployments[-1], dict):
+                new_dep = deployments[-1]
+                # Find an existing deployment to copy system fields from
+                existing_dep = next(
+                    (d for d in deployments[:-1] if isinstance(d, dict)),
+                    None,
+                )
+                new_dep.setdefault("namespace", project_name)
+                if existing_dep:
+                    for field in ("cluster", "repository"):
+                        if field in existing_dep and field not in new_dep:
+                            new_dep[field] = existing_dep[field]
 
     existing_data.update(merged_data)
 

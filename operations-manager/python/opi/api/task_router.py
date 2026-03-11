@@ -4,77 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_master_api_key
+from opi.api.task_models import TaskResponse, task_response_from_dict
+from opi.services.project_service import get_project_service
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Response models
-# ---------------------------------------------------------------------------
-
-
-class TaskAcceptedResponse(BaseModel):
-    status: str = "accepted"
-    task_id: str
-    task_type: str
-    poll_url: str
-
-
-class TaskResponse(BaseModel):
-    task_id: str
-    task_type: str
-    status: str
-    progress_percent: int
-    current_step: str
-    subtasks: list[dict] | None = None
-    result: dict | None = None
-    error_message: str | None = None
-    created_at: str
-    started_at: str | None = None
-    completed_at: str | None = None
-
-
-class TaskListResponse(BaseModel):
-    tasks: list[TaskResponse]
-    total: int
-
-
-# Typed result models (for documentation, not enforced at runtime)
-
-
-class UpsertDeploymentResult(BaseModel):
-    deployment_name: str
-    web_addresses: list[str]
-    warnings: list[str] = []
-
-
-class UpdateImageResult(BaseModel):
-    deployment_name: str
-    image: str
-    previous_image: str
-
-
-class DeleteDeploymentResult(BaseModel):
-    deployment_name: str
-    resources_removed: list[str]
-
-
-class CloneDatabaseResult(BaseModel):
-    source: str
-    target: str
-    rows_copied: int | None = None
-
-
-class CloneBucketResult(BaseModel):
-    source: str
-    target: str
-    objects_copied: int | None = None
-
-
-class RefreshDeploymentResult(BaseModel):
-    deployment_name: str
-    changes_detected: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +23,11 @@ class CreateTaskRequest(BaseModel):
     cluster: str
     payload: dict = {}
     created_by: str | None = None
+
+
+class TaskListResponse(BaseModel):
+    tasks: list[TaskResponse]
+    total: int
 
 
 # ---------------------------------------------------------------------------
@@ -113,28 +52,24 @@ def _get_task_service(request: Request):
     return task_service
 
 
-def _safe_datetime_str(value: object) -> str | None:
-    """Coerce a datetime or string value to a string, or return None."""
-    if value is None:
-        return None
-    return str(value)
+def _validate_task_api_key(request: Request, task: dict) -> None:
+    """Validate the API key in the request against the task's project.
 
+    Tasks store project_name, so we look up the project and verify the
+    X-API-Key header matches. Raises HTTPException on failure.
+    """
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
 
-def _task_to_response(task: dict) -> dict:
-    """Convert a task record (local or remote) to a TaskResponse-compatible dict."""
-    return {
-        "task_id": str(task.get("task_id", "")),
-        "task_type": task.get("task_type", ""),
-        "status": task.get("status", ""),
-        "progress_percent": task.get("progress_percent", 0),
-        "current_step": task.get("current_step", ""),
-        "subtasks": task.get("subtasks"),
-        "result": task.get("result"),
-        "error_message": task.get("error_message"),
-        "created_at": _safe_datetime_str(task.get("created_at")) or "",
-        "started_at": _safe_datetime_str(task.get("started_at")),
-        "completed_at": _safe_datetime_str(task.get("completed_at")),
-    }
+    project_name = task.get("project_name")
+    if not project_name:
+        raise HTTPException(status_code=401, detail="Task has no associated project")
+
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+    if not project or project.api_key != api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +92,17 @@ task_router: APIRouter = APIRouter(
     },
 )
 async def get_task(request: Request, task_id: str) -> JSONResponse:
-    """Get the current status of a task by its ID."""
+    """Get the current status of a task by its ID.
+
+    Requires the project's API key (X-API-Key header). The task's
+    project_name is validated against the key to prevent unauthorized access.
+
+    Returns 202 with Location and Retry-After headers while the task is
+    in progress (pending, claimed, or running), and 200 when the task
+    reaches a terminal state (completed, failed, or cancelled).
+
+    Task lifecycle: pending → claimed (worker picked up) → running → completed/failed.
+    """
     _validate_task_id(task_id)
     task_service = _get_task_service(request)
 
@@ -171,14 +116,21 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
             logger.info("Task not found: %s", task_id)
             raise HTTPException(status_code=404, detail="Task not found")
 
-    response_body = _task_to_response(task)
+    _validate_task_api_key(request, task)
+
+    response_body = task_response_from_dict(task)
     status = task.get("status", "")
 
     if status in ("pending", "claimed", "running"):
-        logger.info("Task %s is %s", task_id, status)
-        return JSONResponse(content=response_body, status_code=202)
+        return JSONResponse(
+            content=response_body,
+            status_code=202,
+            headers={
+                "Location": f"/api/tasks/{task_id}",
+                "Retry-After": "2",
+            },
+        )
 
-    logger.info("Task %s is %s", task_id, status)
     return JSONResponse(content=response_body, status_code=200)
 
 
@@ -194,8 +146,24 @@ async def list_tasks(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> JSONResponse:
-    """List tasks with optional filtering."""
+    """List tasks with optional filtering.
+
+    Requires the project's API key (X-API-Key header) and a project_name
+    query parameter. Tasks are filtered to the authenticated project.
+    """
     task_service = _get_task_service(request)
+
+    if not project_name:
+        raise HTTPException(status_code=400, detail="project_name query parameter is required")
+
+    # Validate API key against the requested project
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
+    project_service_inst = get_project_service()
+    project = project_service_inst.get_project(project_name)
+    if not project or project.api_key != api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
     logger.info(
         "Listing tasks (project=%s, deployment=%s, status=%s, limit=%d, offset=%d)",
@@ -214,7 +182,7 @@ async def list_tasks(
         offset=offset,
     )
 
-    tasks = [_task_to_response(t) for t in result.get("tasks", [])]
+    tasks = [task_response_from_dict(t) for t in result.get("tasks", [])]
     total = result.get("total", len(tasks))
 
     return JSONResponse(content={"tasks": tasks, "total": total})
@@ -229,7 +197,7 @@ async def list_tasks(
     },
 )
 async def cancel_task(request: Request, task_id: str) -> JSONResponse:
-    """Cancel a pending task."""
+    """Cancel a pending task. Requires the project's API key."""
     _validate_task_id(task_id)
     task_service = _get_task_service(request)
 
@@ -237,6 +205,8 @@ async def cancel_task(request: Request, task_id: str) -> JSONResponse:
     if task is None:
         logger.info("Cannot cancel task %s: not found", task_id)
         raise HTTPException(status_code=404, detail="Task not found")
+
+    _validate_task_api_key(request, task)
 
     if task.get("status") != "pending":
         logger.info("Cannot cancel task %s: status is %s", task_id, task.get("status"))
@@ -251,7 +221,7 @@ async def cancel_task(request: Request, task_id: str) -> JSONResponse:
 @task_router.post(
     "",
     responses={
-        202: {"model": TaskAcceptedResponse, "description": "Task created and accepted"},
+        202: {"description": "Task created and accepted"},
     },
 )
 @validate_master_api_key

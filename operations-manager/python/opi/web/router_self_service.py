@@ -1,8 +1,7 @@
 """
-Self-Service Portal route for the web interface.
+Subdomain availability check and cluster domain helpers for the web interface.
 """
 
-import json
 import logging
 
 from fastapi import HTTPException, Request
@@ -16,36 +15,12 @@ from opi.connectors.subdomain import (
 )
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import CLUSTER_CONFIG
-from opi.core.config import settings
-from opi.core.templates import get_templates
-from opi.utils.csrf import ensure_csrf_token
-from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
 
 # Rate limiter for web subdomain checks (same limits as API endpoint: 30 requests/minute per client)
 # Even though SSO-protected, we still rate limit to prevent abuse by authenticated users
 web_subdomain_check_rate_limiter = IPRateLimiter(requests_per_minute=30, burst=10)
-
-
-def get_cluster_options_for_template() -> list[dict]:
-    """Get cluster options for the self-service portal dropdown.
-
-    Returns:
-        List of cluster option dicts with value and label.
-    """
-    cluster_labels = {
-        "local": "Lokaal",
-        "sandboxed-local": "Sandbox (lokaal)",
-        "odcn-production": "Productie Cluster (ODC-Noord)",
-    }
-
-    options = [{"value": "", "label": "Selecteer een cluster"}]
-    for cluster_name in CLUSTER_CONFIG:
-        label = cluster_labels.get(cluster_name, cluster_name)
-        options.append({"value": cluster_name, "label": label})
-
-    return options
 
 
 def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
@@ -69,68 +44,6 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
         result[cluster_name] = domain_options
 
     return result
-
-
-@requires_sso
-async def self_service_portal(request: Request):
-    """
-    Serve the Self-Service Portal form for creating new projects.
-
-    This is a comprehensive form that allows users to:
-    - Define project details (name, description, cluster)
-    - Add team members with different roles
-    - Select required services (web, SSO, storage, databases)
-
-    The form uses ROOS components with a modern, user-friendly design
-    and includes interactive features like user row cloning and
-    service card selection.
-
-    Returns:
-        HTML response with the self-service portal form
-    """
-    try:
-        templates = get_templates()
-        user = get_current_user(request)
-
-        # Generate CSRF token for form protection
-        csrf_token = ensure_csrf_token(request)
-
-        # Get cluster configuration for the template
-        cluster_options = get_cluster_options_for_template()
-        cluster_base_domains = get_cluster_base_domains_for_template()
-
-        return templates.TemplateResponse(
-            "self-service-portal.html.j2",
-            {
-                "request": request,
-                "title": "Nieuw Project - Self Service Portal",
-                "menu_items": get_menu_items(user),
-                "user": user,
-                "cluster_options": cluster_options,
-                "cluster_base_domains_json": json.dumps(cluster_base_domains),
-                "current_cluster": settings.CLUSTER_MANAGER,
-                "csrf_token": csrf_token,
-            },
-        )
-    except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving Self-Service Portal form: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
 @requires_sso

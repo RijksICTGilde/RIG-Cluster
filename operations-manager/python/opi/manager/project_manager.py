@@ -2278,37 +2278,72 @@ class ProjectManager:
             logger.info(
                 "Triggering ArgoCD sync for user-applications and project applications after project processing"
             )
+
+            progress_manager = self.get_progress_manager()
+            argo_task = None
+            if progress_manager:
+                argo_task = progress_manager.add_task("Waiting for ArgoCD deployment sync")
+
             argo_connector = create_argo_connector()
 
-            # Refresh user-applications first (contains project definitions)
+            # Refresh user-applications first (contains project definitions / ArgoCD Application manifests)
             await argo_connector.refresh_application("user-applications")
 
             project_name = await self.get_name()
             deployments = await self.get_deployments(cluster_filter=True)
+            sync_failures: list[str] = []
 
             if deployments and project_name:
-                logger.info(f"Syncing {len(deployments)} project applications for {project_name}")
+                app_names = []
                 for deployment in deployments:
-                    deployment_name = deployment.get("name")
-                    if deployment_name:
-                        app_name = generate_argocd_application_name(project_name, deployment_name)
-                        try:
-                            # Check if application exists before trying to sync
-                            if await argo_connector.application_exists(app_name):
-                                logger.info(f"Refreshing ArgoCD application: {app_name}")
-                                sync_result = await argo_connector.refresh_application(app_name)
-                                if sync_result:
-                                    logger.info(f"Successfully refreshed application: {app_name}")
-                                else:
-                                    logger.warning(f"Failed to sync application: {app_name}")
-                            else:
-                                logger.debug(f"ArgoCD application {app_name} does not exist yet, skipping sync")
-                        except Exception as e:
-                            logger.warning(f"Error syncing application {app_name}: {e}")
-                            # Don't fail the entire refresh if one app sync fails
+                    dep_name = deployment.get("name")
+                    if dep_name:
+                        app_names.append(generate_argocd_application_name(project_name, dep_name))
 
-            # All steps completed successfully
-            return True
+                logger.info(f"Waiting for {len(app_names)} ArgoCD applications to sync for {project_name}")
+
+                # Wait for all applications to be created (ArgoCD needs to sync user-applications first)
+                for app_name in app_names:
+                    try:
+                        await self._argo_manager.wait_for_application_created(
+                            app_name=app_name, timeout=120, poll_interval=5
+                        )
+                    except TimeoutError:
+                        sync_failures.append(f"{app_name}: timed out waiting for application to be created")
+                        logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
+
+                # Refresh each application that was created, then wait for sync+healthy
+                for app_name in app_names:
+                    if any(app_name in f for f in sync_failures):
+                        continue  # Skip apps that failed to be created
+
+                    try:
+                        await argo_connector.refresh_application(app_name)
+                        if progress_manager and argo_task:
+                            progress_manager.update_task(argo_task, f"Waiting for {app_name} to sync")
+                        await self._argo_manager.wait_for_application_synced(
+                            app_name=app_name, timeout=300, poll_interval=5
+                        )
+                        logger.info(f"Application '{app_name}' is synced and healthy")
+                    except TimeoutError:
+                        sync_failures.append(f"{app_name}: timed out waiting for sync")
+                        logger.error(f"Timed out waiting for '{app_name}' to sync")
+                    except RuntimeError as e:
+                        sync_failures.append(f"{app_name}: {e}")
+                        logger.error(f"Application '{app_name}' failed to sync: {e}")
+
+            if sync_failures:
+                failure_summary = "; ".join(sync_failures)
+                logger.error(f"ArgoCD sync completed with {len(sync_failures)} failure(s): {failure_summary}")
+                if progress_manager and argo_task:
+                    progress_manager.fail_task(argo_task, f"Sync failures: {failure_summary}")
+                critical_failures.append(f"ArgoCD sync failures: {failure_summary}")
+                return False
+            else:
+                logger.info("All ArgoCD applications are synced and healthy")
+                if progress_manager and argo_task:
+                    progress_manager.complete_task(argo_task)
+                return True
         except Exception as e:
             logger.exception(f"Error processing project from Git: {e}")
             return False

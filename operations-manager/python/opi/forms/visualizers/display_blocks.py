@@ -7,22 +7,27 @@ from typing import Any
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_format
 
 
-def compute_url_preview(yaml_data: dict[str, Any]) -> dict[str, Any]:
+def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     """Compute URL preview context from wizard form data.
 
     Generates example URLs for each component based on the selected
     domain-format, subdomain, base-domain, and deployment name.
 
+    Args:
+        yaml_data: The full form data dict.
+        context: DisplayBlock context; reads ``deployment_index`` (default 0).
+
     Returns a template context with ``urls`` (list of dicts with
     ``component`` and ``url`` keys) and ``has_urls`` boolean.
     """
+    deployment_index = context.get("deployment_index", 0)
     deployments = yaml_data.get("deployments", [])
-    if not deployments or not isinstance(deployments[0], dict):
+    if len(deployments) <= deployment_index or not isinstance(deployments[deployment_index], dict):
         return {"urls": [], "has_urls": False}
 
-    dep = deployments[0]
-    domain_format = dep.get("domain-format")
-    if not domain_format or domain_format not in DOMAIN_FORMAT_TEMPLATES:
+    dep = deployments[deployment_index]
+    domain_format = dep.get("domain-format") or "component-deployment-project"
+    if domain_format not in DOMAIN_FORMAT_TEMPLATES:
         return {"urls": [], "has_urls": False}
 
     deployment_name = dep.get("name", "deployment")
@@ -33,7 +38,7 @@ def compute_url_preview(yaml_data: dict[str, Any]) -> dict[str, Any]:
     # Resolve the domain: use custom if sentinel, else base_domain, else placeholder
     domain = custom_domain or "voorbeeld.nl" if base_domain == "__custom__" else base_domain or "domein.nl"
 
-    project_name = "project-id"
+    project_name = yaml_data.get("name") or "projectid"
 
     # Get component names from yaml_data
     components = yaml_data.get("components", [])

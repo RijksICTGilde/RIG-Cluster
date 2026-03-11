@@ -50,23 +50,30 @@ def mock_task_service() -> AsyncMock:
 
 @pytest.fixture
 def mock_auth_project_service() -> Any:
-    """Mock project service for API key authentication."""
-    with patch("opi.api.endpoint_util.get_project_service") as mock_get_service:
-        mock_service = MagicMock(spec=ProjectService)
-        test_project = Project(
-            name="test-project",
-            api_key=API_KEY,
-            filename="test-project.yaml",
-            users=[ProjectUser(email="user@example.com", role="Developer")],
-        )
+    """Mock project service for API key authentication.
 
-        def get_project(name: str) -> Project | None:
-            if name == "test-project":
-                return test_project
-            return None
+    Patches both endpoint_util (for V2 endpoint auth) and task_router
+    (for task polling auth) since they import get_project_service separately.
+    """
+    mock_service = MagicMock(spec=ProjectService)
+    test_project = Project(
+        name="test-project",
+        api_key=API_KEY,
+        filename="test-project.yaml",
+        users=[ProjectUser(email="user@example.com", role="Developer")],
+    )
 
-        mock_service.get_project = get_project
-        mock_get_service.return_value = mock_service
+    def get_project(name: str) -> Project | None:
+        if name == "test-project":
+            return test_project
+        return None
+
+    mock_service.get_project = get_project
+
+    with (
+        patch("opi.api.endpoint_util.get_project_service", return_value=mock_service),
+        patch("opi.api.task_router.get_project_service", return_value=mock_service),
+    ):
         yield mock_service
 
 
@@ -197,33 +204,8 @@ class TestV2UpsertDeployment:
 # ---------------------------------------------------------------------------
 
 
-class TestV2CreateProject:
-    """Tests for POST /api/v2/projects."""
-
-    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
-        mock_task_service.create_task.return_value = _make_task(task_type="create_project")
-
-        response = v2_client.post(
-            "/api/v2/projects",
-            json={
-                "project_name": "new-project",
-                "display_name": "New Project",
-                "cluster": "local",
-            },
-        )
-
-        _assert_accepted(response, "create_project")
-
-    def test_invalid_project_name_returns_400(self, v2_client: TestClient) -> None:
-        response = v2_client.post(
-            "/api/v2/projects",
-            json={
-                "project_name": "INVALID!",
-                "display_name": "Bad Name",
-                "cluster": "local",
-            },
-        )
-        assert response.status_code == 400
+# NOTE: TestV2CreateProject removed — create_project_v2 endpoint was removed
+# (project creation is handled exclusively through the web UI wizard).
 
 
 # ---------------------------------------------------------------------------
@@ -513,9 +495,10 @@ class TestV2TaskPolling:
             "created_at": "2026-03-01T10:00:00+00:00",
             "started_at": "2026-03-01T10:00:02+00:00",
             "completed_at": None,
+            "project_name": "test-project",
         }
 
-        poll_response = v2_client.get(poll_url)
+        poll_response = v2_client.get(poll_url, headers={"X-API-Key": API_KEY})
         assert poll_response.status_code == 202
         assert poll_response.json()["status"] == "running"
         assert poll_response.json()["progress_percent"] == 50
@@ -552,9 +535,10 @@ class TestV2TaskPolling:
             "created_at": "2026-03-01T10:00:00+00:00",
             "started_at": "2026-03-01T10:00:02+00:00",
             "completed_at": "2026-03-01T10:05:00+00:00",
+            "project_name": "test-project",
         }
 
-        poll_response = v2_client.get(poll_url)
+        poll_response = v2_client.get(poll_url, headers={"X-API-Key": API_KEY})
         assert poll_response.status_code == 200
         data = poll_response.json()
         assert data["status"] == "completed"
@@ -584,9 +568,10 @@ class TestV2TaskPolling:
             "created_at": "2026-03-01T10:00:00+00:00",
             "started_at": "2026-03-01T10:00:02+00:00",
             "completed_at": "2026-03-01T10:03:00+00:00",
+            "project_name": "test-project",
         }
 
-        poll_response = v2_client.get(poll_url)
+        poll_response = v2_client.get(poll_url, headers={"X-API-Key": API_KEY})
         assert poll_response.status_code == 200
         assert poll_response.json()["status"] == "failed"
         assert "timed out" in poll_response.json()["error_message"]

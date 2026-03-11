@@ -6,27 +6,23 @@ import copy
 import logging
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
-from opi.api.router import SelfServiceComponent, SelfServiceProjectRequest
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.task_manager import create_task
 from opi.core.templates import get_templates
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
-from opi.utils.project_names import generate_project_name
-from opi.utils.project_utils import validate_component_paths, validate_root_component
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
 
 from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
 from .router_detail_edit import detail_edit_router
-from .router_self_service import check_subdomain_availability_web, self_service_portal
+from .router_self_service import check_subdomain_availability_web
 from .router_wizard import wizard_router
 from .services_router import services_router
 
@@ -85,177 +81,15 @@ async def permission_denied(request: Request) -> HTMLResponse:
     )
 
 
-# Register the self-service portal route
-web_router.add_api_route("/projects/new", self_service_portal, methods=["GET"], response_class=HTMLResponse)
+# Redirect old self-service portal URL to the wizard
+@web_router.get("/projects/new")
+async def redirect_projects_new_to_wizard():
+    """Redirect legacy /projects/new to the wizard-based project creation flow."""
+    return RedirectResponse(url="/forms/wizard/create-project", status_code=302)
+
 
 # SSO-protected subdomain availability check (prevents unauthenticated enumeration)
 web_router.add_api_route("/subdomains/check", check_subdomain_availability_web, methods=["GET"])
-
-
-@web_router.post("/projects/new", response_class=HTMLResponse)
-@requires_sso
-async def process_self_service_form(request: Request, background_tasks: BackgroundTasks):
-    """
-    Process the self-service project creation form submission.
-
-    This endpoint handles the form data from /projects/new and creates the project.
-    It requires SSO authentication and processes the comprehensive form data.
-
-    Returns:
-        HTML response with creation results or error page
-    """
-    try:
-        # Parse form data first (needed for CSRF validation)
-        form_data = await request.form()
-        logger.debug(f"Received form data keys: {list(form_data.keys())}")
-
-        # === CSRF PROTECTION (token + origin/referer validation) ===
-        await _validate_csrf(request, form_data)
-
-        # Get current user for logging
-        user = get_current_user(request)
-        logger.info(f"Processing self-service form submission by user: {user.get('email', 'unknown')}")
-
-        # Extract project details
-        display_name = str(form_data.get("display-name", "")).strip()
-        project_description = str(form_data.get("project-description", "")).strip()
-        cluster = str(form_data.get("cluster", "")).strip()
-
-        # Extract web address configuration
-        domain_mode = str(form_data.get("domain-mode", "component-specific")).strip()
-        subdomain = str(form_data.get("subdomain", "")).strip() or None
-        deployment_name = str(form_data.get("deployment-name", "main")).strip() or "main"
-        # Note: For nice-url mode, subdomain is now globally unique and required
-
-        # Extract external domain configuration
-        base_domain = str(form_data.get("base-domain", "")).strip() or None
-        issuer = str(form_data.get("issuer", "")).strip() or None
-        contact_email = str(form_data.get("contact-email", "")).strip() or None
-
-        # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
-        if domain_mode == "nice-url" and base_domain and not issuer:
-            issuer = "letsencrypt"
-            logger.info(f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{base_domain}'")
-
-        if not display_name or not cluster:
-            raise HTTPException(status_code=400, detail="Project name and cluster are required")
-
-        # Generate compliant technical project name from display name
-        try:
-            project_name, validated_display_name = generate_project_name(display_name)
-            logger.info(f"Generated project name '{project_name}' from display name '{display_name}'")
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid project name: {e}")
-
-        # Extract users (arrays)
-        user_emails = form_data.getlist("user-email[]")
-        user_roles = form_data.getlist("user-role[]")
-
-        # Filter out empty entries
-        user_emails = [str(email).strip() for email in user_emails if str(email).strip()]
-        user_roles = [str(role).strip() for role in user_roles if str(role).strip()]
-
-        # Extract services (checkboxes)
-        services = form_data.getlist("services[]")
-
-        # Extract components - this is more complex as it's dynamic
-        components = []
-        component_index = 0
-        while True:
-            # Check if we have component data for this index
-            comp_type_key = f"components[{component_index}][type]"
-            if comp_type_key not in form_data:
-                break
-
-            comp_type = str(form_data.get(comp_type_key, "deployment")).strip()
-            comp_port = form_data.get(f"components[{component_index}][port]")
-            comp_image = str(form_data.get(f"components[{component_index}][image]", "")).strip()
-            comp_path = str(form_data.get(f"components[{component_index}][path]", "/")).strip() or "/"
-            comp_cpu = str(form_data.get(f"components[{component_index}][cpu_limit]", "")).strip()
-            comp_memory = str(form_data.get(f"components[{component_index}][memory_limit]", "")).strip()
-            comp_env_vars = str(form_data.get(f"components[{component_index}][env_vars]", "")).strip()
-            comp_aliases = str(form_data.get(f"components[{component_index}][aliases]", "")).strip()
-            comp_services = form_data.getlist(f"components[{component_index}][services][]")
-            comp_root = str(form_data.get(f"components[{component_index}][root]", "")).strip().lower() == "true"
-
-            # Parse port as integer
-            try:
-                port = int(str(comp_port)) if comp_port and str(comp_port).strip() else None
-            except ValueError:
-                port = None
-
-            component = SelfServiceComponent(
-                type=comp_type,
-                port=port,
-                image=comp_image or "nginx:latest",
-                path=comp_path,
-                cpu_limit=comp_cpu or None,
-                memory_limit=comp_memory or None,
-                env_vars=comp_env_vars or None,
-                aliases=comp_aliases or None,
-                services=comp_services or None,
-                root=comp_root,
-            )
-            components.append(component)
-            component_index += 1
-
-        # Validate paths when using shared domains
-        if components:
-            try:
-                validate_component_paths([comp.path for comp in components], domain_mode)
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-
-        # Validate root component for nice-url mode
-        if components:
-            try:
-                validate_root_component(
-                    [(f"component-{i + 1}", comp.root, comp.port) for i, comp in enumerate(components)],
-                    domain_mode,
-                )
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-
-        # Create the request object
-        project_data = SelfServiceProjectRequest(
-            project_name=project_name,
-            display_name=display_name,
-            project_description=project_description or None,
-            cluster=cluster,
-            deployment_name=deployment_name,
-            domain_mode=domain_mode,
-            subdomain=subdomain,
-            base_domain=base_domain,
-            issuer=issuer,
-            contact_email=contact_email,
-            user_email=user_emails or None,
-            user_role=user_roles or None,
-            services=services or None,
-            components=components or None,
-        )
-
-        logger.info(
-            f"Starting async processing for project: '{project_name}' (display: '{display_name}') with {len(components)} components"
-        )
-
-        # Create task and start background processing (use display name for user-facing messages)
-        task_id = create_task(display_name)
-
-        # Start the background task with simple processor
-        from opi.core.simple_background import process_project_background
-
-        background_tasks.add_task(process_project_background, task_id, project_data)
-
-        logger.info(f"Started background task {task_id} for project {project_name}")
-
-        # Redirect immediately to progress page
-        return RedirectResponse(url=f"/projects/progress/{task_id}", status_code=302)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error starting background task for self-service form: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error starting project creation: {e!s}")
 
 
 @web_router.get("/projects/progress/{task_id}", response_class=HTMLResponse)

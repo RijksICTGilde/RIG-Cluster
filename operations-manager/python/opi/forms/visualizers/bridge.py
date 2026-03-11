@@ -59,13 +59,19 @@ def editable_to_form_field(
     if raw_value is None and default is not None:
         raw_value = default
 
-    # 3. Apply converter for display (pass yaml_data for converters that need it, e.g. AGE decryption)
+    # 3. Apply converter for display
+    # For editable widgets, use read() to convert YAML → form-compatible value
+    # (e.g. dict → string for select dropdowns). Fall back to view() for
+    # read-only display or converters that don't implement read().
     display_value = raw_value
     if converter:
-        try:
-            display_value = converter.view(raw_value, yaml_data=yaml_data)
-        except TypeError:
-            display_value = converter.view(raw_value)
+        if hasattr(converter, "read") and widget in ("select", "text", "textarea", "radio"):
+            display_value = converter.read(raw_value)
+        else:
+            try:
+                display_value = converter.view(raw_value, yaml_data=yaml_data)
+            except TypeError:
+                display_value = converter.view(raw_value)
 
     # 3b. Auto-detect KV format from stored value so the toggle matches
     if converter and hasattr(converter, "detect_format") and raw_value is not None:

@@ -289,6 +289,16 @@ class DeploymentModel(BaseModel):
         ),
     ] = Field(default=None)
 
+    data_retention_period: Annotated[
+        str | None,
+        FormMeta(
+            label="deployment.data_retention_period",
+            description="deployment.data_retention_period.description",
+            widget="text",
+            placeholder="0h",
+        ),
+    ] = Field(default=None, alias="data-retention-period")
+
 
 class RepositoryModel(BaseModel):
     """Git repository configuration."""

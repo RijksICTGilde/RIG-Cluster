@@ -9,7 +9,7 @@ Verifies separation of concerns:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.manager.delete_project_manager import DeleteProjectManager
+from opi.manager.delete_project_manager import DeleteProjectManager, parse_retention_period_hours
 
 
 def _make_project_manager_mock() -> MagicMock:
@@ -625,3 +625,48 @@ class TestDeleteProjectOrchestration:
         # Infrastructure cleanup should still be called (project-level, not deployment-level)
         mock_infra_cleanup.assert_called_once()
         assert result["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# parse_retention_period_hours tests
+# ---------------------------------------------------------------------------
+
+
+class TestParseRetentionPeriodHours:
+    """Tests for the parse_retention_period_hours utility function."""
+
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            (None, 0),
+            ("", 0),
+            ("  ", 0),
+            ("0h", 0),
+            ("0d", 0),
+            ("1h", 1),
+            ("24h", 24),
+            ("168h", 168),
+            ("1d", 24),
+            ("7d", 168),
+            ("3d", 72),
+            (" 3h ", 3),
+            (" 2D ", 48),
+        ],
+    )
+    def test_valid_values(self, input_value: str | None, expected: int) -> None:
+        assert parse_retention_period_hours(input_value) == expected
+
+    @pytest.mark.parametrize(
+        "input_value",
+        [
+            "169h",
+            "8d",
+            "-1h",
+            "abc",
+            "10",
+            "10m",
+        ],
+    )
+    def test_invalid_values(self, input_value: str) -> None:
+        with pytest.raises(ValueError):  # noqa: PT011
+            parse_retention_period_hours(input_value)

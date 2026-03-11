@@ -6,7 +6,7 @@ with various task states and error conditions.
 """
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +15,9 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 SAMPLE_TASK_ID = "550e8400-e29b-41d4-a716-446655440000"
+SAMPLE_PROJECT = "test-project"
+SAMPLE_API_KEY = "test-api-key-12345"
+AUTH_HEADERS = {"X-API-Key": SAMPLE_API_KEY}
 
 
 def _make_task(
@@ -30,6 +33,7 @@ def _make_task(
     created_at: str = "2026-03-01T10:00:00+00:00",
     started_at: str | None = "2026-03-01T10:00:02+00:00",
     completed_at: str | None = None,
+    project_name: str = SAMPLE_PROJECT,
 ) -> dict[str, Any]:
     """Build a task dict as returned by the mock task service."""
     return {
@@ -44,7 +48,18 @@ def _make_task(
         "created_at": created_at,
         "started_at": started_at,
         "completed_at": completed_at,
+        "project_name": project_name,
     }
+
+
+def _mock_project_service():
+    """Create a mock project service that validates SAMPLE_API_KEY."""
+    mock_project = MagicMock()
+    mock_project.api_key = SAMPLE_API_KEY
+    mock_project.name = SAMPLE_PROJECT
+    mock_service = MagicMock()
+    mock_service.get_project.return_value = mock_project
+    return mock_service
 
 
 @pytest.fixture
@@ -94,7 +109,8 @@ class TestGetTask:
         """A task with status 'running' should return HTTP 202."""
         mock_task_service.get_task.return_value = _make_task(status="running")
 
-        response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
 
         assert response.status_code == 202
         data = response.json()
@@ -115,7 +131,8 @@ class TestGetTask:
             started_at=None,
         )
 
-        response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
 
         assert response.status_code == 202
         assert response.json()["status"] == "pending"
@@ -134,7 +151,8 @@ class TestGetTask:
             result={"deployment_name": "my-app", "web_addresses": ["https://my-app.example.com"]},
         )
 
-        response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
 
         assert response.status_code == 200
         data = response.json()
@@ -157,7 +175,8 @@ class TestGetTask:
             completed_at="2026-03-01T10:03:00+00:00",
         )
 
-        response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
 
         assert response.status_code == 200
         data = response.json()
@@ -169,7 +188,7 @@ class TestGetTask:
         test_client_with_task_service: TestClient,
         mock_task_service: AsyncMock,
     ) -> None:
-        """Requesting a non-existent task should return HTTP 404."""
+        """Requesting a non-existent task should return HTTP 404 (before auth)."""
         mock_task_service.get_task.return_value = None
 
         response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}")
@@ -186,6 +205,33 @@ class TestGetTask:
 
         assert response.status_code == 400
         assert "Invalid task_id" in response.json()["detail"]
+
+    def test_get_task_without_api_key_returns_401(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Requesting a task without API key should return HTTP 401."""
+        mock_task_service.get_task.return_value = _make_task(status="running")
+
+        response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}")
+
+        assert response.status_code == 401
+
+    def test_get_task_with_wrong_api_key_returns_401(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Requesting a task with wrong API key should return HTTP 401."""
+        mock_task_service.get_task.return_value = _make_task(status="running")
+
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(
+                f"/api/tasks/{SAMPLE_TASK_ID}", headers={"X-API-Key": "wrong-key"}
+            )
+
+        assert response.status_code == 401
 
 
 class TestListTasks:
@@ -204,7 +250,10 @@ class TestListTasks:
             "total": 2,
         }
 
-        response = test_client_with_task_service.get("/api/tasks")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(
+                f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -221,7 +270,10 @@ class TestListTasks:
         """Listing tasks when none exist should return an empty list."""
         mock_task_service.list_tasks.return_value = {"tasks": [], "total": 0}
 
-        response = test_client_with_task_service.get("/api/tasks")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(
+                f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -236,18 +288,30 @@ class TestListTasks:
         """Query parameters should be forwarded to the task service."""
         mock_task_service.list_tasks.return_value = {"tasks": [], "total": 0}
 
-        response = test_client_with_task_service.get(
-            "/api/tasks?project_name=foo&deployment_name=bar&status=running&limit=10&offset=5"
-        )
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(
+                f"/api/tasks?project_name={SAMPLE_PROJECT}&deployment_name=bar&status=running&limit=10&offset=5",
+                headers=AUTH_HEADERS,
+            )
 
         assert response.status_code == 200
         mock_task_service.list_tasks.assert_awaited_once_with(
-            project_name="foo",
+            project_name=SAMPLE_PROJECT,
             deployment_name="bar",
             status="running",
             limit=10,
             offset=5,
         )
+
+    def test_list_tasks_without_project_name_returns_400(
+        self,
+        test_client_with_task_service: TestClient,
+    ) -> None:
+        """Listing tasks without project_name should return 400."""
+        response = test_client_with_task_service.get("/api/tasks", headers=AUTH_HEADERS)
+
+        assert response.status_code == 400
+        assert "project_name" in response.json()["detail"]
 
 
 class TestCancelTask:
@@ -266,7 +330,8 @@ class TestCancelTask:
             started_at=None,
         )
 
-        response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=AUTH_HEADERS)
 
         assert response.status_code == 200
         data = response.json()
@@ -282,7 +347,8 @@ class TestCancelTask:
         """Cancelling a running task should return HTTP 409."""
         mock_task_service.get_task.return_value = _make_task(status="running")
 
-        response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=AUTH_HEADERS)
 
         assert response.status_code == 409
         assert "pending" in response.json()["detail"].lower()
@@ -299,7 +365,8 @@ class TestCancelTask:
             completed_at="2026-03-01T10:05:00+00:00",
         )
 
-        response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel")
+        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+            response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=AUTH_HEADERS)
 
         assert response.status_code == 409
         mock_task_service.update_task_status.assert_not_awaited()
@@ -344,7 +411,9 @@ class TestTaskServiceUnavailable:
         test_client_without_task_service: TestClient,
     ) -> None:
         """GET /api/tasks should return 503 when task_service is absent."""
-        response = test_client_without_task_service.get("/api/tasks")
+        response = test_client_without_task_service.get(
+            f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
+        )
 
         assert response.status_code == 503
 

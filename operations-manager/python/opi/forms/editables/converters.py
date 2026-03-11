@@ -375,25 +375,51 @@ class ContainerImageConverter:
         return self.read(value)
 
 
-class CloneFromDisplayConverter:
-    """Formats clone-from metadata for display."""
+class CloneFromConverter:
+    """Converts between the clone-from dict format and a simple deployment name string.
+
+    YAML format (what the managers expect):
+        clone-from:
+          type: deployment
+          reference: staging
+          mode: once
+
+    Form format (what the dropdown produces):
+        "staging"  (or "" for no clone)
+    """
 
     def read(self, value: Any) -> Any:
-        return value
+        """Dict → string for form display."""
+        if isinstance(value, dict):
+            return value.get("reference", "")
+        if isinstance(value, str):
+            return value
+        return ""
 
     def write(self, value: Any) -> Any:
-        return value
+        """String → dict for YAML storage."""
+        if not value or (isinstance(value, str) and not value.strip()):
+            return None
+        if isinstance(value, dict):
+            return value
+        return {
+            "type": "deployment",
+            "reference": str(value),
+            "mode": "once",
+        }
 
     def view(self, value: Any) -> str:
-        if not value or not isinstance(value, dict):
+        if not value:
             return ""
-        reference = value.get("reference", "onbekend")
-        clone_type = value.get("type", "onbekend")
-        status = value.get("status", {})
-        if status.get("completed"):
-            timestamp = status.get("timestamp", "")
-            return f"Gekloond van {reference} ({clone_type}) — Voltooid op {timestamp}"
-        return f"Gekloond van {reference} ({clone_type}) — Bezig..."
+        if isinstance(value, dict):
+            reference = value.get("reference", "onbekend")
+            clone_type = value.get("type", "onbekend")
+            status = value.get("status", {})
+            if status.get("completed"):
+                timestamp = status.get("timestamp", "")
+                return f"Gekloond van {reference} ({clone_type}) — Voltooid op {timestamp}"
+            return f"Gekloond van {reference} ({clone_type}) — Bezig..."
+        return str(value)
 
 
 class DeploymentServicesDisplayConverter:

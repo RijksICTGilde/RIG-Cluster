@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from opi.forms.editables.converters import (
     AGEEncryptConverter,
-    CloneFromDisplayConverter,
+    CloneFromConverter,
     ContainerImageConverter,
     DeploymentServicesDisplayConverter,
     EncryptedDisplayConverter,
@@ -169,20 +169,46 @@ class TestContainerImageConverter:
         assert ContainerImageConverter().read(None) == ""
 
 
-class TestCloneFromDisplayConverter:
+class TestCloneFromConverter:
+    def test_read_dict_extracts_reference(self):
+        value = {"type": "deployment", "reference": "staging", "mode": "once"}
+        assert CloneFromConverter().read(value) == "staging"
+
+    def test_read_string_passthrough(self):
+        assert CloneFromConverter().read("staging") == "staging"
+
+    def test_read_none_returns_empty(self):
+        assert CloneFromConverter().read(None) == ""
+
+    def test_write_string_to_dict(self):
+        result = CloneFromConverter().write("staging")
+        assert result == {"type": "deployment", "reference": "staging", "mode": "once"}
+
+    def test_write_empty_returns_none(self):
+        assert CloneFromConverter().write("") is None
+        assert CloneFromConverter().write(None) is None
+        assert CloneFromConverter().write("  ") is None
+
+    def test_write_dict_passthrough(self):
+        value = {"type": "deployment", "reference": "staging", "mode": "once"}
+        assert CloneFromConverter().write(value) == value
+
     def test_view_completed(self):
         value = {"reference": "prod", "type": "remote-source", "status": {"completed": True, "timestamp": "2026-02-03"}}
-        result = CloneFromDisplayConverter().view(value)
+        result = CloneFromConverter().view(value)
         assert "prod" in result
         assert "Voltooid" in result
 
     def test_view_in_progress(self):
         value = {"reference": "prod", "type": "remote-source", "status": {}}
-        result = CloneFromDisplayConverter().view(value)
+        result = CloneFromConverter().view(value)
         assert "Bezig" in result
 
     def test_view_none(self):
-        assert CloneFromDisplayConverter().view(None) == ""
+        assert CloneFromConverter().view(None) == ""
+
+    def test_view_string(self):
+        assert CloneFromConverter().view("staging") == "staging"
 
 
 class TestDeploymentServicesDisplayConverter:
@@ -429,10 +455,12 @@ class TestAGEEncryptConverter:
         """Encrypted values should be decrypted for form display."""
         conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
 
-        with patch("opi.utils.age.decrypt_age_content_sync", return_value="decrypted-secret"):
-            with patch("opi.core.config.settings") as mock_settings:
-                mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1TEST"
-                result = conv.read(FAKE_AGE_ENCRYPTED)
+        with (
+            patch("opi.utils.age.decrypt_age_content_sync", return_value="decrypted-secret"),
+            patch("opi.core.config.settings") as mock_settings,
+        ):
+            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1TEST"
+            result = conv.read(FAKE_AGE_ENCRYPTED)
 
         assert result == "decrypted-secret"
 

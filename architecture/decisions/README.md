@@ -39,3 +39,4 @@ What becomes easier or harder as a result of this decision?
 | # | Title | Status | Date |
 |---|-------|--------|------|
 | 0001 | [Remove FormField, use ResolvedEditableVisualizer](0001-remove-formfield-use-resolved-editable.md) | Proposed | 2026-03-09 |
+| 0002 | [Wait for ArgoCD sync completion after project refresh](0002-argocd-sync-wait-after-project-refresh.md) | Accepted | 2026-03-11 |
