@@ -262,14 +262,7 @@
         </div>
         {% else %}
         <c-card outline="true" padding="lg" backgroundColor="wit">
-            <c-layout-flow gap="md">
-                <p class="rvo-text--md">Geen projecten gevonden.</p>
-                <c-button
-                    label="Maak een nieuw project aan"
-                    kind="primary"
-                    size="md"
-                    @click="window.location.href='/projects/new'" />
-            </c-layout-flow>
+            <p class="rvo-text--md">Geen projecten gevonden.</p>
         </c-card>
         {% endif %}
     </c-layout-flow>
