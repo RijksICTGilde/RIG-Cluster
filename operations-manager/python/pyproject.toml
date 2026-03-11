@@ -82,6 +82,7 @@ dev = [
     "djlint>=1.36.1",
     "debugpy>=1.8.0",
     "pytest>=9.0.2",
+    "pip-audit>=2.7.0",
 ]
 
 

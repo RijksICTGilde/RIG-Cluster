@@ -1194,6 +1194,18 @@ tasks:
           CACHE_IMAGE: ghcr.io/minbzk/base-images/rig-backup:cache
           BUILDER_NAME: rig-backup-builder
 
+  security-audit:
+    desc: "Run pip-audit to check Python dependencies for known vulnerabilities"
+    dir: operations-manager/python
+    cmds:
+      - uv run pip-audit --strict --desc
+
+  security-scan-image:
+    desc: "Scan operations-manager Docker image for vulnerabilities with Trivy"
+    cmds:
+      - docker build -t opi:scan -f operations-manager/Dockerfile .
+      - trivy image --severity HIGH,CRITICAL opi:scan
+
   # Internal shared task for secret generation
   _generate-secrets-shared:
     internal: true
