@@ -2510,6 +2510,10 @@ tasks:
         # Clone the repo (use HTTPS to avoid credential stripping on HTTP->HTTPS redirect)
         git clone "$FORGEJO_REPO" "$TEMP_DIR" 2>/dev/null || {
           echo "Could not clone via ingress, trying in-cluster port-forward..."
+          # Forgejo pod may have restarted after init-forgejo (OOM, liveness probe),
+          # so wait for it to be Ready before attempting port-forward
+          echo "Waiting for Forgejo pod to be ready..."
+          kubectl wait --for=condition=Ready pod/forgejo-0 -n rig-system --timeout=120s
           # Fallback: use kubectl port-forward
           kubectl port-forward -n rig-system svc/forgejo 3000:3000 &
           PF_PID=$!
