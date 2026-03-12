@@ -17,7 +17,8 @@ Usage:
 import logging
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 
@@ -104,6 +105,14 @@ def create_test_app():
                 new_callable=AsyncMock,
             ),
             patch("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", TEST_AGE_PRIVATE_KEY),
+            patch(
+                "opi.connectors.prometheus.get_metrics_connector",
+                return_value=SimpleNamespace(is_connected=False),
+            ),
+            patch(
+                "opi.connectors.argo.create_argo_connector",
+                return_value=MagicMock(auth_token=None),
+            ),
         ):
             # Mark all readiness services as ready
             import opi.core.readiness as readiness_module
