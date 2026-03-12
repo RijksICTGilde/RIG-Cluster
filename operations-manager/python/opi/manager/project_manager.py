@@ -7,6 +7,7 @@ import asyncio
 import glob
 import logging
 import os
+import secrets
 import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -6412,7 +6413,7 @@ class ProjectManager:
             decrypted_api_key = await decrypt_password_smart_auto(str(raw_api_key))
 
             # Compare API keys
-            if decrypted_api_key != provided_api_key:
+            if not secrets.compare_digest(decrypted_api_key, provided_api_key):
                 raise HTTPException(status_code=401, detail="Invalid project API key")
 
             logger.debug(f"Project API key validated successfully for project: {project_name}")
