@@ -11,15 +11,10 @@
                 </div>
                 <div class="deployment-actions">
                     {% if user_role in ['admin', 'owner'] %}
-                    <button type="button" class="edit-section-btn"
-                        onclick="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Deployment bewerken — {{ deployment.name }}')"
-                        title="Deployment bewerken">
-                        <c-icon icon="bewerken" size="sm" />Bewerken
-                    </button>
-                    <button type="button" class="edit-section-btn"
-                        onclick="openEditModal('modal-edit-domain-{{ loop.index0 }}', 'Webadres bewerken — {{ deployment.name }}')">
-                        <c-icon icon="wereldbol" size="sm" />Webadres
-                    </button>
+                    <c-button kind="secondary" size="sm" showIcon="before" icon="bewerken"
+                        @click="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Deployment bewerken — {{ deployment.name }}')">Bewerken</c-button>
+                    <c-button kind="secondary" size="sm" showIcon="before" icon="wereldbol"
+                        @click="openEditModal('modal-edit-domain-{{ loop.index0 }}', 'Webadres bewerken — {{ deployment.name }}')">Webadres</c-button>
                     <c-button kind="warning" size="sm"
                               showIcon="before" icon="verwijderen"
                               @click="showDangerConfirmation('deployment', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt verwijderen? Dit verwijdert alle bijbehorende Kubernetes resources en ArgoCD configuratie.')">
@@ -59,17 +54,17 @@
                     {% for helm_chart in deployment.get('helm-charts', []) %}
                     <c-card padding="md" backgroundColor="wit" outline="true">
                         <c-layout-flow gap="sm">
-                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                            <c-layout-flow row="true" alignItems="center" gap="sm">
                                 <c-icon icon="applicatie" size="sm" color="groen" />
                                 <strong>{{ helm_chart.reference }}</strong>
-                            </div>
+                            </c-layout-flow>
                             {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping %}
                             <div class="helm-values-section">
-                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                                <c-layout-flow row="true" alignItems="center" gap="sm" style="margin-bottom: var(--rvo-space-sm);">
                                     <c-icon icon="sleutel" size="sm" color="hemelblauw" />
                                     <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
-                                </div>
+                                </c-layout-flow>
                                 <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" />
                             </div>
                             {% endif %}
@@ -88,17 +83,17 @@
                     {% for helmfile in deployment.get('helmfile', []) %}
                     <c-card padding="md" backgroundColor="wit" outline="true">
                         <c-layout-flow gap="sm">
-                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                            <c-layout-flow row="true" alignItems="center" gap="sm">
                                 <c-icon icon="applicatie" size="sm" color="oranje" />
                                 <strong>{{ helmfile.reference }}</strong>
-                            </div>
+                            </c-layout-flow>
                             {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping %}
                             <div class="helm-values-section">
-                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                                <c-layout-flow row="true" alignItems="center" gap="sm" style="margin-bottom: var(--rvo-space-sm);">
                                     <c-icon icon="sleutel" size="sm" color="hemelblauw" />
                                     <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
-                                </div>
+                                </c-layout-flow>
                                 <c-secret-field
                                     value="{{ helmfile['helm-values'] | tojson(indent=2) }}"
                                     valueType="json"
@@ -140,10 +135,10 @@
                         {% for key, value in variables.items() %}
                         <c-card padding="sm" backgroundColor="wit" outline="true">
                             <c-layout-flow gap="xs">
-                                <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                <c-layout-flow row="true" alignItems="center" gap="sm">
                                     <c-icon icon="sleutel" size="sm" color="grijs-600" />
                                     <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
-                                </div>
+                                </c-layout-flow>
                                 <div style="margin-left: var(--rvo-space-lg);">
                                     <c-secret-field value="{{ value }}" />
                                 </div>
@@ -161,10 +156,7 @@
                         </div>
                         {% endif %}
                     {% else %}
-                    <div class="empty-state">
-                        <c-icon icon="info" size="lg" color="grijs-050" />
-                        <p class="rvo-text--md">Geen configuratie variabelen beschikbaar</p>
-                    </div>
+                    <c-alert kind="info">Geen configuratie variabelen beschikbaar</c-alert>
                     {% endif %}
                 </c-layout-flow>
             </div>
@@ -184,7 +176,7 @@
 
             {% if has_user_vars %}
             <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="user" size="md" color="donkerblauw" />Gebruikers configuratie</c-heading>
+                <c-heading type="h4"><c-icon icon="user" size="md" color="donkerblauw" />Gebruikers configuratie</c-heading>
                 <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor deze deployment</p>
 
                 <c-layout-flow gap="md">
@@ -202,10 +194,10 @@
                                 {% for key, value in project_component['user-env-vars'].items() %}
                                 <c-card padding="sm" backgroundColor="wit" outline="true">
                                     <c-layout-flow gap="xs">
-                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+                                        <c-layout-flow row="true" alignItems="center" gap="sm">
                                             <c-icon icon="sleutel" size="sm" color="grijs-600" />
                                             <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
-                                        </div>
+                                        </c-layout-flow>
                                         <div style="margin-left: var(--rvo-space-lg);">
                                             <c-secret-field value="{{ value }}" />
                                         </div>
@@ -227,8 +219,5 @@
     </div>
     {% endfor %}
 {% else %}
-<div class="empty-state">
-    <c-icon icon="info" size="lg" color="grijs-050" />
-    <p class="rvo-text--md">Geen deployments geconfigureerd</p>
-</div>
+<c-alert kind="info">Geen deployments geconfigureerd</c-alert>
 {% endif %}

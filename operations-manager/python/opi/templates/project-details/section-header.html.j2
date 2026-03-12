@@ -1,16 +1,15 @@
 {# Page Header — project name, description, badge #}
 <div>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--rvo-space-md);">
+    <c-layout-flow row="true" justifyContent="space-between" alignItems="center" style="margin-bottom: var(--rvo-space-md);">
         <div>
             <c-heading type="h1" textContent="{{ project.display_name }}" />
-            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
+            <c-layout-flow row="true" alignItems="center" gap="sm">
                 <p class="rvo-text--lg" style="margin: 0;">{{ project.description }}</p>
                 {% if user_role in ["admin", "owner"] %}
-                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" title="Beschrijving bewerken">
-                    <c-icon icon="bewerken" size="sm" color="hemelblauw" />
-                </button>
+                <c-button kind="secondary" size="sm" showIcon="before" icon="bewerken"
+                          @click="openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" />
                 {% endif %}
-            </div>
+            </c-layout-flow>
         </div>
-    </div>
+    </c-layout-flow>
 </div>

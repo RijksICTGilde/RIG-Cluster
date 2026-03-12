@@ -8,24 +8,20 @@
 {% endfor %}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <c-layout-flow row="true" justifyContent="space-between" alignItems="start">
             <div>
-                <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
+                <c-heading type="h2"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
                 <p class="rvo-text--subtle">Beschikbare backups per deployment (alleen voor cluster: {{ current_cluster }})</p>
             </div>
-            <div style="display: flex; gap: 8px;">
-                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-backup', 'Backup aanmaken')" title="Backup aanmaken">
-                    <c-icon icon="iconen-toevoegen" size="sm" color="groen" />
-                    <span>Backup aanmaken</span>
-                </button>
+            <c-layout-flow row="true" gap="sm">
+                <c-button kind="secondary" size="sm" showIcon="before" icon="iconen-toevoegen"
+                          @click="openEditModal('modal-backup', 'Backup aanmaken')">Backup aanmaken</c-button>
                 {% if ns.has_backups %}
-                <button type="button" class="edit-section-btn" onclick="openEditModal('modal-restore', 'Backup herstellen')" title="Backup herstellen">
-                    <c-icon icon="terug" size="sm" color="hemelblauw" />
-                    <span>Herstellen</span>
-                </button>
+                <c-button kind="secondary" size="sm" showIcon="before" icon="terug"
+                          @click="openEditModal('modal-restore', 'Backup herstellen')">Herstellen</c-button>
                 {% endif %}
-            </div>
-        </div>
+            </c-layout-flow>
+        </c-layout-flow>
 
         {% if ns.has_backups %}
         <div>
@@ -41,7 +37,7 @@
                     <c-layout-row gap="sm" verticalSpacing="center">
                         <c-icon icon="applicatie" size="md" color="donkerblauw" />
                         <c-heading type="h4" textContent="{{ deployment.name }}" />
-                        <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.namespace }}</span>
+                        <c-tag content="{{ deployment.namespace }}" />
                     </c-layout-row>
 
                     {% if backups %}
@@ -56,17 +52,17 @@
                     {% endfor %}
                     {% set run_colors = ['var(--rvo-color-wit)', 'var(--rvo-color-grijs-100)'] %}
                     <div style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                        <table class="backup-table" style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
                             <thead>
                                 <tr style="border-bottom: 2px solid var(--rvo-color-grijs-300);">
-                                    <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Backup Run</th>
-                                    <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Type</th>
-                                    <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Component</th>
-                                    <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Storage</th>
-                                    <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Gen</th>
-                                    <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Timestamp</th>
-                                    <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Grootte</th>
-                                    <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Snapshot ID</th>
+                                    <th>Backup Run</th>
+                                    <th>Type</th>
+                                    <th>Component</th>
+                                    <th>Storage</th>
+                                    <th>Gen</th>
+                                    <th>Timestamp</th>
+                                    <th>Grootte</th>
+                                    <th>Snapshot ID</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -75,50 +71,44 @@
                                 {% set row_bg = run_colors[color_idx.val % 2] %}
                                 {% for backup in run_backups %}
                                 <tr style="border-bottom: 1px solid var(--rvo-color-grijs-200); background: {{ row_bg }};">
-                                    <td style="padding: 8px 12px;">
+                                    <td>
                                         {% if run_id != 'unknown' %}
                                             <code style="font-family: monospace; font-size: 0.75rem; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw); padding: 2px 6px; border-radius: 4px; cursor: help;" title="{{ run_backups | length }} item(s) in deze backup run">{{ run_id }}</code>
                                         {% else %}
                                             <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">-</span>
                                         {% endif %}
                                     </td>
-                                    <td style="padding: 8px 12px;">
+                                    <td>
                                         {% if backup.resource_type == 'pvc' %}
-                                            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw);">
-                                                PVC
-                                            </span>
+                                            <c-tag type="info" content="PVC" />
                                         {% elif backup.resource_type == 'database' %}
-                                            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-grasgroen-200); color: var(--rvo-color-grasgroen-800);">
-                                                DB
-                                            </span>
+                                            <c-tag type="success" content="DB" />
                                         {% elif backup.resource_type == 'bucket' %}
-                                            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-oranje-200); color: var(--rvo-color-oranje-800);">
-                                                Bucket
-                                            </span>
+                                            <c-tag type="warning" content="Bucket" />
                                         {% else %}
                                             <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">{{ backup.resource_type or '-' }}</span>
                                         {% endif %}
                                     </td>
-                                    <td style="padding: 8px 12px;">
+                                    <td>
                                         <span style="display: inline-flex; align-items: center; gap: 4px;">
                                             <c-icon icon="document-blanco" size="sm" color="grijs-600" />
                                             {{ backup.component_name or '-' }}
                                         </span>
                                     </td>
-                                    <td style="padding: 8px 12px;">
+                                    <td>
                                         {{ backup.storage_name or '-' }}
                                     </td>
-                                    <td style="padding: 8px 12px;">
+                                    <td>
                                         {% if backup.generation is not none %}
                                             <span style="display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; background: var(--rvo-color-grijs-200); border-radius: 4px; font-weight: 500;">v{{ backup.generation }}</span>
                                         {% else %}
                                             <span style="color: var(--rvo-color-grijs-500);">-</span>
                                         {% endif %}
                                     </td>
-                                    <td style="padding: 8px 12px;">
+                                    <td>
                                         <span style="color: var(--rvo-color-grijs-700);">{{ backup.timestamp | dutch_date }}</span>
                                     </td>
-                                    <td style="padding: 8px 12px;">
+                                    <td>
                                         {% if backup.size_bytes is not none %}
                                             {% if backup.size_bytes == 0 %}
                                                 <span style="color: var(--rvo-color-grijs-500);">0 B (leeg)</span>
@@ -136,7 +126,7 @@
                                             <span style="color: var(--rvo-color-grijs-500);">-</span>
                                         {% endif %}
                                     </td>
-                                    <td style="padding: 8px 12px;">
+                                    <td>
                                         {% set tags_display = [] %}
                                         {% if backup.tags %}
                                             {% for key, value in backup.tags.items() %}

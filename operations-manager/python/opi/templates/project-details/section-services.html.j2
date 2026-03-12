@@ -1,19 +1,17 @@
 {# Services & Integraties Section #}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Services & Integraties</c-heading>
+        <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
+            <c-heading type="h2"><c-icon icon="applicatie" size="xl" color="groen" />Services & Integraties</c-heading>
             {% if user_role in ["admin", "owner"] %}
-            <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-services', 'Services beheren')" title="Services bewerken">
-                <c-icon icon="bewerken" size="sm" color="hemelblauw" />
-                <span>Bewerken</span>
-            </button>
+            <c-button kind="secondary" size="sm" showIcon="before" icon="bewerken"
+                      @click="openEditModal('modal-edit-services', 'Services beheren')">Bewerken</c-button>
             {% endif %}
-        </div>
+        </c-layout-flow>
         <p class="rvo-text--subtle">Geactiveerde services voor dit project</p>
 
         {% if project.services %}
-        <div class="services-grid">
+        <c-grid columns="three" gap="lg">
             {% for service in project.services %}
             <c-card class="service-detail-card" padding="lg" background="color" backgroundColor="wit" outline="true">
                 <c-layout-flow gap="md">
@@ -37,12 +35,9 @@
                 </c-layout-flow>
             </c-card>
             {% endfor %}
-        </div>
+        </c-grid>
         {% else %}
-        <div class="empty-state">
-            <c-icon icon="info" size="lg" color="grijs-050" />
-            <p class="rvo-text--md">Geen services geconfigureerd</p>
-        </div>
+        <c-alert kind="info">Geen services geconfigureerd</c-alert>
         {% endif %}
     </c-layout-flow>
 </c-card>

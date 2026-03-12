@@ -218,13 +218,6 @@
         border-radius: 4px;
     }
 
-    /* Services Grid */
-    .services-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: var(--rvo-space-lg);
-    }
-
     .service-detail-card {
         min-height: 150px;
     }
@@ -325,13 +318,6 @@
         font-family: monospace;
     }
 
-
-    /* Components Section */
-    .components-section {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-        gap: var(--rvo-space-lg);
-    }
 
     .component-card {
         border-left: 4px solid var(--rvo-color-paars);
@@ -619,6 +605,17 @@
         color: var(--rvo-color-grijs-600);
     }
 
+    /* Backup Table */
+    .backup-table th,
+    .backup-table td {
+        padding: 8px 12px;
+        text-align: left;
+    }
+    .backup-table th {
+        font-weight: 600;
+        color: var(--rvo-color-grijs-700);
+    }
+
     /* Responsive Design */
     @media (max-width: 768px) {
         .overview-grid {
@@ -626,14 +623,6 @@
         }
 
         /* .team-grid responsive styles handled by c-grid component */
-
-        .services-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .components-section {
-            grid-template-columns: 1fr;
-        }
 
         .deployment-header {
             flex-direction: column;
@@ -1300,24 +1289,6 @@
         gap: var(--rvo-space-md);
         padding-top: var(--rvo-space-md);
         border-top: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .edit-section-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: var(--rvo-space-xs);
-        background: none;
-        border: 1px solid var(--rvo-color-hemelblauw);
-        color: var(--rvo-color-hemelblauw);
-        cursor: pointer;
-        padding: var(--rvo-space-xs) var(--rvo-space-sm);
-        border-radius: 4px;
-        font-size: 0.8125rem;
-        transition: background 0.15s ease;
-    }
-
-    .edit-section-btn:hover {
-        background: var(--rvo-color-hemelblauw-100);
     }
 
     .domain-badge {

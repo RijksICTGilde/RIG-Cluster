@@ -1,19 +1,17 @@
 {# Components Section #}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
+        <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
+            <c-heading type="h2"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
             {% if user_role in ["admin", "owner"] %}
-            <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen')" title="Component toevoegen">
-                <c-icon icon="plus" size="sm" color="donkerblauw" />
-                <span>Toevoegen</span>
-            </button>
+            <c-button kind="secondary" size="sm" showIcon="before" icon="plus"
+                      @click="openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen')">Toevoegen</c-button>
             {% endif %}
-        </div>
+        </c-layout-flow>
         <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
 
         {% if project.components %}
-        <div class="components-section">
+        <c-layout-flow gap="lg">
             {% for component in project.components %}
             <c-card class="component-card" padding="lg" background="color" backgroundColor="wit" outline="true">
                 <c-layout-flow gap="md">
@@ -24,18 +22,12 @@
                             <div class="component-type">{{ component.type|title }}</div>
                         </div>
                         {% if user_role in ["admin", "owner"] %}
-                        <div class="component-actions" style="display: flex; gap: var(--rvo-space-xs);">
-                            <button type="button" class="edit-section-btn"
-                                onclick="openEditModal('modal-edit-component-{{ loop.index0 }}', 'Component bewerken — {{ component.name }}')"
-                                title="Component bewerken">
-                                <c-icon icon="bewerken" size="sm" color="donkerblauw" />
-                            </button>
-                            <button type="button" class="edit-section-btn" style="color: var(--rvo-color-rood-600);"
-                                onclick="showDangerConfirmation('component', '{{ component.name }}', 'Weet u zeker dat u component &quot;{{ component.name }}&quot; wilt verwijderen?')"
-                                title="Component verwijderen">
-                                <c-icon icon="verwijderen" size="sm" color="rood" />
-                            </button>
-                        </div>
+                        <c-layout-flow row="true" gap="xs">
+                            <c-button kind="secondary" size="sm" showIcon="before" icon="bewerken"
+                                @click="openEditModal('modal-edit-component-{{ loop.index0 }}', 'Component bewerken — {{ component.name }}')" />
+                            <c-button kind="warning" size="sm" showIcon="before" icon="verwijderen"
+                                @click="showDangerConfirmation('component', '{{ component.name }}', 'Weet u zeker dat u component &quot;{{ component.name }}&quot; wilt verwijderen?')" />
+                        </c-layout-flow>
                         {% endif %}
                     </div>
 
@@ -103,12 +95,9 @@
                 </c-layout-flow>
             </c-card>
             {% endfor %}
-        </div>
+        </c-layout-flow>
         {% else %}
-        <div class="empty-state">
-            <c-icon icon="info" size="lg" color="grijs-050" />
-            <p class="rvo-text--md">Geen componenten geconfigureerd</p>
-        </div>
+        <c-alert kind="info">Geen componenten geconfigureerd</c-alert>
         {% endif %}
     </c-layout-flow>
 </c-card>

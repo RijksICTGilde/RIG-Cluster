@@ -35,9 +35,7 @@
 
                     {# Show button #}
                     <div class="metrics-controls__field metrics-controls__field--button">
-                        <button id="show-btn" class="rvo-button rvo-button--primary" disabled onclick="showMetric()">
-                            Tonen in Prometheus
-                        </button>
+                        <c-button kind="primary" id="show-btn" disabled @click="showMetric()">Tonen in Prometheus</c-button>
                     </div>
                 </div>
 
@@ -111,22 +109,6 @@
         border-radius: 4px;
         font-size: 0.95rem;
         width: 100%;
-    }
-    .rvo-button {
-        padding: 0.5rem 1.25rem;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.95rem;
-        white-space: nowrap;
-    }
-    .rvo-button--primary {
-        background-color: var(--rvo-color-hemelblauw, #007bc7);
-        color: white;
-    }
-    .rvo-button--primary:disabled {
-        background-color: var(--rvo-color-grijs-300, #ccc);
-        cursor: not-allowed;
     }
 </style>
 {% endblock %}

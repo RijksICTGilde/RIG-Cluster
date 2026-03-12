@@ -1,15 +1,13 @@
 {# Team & Toegang Section #}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
+        <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
+            <c-heading type="h2"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
             {% if user_role in ["admin", "owner"] %}
-            <button type="button" class="edit-section-btn" onclick="openEditModal('modal-edit-team', 'Projectleden beheren')" title="Leden bewerken">
-                <c-icon icon="bewerken" size="sm" color="hemelblauw" />
-                <span>Bewerken</span>
-            </button>
+            <c-button kind="secondary" size="sm" showIcon="before" icon="bewerken"
+                      @click="openEditModal('modal-edit-team', 'Projectleden beheren')">Bewerken</c-button>
             {% endif %}
-        </div>
+        </c-layout-flow>
         <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>
 
         <c-grid columns="three" gap="md">
