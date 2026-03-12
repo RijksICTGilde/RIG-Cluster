@@ -308,6 +308,10 @@ class Settings(BaseSettings):
     # External Prometheus URL for browser access (iframe in metrics explorer)
     # Falls back to PROMETHEUS_URL if not set
     PROMETHEUS_EXTERNAL_URL: str | None = None
+    # Bearer token that Prometheus sends when scraping /metrics endpoints.
+    # Applications can validate this to restrict access to metrics.
+    # Sourced from the prometheus-metrics-auth secret.
+    PROMETHEUS_METRICS_AUTH_TOKEN: str | None = None
 
     # Grafana configuration (used when METRICS_BACKEND="grafana")
     GRAFANA_URL: str = "http://grafana-service.rig-system.svc.cluster.local:3000"

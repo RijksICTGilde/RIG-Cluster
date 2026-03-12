@@ -397,6 +397,20 @@ document.addEventListener('keydown', function(e) {
 });
 
 /* ========================================================================
+ * Scroll to first validation error after form submission
+ * ======================================================================== */
+
+function scrollToFirstError(container) {
+    container = container || document;
+    var el = container.querySelector('[aria-invalid="true"]')
+          || container.querySelector('.rvo-form-field__error-text')
+          || container.querySelector('[data-roos-component="alert"]');
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+/* ========================================================================
  * Initialization: on page load and after HTMX swaps
  * ======================================================================== */
 
@@ -412,8 +426,52 @@ document.addEventListener('DOMContentLoaded', function() {
 
 document.addEventListener('htmx:afterSettle', function(event) {
     initWizardWidgets(event.detail.target);
+    scrollToFirstError(event.detail.target);
 });
 
+
+/* ========================================================================
+ * Paste cleaner for container image fields
+ *
+ * Strips "docker pull " and similar prefixes when pasting into fields
+ * marked with data-paste-clean="container-image".
+ * ======================================================================== */
+
+document.addEventListener('paste', function(e) {
+    var el = e.target.closest('[data-paste-clean="container-image"]')
+          || (e.target.getRootNode && e.target.getRootNode().host
+              && e.target.getRootNode().host.closest
+              && e.target.getRootNode().host.closest('[data-paste-clean="container-image"]'));
+    if (!el) return;
+
+    var pasted = (e.clipboardData || window.clipboardData).getData('text');
+    if (!pasted) return;
+
+    var cleaned = pasted.trim().replace(/^docker\s+pull\s+/i, '');
+    if (cleaned !== pasted) {
+        e.preventDefault();
+        var input = e.target;
+        input.value = cleaned;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        flashCleanIndicator(input);
+    }
+}, true);
+
+function flashCleanIndicator(input) {
+    input.style.transition = 'none';
+    input.style.outlineStyle = 'solid';
+    input.style.outlineWidth = '3px';
+    input.style.outlineColor = '#66bb6a';
+    // Force reflow so the bright green is applied before the transition starts
+    input.offsetHeight;
+    input.style.transition = 'outline-color 0.8s ease-out';
+    input.style.outlineColor = '#1b5e20';
+    input.addEventListener('transitionend', function cleanup() {
+        input.removeEventListener('transitionend', cleanup);
+        input.style.outline = '';
+        input.style.transition = '';
+    });
+}
 
 /* Re-render the current step when a [data-rerender] field changes */
 document.addEventListener('change', function(e) {

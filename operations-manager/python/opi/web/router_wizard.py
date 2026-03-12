@@ -334,8 +334,9 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 
-        # Seed the components step with one default component including
-        # default storage volumes (persistent /data and temporary /tmp/app).
+        # Seed the components step with one default component.
+        # The services checkbox is left unset (None) so the renderer
+        # auto-populates it with all project-level services on first render.
         state.store_step_data(
             "components",
             {
@@ -346,16 +347,8 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
                         "ports": {"inbound": [8080], "outbound": [80, 443]},
                         "resources": {
                             "cpu": {"request": "50m", "limit": "1"},
-                            "memory": {"request": "256Mi", "limit": "1Gi"},
+                            "memory": {"request": "256Mi", "limit": "512Mi"},
                         },
-                        "services": [
-                            {
-                                "persistent-storage": {
-                                    "config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]
-                                }
-                            },
-                            {"temp-storage": {"config": [{"name": "tmp", "size": "1Gi", "mount-path": "/tmp/app"}]}},
-                        ],
                     },
                 ],
             },
@@ -787,12 +780,29 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Handle re-render request (e.g., toggle changed): save values, clear hidden
     # depends_on fields, and re-render the same step without advancing.
     if is_rerender:
+        from opi.forms.editables.service_path import smart_get_value as _sgv
+
+        logger.info(
+            "[RERENDER %s] services in submitted_yaml BEFORE clear_hidden: %r",
+            section_id,
+            _sgv(submitted_yaml, "components[0]/services"),
+        )
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
+        logger.info(
+            "[RERENDER %s] services in submitted_yaml AFTER clear_hidden: %r",
+            section_id,
+            _sgv(submitted_yaml, "components[0]/services"),
+        )
 
         section_data = _extract_section_data(section.editables, submitted_yaml)
         state.store_step_data(section_id, section_data)
         save_wizard_state(request, state)
 
+        logger.info(
+            "[RERENDER %s] services passed to renderer: %r",
+            section_id,
+            _sgv(submitted_yaml, "components[0]/services"),
+        )
         step_html = _render_step_html(section, yaml_data=submitted_yaml, edit_mode=edit_mode)
         context = _build_step_context(request, flow_id, section, step_html)
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)

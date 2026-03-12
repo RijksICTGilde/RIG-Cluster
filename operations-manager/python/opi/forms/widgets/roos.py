@@ -114,10 +114,7 @@ class ROOSWidgetAdapter(WidgetAdapter):
             for o in (field.options or [])
         ]
         raw_value: object = field.value
-        if (raw_value is None or raw_value == "__all__") and field.default == "__all__":
-            selected = [o["value"] for o in options]
-        else:
-            selected = [str(v) for v in (raw_value if isinstance(raw_value, list) else [])]  # type: ignore[union-attr]
+        selected = [str(v) for v in (raw_value if isinstance(raw_value, list) else [])]  # type: ignore[union-attr]
         return self._render_template(
             "checkbox_group.html.j2",
             {"field": field, "options": options, "selected_values": selected},

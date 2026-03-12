@@ -24,7 +24,21 @@
             <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.cluster }}</span>
         </c-layout-row>
 
-        {% if deployment.cluster != current_cluster %}
+        {# Check if any component has a container image #}
+        {% set has_image = deployment.components | selectattr('image', 'defined') | selectattr('image') | list | length > 0 if deployment.components else false %}
+
+        {% if not has_image %}
+        {# No components have images — deployment has no resources #}
+        <c-card padding="md" backgroundColor="grijs-100" outline="true">
+            <c-layout-row gap="sm" verticalSpacing="center">
+                <c-icon icon="info" size="md" color="grijs-600" />
+                <c-layout-flow gap="xs">
+                    <span class="rvo-text--sm">Geen actieve deployment — geen container image geconfigureerd.</span>
+                    <span class="rvo-text--sm rvo-text--subtle">Configureer een container image voor een component om deze deployment te activeren.</span>
+                </c-layout-flow>
+            </c-layout-row>
+        </c-card>
+        {% elif deployment.cluster != current_cluster %}
         {# Deployment is on a different cluster - show info message #}
         <div style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--rvo-color-grijs-100); border: 1px solid var(--rvo-color-grijs-300); border-radius: 4px;">
             <c-icon icon="info" size="md" color="grijs-600" />

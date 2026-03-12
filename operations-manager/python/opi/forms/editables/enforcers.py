@@ -88,7 +88,7 @@ class ComponentServicesEnforcer:
             if not isinstance(comp, dict):
                 continue
             comp_services = comp.get("services", [])
-            if comp_services == "__all__" or not isinstance(comp_services, list):
+            if not isinstance(comp_services, list):
                 continue
             uses = extract_service_names(comp_services)
             invalid = [s for s in uses if s not in services]

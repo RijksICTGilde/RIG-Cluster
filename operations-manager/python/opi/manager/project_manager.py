@@ -99,6 +99,7 @@ from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
     KeycloakSecret,
+    MetricsAuthSecret,
     MinIOSecret,
     PlatformSecret,
     RedisSecret,
@@ -4313,6 +4314,11 @@ class ProjectManager:
                 env_from_secrets.append(redis_secret_name)
                 logger.debug(f"Redis secret added to envFrom: {redis_secret_name}")
 
+            if component_uses_metrics_scraper:
+                metrics_auth_secret_name = MetricsAuthSecret.get_secret_name(deployment_name)
+                env_from_secrets.append(metrics_auth_secret_name)
+                logger.debug(f"Metrics auth secret added to envFrom: {metrics_auth_secret_name}")
+
             # Platform secret (always present, per-component)
             platform_secret_name = PlatformSecret.get_secret_name(unique_name)
             env_from_secrets.append(platform_secret_name)
@@ -4470,7 +4476,8 @@ class ProjectManager:
 
             # Configure metrics scraper if enabled
             if component_uses_metrics_scraper and component_def:
-                # Extract metrics config from component's service definition
+                # Extract metrics config from component's service definition.
+                # Config is stored as: services: [{metrics-scraper: {config: [{port, path}]}}]
                 services = component_def.get("services", [])
                 for service_item in services:
                     if isinstance(service_item, dict) and ServiceType.METRICS_SCRAPER.value in service_item:
@@ -5112,6 +5119,37 @@ class ProjectManager:
                 else:
                     logger.warning(
                         f"Component {component_name} uses Redis but no cache credentials found in deployment {deployment_name}"
+                    )
+
+            # Create metrics auth secret if component uses metrics-scraper
+            if component_uses_metrics_scraper:
+                metrics_auth_token = settings.PROMETHEUS_METRICS_AUTH_TOKEN
+                if metrics_auth_token:
+                    metrics_secret = MetricsAuthSecret(token=metrics_auth_token)
+                    metrics_secret_data = metrics_secret.to_k8s_secret_data()
+
+                    metrics_secret_vars = {
+                        "name": MetricsAuthSecret.get_secret_name(deployment_name),
+                        "namespace": namespace,
+                        "secret_pairs": metrics_secret_data,
+                    }
+
+                    metrics_manifest_name = f"{MetricsAuthSecret.get_secret_name(deployment_name)}-secret"
+
+                    self._manifest_generator.create_manifest_file(
+                        template_path=secret_template_path,
+                        values=metrics_secret_vars,
+                        output_dir=full_output_dir,
+                        output_filename=metrics_manifest_name,
+                        use_sops=True,
+                    )
+
+                    sops_filename = f"{metrics_manifest_name}.to-sops.yaml"
+                    created_files.append(sops_filename)
+                    logger.info(f"Metrics auth secret will be SOPS encrypted: {sops_filename}")
+                else:
+                    logger.warning(
+                        f"Component {component_name} uses metrics-scraper but PROMETHEUS_METRICS_AUTH_TOKEN is not configured"
                     )
 
         # Clear rollback info on success

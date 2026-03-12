@@ -93,6 +93,7 @@ class FormField:
     edit_mode: bool = False
     help_template: str | None = None
     examples: list[str] | None = None
+    virtualize: tuple[str, str] | None = None
 
     def has_errors(self) -> bool:
         """Check if this field or any children have errors."""

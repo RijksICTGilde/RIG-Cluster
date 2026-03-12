@@ -291,6 +291,18 @@ class RedisVariables(Enum):
     )
 
 
+class MetricsScraperVariables(Enum):
+    """Metrics scraper service variable definitions."""
+
+    AUTH_TOKEN = VariableDefinition(
+        name="METRICS_AUTH_TOKEN",
+        description="Bearer token that Prometheus sends when scraping /metrics. Validate this to restrict access.",
+        source="secret",
+        secret_key="token",
+        aliases=["PROMETHEUS_METRICS_AUTH_TOKEN"],
+    )
+
+
 class PlatformVariables(Enum):
     """Platform-provided variable definitions - always available in every deployment."""
 
@@ -452,7 +464,7 @@ class ServiceAdapter:
             icon="grafiek",
             color="hemelblauw",
             scope="component",
-            variables=[],
+            variables=[v.value for v in MetricsScraperVariables],
         ),
     }
 

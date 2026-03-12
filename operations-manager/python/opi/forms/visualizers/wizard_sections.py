@@ -160,6 +160,15 @@ COMPONENTS_SECTION = FormSection(
                 ),
                 Sequence(field_name="services{persistent-storage}/config"),
                 Sequence(field_name="services{temp-storage}/config"),
+                Fieldset(
+                    legend="Prometheus metrics scraper configuratie",
+                    depends_on="services",
+                    show_when={"contains": "metrics-scraper"},
+                    children=[
+                        "services{metrics-scraper}/port",
+                        "services{metrics-scraper}/path",
+                    ],
+                ),
             ],
         ),
     ],
@@ -405,7 +414,10 @@ def _prefix_layout_children(items: list, prefix: str) -> list:
         if isinstance(item, str):
             result.append(f"{prefix}/{item}")
         elif isinstance(item, Fieldset):
-            result.append(dataclasses.replace(item, children=_prefix_layout_children(list(item.children), prefix)))
+            replaced = dataclasses.replace(item, children=_prefix_layout_children(list(item.children), prefix))
+            if replaced.depends_on:
+                replaced = dataclasses.replace(replaced, depends_on=f"{prefix}/{replaced.depends_on}")
+            result.append(replaced)
         elif isinstance(item, Sequence):
             child_layout = item.child_layout
             if isinstance(child_layout, list):
@@ -485,7 +497,6 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
     target_deployments_editable = Editable(
         yaml_path="_target_deployments",
         transient=True,
-        default="__all__",
         values_provider="DeploymentSelectOptionsProvider",
     )
     target_deployments_vis = EditableVisualizer(

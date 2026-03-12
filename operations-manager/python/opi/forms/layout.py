@@ -105,6 +105,14 @@ class Fieldset(LayoutElement):
         collapsible: Whether the fieldset can be collapsed
         collapsed: Initial collapsed state (only if collapsible)
         description: Optional description text below legend
+        depends_on: YAML path of a field this fieldset depends on.
+            When set, the fieldset is only rendered if the condition
+            specified by ``show_when`` is met. Uses the same semantics
+            as ``Editable.depends_on``. Paths containing ``[*]`` are
+            resolved using the parent sequence index at render time.
+        show_when: Condition dict evaluated against the ``depends_on``
+            value. Supports the same operators as ``Editable.show_when``
+            (e.g. ``{"contains": "metrics-scraper"}``).
 
     Example:
         Fieldset(
@@ -120,6 +128,8 @@ class Fieldset(LayoutElement):
     collapsible: bool = False
     collapsed: bool = False
     description: str | None = None
+    depends_on: str | None = None
+    show_when: dict[str, Any] | None = None
 
 
 @dataclass

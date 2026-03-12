@@ -10,7 +10,7 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
-from opi.forms.editables.editable import WidgetType
+from opi.forms.editables.editable import WidgetType, apply_virtualize
 from opi.forms.editables.path import get_value, resolve_path
 from opi.forms.editables.service_path import smart_delete_value, smart_get_value, smart_set_value
 from opi.forms.visualizers.bridge import should_render_editable
@@ -363,7 +363,10 @@ class EditableFormProcessor:
                     self._write_field(child_ed, concrete_path, value, result)
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
-                    value = get_value(submitted, concrete_path)
+                    read_path = (
+                        apply_virtualize(concrete_path, child_ed.virtualize) if child_ed.virtualize else concrete_path
+                    )
+                    value = get_value(submitted, read_path)
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
 
@@ -377,26 +380,48 @@ class EditableFormProcessor:
         parent_index: int,
         context: dict[str, Any] | None = None,
     ) -> None:
-        """Process a nested sequence from JSON (e.g. additional-clients[0]/redirect-uris)."""
+        """Process a nested sequence from JSON (e.g. additional-clients[0]/redirect-uris).
+
+        When the editable has a ``virtualize`` mapping, form field names use a
+        virtual path segment (e.g. ``_services-config`` instead of ``services``)
+        to avoid collisions with sibling fields that share the real path prefix.
+        Submitted data is read from the virtual path; validated and written to
+        the real path in the result.
+        """
         ed = vis.editable
-        concrete_seq_path = resolve_path(ed.yaml_path, parent_index)
-        items = get_value(submitted, concrete_seq_path)
+        virt = ed.virtualize
+        real_seq_path = resolve_path(ed.yaml_path, parent_index)
+        virtual_seq_path = apply_virtualize(real_seq_path, virt) if virt else real_seq_path
+
+        # Read from virtual path in submitted data
+        items = get_value(submitted, virtual_seq_path)
         if not isinstance(items, list):
             items = []
 
-        # Write the nested list (correct count)
-        smart_set_value(result, concrete_seq_path, copy.deepcopy(items))
+        # Write to real path in result
+        smart_set_value(result, real_seq_path, copy.deepcopy(items))
+
+        # TODO: Evaluate whether stripping virtual keys here is the best approach.
+        #  An alternative would be to strip them in _extract_section_data or via
+        #  a dedicated cleanup pass (similar to _strip_transients). For now this
+        #  prevents the virtual key (e.g. _services-config) from leaking into
+        #  step_data and ultimately into the final project YAML.
+        if virt and virtual_seq_path != real_seq_path:
+            self._delete_path(result, virtual_seq_path)
 
         for child_index in range(len(items)):
             for child_vis in vis.children or []:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                child_path = resolve_path(child_ed.yaml_path, parent_index)
-                child_path = resolve_path(child_path, child_index)
-                value = get_value(submitted, child_path)
-                self._validate_field(child_vis, child_path, value, errors, context)
-                self._write_field(child_ed, child_path, value, result)
+                # Real path for validation + writing
+                real_child_path = resolve_path(child_ed.yaml_path, parent_index)
+                real_child_path = resolve_path(real_child_path, child_index)
+                # Virtual path for reading from submitted data
+                virtual_child_path = apply_virtualize(real_child_path, virt) if virt else real_child_path
+                value = get_value(submitted, virtual_child_path)
+                self._validate_field(child_vis, real_child_path, value, errors, context)
+                self._write_field(child_ed, real_child_path, value, result)
 
     # ------------------------------------------------------------------
     # Deferral and transient field handling

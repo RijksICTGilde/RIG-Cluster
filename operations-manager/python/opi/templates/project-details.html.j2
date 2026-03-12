@@ -51,6 +51,7 @@
         </div>
         {% endif %}
 
+        {% include "project-details/section-deployment-actions.html.j2" %}
         {% include "project-details/section-deployment-argocd.html.j2" %}
         {% include "project-details/section-metrics.html.j2" %}
         {% include "project-details/section-deployments.html.j2" %}
@@ -1352,6 +1353,15 @@
         // Show selected tab
         document.getElementById('tab-' + tabName).style.display = '';
 
+        // Update URL hash to preserve tab state across reloads
+        if (tabName === 'deployments') {
+            var gs = document.getElementById('global-deployment-selector');
+            var depName = gs ? gs.value : '';
+            location.hash = depName ? 'deployments/' + depName : 'deployments';
+        } else {
+            location.hash = tabName;
+        }
+
         // Update rendered tab active state (c-tab-item renders as <li> with <a> inside)
         var tabsList = document.querySelector('[data-roos-component="tabs"]') ||
                        document.querySelector('.rvo-tabs');
@@ -1361,11 +1371,18 @@
                 link.setAttribute('aria-selected', 'false');
             });
         }
-        // Activate the clicked tab link
+        // Activate the clicked tab link — find by tab name when restoring from hash
         if (event && event.target) {
             var link = event.target.closest('.rvo-tabs__item-link') || event.target;
             link.classList.add('rvo-tabs__item-link--active');
             link.setAttribute('aria-selected', 'true');
+        } else if (tabsList) {
+            var links = tabsList.querySelectorAll('.rvo-tabs__item-link');
+            var tabIndex = tabName === 'deployments' ? 1 : 0;
+            if (links[tabIndex]) {
+                links[tabIndex].classList.add('rvo-tabs__item-link--active');
+                links[tabIndex].setAttribute('aria-selected', 'true');
+            }
         }
     }
 
@@ -1378,7 +1395,7 @@
             section.style.display = 'none';
         });
         // Show sections matching this deployment
-        ['deployment-', 'argocd-', 'backups-'].forEach(prefix => {
+        ['deployment-actions-', 'deployment-', 'argocd-', 'backups-'].forEach(prefix => {
             const el = document.getElementById(prefix + deploymentName);
             if (el) el.style.display = '';
         });
@@ -1393,9 +1410,10 @@
             });
         }
 
-        // Sync global selector
+        // Sync global selector and URL hash
         const gs = document.getElementById('global-deployment-selector');
         if (gs) gs.value = deploymentName;
+        location.hash = 'deployments/' + deploymentName;
     }
 
     /**
@@ -2133,6 +2151,18 @@
             }
         });
     }
+
+    // Restore tab and deployment state from URL hash on page load
+    (function() {
+        var hash = location.hash.replace('#', '');
+        if (hash.startsWith('deployments')) {
+            switchTab('deployments');
+            var parts = hash.split('/');
+            if (parts.length > 1) {
+                switchDeployment(parts[1]);
+            }
+        }
+    })();
 </script>
 {% endblock %}
 

@@ -320,6 +320,10 @@ class FormRenderer:
             if editable.locked_by_service and _is_service_active(editable.locked_by_service, yaml_data):
                 smart_set_value(yaml_data, editable.editable.yaml_path, True)
 
+        # Ensure checkbox_group fields have all provider values in yaml_data
+        # so depends_on / show_when checks see real values.
+        self._resolve_checkbox_group_defaults(editables, yaml_data, provider_context)
+
         for editable in editables:
             if not should_render_editable(editable, yaml_data, siblings=editables):
                 continue
@@ -350,6 +354,56 @@ class FormRenderer:
             self._apply_edit_mode(all_fields)
 
         return fields_by_name
+
+    def _resolve_checkbox_group_defaults(
+        self,
+        editables: list[EditableVisualizer],
+        yaml_data: dict[str, Any],
+        provider_context: dict[str, Any] | None = None,
+        index: int | None = None,
+    ) -> None:
+        """Populate unset checkbox_group fields with all provider values.
+
+        When a checkbox_group editable has a ``values_provider`` and its
+        current value in yaml_data is None, injects the full list of
+        option values.  This ensures dependent fields (``depends_on`` /
+        ``show_when``) see real values so they render correctly.
+
+        Only acts when the value is None (field never set).  Once the
+        user has made a selection (value is a list), their choices are
+        preserved.
+        """
+        import logging as _logging
+
+        from opi.forms.editables.editable import WidgetType
+        from opi.forms.editables.path import resolve_path
+        from opi.forms.editables.service_path import smart_get_value, smart_set_value
+        from opi.forms.visualizers.bridge import _resolve_options
+
+        _logger = _logging.getLogger(__name__)
+        for editable in editables:
+            if editable.widget != WidgetType.CHECKBOX_GROUP:
+                continue
+            ed = editable.editable
+            if not ed.values_provider:
+                continue
+
+            concrete_path = resolve_path(ed.yaml_path, index)
+            current_value = smart_get_value(yaml_data, concrete_path)
+            _logger.info(
+                "[resolve_defaults] path=%s, current_value=%r, is_none=%s",
+                concrete_path,
+                current_value,
+                current_value is None,
+            )
+            if current_value is not None:
+                continue
+
+            options = _resolve_options(ed.values_provider, provider_context)
+            if options:
+                all_values = [str(o.get("value", "")) for o in options]
+                _logger.info("[resolve_defaults] INJECTING all values: %r", all_values)
+                smart_set_value(yaml_data, concrete_path, all_values)
 
     @staticmethod
     def _build_provider_context(yaml_data: dict[str, Any]) -> dict[str, Any]:
@@ -504,6 +558,10 @@ class FormRenderer:
 
             item_children: list[FormField] = []
             seq_children = editable.children or []
+
+            # Resolve "select all" defaults for sequence children at this index
+            self._resolve_checkbox_group_defaults(seq_children, yaml_data, item_context, index=index)
+
             for child_editable in seq_children:
                 if not should_render_editable(child_editable, yaml_data, index=index, siblings=seq_children):
                     continue
@@ -583,13 +641,17 @@ class FormRenderer:
         provider_context: dict[str, Any] | None = None,
     ) -> FormField:
         """Build a nested sequence (e.g., deployments[0]/components)."""
+        from opi.forms.editables.editable import apply_virtualize
         from opi.forms.editables.path import resolve_path
         from opi.forms.editables.service_path import smart_get_value
         from opi.forms.visualizers.bridge import editable_to_form_field
 
         ed = editable.editable
-        concrete_path = resolve_path(ed.yaml_path, parent_index)
-        items = smart_get_value(yaml_data, concrete_path) or []
+        real_path = resolve_path(ed.yaml_path, parent_index)
+        virt = ed.virtualize
+        form_path = apply_virtualize(real_path, virt) if virt else real_path
+
+        items = smart_get_value(yaml_data, real_path) or []
         if not isinstance(items, list):
             items = []
 
@@ -598,13 +660,14 @@ class FormRenderer:
             items.append({})
 
         nested_field = FormField(
-            name=concrete_path,
-            path=concrete_path,
+            name=form_path,
+            path=form_path,
             schema_type=list,
             widget_type="sequence",
             label=editable.label or "",
             min_items=ed.min_items,
             max_items=ed.max_items,
+            virtualize=virt,
         )
 
         children: list[FormField] = []
@@ -624,12 +687,13 @@ class FormRenderer:
                     index=child_index,
                     edit_mode=edit_mode,
                     provider_context=provider_context,
+                    parent_virtualize=virt,
                 )
                 item_children.append(child_field)
 
             item_field = FormField(
-                name=f"{concrete_path}[{child_index}]",
-                path=f"{concrete_path}[{child_index}]",
+                name=f"{form_path}[{child_index}]",
+                path=f"{form_path}[{child_index}]",
                 schema_type=dict,
                 widget_type="sequence_item",
                 label=f"Item {child_index + 1}",
@@ -727,6 +791,13 @@ class FormRenderer:
 
         # Fieldset layout
         if isinstance(element, Fieldset):
+            if element.depends_on:
+                dep_field = fields.get(element.depends_on)
+                dep_value = dep_field.value if dep_field else None
+                from opi.forms.visualizers.bridge import evaluate_show_when
+
+                if not evaluate_show_when(dep_value, element.show_when):
+                    return ""
             children_html = [self._render_layout_element(child, fields, yaml_data) for child in element.children]
             return self.adapter.render_fieldset(element, children_html)
 
@@ -748,6 +819,16 @@ class FormRenderer:
                         for cf in child_field.children:
                             rel_key = cf.path.removeprefix(item_prefix)
                             relative_fields[rel_key] = cf
+
+                        # Add reverse-virtualized aliases so layout references
+                        # using the real YAML path find the virtual FormField.
+                        from opi.forms.editables.editable import reverse_virtualize
+
+                        for rel_key, cf in list(relative_fields.items()):
+                            if cf.virtualize:
+                                real_key = reverse_virtualize(rel_key, cf.virtualize)
+                                if real_key != rel_key:
+                                    relative_fields[real_key] = cf
 
                         # Render using child_layout
                         if isinstance(element.child_layout, list):

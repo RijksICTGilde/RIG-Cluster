@@ -19,6 +19,8 @@ from opi.forms.editables.fields.components import (
     COMPONENT_USER_ENV_VARS_EDITABLE,
     COMPONENTS_SEQUENCE_EDITABLE,
     INBOUND_PORT_EDITABLE,
+    METRICS_PATH_EDITABLE,
+    METRICS_PORT_EDITABLE,
     OUTBOUND_PORT_EDITABLE,
     PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
     PERSISTENT_STORAGE_NAME_EDITABLE,
@@ -50,6 +52,7 @@ COMPONENT_IMAGE = EditableVisualizer(
         "Kan leeg gelaten worden; er wordt dan geen deployment aangemaakt voor dit component."
     ),
     help_template="container-image.html.j2",
+    attributes={"data-paste-clean": "container-image"},
 )
 
 INBOUND_PORT = EditableVisualizer(
@@ -224,6 +227,20 @@ TEMP_STORAGE_SEQUENCE = EditableVisualizer(
     children=[TEMP_STORAGE_NAME, TEMP_STORAGE_SIZE, TEMP_STORAGE_MOUNT_PATH],
 )
 
+METRICS_PORT = EditableVisualizer(
+    editable=METRICS_PORT_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Metrics poort",
+    description="De poort waarop Prometheus metrics worden geserveerd.",
+)
+
+METRICS_PATH = EditableVisualizer(
+    editable=METRICS_PATH_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Metrics pad",
+    description="Het pad waarop de Prometheus metrics beschikbaar zijn.",
+)
+
 COMPONENTS_SEQUENCE = EditableVisualizer(
     editable=COMPONENTS_SEQUENCE_EDITABLE,
     widget=WidgetType.SEQUENCE,
@@ -244,5 +261,7 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         COMPONENT_USER_ENV_VARS,
         PERSISTENT_STORAGE_SEQUENCE,
         TEMP_STORAGE_SEQUENCE,
+        METRICS_PORT,
+        METRICS_PATH,
     ],
 )

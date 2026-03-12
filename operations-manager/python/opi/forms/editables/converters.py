@@ -106,6 +106,10 @@ class ServiceListConverter:
 
         Handles both list input (multiple checkboxes) and single string
         (one checkbox checked, json-enc passes a scalar instead of array).
+
+        When a storage service is checked, ``json-enc.js`` promotes the
+        string entry to a dict (``{"persistent-storage": {"config": ...}}``).
+        These dicts are kept as-is so storage config is preserved.
         """
         if isinstance(value, list):
             return value
@@ -229,7 +233,9 @@ class KeyValueConverter:
         if isinstance(value, dict):
             if not value:
                 return ""
-            # Stored as dict — convert to KEY: value text for the editor.
+            if self.fmt == "env":
+                return "\n".join(f"{k}={v}" for k, v in value.items())
+            # YAML format: KEY: value text for the editor.
             # dict() strips ruamel CommentedMap so stdlib yaml.dump works.
             return yaml.dump(dict(value), default_flow_style=False, allow_unicode=True).rstrip("\n")
         return str(value or "")

@@ -98,6 +98,7 @@ DEPLOYMENT_COMP_IMAGE = EditableVisualizer(
     editable=DEPLOYMENT_COMP_IMAGE_EDITABLE,
     widget=WidgetType.TEXT,
     label="Container image",
+    attributes={"data-paste-clean": "container-image"},
 )
 
 DEPLOYMENT_COMP_PULL_POLICY = EditableVisualizer(

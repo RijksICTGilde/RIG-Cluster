@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.editables.editable import apply_virtualize
 from opi.forms.editables.path import resolve_path
 from opi.forms.editables.service_path import smart_get_value
 from opi.forms.field import FormField
@@ -20,6 +21,7 @@ def editable_to_form_field(
     index: int | None = None,
     edit_mode: bool = False,
     provider_context: dict[str, Any] | None = None,
+    parent_virtualize: tuple[str, str] | None = None,
 ) -> FormField:
     """Convert an EditableVisualizer + YAML data into a FormField.
 
@@ -51,11 +53,13 @@ def editable_to_form_field(
 
     # --- Shared logic ---
 
-    # 1. Resolve the path
-    concrete_path = resolve_path(yaml_path, index)
+    # 1. Resolve the path (real for data access, virtual for form names)
+    real_path = resolve_path(yaml_path, index)
+    virt = ed.virtualize or parent_virtualize
+    form_path = apply_virtualize(real_path, virt) if virt else real_path
 
-    # 2. Extract value from YAML (fall back to default)
-    raw_value = smart_get_value(yaml_data, concrete_path)
+    # 2. Extract value from YAML using the real path (fall back to default)
+    raw_value = smart_get_value(yaml_data, real_path)
     if raw_value is None and default is not None:
         raw_value = default
 
@@ -100,10 +104,10 @@ def editable_to_form_field(
         readonly = True
         description = f"Vereist door: {_service_display_name(locked_by_service)}"
 
-    # 8. Build FormField
+    # 8. Build FormField (use form_path for name/path, look up errors by real_path)
     return FormField(
-        name=concrete_path,
-        path=concrete_path,
+        name=form_path,
+        path=form_path,
         schema_type=str,
         widget_type=widget,
         label=label,
@@ -112,7 +116,7 @@ def editable_to_form_field(
         placeholder=placeholder,
         value=display_value,
         options=options or None,
-        errors=(errors or {}).get(concrete_path, []),
+        errors=(errors or {}).get(real_path, []),
         readonly=readonly,
         readonly_on_edit=readonly_on_edit_flag,
         min_items=min_items,
@@ -123,7 +127,46 @@ def editable_to_form_field(
         help_text=help_text,
         help_template=help_template,
         examples=examples,
+        virtualize=virt,
     )
+
+
+def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool:
+    """Evaluate a ``show_when`` condition against a dependency value.
+
+    Returns True when the condition is met (or when *show_when* is None,
+    in which case truthiness of *dep_value* decides).
+
+    Supported operators:
+    - ``{"contains": "value"}`` — dep_value is a list containing "value"
+    - ``{"contains_any": [...]}`` — dep_value is a list containing any value
+    - ``{"field": "value"}`` — dep_value equals "value"
+    - ``{"field": ["v1", "v2"]}`` — dep_value is in the list
+    """
+    if show_when is None:
+        return bool(dep_value)
+
+    for key, expected in show_when.items():
+        if key == "contains":
+            if not isinstance(dep_value, list):
+                return False
+            names = _extract_names_from_list(dep_value)
+            if expected not in names:
+                return False
+        elif key == "contains_any":
+            if not isinstance(dep_value, list) or not isinstance(expected, list):
+                return False
+            names = _extract_names_from_list(dep_value)
+            if not any(e in names for e in expected):
+                return False
+        else:
+            if isinstance(expected, list):
+                if dep_value not in expected:
+                    return False
+            elif dep_value != expected:
+                return False
+
+    return True
 
 
 def should_render_editable(
@@ -138,11 +181,7 @@ def should_render_editable(
 
     1. No depends_on -> always render (True)
     2. depends_on set, no show_when -> render if dependency value is truthy
-    3. depends_on + show_when -> evaluate conditions:
-       - {"contains": "value"} -> dep_value is list and "value" in dep_value
-       - {"contains_any": [...]} -> dep_value is list and any match
-       - {"field": ["val1", "val2"]} -> dep_value in ["val1", "val2"]
-       - {"field": "value"} -> dep_value == "value"
+    3. depends_on + show_when -> evaluate conditions (see ``evaluate_show_when``)
 
     When *siblings* is provided, the dependency value is passed through the
     dependency field's converter (if any) before comparison.  This is needed
@@ -169,30 +208,7 @@ def should_render_editable(
         if dep_converter and hasattr(dep_converter, "view"):
             dep_value = dep_converter.view(dep_value)
 
-    if show_when is None:
-        return bool(dep_value)
-
-    for key, expected in show_when.items():
-        if key == "contains":
-            if not isinstance(dep_value, list):
-                return False
-            names = _extract_names_from_list(dep_value)
-            if expected not in names:
-                return False
-        elif key == "contains_any":
-            if not isinstance(dep_value, list) or not isinstance(expected, list):
-                return False
-            names = _extract_names_from_list(dep_value)
-            if not any(e in names for e in expected):
-                return False
-        else:
-            if isinstance(expected, list):
-                if dep_value not in expected:
-                    return False
-            elif dep_value != expected:
-                return False
-
-    return True
+    return evaluate_show_when(dep_value, show_when)
 
 
 def resolve_options_for_editable(

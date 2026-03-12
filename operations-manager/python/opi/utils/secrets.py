@@ -310,6 +310,21 @@ class RedisSecret(BaseSecret):
 
 
 @dataclass
+class MetricsAuthSecret(BaseSecret):
+    """Metrics scraper authentication secret.
+
+    Contains the Bearer token that Prometheus sends when scraping /metrics.
+    Applications use this to validate that scrape requests come from Prometheus.
+    The token is cluster-wide (same value for all deployments).
+    """
+
+    token: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-metrics-auth"
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.METRICS_SCRAPER
+
+
+@dataclass
 class PlatformSecret(BaseSecret):
     """Platform-provided variables secret (always available per component)."""
 

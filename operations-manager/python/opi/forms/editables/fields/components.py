@@ -87,7 +87,6 @@ COMPONENT_SERVICES_EDITABLE = Editable(
     yaml_path="components[*]/services",
     converter=ServiceListConverter(),
     values_provider="FilteredServiceOptionsProvider",
-    default="__all__",
 )
 
 COMPONENT_PATH_EDITABLE = Editable(
@@ -119,23 +118,28 @@ COMPONENT_USER_ENV_VARS_EDITABLE = Editable(
 PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config[*]/name",
     required=True,
+    default="data",
 )
 
 PERSISTENT_STORAGE_SIZE_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config[*]/size",
     values_provider="StorageSizeOptionsProvider",
+    default="1Gi",
 )
 
 PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config[*]/mount-path",
     validator=PathValidator(),
     required=True,
+    default="/data",
 )
 
 PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config",
     depends_on="components[*]/services",
     show_when={"contains": "persistent-storage"},
+    virtualize=("services", "_services-config"),
+    min_items=1,
     children=[
         PERSISTENT_STORAGE_NAME_EDITABLE,
         PERSISTENT_STORAGE_SIZE_EDITABLE,
@@ -146,28 +150,53 @@ PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
 TEMP_STORAGE_NAME_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config[*]/name",
     required=True,
+    default="tmp",
 )
 
 TEMP_STORAGE_SIZE_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config[*]/size",
     values_provider="StorageSizeOptionsProvider",
+    default="1Gi",
 )
 
 TEMP_STORAGE_MOUNT_PATH_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config[*]/mount-path",
     validator=PathValidator(),
     required=True,
+    default="/tmp",
 )
 
 TEMP_STORAGE_SEQUENCE_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config",
     depends_on="components[*]/services",
     show_when={"contains": "temp-storage"},
+    virtualize=("services", "_services-config"),
+    min_items=1,
     children=[
         TEMP_STORAGE_NAME_EDITABLE,
         TEMP_STORAGE_SIZE_EDITABLE,
         TEMP_STORAGE_MOUNT_PATH_EDITABLE,
     ],
+)
+
+METRICS_PORT_EDITABLE = Editable(
+    yaml_path="components[*]/services{metrics-scraper}/port",
+    converter=IntegerConverter(),
+    required=True,
+    default=8080,
+    depends_on="components[*]/services",
+    show_when={"contains": "metrics-scraper"},
+    virtualize=("services", "_services-config"),
+)
+
+METRICS_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/services{metrics-scraper}/path",
+    default="/metrics",
+    validator=PathValidator(),
+    required=True,
+    depends_on="components[*]/services",
+    show_when={"contains": "metrics-scraper"},
+    virtualize=("services", "_services-config"),
 )
 
 COMPONENTS_SEQUENCE_EDITABLE = Editable(
@@ -189,5 +218,7 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_USER_ENV_VARS_EDITABLE,
         PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
         TEMP_STORAGE_SEQUENCE_EDITABLE,
+        METRICS_PORT_EDITABLE,
+        METRICS_PATH_EDITABLE,
     ],
 )

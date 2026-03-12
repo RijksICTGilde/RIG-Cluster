@@ -510,16 +510,39 @@
         if (completedActions) completedActions.style.display = '';
     }
 
-    function showError(error) {
+    function showError(error, tasks) {
         const errorMessage = document.getElementById('error-message');
         const errorDetails = document.getElementById('error-details');
 
         if (errorMessage) {
             errorMessage.style.display = 'block';
         }
-        if (errorDetails && error) {
-            errorDetails.textContent = error;
+        if (errorDetails) {
+            // Collect specific error messages from failed tasks
+            var details = [];
+            if (tasks && tasks.length > 0) {
+                tasks.forEach(function(task) {
+                    if (task.error) details.push(task.error);
+                    if (task.subtasks) {
+                        task.subtasks.forEach(function(sub) {
+                            if (sub.error) details.push(sub.error);
+                        });
+                    }
+                });
+            }
+            if (details.length > 0) {
+                errorDetails.innerHTML = details.map(function(d) {
+                    return '<p>' + d.replace(/</g, '&lt;') + '</p>';
+                }).join('');
+            } else if (error) {
+                errorDetails.textContent = error;
+            }
         }
+        // Show project details link so the user can fix the issue
+        var defaultActions = document.getElementById('default-actions');
+        var completedActions = document.getElementById('completed-actions');
+        if (defaultActions) defaultActions.style.display = 'none';
+        if (completedActions) completedActions.style.display = '';
     }
 
     async function pollTaskStatus() {
@@ -552,7 +575,7 @@
                 showSuccess();
             } else if (data.status === 'failed') {
                 clearInterval(pollTimer);
-                showError(data.error || 'Project aanmaak mislukt');
+                showError(data.error || 'Project aanmaak mislukt', data.tasks);
             }
 
         } catch (error) {
