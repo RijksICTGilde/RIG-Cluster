@@ -113,6 +113,7 @@ def create_test_app():
                 "opi.connectors.argo.create_argo_connector",
                 return_value=MagicMock(auth_token=None),
             ),
+            patch("opi.handlers.project_file_handler.save_project_file"),
         ):
             # Mark all readiness services as ready
             import opi.core.readiness as readiness_module
