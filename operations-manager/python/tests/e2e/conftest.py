@@ -56,6 +56,12 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="session")
+def browser_type_launch_args(browser_type_launch_args: dict) -> dict:
+    """Add --no-sandbox for running in containers (e.g. Docker as root)."""
+    return {**browser_type_launch_args, "args": ["--no-sandbox", "--disable-setuid-sandbox"]}
+
+
+@pytest.fixture(scope="session")
 def app_server() -> Generator[str]:
     """Start the real FastAPI app on a free TCP port, yield the base URL."""
     port = _free_port()
