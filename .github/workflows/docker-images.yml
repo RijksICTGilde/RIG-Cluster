@@ -1,0 +1,143 @@
+name: Docker — Supporting Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Image to build'
+        required: true
+        type: choice
+        options:
+          - rig-backup
+          - cmp-kustomize-sops
+          - postgresql-with-dictionaries
+          - all
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      calver_tag: ${{ steps.calver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate CalVer tag
+        id: calver
+        run: |
+          PREFIX="$(date -u +%Y.%-m)"
+          PATCH=$(git tag -l "${PREFIX}.*" | sed "s/${PREFIX}\.//" | sort -n | tail -1)
+          NEXT_PATCH=$(( ${PATCH:-0} + 1 ))
+          TAG="${PREFIX}.${NEXT_PATCH}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "CalVer tag: ${TAG}"
+
+  rig-backup:
+    needs: prepare
+    if: inputs.image == 'rig-backup' || inputs.image == 'all'
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-backup
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: operations-manager/backup-image
+          file: operations-manager/backup-image/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.calver_tag }}
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=rig-backup
+          cache-to: type=gha,scope=rig-backup,mode=max
+
+  cmp-kustomize-sops:
+    needs: prepare
+    if: inputs.image == 'cmp-kustomize-sops' || inputs.image == 'all'
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-cmp-argo-kustomize-sops
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/cmp-kustomize-sops/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.calver_tag }}
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=cmp-kustomize-sops
+          cache-to: type=gha,scope=cmp-kustomize-sops,mode=max
+
+  postgresql-with-dictionaries:
+    needs: prepare
+    if: inputs.image == 'postgresql-with-dictionaries' || inputs.image == 'all'
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ghcr.io/rijksictgilde/zad/postgresql-with-dictionaries
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: images/postgresql-with-dictionaries
+          file: images/postgresql-with-dictionaries/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.calver_tag }}
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=postgresql
+          cache-to: type=gha,scope=postgresql,mode=max

@@ -16,14 +16,14 @@ import os
 import socket
 import threading
 from collections.abc import Generator
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
 from playwright.sync_api import BrowserContext, Page
-
-SECRET_KEY = "e2e-test-secret-key"
+from tests.e2e.testserver import SECRET_KEY, create_test_app
 
 # Sandbox config — override via environment variables
 E2E_BASE_URL = os.environ.get("E2E_BASE_URL", "")
@@ -58,36 +58,10 @@ def _free_port() -> int:
 @pytest.fixture(scope="session")
 def app_server() -> Generator[str]:
     """Start the real FastAPI app on a free TCP port, yield the base URL."""
-    from unittest.mock import AsyncMock, patch
-
     port = _free_port()
 
-    # Patch startup tasks and settings before importing the app
-    with (
-        patch("opi.core.startup.run_startup_tasks", new_callable=AsyncMock),
-        patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
-        patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
-    ):
-        # Mark all readiness services as ready
-        import opi.core.readiness as readiness_module
-
-        readiness_module._state = None
-        state = readiness_module.get_readiness_state()
-        state.database.mark_ready()
-        state.keycloak.mark_ready()
-        state.oauth.mark_ready()
-        state.projects.mark_ready()
-
-        from opi.server import create_app
-
-        app = create_app()
-
-        # Add test user email to the allowlist so SSO-protected routes work
-        from opi.services.user_service import get_user_service
-
-        user_service = get_user_service()
-        user_service.add_allowed_emails([TEST_USER["email"]])
-
+    ctx = create_test_app()
+    with ctx() as app:
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         server = uvicorn.Server(config)
 
@@ -139,6 +113,18 @@ def auth_page(authenticated_context: BrowserContext) -> Generator[Page]:
     page = authenticated_context.new_page()
     yield page
     page.close()
+
+
+@pytest.fixture(scope="session")
+def screenshot_dir() -> Path:
+    """Directory for saving E2E screenshots.
+
+    Uses E2E_SCREENSHOT_DIR env var, or defaults to a temp directory.
+    """
+    env_dir = os.environ.get("E2E_SCREENSHOT_DIR")
+    path = Path(env_dir) if env_dir else Path(__file__).parent / "screenshots"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 # --- Sandbox fixtures ---

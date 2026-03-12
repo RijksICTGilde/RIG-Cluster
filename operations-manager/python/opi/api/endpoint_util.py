@@ -1,5 +1,6 @@
 import logging
 import re
+import secrets
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
@@ -45,7 +46,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
         project_service = get_project_service()
         project = project_service.get_project(project_name_from_url)
 
-        if not project or project.api_key != x_api_key:
+        if not project or not secrets.compare_digest(project.api_key, x_api_key):
             logger.warning(f"Authentication failed for route {func.__name__} - invalid API key")
             raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -110,7 +111,7 @@ def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
                 detail="This endpoint requires ADMIN_API_KEY to be configured",
             )
 
-        if x_api_key != settings.ADMIN_API_KEY:
+        if not secrets.compare_digest(x_api_key, settings.ADMIN_API_KEY):
             logger.warning(f"Authentication failed for route {func.__name__} - invalid admin API key")
             raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -151,7 +152,7 @@ def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
                 detail="This endpoint requires MASTER_API_KEY to be configured",
             )
 
-        if x_api_key != settings.MASTER_API_KEY:
+        if not secrets.compare_digest(x_api_key, settings.MASTER_API_KEY):
             logger.warning(f"Authentication failed for route {func.__name__} - invalid master API key")
             raise HTTPException(status_code=401, detail="Invalid API key")
 

@@ -1,4 +1,5 @@
 import logging
+import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -68,7 +69,7 @@ def _validate_task_api_key(request: Request, task: dict) -> None:
 
     project_service = get_project_service()
     project = project_service.get_project(project_name)
-    if not project or project.api_key != api_key:
+    if not project or not secrets.compare_digest(project.api_key, api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
@@ -162,7 +163,7 @@ async def list_tasks(
         raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
     project_service_inst = get_project_service()
     project = project_service_inst.get_project(project_name)
-    if not project or project.api_key != api_key:
+    if not project or not secrets.compare_digest(project.api_key, api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     logger.info(

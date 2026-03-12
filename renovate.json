@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 9am on monday"],
+  "labels": ["dependencies"],
+  "kubernetes": {
+    "fileMatch": [
+      "infrastructure/.+\\.yaml$",
+      "bootstrap/.+\\.yaml$"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "Group minor and patch updates",
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "minor and patch dependencies"
+    },
+    {
+      "description": "GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "labels": ["dependencies", "ci"]
+    },
+    {
+      "description": "Docker image updates",
+      "matchManagers": ["dockerfile"],
+      "labels": ["dependencies", "docker"]
+    },
+    {
+      "description": "Kubernetes manifest image updates",
+      "matchManagers": ["kubernetes"],
+      "labels": ["dependencies", "infrastructure"]
+    }
+  ]
+}
