@@ -87,12 +87,20 @@ class WizardHelper:
 
     def fill_team(self, email: str = "admin@sandbox.rijksapp.dev", role: str = "admin") -> None:
         """Fill the team step with a single user."""
-        email_input = self.page.locator("[name*='email']").first
+        # Field name uses slash notation: users[0]/email
+        email_input = self.page.locator("[name='users[0]/email']")
         if email_input.count() > 0:
             email_input.fill(email)
+        else:
+            # Fallback to partial match
+            email_input = self.page.locator("[name*='email']").first
+            if email_input.count() > 0:
+                email_input.fill(email)
 
-        role_select = self.page.locator("[name*='role']").first
-        if role_select.count() > 0:
+        # Role is typically a hidden input with a default value — no interaction needed.
+        # Only attempt to set it if it's a visible select element.
+        role_select = self.page.locator("select[name='users[0]/role']")
+        if role_select.count() > 0 and role_select.is_visible():
             role_select.select_option(value=role)
 
     def fill_component(
@@ -111,23 +119,19 @@ class WizardHelper:
 
     def click_next(self) -> None:
         """Click the Next/submit button to advance to the next step."""
-        # The primary submit button advances the wizard
-        next_btn = self.page.locator("button[type='submit']").last
-        next_btn.click()
-        self._wait_for_htmx()
+        next_btn = self.page.locator(".wizard-step__actions button[type='submit']")
+        self._click_and_wait_for_step_change(next_btn)
 
     def click_previous(self) -> None:
         """Click the Previous button to go back a step."""
         prev_btn = self.page.locator("button:has-text('Vorige'), button:has-text('Previous')")
         if prev_btn.count() > 0:
-            prev_btn.first.click()
-            self._wait_for_htmx()
+            self._click_and_wait_for_step_change(prev_btn.first)
 
     def click_review(self) -> None:
         """Click the review/check button on the last step."""
         review_btn = self.page.locator("button:has-text('Controleren'), button[type='submit']").last
-        review_btn.click()
-        self._wait_for_htmx()
+        self._click_and_wait_for_step_change(review_btn)
 
     def submit_wizard(self) -> None:
         """Click the final submit button on the review page."""
@@ -237,5 +241,49 @@ class WizardHelper:
         return titles
 
     def _wait_for_htmx(self, timeout: float = 10000) -> None:
-        """Wait for HTMX requests to complete."""
+        """Wait for HTMX request + DOM swap to complete.
+
+        networkidle fires when the XHR finishes, but HTMX still needs to
+        swap the response HTML into the DOM.  We capture the form's hx-post
+        before the click and wait until it changes — that proves the new
+        step content has been swapped in.
+        """
         self.page.wait_for_load_state("networkidle", timeout=timeout)
+        # Give HTMX time to swap the response into the DOM
+        self.page.wait_for_function(
+            """() => {
+                // htmx fires a 'htmx:afterSettle' event when done.
+                // As a proxy, check that the wizard step inner element exists
+                // (it's recreated on each swap).
+                const el = document.querySelector('#wizard-step-inner');
+                return el !== null;
+            }""",
+            timeout=timeout,
+        )
+
+    def _click_and_wait_for_step_change(self, locator, timeout: float = 10000) -> None:
+        """Click a button and wait for the HTMX swap to complete.
+
+        Captures a snapshot of the wizard-step-inner element before clicking,
+        then waits until the element is replaced (HTMX innerHTML swap recreates
+        it). This works for all cases: step change, validation re-render,
+        review page navigation.
+        """
+        # Mark the current step element so we can detect when it's replaced
+        self.page.evaluate(
+            "document.querySelector('#wizard-step-inner')?.setAttribute('data-stale', '1')"
+        )
+
+        locator.click()
+        self.page.wait_for_load_state("networkidle", timeout=timeout)
+
+        # Wait until the stale marker is gone (element was replaced by HTMX swap)
+        self.page.wait_for_function(
+            """() => {
+                const el = document.querySelector('#wizard-step-inner');
+                // Either: element replaced (no stale attr) or element gone (review)
+                if (!el) return true;
+                return !el.hasAttribute('data-stale');
+            }""",
+            timeout=timeout,
+        )

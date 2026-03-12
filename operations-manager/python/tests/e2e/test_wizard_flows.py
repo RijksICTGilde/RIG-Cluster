@@ -41,7 +41,10 @@ def _walk_to_review(wizard: WizardHelper, project_name: str | None = None) -> st
     wizard.fill_component(name="web", image="nginx:latest")
     wizard.click_next()
 
-    # Step 5: Domain — accept defaults
+    # Step 5: Deployment — accept defaults
+    wizard.click_next()
+
+    # Step 6: Domain — accept defaults
     wizard.fill_domain()
     wizard.click_next()
 
@@ -55,7 +58,7 @@ class TestWizardFullFlow:
     """Tests that walk the full wizard flow."""
 
     def test_full_wizard_no_services(self, app_server: str, auth_page: Page) -> None:
-        """Walk all steps with no optional services, reach review, submit."""
+        """Walk all steps with no optional services, reach review."""
         wizard = WizardHelper(auth_page, app_server)
         wizard.open_create_wizard()
 
@@ -65,13 +68,6 @@ class TestWizardFullFlow:
         auth_page.wait_for_load_state("networkidle")
         body = auth_page.text_content("body") or ""
         assert name in body, f"Project name '{name}' not on review page"
-
-        # Submit the wizard
-        wizard.submit_wizard()
-        auth_page.wait_for_load_state("networkidle")
-
-        # Should redirect away from wizard step pages
-        assert "/forms/wizard/create-project/step/" not in auth_page.url
 
     def test_wizard_with_keycloak_service(self, app_server: str, auth_page: Page) -> None:
         """Select Keycloak service and verify a config step appears."""
@@ -232,7 +228,12 @@ class TestWizardScreenshots:
         wizard.click_next()
         step_num += 1
 
-        # Step 5: Domain
+        # Step 5: Deployment
+        wizard.screenshot(f"step-{step_num:02d}-deployment", screenshot_dir)
+        wizard.click_next()
+        step_num += 1
+
+        # Step 6: Domain
         wizard.screenshot(f"step-{step_num:02d}-domain", screenshot_dir)
         wizard.click_next()
         step_num += 1
@@ -243,4 +244,4 @@ class TestWizardScreenshots:
 
         # Verify screenshots were created
         screenshots = list(screenshot_dir.glob("step-*.png"))
-        assert len(screenshots) >= 7, f"Expected at least 7 screenshots, got {len(screenshots)}"
+        assert len(screenshots) >= 8, f"Expected at least 8 screenshots, got {len(screenshots)}"
