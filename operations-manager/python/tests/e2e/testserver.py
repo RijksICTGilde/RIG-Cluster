@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 SECRET_KEY = "e2e-test-secret-key"
 
+# Fixed test AGE keypair for E2E testing (DO NOT use in production)
+TEST_AGE_PUBLIC_KEY = "age10uegg2n4sxnsmpd00xjqh8e80hhrs9983yhy673gp8k0aevn4dtsn9d8xj"
+TEST_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1P9VAE6J5J7FK0LF2TH0FG7HMNS8XC9T4GTJQNGWRJAS40DYAGULQTCCAMK"
+
 TEST_USER_EMAIL = "test@example.com"
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "projects"
@@ -99,6 +103,7 @@ def create_test_app():
                 "opi.core.simple_background.process_project_yaml_background",
                 new_callable=AsyncMock,
             ),
+            patch("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", TEST_AGE_PRIVATE_KEY),
         ):
             # Mark all readiness services as ready
             import opi.core.readiness as readiness_module
