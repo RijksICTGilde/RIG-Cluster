@@ -17,6 +17,8 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from playwright.sync_api import Page
 
 
@@ -172,6 +174,67 @@ class WizardHelper:
         """Return all visible validation error messages."""
         errors = self.page.locator(".rvo-form-field__error, .field-error, [role='alert']")
         return [errors.nth(i).text_content() or "" for i in range(errors.count())]
+
+    def fill_services(self, services: list[str] | None = None) -> None:
+        """Select service cards on the services step.
+
+        Args:
+            services: List of service names to select (e.g., ["keycloak", "postgresql"]).
+                      If None or empty, no services are selected (just advance).
+        """
+        if not services:
+            return
+
+        for service in services:
+            # Try clicking service cards by data attribute, label text, or checkbox
+            card = self.page.locator(
+                f"[data-service='{service}'], label:has-text('{service}'), input[value='{service}']"
+            ).first
+            if card.count() > 0:
+                card.click()
+
+    def fill_deployment(
+        self,
+        name: str = "default",
+        image: str = "nginx:latest",
+    ) -> None:
+        """Fill deployment step fields."""
+        name_input = self.page.locator("[name*='deployment'] [name*='name'], [name*='name']").first
+        if name_input.count() > 0:
+            name_input.fill(name)
+
+        image_input = self.page.locator("[name*='image']").first
+        if image_input.count() > 0:
+            image_input.fill(image)
+
+    def fill_domain(self) -> None:
+        """Accept defaults on the domain step (just advance without changes)."""
+        # Domain step typically has defaults; nothing to fill for basic flow.
+
+    def screenshot(self, name: str, directory: Path) -> Path:
+        """Take a full-page screenshot and save it.
+
+        Args:
+            name: Screenshot filename (without extension).
+            directory: Directory to save the screenshot in.
+
+        Returns:
+            Path to the saved screenshot file.
+        """
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{name}.png"
+        self.page.screenshot(path=str(path), full_page=True)
+        return path
+
+    def get_visible_step_titles(self) -> list[str]:
+        """Return all visible step titles from the step indicator."""
+        steps = self.page.locator("[data-step], .wizard-step, .step-indicator li, nav li")
+        titles = []
+        for i in range(steps.count()):
+            text = steps.nth(i).text_content()
+            if text:
+                titles.append(text.strip())
+        return titles
 
     def _wait_for_htmx(self, timeout: float = 10000) -> None:
         """Wait for HTMX requests to complete."""
