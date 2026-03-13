@@ -113,6 +113,7 @@ class KeycloakManager:
             subdomain = deployment.get("subdomain")
             base_domain = deployment.get("base-domain")
             domain_mode = deployment.get("domain-mode")
+            domain_format = deployment.get("domain-format")
 
             if domain_mode == "nice-url":
                 logger.info(
@@ -141,6 +142,7 @@ class KeycloakManager:
                 subdomain=subdomain,
                 base_domain=base_domain,
                 hostname_format=HostnameFormat.from_domain_mode(domain_mode),
+                domain_format=domain_format,
             )
             if all_ingress_hosts:
                 logger.info(f"Generated hostnames for components: {all_ingress_hosts}")
@@ -587,6 +589,35 @@ class KeycloakManager:
 
         return merged_config
 
+    async def handle_service_removal(
+        self,
+        project_name: str,
+        deployment_name: str,
+        deployment_data: dict[str, Any],
+        project_data: dict[str, Any],
+        marked_for_deletion_service: Any = None,
+    ) -> dict[str, Any]:
+        """Handle cleanup when Keycloak service is removed from a deployment.
+
+        Keycloak resources (clients, redirect URIs) are ephemeral and always
+        deleted immediately.  The ``marked_for_deletion_service`` parameter is
+        accepted for interface consistency but is ignored.
+
+        Args:
+            project_name: Name of the project.
+            deployment_name: Name of the deployment losing the service.
+            deployment_data: The deployment dict from the *previous* YAML.
+            project_data: The *previous* project YAML (so internal service
+                checks still pass).
+            marked_for_deletion_service: Ignored (Keycloak is always immediate).
+
+        Returns:
+            Structured result dict with operations, errors, success.
+        """
+        result = await self.delete_resources_for_deployment(project_data, deployment_data)
+        result["trigger"] = "service_removal"
+        return result
+
     async def _get_sso_components_for_deployment(self, project_data: dict[str, Any], deployment_name: str) -> list[str]:
         """
         Get list of components in a deployment that use Keycloak service.
@@ -609,15 +640,13 @@ class KeycloakManager:
 
         # Then check if any of these components use Keycloak service
         for component_ref in component_refs:
-            component_query = jsonpath_parse(f"$.components[?@.name=='{component_ref}']['uses-services']")
-            component_services = [match.value for match in component_query.find(project_data)]
-            # Flatten the services list (in case it's nested)
-            all_services = []
-            for services in component_services:
-                if isinstance(services, list):
-                    all_services.extend(services)
-                else:
-                    all_services.append(services)
+            component = next(
+                (c for c in project_data.get("components", []) if c.get("name") == component_ref),
+                None,
+            )
+            if not component:
+                continue
+            all_services = ServiceAdapter.extract_service_names_from_project_services(component.get("services", []))
 
             if ServiceType.KEYCLOAK.value in all_services:
                 sso_components.append(component_ref)
@@ -641,9 +670,11 @@ class KeycloakManager:
             components = project_data.get("components", [])
             for component in components:
                 if component.get("name") == component_reference:
-                    # Check uses-services array for Keycloak
-                    uses_services = component.get("uses-services", [])
-                    component_services = ServiceAdapter.parse_services_from_strings(uses_services)
+                    # Check services list for Keycloak
+                    service_names = ServiceAdapter.extract_service_names_from_project_services(
+                        component.get("services", [])
+                    )
+                    component_services = ServiceAdapter.parse_services_from_strings(service_names)
                     has_keycloak_service = ServiceType.KEYCLOAK in component_services
 
                     if has_keycloak_service:
@@ -689,9 +720,11 @@ class KeycloakManager:
             if not helm_chart_def:
                 continue
 
-            # Check uses-services in the helm-chart definition
-            uses_services = helm_chart_def.get("uses-services", [])
-            chart_services = ServiceAdapter.parse_services_from_strings(uses_services)
+            # Check services in the helm-chart definition
+            service_names = ServiceAdapter.extract_service_names_from_project_services(
+                helm_chart_def.get("services", [])
+            )
+            chart_services = ServiceAdapter.parse_services_from_strings(service_names)
             if ServiceType.KEYCLOAK in chart_services:
                 return True
 
@@ -729,9 +762,9 @@ class KeycloakManager:
             if not helmfile_def:
                 continue
 
-            # Check uses-services in the helmfile definition
-            uses_services = helmfile_def.get("uses-services", [])
-            helmfile_services = ServiceAdapter.parse_services_from_strings(uses_services)
+            # Check services in the helmfile definition
+            service_names = ServiceAdapter.extract_service_names_from_project_services(helmfile_def.get("services", []))
+            helmfile_services = ServiceAdapter.parse_services_from_strings(service_names)
             if ServiceType.KEYCLOAK in helmfile_services:
                 return True
 
@@ -912,7 +945,7 @@ class KeycloakManager:
                 ingress_hosts=ingress_hosts,
                 realm_name=realm_name,
                 support_http=support_http,
-                additional_redirect_uris=additional_redirect_uris if additional_redirect_uris else None,
+                additional_redirect_uris=additional_redirect_uris or None,
             )
 
             # Apply access restriction if configured

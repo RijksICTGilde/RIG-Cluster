@@ -1,12 +1,15 @@
 """MinIO service manager for handling object storage resources."""
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
-from opi.services import ServiceType
+from opi.services import CloneFromType, ServiceType
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import MinIOSecret
@@ -194,17 +197,22 @@ class MinioManager:
                 )
             else:
                 clone_type = clone_from.get("type")
-                if clone_type == "remote-source":
+                if clone_type == CloneFromType.REMOTE_SOURCE.value:
                     remote_source_name = clone_from.get("reference")
                     await self._handle_remote_source_clone(
                         project_name, deployment_name, remote_source_name, project_data, force_clone
                     )
                     return
-                elif clone_type == "deployment":
+                elif clone_type == CloneFromType.DEPLOYMENT.value:
                     source_deployment = clone_from.get("reference")
                     logger.info(f"Deployment {deployment_name} has clone-from deployment: {source_deployment}")
                     await self.clone_minio_from_deployment(project_data, deployment, source_deployment)
                     return
+                elif clone_type == CloneFromType.BACKUP.value:
+                    logger.info(
+                        f"Clone-from type 'backup' for deployment '{deployment_name}': "
+                        "skipping live MinIO clone, data will come from backup restore"
+                    )
                 else:
                     raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
 
@@ -667,6 +675,81 @@ class MinioManager:
 
         return deletion_results
 
+    async def handle_service_removal(
+        self,
+        project_name: str,
+        deployment_name: str,
+        deployment_data: dict[str, Any],
+        project_data: dict[str, Any],
+        marked_for_deletion_service: "MarkedForDeletionService | None" = None,
+    ) -> dict[str, Any]:
+        """Handle cleanup when MinIO service is removed from a deployment.
+
+        If a ``MarkedForDeletionService`` is provided the bucket, user, and
+        policy are marked for deferred deletion.  Otherwise they are deleted
+        immediately via ``delete_resources_for_deployment``.
+
+        Args:
+            project_name: Name of the project.
+            deployment_name: Name of the deployment losing the service.
+            deployment_data: The deployment dict from the *previous* YAML.
+            project_data: The *previous* project YAML (so internal service
+                checks still pass).
+            marked_for_deletion_service: Optional service for deferred deletion.
+
+        Returns:
+            Structured result dict with operations, errors, success.
+        """
+        cluster = deployment_data.get("cluster", "")
+
+        result: dict[str, Any] = {
+            "service": "minio",
+            "deployment": deployment_name,
+            "trigger": "service_removal",
+            "operations": [],
+            "success": True,
+            "errors": [],
+        }
+
+        if marked_for_deletion_service is not None:
+            bucket_name = generate_bucket_name(project_name, deployment_name)
+            minio_user = generate_minio_username(project_name, deployment_name)
+            minio_policy = generate_minio_policy_name(project_name, deployment_name)
+
+            for rtype, rname in [
+                ("minio_bucket", bucket_name),
+                ("minio_user", minio_user),
+                ("minio_policy", minio_policy),
+            ]:
+                await marked_for_deletion_service.mark_resource(
+                    resource_type=rtype,
+                    resource_name=rname,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    metadata={"server_alias": "minio"},
+                )
+
+            result["operations"].append(
+                {
+                    "type": "mark_for_deletion",
+                    "resource_type": "minio_bucket",
+                    "resource_name": bucket_name,
+                    "status": "marked",
+                }
+            )
+            logger.info(
+                "Marked MinIO resources for deferred deletion: %s (project=%s, deployment=%s)",
+                bucket_name,
+                project_name,
+                deployment_name,
+            )
+        else:
+            result = await self.delete_resources_for_deployment(project_data, deployment_data)
+            result["trigger"] = "service_removal"
+
+        return result
+
     async def _deployment_uses_minio(self, project_data: dict[str, Any], deployment_name: str) -> bool:
         """
         Check if a deployment uses MinIO service.
@@ -935,7 +1018,7 @@ class MinioManager:
                 logger.info(f"Skipping data copy - source bucket {source_bucket} does not exist")
 
             # Record revision for initial creation
-            initial_gen = current_generation if current_generation is not None else 1
+            initial_gen = current_generation if current_generation is not None else 0
             self.project_manager._revision_manager.record_clone(
                 project_data=project_data,
                 deployment_name=target_deployment_name,
@@ -1746,7 +1829,7 @@ class MinioManager:
 
                 # Record revision for initial creation (if not already incremented)
                 if not generation_was_incremented:
-                    initial_gen = current_generation if current_generation is not None else 1
+                    initial_gen = current_generation if current_generation is not None else 0
                     source_desc = f"external:{source_host}:{source_port}/{source_bucket}"
                     self.project_manager._revision_manager.record_clone(
                         project_data=project_data,

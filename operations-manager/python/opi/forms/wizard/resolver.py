@@ -61,19 +61,39 @@ def _is_visible(section: FormSection, data: dict[str, Any]) -> bool:
 def _merge_step_data(step_data: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Merge per-step data dicts into a single flat dict.
 
+    For list values shared across sections (e.g. ``deployments``), items
+    are merged by index so fields from different sections combine.
+
     The "services" section is merged last so its ``services`` key
     (the authoritative list of selected services) is not overwritten
     by config sections that share the same top-level key (e.g.
     keycloak-config stores its data under ``{"services": [...]}}``
     because its editables' yaml_paths start with ``services/``).
     """
+    import copy
+
+    def _merge_into(target: dict[str, Any], source: dict[str, Any]) -> None:
+        for key, value in source.items():
+            if key in target and isinstance(target[key], list) and isinstance(value, list):
+                tgt_list = target[key]
+                for i, src_item in enumerate(value):
+                    if i < len(tgt_list):
+                        if isinstance(tgt_list[i], dict) and isinstance(src_item, dict):
+                            tgt_list[i].update(copy.deepcopy(src_item))
+                        else:
+                            tgt_list[i] = copy.deepcopy(src_item)
+                    else:
+                        tgt_list.append(copy.deepcopy(src_item))
+            else:
+                target[key] = copy.deepcopy(value)
+
     merged: dict[str, Any] = {}
     services_data: dict[str, Any] | None = None
     for section_id, section_data in step_data.items():
         if section_id == "services":
             services_data = section_data
             continue
-        merged.update(section_data)
+        _merge_into(merged, section_data)
     if services_data is not None:
-        merged.update(services_data)
+        _merge_into(merged, services_data)
     return merged

@@ -22,3 +22,8 @@ patches:
     target:
       kind: Deployment
       name: operations-manager
+  # Uncomment for debug mode (disable hot-reload, enable debugger on port 5678)
+  # - path: patches/enable-debug.yaml
+  #   target:
+  #     kind: Deployment
+  #     name: operations-manager

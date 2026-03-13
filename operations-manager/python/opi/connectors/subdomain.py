@@ -27,15 +27,19 @@ def get_supported_base_domains(cluster: str | None = None) -> set[str]:
     Returns:
         Set of supported base domain strings
     """
+
+    def _extract_domain(entry: str | dict) -> str:
+        return entry["domain"] if isinstance(entry, dict) else entry
+
     if cluster and cluster in CLUSTER_CONFIG:
         nice_url_config = CLUSTER_CONFIG[cluster].get("nice_url", {})
-        return set(nice_url_config.get("supported_domains", []))
+        return {_extract_domain(d) for d in nice_url_config.get("supported_domains", [])}
 
     # Collect all supported domains from all clusters
-    all_domains = set()
+    all_domains: set[str] = set()
     for cluster_config in CLUSTER_CONFIG.values():
         nice_url_config = cluster_config.get("nice_url", {})
-        all_domains.update(nice_url_config.get("supported_domains", []))
+        all_domains.update(_extract_domain(d) for d in nice_url_config.get("supported_domains", []))
     return all_domains
 
 
@@ -69,6 +73,9 @@ def validate_base_domain(base_domain: str, cluster: str | None = None, language:
     supported_domains = get_supported_base_domains(cluster)
 
     if base_domain_lower not in supported_domains:
+        # Accept any syntactically valid domain (custom domain support)
+        if re.match(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$", base_domain_lower):
+            return True, None
         return False, messages["not_supported"].format(
             base_domain=base_domain_lower, supported=", ".join(sorted(supported_domains))
         )

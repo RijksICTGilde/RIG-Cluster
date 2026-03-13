@@ -20,12 +20,14 @@ class TestServiceType:
             "redis",
             "namespace-redis",
             "authorization-wall",
+            "metrics-scraper",
+            "platform",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        assert len(ServiceType) == 10
+        assert len(ServiceType) == 12
 
 
 class TestGetAllServices:

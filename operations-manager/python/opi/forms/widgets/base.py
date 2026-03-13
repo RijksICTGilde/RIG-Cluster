@@ -244,7 +244,7 @@ class WidgetAdapter(ABC):
             "password": self.render_text,  # Password uses text input with type override
             "service_cards": self.render_service_cards,
             "display_card": self.render_display_card,
-            "key_value_editor": self.render_key_value_editor,
+            "key_value": self.render_key_value_editor,
         }
 
         render_method = render_methods.get(widget_type)

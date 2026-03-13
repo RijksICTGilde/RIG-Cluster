@@ -695,7 +695,9 @@ async def restore_project_pvc(
                 )
 
             # 5. Find storage configuration from BASE component
-            storage_list = base_component.get("storage", [])
+            from opi.handlers.project_file_handler import extract_storage_from_component_services
+
+            storage_list = extract_storage_from_component_services(base_component)
             target_storage = None
 
             for idx, storage in enumerate(storage_list):
@@ -936,7 +938,9 @@ async def _restore_pvc(
     # Get storage config from component
     base_components = {c.get("name"): c for c in project_data.get("components", [])}
     base_component = base_components.get(component_name, {})
-    storage_list = base_component.get("storage", []) if isinstance(base_component, dict) else []
+    from opi.handlers.project_file_handler import extract_storage_from_component_services
+
+    storage_list = extract_storage_from_component_services(base_component) if isinstance(base_component, dict) else []
     target_storage = next((s for s in storage_list if s.get("name") == storage_name), None)
 
     storage_size = target_storage.get("size", "10Gi") if target_storage else "10Gi"
@@ -1771,7 +1775,7 @@ async def _restore_pvc_with_versioning(
     # Get storage info from base component
     base_components = {c.get("name"): c for c in project_data.get("components", [])}
     base_component = base_components.get(component_name, {})
-    storage_list = base_component.get("storage", [])
+    storage_list = extract_storage_from_component_services(base_component)
 
     target_storage = None
     for idx, storage in enumerate(storage_list):

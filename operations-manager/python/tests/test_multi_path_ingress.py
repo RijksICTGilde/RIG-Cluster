@@ -145,6 +145,102 @@ class TestExtractComponentPaths:
         assert result == [{"match": "/", "rewrite": None}]
 
 
+class TestExtractDeploymentComponentPaths:
+    """Tests for ProjectFileHandler.extract_deployment_component_paths method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.handler = ProjectFileHandler()
+
+    def test_deployment_level_paths_take_precedence(self):
+        """Deployment-level paths should override component-level path."""
+        project_data = {"components": [{"name": "frontend", "path": "/"}]}
+        deployment_data = {
+            "name": "production",
+            "components": [
+                {
+                    "reference": "frontend",
+                    "image": "nginx:latest",
+                    "paths": [
+                        {"match": "/app", "rewrite": "/"},
+                    ],
+                }
+            ],
+        }
+        result = self.handler.extract_deployment_component_paths(project_data, deployment_data, "frontend")
+        assert result == [{"match": "/app", "rewrite": "/"}]
+
+    def test_falls_back_to_component_level(self):
+        """When no deployment-level paths, should fall back to component-level."""
+        project_data = {"components": [{"name": "api", "path": "/api"}]}
+        deployment_data = {
+            "name": "production",
+            "components": [
+                {"reference": "api", "image": "myapi:latest"},
+            ],
+        }
+        result = self.handler.extract_deployment_component_paths(project_data, deployment_data, "api")
+        assert result == [{"match": "/api", "rewrite": None}]
+
+    def test_default_when_neither_present(self):
+        """When neither deployment nor component paths exist, should return default."""
+        project_data = {"components": [{"name": "app"}]}
+        deployment_data = {
+            "name": "production",
+            "components": [
+                {"reference": "app", "image": "myapp:latest"},
+            ],
+        }
+        result = self.handler.extract_deployment_component_paths(project_data, deployment_data, "app")
+        assert result == [{"match": "/", "rewrite": None}]
+
+    def test_multiple_deployment_paths(self):
+        """Multiple deployment-level paths should all be returned."""
+        project_data = {"components": [{"name": "frontend", "path": "/"}]}
+        deployment_data = {
+            "name": "production",
+            "components": [
+                {
+                    "reference": "frontend",
+                    "image": "nginx:latest",
+                    "paths": [
+                        {"match": "/app", "rewrite": "/"},
+                        {"match": "/static"},
+                    ],
+                }
+            ],
+        }
+        result = self.handler.extract_deployment_component_paths(project_data, deployment_data, "frontend")
+        assert result == [
+            {"match": "/app", "rewrite": "/"},
+            {"match": "/static", "rewrite": None},
+        ]
+
+    def test_empty_deployment_paths_falls_back(self):
+        """Empty deployment paths list should fall back to component-level."""
+        project_data = {"components": [{"name": "api", "path": "/api"}]}
+        deployment_data = {
+            "name": "production",
+            "components": [
+                {"reference": "api", "image": "myapi:latest", "paths": []},
+            ],
+        }
+        result = self.handler.extract_deployment_component_paths(project_data, deployment_data, "api")
+        assert result == [{"match": "/api", "rewrite": None}]
+
+    def test_component_not_in_deployment(self):
+        """Component not in deployment should fall back to component-level."""
+        project_data = {"components": [{"name": "api", "path": "/api"}]}
+        deployment_data = {
+            "name": "production",
+            "components": [
+                {"reference": "frontend", "image": "nginx:latest"},
+            ],
+        }
+        result = self.handler.extract_deployment_component_paths(project_data, deployment_data, "api")
+        assert result == [{"match": "/api", "rewrite": None}]
+
+
 class TestExtractComponentPathBackwardCompatibility:
     """Tests for backward compatibility of extract_component_path method."""
 

@@ -32,13 +32,11 @@
                         {% if section.icon %}<c-icon icon="{{ section.icon }}" size="lg" />{% endif %}
                         {{ section.title }}
                     </c-heading>
-                    <c-button kind="tertiary" size="sm"
+                    <c-button kind="tertiary" size="sm" label="Bewerken"
                               showIcon="before" icon="bewerken"
                               hx-get="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
                               hx-target="#wizard-step-content"
-                              hx-swap="innerHTML">
-                        Bewerken
-                    </c-button>
+                              hx-swap="innerHTML" />
                 </div>
                 <div class="wizard-review__section-content">
                     {{ section.summary_html | safe }}
@@ -49,20 +47,16 @@
     </c-layout-flow>
 
     <div class="wizard-step__actions">
-        <c-button kind="secondary"
+        <c-button kind="secondary" label="Terug"
                   showIcon="before" icon="terug"
                   hx-get="/forms/wizard/{{ flow_id }}/step/{{ steps.last }}"
                   hx-target="#wizard-step-content"
-                  hx-swap="innerHTML">
-            Terug
-        </c-button>
+                  hx-swap="innerHTML" />
 
-        <c-button kind="primary"
+        <c-button kind="primary" label="Project aanmaken"
                   showIcon="before" icon="publicatie"
                   hx-post="/forms/wizard/{{ flow_id }}/submit"
                   hx-target="#wizard-step-content"
-                  hx-swap="innerHTML">
-            Project aanmaken
-        </c-button>
+                  hx-swap="innerHTML" />
     </div>
 </div>

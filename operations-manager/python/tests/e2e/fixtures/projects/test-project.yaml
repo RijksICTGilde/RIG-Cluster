@@ -1,0 +1,32 @@
+name: test-project
+description: "Test project for E2E UI testing"
+
+clusters:
+  - local
+
+users:
+  - email: test@example.com
+    role: admin
+  - email: developer@example.com
+    role: developer
+
+config:
+  api-key: test-api-key-12345
+
+components:
+  - name: frontend
+    publish-on-web: true
+    type: deployment
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    uses-services: []
+
+deployments:
+  - name: default
+    cluster: local
+    namespace: test-project
+    repository: main-repo
+    components:
+      - reference: frontend
+        image: "nginx:latest"

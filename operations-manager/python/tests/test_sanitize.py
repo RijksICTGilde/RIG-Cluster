@@ -8,14 +8,15 @@ import pytest
 class TestSanitizeUnhealthyPods:
     """Test sanitize endpoint with unhealthy deployments."""
 
-    @patch("opi.api.resource_router._trigger_reprocessing", new_callable=AsyncMock)
-    @patch("opi.api.resource_router._commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.commit_project_yaml", new_callable=AsyncMock)
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
     async def test_high_restarts_disables_component(
-        self, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_commit, mock_reprocess
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_commit, mock_reprocess
     ):
         project_data = {
             "name": "my-project",
@@ -23,7 +24,7 @@ class TestSanitizeUnhealthyPods:
             "deployments": [
                 {
                     "name": "production",
-                    "namespace": "default",
+                    "namespace": "my-project",
                     "cluster": "local",
                     "components": [{"reference": "api"}],
                 }
@@ -68,15 +69,18 @@ class TestSanitizeUnhealthyPods:
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
-    async def test_healthy_components_not_disabled(self, mock_get_connector, mock_get_service, mock_kubectl_cls):
+    async def test_healthy_components_not_disabled(
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls
+    ):
         project_data = {
             "name": "my-project",
             "components": [{"name": "api"}],
             "deployments": [
                 {
                     "name": "production",
-                    "namespace": "default",
+                    "namespace": "my-project",
                     "cluster": "local",
                     "components": [{"reference": "api"}],
                 }
@@ -119,14 +123,17 @@ class TestSanitizeUnhealthyPods:
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
-    async def test_already_disabled_skipped(self, mock_get_connector, mock_get_service, mock_kubectl_cls):
+    async def test_already_disabled_skipped(self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls):
         project_data = {
             "name": "my-project",
             "components": [{"name": "api", "disabled": True, "disabled-reason": "previously broken"}],
             "deployments": [
                 {
                     "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "local",
                     "components": [{"reference": "api"}],
                 }
             ],

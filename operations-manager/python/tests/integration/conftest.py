@@ -9,6 +9,7 @@ import asyncio
 import os
 import subprocess
 import time
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
@@ -155,7 +156,7 @@ def kind_cluster(
     kind_cluster_name: str,
     kind_config_path: str,
     test_workloads_path: str,
-) -> str:
+) -> Generator[str]:
     """
     Create a Kind cluster for integration tests.
 
@@ -166,6 +167,8 @@ def kind_cluster(
 
     Note: Cluster cleanup is intentionally omitted to allow reuse
     during development. Use 'task test-kind-delete' to clean up.
+    The kubectl context is restored to its original value after
+    the test session completes.
 
     Usage:
         @pytest.mark.slow
@@ -188,6 +191,20 @@ def kind_cluster(
     if not is_docker_available():
         pytest.skip("Docker not available")
 
+    # Save current kubectl context so we can restore it after tests
+    original_context = None
+    try:
+        result = subprocess.run(
+            ["kubectl", "config", "current-context"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            original_context = result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
     _create_kind_cluster(kind_cluster_name, kind_config_path)
 
     # Set kubectl context
@@ -198,7 +215,16 @@ def kind_cluster(
 
     _deploy_test_workloads(test_workloads_path)
 
-    return kind_cluster_name
+    yield kind_cluster_name
+
+    # Restore the original kubectl context
+    if original_context:
+        subprocess.run(
+            ["kubectl", "config", "use-context", original_context],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
 
 
 @pytest.fixture

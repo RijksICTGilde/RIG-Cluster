@@ -7,24 +7,83 @@
 
 /* ========================================================================
  * Sequence item management
+ *
+ * Context-aware: works in both the wizard (HTMX form submit) and the
+ * detail-page edit modal (fetch to /sequence endpoint).
  * ======================================================================== */
 
 function sequenceAdd(path) {
-    var form = document.getElementById('wizard-step-form');
-    if (!form) return;
-    _seqHidden(form, '_seq_action', 'add');
-    _seqHidden(form, '_seq_path', path);
-    _seqHidden(form, '_seq_index', '');
-    htmx.trigger(form, 'submit');
+    _sequenceDispatch('add', path, '');
 }
 
 function sequenceRemove(path, index) {
-    var form = document.getElementById('wizard-step-form');
-    if (!form) return;
-    _seqHidden(form, '_seq_action', 'remove');
-    _seqHidden(form, '_seq_path', path);
-    _seqHidden(form, '_seq_index', String(index));
-    htmx.trigger(form, 'submit');
+    _sequenceDispatch('remove', path, String(index));
+}
+
+/**
+ * Route the sequence action to the correct handler based on context.
+ */
+function _sequenceDispatch(action, path, index) {
+    var form = document.getElementById('wizard-step-form')
+            || document.getElementById('modal-wizard-form');
+    if (form) {
+        /* Wizard / modal-wizard context: inject hidden fields and trigger HTMX submit */
+        _seqHidden(form, '_seq_action', action);
+        _seqHidden(form, '_seq_path', path);
+        _seqHidden(form, '_seq_index', index);
+        htmx.trigger(form, 'submit');
+        return;
+    }
+
+    /* Detail-edit modal context (legacy non-wizard edit) */
+    var modal = document.getElementById('edit-section-modal');
+    if (modal && modal.dataset.projectName && modal.dataset.sectionId) {
+        _sequenceEditModal(modal, action, path, index);
+    }
+}
+
+/**
+ * Handle sequence action in the detail-edit modal via fetch.
+ */
+function _sequenceEditModal(modal, action, path, index) {
+    var contentEl = document.getElementById('edit-section-content');
+    if (!contentEl) return;
+    if (typeof collectFormData !== 'function') return;
+
+    var projectName = modal.dataset.projectName;
+    var sectionId = modal.dataset.sectionId;
+
+    var formData = collectFormData(contentEl);
+    formData['_seq_action'] = action;
+    formData['_seq_path'] = path;
+    formData['_seq_index'] = index;
+
+    fetch('/projects/' + projectName + '/edit/' + sectionId + '/sequence', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+    })
+    .then(function(response) {
+        if (!response.ok) throw new Error('Fout bij reeks-actie');
+        return response.text();
+    })
+    .then(function(html) {
+        contentEl.innerHTML = html;
+        /* Re-init service cards if present */
+        contentEl.querySelectorAll('.service-cards-grid').forEach(function(grid) {
+            delete grid.dataset.initialized;
+            initServiceCards(grid);
+        });
+        if (typeof initKvEditors === 'function') initKvEditors(contentEl);
+    })
+    .catch(function(err) {
+        var errorEl = document.getElementById('edit-section-error');
+        if (errorEl) {
+            errorEl.textContent = err.message;
+            errorEl.style.display = '';
+        }
+    });
 }
 
 function _seqHidden(form, name, value) {
@@ -79,37 +138,7 @@ function kvToggleFormat(editorId, newFormat) {
             ? 'kv-toggle__btn kv-toggle__btn--active'
             : 'kv-toggle__btn';
     }
-    kvValidate(editorId);
-}
-
-function kvValidate(editorId) {
-    var editor = document.getElementById(editorId);
-    if (!editor) return;
-    var textarea = editor.querySelector('textarea');
-    var status = document.getElementById(editorId + '-status');
-    if (!textarea || !status) return;
-
-    var fmt = editor.dataset.format;
-    var lines = textarea.value.split('\n');
-    var errors = [];
-    var count = 0;
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (!line || line.charAt(0) === '#') continue;
-        count++;
-        if (fmt === 'env' && line.indexOf('=') === -1) {
-            errors.push('Regel ' + (i+1) + ': verwacht KEY=value');
-        } else if (fmt === 'yaml' && line.indexOf(': ') === -1 && line.indexOf(':') === -1) {
-            errors.push('Regel ' + (i+1) + ': verwacht KEY: value');
-        }
-    }
-    if (errors.length > 0) {
-        status.className = 'kv-editor__status kv-editor__status--error';
-        status.textContent = errors[0];
-    } else {
-        status.className = 'kv-editor__status kv-editor__status--ok';
-        status.textContent = count > 0 ? count + ' variabele(n)' : '';
-    }
+    if (typeof switchKvLanguage === 'function') switchKvLanguage(editorId, newFormat);
 }
 
 /* ========================================================================
@@ -224,7 +253,8 @@ function initServiceCards(grid) {
             }
 
             var requirers = revDeps[svc] || [];
-            var locked = checked && requirers.length > 0;
+            var serverLocked = card.dataset.locked === 'true';
+            var locked = checked && (requirers.length > 0 || serverLocked);
 
             if (locked) {
                 card.classList.add('service-card--locked-checked');
@@ -367,33 +397,88 @@ document.addEventListener('keydown', function(e) {
 });
 
 /* ========================================================================
+ * Scroll to first validation error after form submission
+ * ======================================================================== */
+
+function scrollToFirstError(container) {
+    container = container || document;
+    var el = container.querySelector('[aria-invalid="true"]')
+          || container.querySelector('.rvo-form-field__error-text')
+          || container.querySelector('[data-roos-component="alert"]');
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+/* ========================================================================
  * Initialization: on page load and after HTMX swaps
  * ======================================================================== */
 
 function initWizardWidgets(container) {
     container = container || document;
     container.querySelectorAll('.service-cards-grid').forEach(initServiceCards);
+    if (typeof initKvEditors === 'function') initKvEditors(container);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
     initWizardWidgets();
 });
 
-document.addEventListener('htmx:afterSwap', function(event) {
+document.addEventListener('htmx:afterSettle', function(event) {
     initWizardWidgets(event.detail.target);
+    scrollToFirstError(event.detail.target);
 });
 
-/* Validate key-value editors on input */
-document.addEventListener('input', function(e) {
-    var editor = e.target.closest('.kv-editor');
-    if (editor) kvValidate(editor.id);
-});
+
+/* ========================================================================
+ * Paste cleaner for container image fields
+ *
+ * Strips "docker pull " and similar prefixes when pasting into fields
+ * marked with data-paste-clean="container-image".
+ * ======================================================================== */
+
+document.addEventListener('paste', function(e) {
+    var el = e.target.closest('[data-paste-clean="container-image"]')
+          || (e.target.getRootNode && e.target.getRootNode().host
+              && e.target.getRootNode().host.closest
+              && e.target.getRootNode().host.closest('[data-paste-clean="container-image"]'));
+    if (!el) return;
+
+    var pasted = (e.clipboardData || window.clipboardData).getData('text');
+    if (!pasted) return;
+
+    var cleaned = pasted.trim().replace(/^docker\s+pull\s+/i, '');
+    if (cleaned !== pasted) {
+        e.preventDefault();
+        var input = e.target;
+        input.value = cleaned;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        flashCleanIndicator(input);
+    }
+}, true);
+
+function flashCleanIndicator(input) {
+    input.style.transition = 'none';
+    input.style.outlineStyle = 'solid';
+    input.style.outlineWidth = '3px';
+    input.style.outlineColor = '#66bb6a';
+    // Force reflow so the bright green is applied before the transition starts
+    input.offsetHeight;
+    input.style.transition = 'outline-color 0.8s ease-out';
+    input.style.outlineColor = '#1b5e20';
+    input.addEventListener('transitionend', function cleanup() {
+        input.removeEventListener('transitionend', cleanup);
+        input.style.outline = '';
+        input.style.transition = '';
+    });
+}
 
 /* Re-render the current step when a [data-rerender] field changes */
 document.addEventListener('change', function(e) {
     var el = e.target.closest('[data-rerender]');
     if (!el) return;
-    var form = document.getElementById('wizard-step-form');
+    var form = document.getElementById('wizard-step-form')
+            || document.getElementById('modal-wizard-form');
     if (!form) return;
     _seqHidden(form, '_rerender', '1');
     htmx.trigger(form, 'submit');

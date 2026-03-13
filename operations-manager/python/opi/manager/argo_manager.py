@@ -907,3 +907,93 @@ class ArgoManager:
         argocd_url = f"{protocol}://{settings.ARGOCD_HOST}{port_suffix}"
         logger.error(f"ArgoCD dashboard: {argocd_url}/applications/{app_name}")
         raise TimeoutError(error_msg)
+
+    async def wait_for_application_synced(self, app_name: str, timeout: int = 300, poll_interval: int = 5) -> bool:
+        """
+        Wait for an ArgoCD application to be synced and healthy.
+
+        Polls the ArgoCD API until the application reaches Synced+Healthy state,
+        or until a terminal failure is detected.
+
+        Args:
+            app_name: Name of the application to wait for
+            timeout: Maximum time to wait in seconds (default: 300 = 5 minutes)
+            poll_interval: Seconds between status checks (default: 5)
+
+        Returns:
+            True if application is synced and healthy
+
+        Raises:
+            TimeoutError: If application doesn't become ready within timeout
+            RuntimeError: If application enters a terminal failure state
+        """
+        from opi.connectors.argo import create_argo_connector
+
+        logger.info(
+            f"Waiting for ArgoCD application '{app_name}' to be synced and healthy "
+            f"(timeout: {timeout}s, poll: {poll_interval}s)"
+        )
+
+        argo_connector = create_argo_connector()
+        if not await argo_connector.login():
+            raise RuntimeError("Failed to login to ArgoCD")
+
+        import asyncio
+
+        elapsed_time = 0
+        while elapsed_time < timeout:
+            try:
+                status_data = await argo_connector.get_application_status(app_name)
+
+                if not status_data:
+                    logger.debug(f"Could not get status for '{app_name}', retrying...")
+                    await asyncio.sleep(poll_interval)
+                    elapsed_time += poll_interval
+                    continue
+
+                sync_status = status_data.get("status", {}).get("sync", {}).get("status")
+                health_status = status_data.get("status", {}).get("health", {}).get("status")
+
+                if sync_status == "Synced" and health_status == "Healthy":
+                    logger.info(f"Application '{app_name}' is synced and healthy")
+                    return True
+
+                # Check for terminal sync failures
+                operation_state = status_data.get("status", {}).get("operationState", {})
+                operation_phase = operation_state.get("phase")
+                if operation_phase in ("Failed", "Error"):
+                    operation_message = operation_state.get("message", "")
+                    error_msg = f"Application '{app_name}' sync failed: {operation_phase}"
+                    if operation_message:
+                        error_msg += f" - {operation_message}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+
+                # Check for terminal health failure
+                if health_status == "Degraded":
+                    error_msg = f"Application '{app_name}' is degraded"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+
+                logger.debug(
+                    f"Application '{app_name}': sync={sync_status}, health={health_status}, "
+                    f"waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
+                )
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+
+            except (RuntimeError, TimeoutError):
+                raise
+            except PermissionError:
+                # Application may not be accessible yet (AppProject not synced)
+                logger.debug(
+                    f"Permission denied for '{app_name}', waiting for AppProject sync... (elapsed: {elapsed_time}s)"
+                )
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+            except Exception as e:
+                logger.warning(f"Error checking status of '{app_name}': {e}, retrying...")
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+
+        raise TimeoutError(f"Timeout waiting for application '{app_name}' to be synced and healthy after {timeout}s")

@@ -46,22 +46,6 @@ class TestEmptyResults:
             # Results should be present but contain empty logs
             assert "results" in data
 
-    def test_metrics_empty_pod_list(
-        self,
-        test_client: TestClient,
-    ) -> None:
-        """Test that empty pod list from Prometheus is handled correctly."""
-        mock_instance = MagicMock()
-        mock_instance.is_connected = True
-        mock_instance.get_cpu_usage_by_namespace.return_value = []
-
-        with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
-            response = test_client.get("/api/metrics/cpu")
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "success"
-            assert data["data"] == []
-
 
 @pytest.mark.integration
 class TestInvalidInputs:
@@ -105,21 +89,6 @@ class TestInvalidInputs:
         response = test_client.get("/api/logs/")
         # Should return 404 or redirect
         assert response.status_code in (404, 307)
-
-    def test_metrics_invalid_namespace_chars(
-        self,
-        test_client: TestClient,
-    ) -> None:
-        """Test that invalid namespace characters are passed through."""
-        mock_instance = MagicMock()
-        mock_instance.is_connected = True
-        mock_instance.get_cpu_usage_by_namespace.return_value = []
-
-        with patch("opi.api.metrics_router.get_metrics_connector", return_value=mock_instance):
-            # Kubernetes namespace rules: lowercase, alphanumeric, hyphens
-            response = test_client.get("/api/metrics/cpu?namespace=INVALID_NAMESPACE!")
-            assert response.status_code == 200
-            # The API passes through the namespace - Prometheus handles validation
 
 
 @pytest.mark.integration
@@ -313,14 +282,6 @@ class TestResourceNotFound:
         response = test_client.get("/api/nonexistent-endpoint")
         assert response.status_code == 404
 
-    def test_nonexistent_metrics_endpoint(
-        self,
-        test_client: TestClient,
-    ) -> None:
-        """Test that nonexistent metrics endpoints return 404."""
-        response = test_client.get("/api/metrics/nonexistent")
-        assert response.status_code == 404
-
 
 @pytest.mark.integration
 class TestMethodNotAllowed:
@@ -332,14 +293,6 @@ class TestMethodNotAllowed:
     ) -> None:
         """Test that POST to logs endpoint is not allowed."""
         response = test_client.post("/api/logs/test-project")
-        assert response.status_code == 405
-
-    def test_metrics_health_post_not_allowed(
-        self,
-        test_client: TestClient,
-    ) -> None:
-        """Test that POST to metrics health endpoint is not allowed."""
-        response = test_client.post("/api/metrics/health")
         assert response.status_code == 405
 
 

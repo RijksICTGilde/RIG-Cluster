@@ -1,0 +1,68 @@
+name: test-project-detail
+display-name: "Detail Test Project"
+description: "Uitgebreid testproject voor de detailpagina E2E tests"
+
+clusters:
+  - local
+
+users:
+  - email: test@example.com
+    role: admin
+  - email: developer@example.com
+    role: developer
+
+services:
+  - publish-on-web
+  - keycloak
+
+config:
+  age-public-key: "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy"
+  age-private-key: |
+    -----BEGIN AGE ENCRYPTED FILE-----
+    YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB0ZkhrWGhCVEdIT1B5SFEz
+    SVRJSG5zK1RHWFFBTmUvL040RU9LakdqeDE4Cld6c3MwWlJPWDgwYmlETjdEYnFC
+    SUN3U3NMdEFYSEhZZG5veHd3U09Dd2MKLS0tIDg3ZDlMNGZNdWo4WEVRcWRpbE4w
+    Z0x5bi9TT0hOazloWFFUOTJNL1BNYkUKHphHJ9YjoFAsm7M2ylEIRskosRJ4yjDz
+    FHvB2sekCLIoHuLGt0jLowrALzEcAsE0b+rkc1tt7YVswg+t0HvJx0kDdmTSL0X4
+    cXwv+GpqbnY5WLURIHtH8Fq3FubUc91kw532d8NnvC6KwA==
+    -----END AGE ENCRYPTED FILE-----
+  api-key: |
+    -----BEGIN AGE ENCRYPTED FILE-----
+    YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB6ZWFyeFdFcW5mNmNlU2FY
+    cHZucFA0VGpSWTh1UkU0ZG45NlZkVVNsSWpZClZUYU9uS204QnhKdVlUd1N1aG5O
+    SnBsQlQvODVvU3JUREs3c2RUcG95WmsKLS0tIHp6V2daUVlhVUN4aGNWcGorUTk5
+    VjI2TkhYUVBGc1VYTmhHVUZ5YU13RWMKxe/DYoqiPlsrwDHq1wE6kUBNOhDD8SWU
+    7bd8PgkH/2LNFB/EDfnIDwcH2DFXZY3lP5HuMowFu0Cl7g==
+    -----END AGE ENCRYPTED FILE-----
+
+components:
+  - name: web-app
+    publish-on-web: true
+    type: deployment
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    uses-services:
+      - keycloak
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+
+  - name: worker
+    type: deployment
+    ports:
+      outbound: [5432, 443]
+    uses-services: []
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+
+deployments:
+  - name: default
+    cluster: local
+    namespace: test-project-detail
+    components:
+      - reference: web-app
+        image: "nginx:latest"
+      - reference: worker
+        image: "python:3.13-slim"

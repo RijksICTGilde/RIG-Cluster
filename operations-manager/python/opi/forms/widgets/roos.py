@@ -114,10 +114,7 @@ class ROOSWidgetAdapter(WidgetAdapter):
             for o in (field.options or [])
         ]
         raw_value: object = field.value
-        if (not raw_value or raw_value == "__all__") and field.default == "__all__":
-            selected = [o["value"] for o in options]
-        else:
-            selected = [str(v) for v in (raw_value if isinstance(raw_value, list) else [])]  # type: ignore[union-attr]
+        selected = [str(v) for v in (raw_value if isinstance(raw_value, list) else [])]  # type: ignore[union-attr]
         return self._render_template(
             "checkbox_group.html.j2",
             {"field": field, "options": options, "selected_values": selected},
@@ -194,12 +191,14 @@ class ROOSWidgetAdapter(WidgetAdapter):
                     depended_by_active.setdefault(dep, []).append(svc)
 
         # Build card data
+        locked_values_raw = field.attributes.get("locked_values", "")
+        locked_values: set[str] = set(locked_values_raw.split(",")) if locked_values_raw else set()
         cards: list[dict[str, object]] = []
         for option in options:
             value = str(option.get("value", ""))
             checked = value in selected_names
             dependents = depended_by_active.get(value, [])
-            is_locked = checked and bool(dependents)
+            is_locked = checked and (bool(dependents) or value in locked_values)
 
             # Resolve dependent labels for the hint
             dependents_labels: list[str] = []
@@ -224,6 +223,7 @@ class ROOSWidgetAdapter(WidgetAdapter):
                     "checked": checked,
                     "is_locked": is_locked,
                     "disabled": field.readonly or is_locked,
+                    "server_locked": value in locked_values,
                     "data_requires": json.dumps(svc_deps) if svc_deps else None,
                     "dependents_labels": dependents_labels,
                     "help_template": str(help_template) if help_template else None,

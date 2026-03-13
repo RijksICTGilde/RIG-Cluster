@@ -1,50 +1,19 @@
 # Keycloak Setup and Configuration
 
-This document describes the Keycloak setup for RIG Cluster, including SSO federation, user attribute mapping, and automatic configuration.
-
-## Architecture Overview
+## Architecture
 
 ```
-External SSO-Rijk (Digilab Keycloak)
-           ↓
-    RIG Platform Realm
-    (sso-rijk IDP)
-           ↓
-    Project Realms
-    (optional federation)
+SSO-Rijk → RIG Platform Realm (sso-rijk IDP) → Project Realms (optional federation)
 ```
 
-## Bootstrap Process
-
-The operations manager automatically configures Keycloak during startup via `opi/bootstrap/keycloak_setup.py`:
-
-1. **Realm Setup** - Creates `rig-platform` realm if it doesn't exist
-2. **External SSO** - Configures `sso-rijk` identity provider with attribute mappers
-3. **Client Scopes** - Creates `custom_attributes_passthrough` scope with protocol mappers
-4. **Operations Client** - Creates OIDC client for operations manager authentication
+Bootstrap is automatic via `opi/bootstrap/keycloak_setup.py` on startup: creates `rig-platform` realm, configures SSO-Rijk IDP, creates client scopes and protocol mappers, creates the operations manager OIDC client. All operations are idempotent.
 
 ## SSO-Rijk Identity Provider
 
-### Configuration
-
-- **Provider Alias**: `sso-rijk`
-- **Display Name**: SSO Rijk
-- **Type**: OIDC (OpenID Connect)
-- **Discovery URL**: From `KEYCLOAK_MASTER_OIDC_DISCOVERY_URL` environment variable
-- **Client Credentials**: From `KEYCLOAK_MASTER_OIDC_CLIENT_ID` and `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET`
-
-### Authentication Flow
-
-The platform uses **External IDP Redirector** flow to automatically redirect users to SSO-Rijk:
-
-- **Flow**: External IDP Redirector
-- **Executions**:
-  1. Cookie (ALTERNATIVE) - Check for existing session
-  2. Identity Provider Redirector (ALTERNATIVE) - Redirect to sso-rijk
-- **Default Provider**: `sso-rijk`
-- **Browser Flow**: External IDP Redirector (set as default)
-
-This eliminates username/password prompts and redirects users directly to SSO-Rijk for authentication.
+- **Alias**: `sso-rijk`, Type: OIDC
+- **Discovery URL**: From `KEYCLOAK_MASTER_OIDC_DISCOVERY_URL` env var
+- **Auth flow**: External IDP Redirector — auto-redirects to SSO-Rijk (no username/password prompt)
+- Platform realm uses this flow as default browser flow; project realms use standard "browser" flow
 
 ## Identity Provider Mappers
 
@@ -119,94 +88,35 @@ Project realms use the same `custom_attributes_passthrough` scope but **without 
 - SSO-Rijk attributes: Passed through as custom claims only
 - Standard claims (`sub`, `preferred_username`): Use Keycloak's internal values
 
-## Transparent SSO Pattern
+## Transparent SSO
 
-The platform implements **transparent SSO** to enable seamless migration:
+Platform realm **overrides** `sub` and `preferred_username` claims with SSO-Rijk values, so apps get consistent token claims regardless of whether Digilab is in the chain:
 
-### Current Flow
-```
-SSO-Rijk → Digilab Keycloak → RIG Platform Keycloak → Applications
-                                (overrides sub/username)
-```
-
-### Token Claims
-Applications receive tokens with:
 - `sub`: SSO-Rijk NameID (e.g., `urn:collab:person:minbzk:nl:Uittenbroek`)
-- `preferred_username`: Lowercase version (e.g., `urn:collab:person:minbzk:nl:uittenbroek`)
-- `sso-rijk-userid`: Custom claim with original value
-- `sso-rijk-userid-lowercase`: Custom claim with lowercase value
+- `preferred_username`: Lowercase version
 
-### Migration Path
-When removing the Digilab intermediary, applications continue working without changes:
+## Clients
 
-```
-Before: SSO-Rijk → Digilab → RIG Keycloak → Apps
-After:  SSO-Rijk → RIG Keycloak → Apps  (same token claims!)
-```
+- **Operations Manager**: `rig-platform-operations-manager` (confidential, auto-configured during bootstrap)
+- **Project clients**: `{project-name}-{deployment-name}`, created by `keycloak_manager.py`, credentials stored in K8s secrets
 
-This eliminates the need for user data migration or application changes.
-
-## Client Creation
-
-### Operations Manager Client
-
-- **Client ID**: `rig-platform-operations-manager`
-- **Type**: Confidential
-- **Redirect URIs**: Based on `OWN_DOMAIN` environment variable
-- **Credentials**: Stored in `operations-manager-keycloak` Kubernetes secret
-- **Auto-configured**: Credentials automatically updated in settings during bootstrap
-
-### Project Clients
-
-Project clients are created via `keycloak_manager.py`:
-
-- **Naming**: `{project-name}-{deployment-name}`
-- **Redirect URIs**: From project ingress hosts + localhost for development
-- **Client Scope**: Automatically includes `custom_attributes_passthrough`
-- **Credentials**: Stored in project-specific Kubernetes secrets
-
-## Environment Variables
-
-Required environment variables for Keycloak configuration:
+## Key Environment Variables
 
 ```bash
-# Keycloak Instance
 KEYCLOAK_URL=http://keycloak.kind
 KEYCLOAK_ADMIN_USERNAME=admin
 KEYCLOAK_ADMIN_PASSWORD=<admin-password>
-
-# RIG Platform Realm
 KEYCLOAK_DEFAULT_REALM=rig-platform
-KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME="RIG Platform"
-
-# External SSO-Rijk IDP (Digilab Keycloak)
 KEYCLOAK_MASTER_OIDC_CLIENT_ID=<client-id>
 KEYCLOAK_MASTER_OIDC_CLIENT_SECRET=<client-secret>
-KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.apps.digilab.network/realms/algoritmes/.well-known/openid-configuration
-
-# Operations Manager OIDC (auto-configured)
-OIDC_CLIENT_ID=rig-platform-operations-manager
-OIDC_CLIENT_SECRET=<auto-generated>
-OIDC_DISCOVERY_URL=https://keycloak.kind/realms/rig-platform/.well-known/openid-configuration
+KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=<discovery-url>
 ```
 
-## Implementation Files
+## Key Files
 
-- **Bootstrap**: `operations-manager/python/opi/bootstrap/keycloak_setup.py` - Automatic configuration
-- **Connector**: `operations-manager/python/opi/connectors/keycloak.py` - API operations and realm types
-- **Manager**: `operations-manager/python/opi/manager/keycloak_manager.py` - Project client management
-- **Migration**: `keycloak-migration/` - Historical migration tools and investigation notes
-
-## Idempotency
-
-All Keycloak operations are **idempotent** - the bootstrap can be run multiple times safely:
-
-- Existing resources are detected and skipped or updated as needed
-- Mappers are created only if they don't exist
-- Client scopes are assigned only if not already assigned
-- SSO redirect flow is updated if configuration changes
-
-This ensures reliable startup even after pod restarts or configuration changes.
+- `opi/bootstrap/keycloak_setup.py` — automatic configuration on startup
+- `opi/connectors/keycloak.py` — API client
+- `opi/manager/keycloak_manager.py` — project client management
 
 ## Troubleshooting
 

@@ -25,6 +25,8 @@ spec:
     name: postgres-admin-credentials
 
   # Using existing storage class provided by the cluster
+  # NOTE: This is a development default. ODCN production overrides this to 20Gi
+  # via the ODCN overlay. Do not manually change this to 20Gi here.
   storage:
     size: 1Gi
     storageClass: standard

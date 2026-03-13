@@ -17,6 +17,7 @@ Example:
     )
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Union
 
@@ -104,6 +105,14 @@ class Fieldset(LayoutElement):
         collapsible: Whether the fieldset can be collapsed
         collapsed: Initial collapsed state (only if collapsible)
         description: Optional description text below legend
+        depends_on: YAML path of a field this fieldset depends on.
+            When set, the fieldset is only rendered if the condition
+            specified by ``show_when`` is met. Uses the same semantics
+            as ``Editable.depends_on``. Paths containing ``[*]`` are
+            resolved using the parent sequence index at render time.
+        show_when: Condition dict evaluated against the ``depends_on``
+            value. Supports the same operators as ``Editable.show_when``
+            (e.g. ``{"contains": "metrics-scraper"}``).
 
     Example:
         Fieldset(
@@ -119,6 +128,8 @@ class Fieldset(LayoutElement):
     collapsible: bool = False
     collapsed: bool = False
     description: str | None = None
+    depends_on: str | None = None
+    show_when: dict[str, Any] | None = None
 
 
 @dataclass
@@ -213,6 +224,32 @@ class TemplatePartial(LayoutElement):
         TemplatePartial(template="wizard/partials/domain_info.html.j2")
     """
 
+    template: str = ""
+    context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DisplayBlock(LayoutElement):
+    """Server-rendered display area updated via HTMX.
+
+    Renders a small HTML fragment computed from form data. Source fields
+    trigger ``hx-post`` to a generic endpoint that re-runs ``compute``
+    and swaps only the display div.
+
+    Attributes:
+        display_id: Unique identifier, used as both the endpoint lookup
+            key and the HTML element id for HTMX targeting.
+        compute: Callable that receives ``yaml_data`` (dict) and a
+            ``context`` dict, and returns a template context dict.
+            The context dict comes from the DisplayBlock's inherited
+            ``context`` field and can carry configuration such as
+            ``deployment_index``.
+        template: Jinja2 template path (relative to templates dir) that
+            renders the computed context into an HTML fragment.
+    """
+
+    display_id: str = ""
+    compute: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] = field(default_factory=lambda: lambda d, c: {})
     template: str = ""
     context: dict[str, Any] = field(default_factory=dict)
 

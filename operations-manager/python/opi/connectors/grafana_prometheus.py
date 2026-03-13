@@ -256,8 +256,8 @@ class GrafanaPrometheusConnector:
                 else:
                     # Range query: multiple values over time
                     if values and len(values) > 1:
-                        timestamps = values[0] if values[0] else []
-                        metric_values = values[1] if values[1] else []
+                        timestamps = values[0] or []
+                        metric_values = values[1] or []
 
                         range_values = []
                         for i, ts in enumerate(timestamps):

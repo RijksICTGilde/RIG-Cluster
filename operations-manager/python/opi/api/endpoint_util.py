@@ -1,5 +1,6 @@
 import logging
 import re
+import secrets
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
@@ -45,7 +46,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
         project_service = get_project_service()
         project = project_service.get_project(project_name_from_url)
 
-        if not project or project.api_key != x_api_key:
+        if not project or not secrets.compare_digest(project.api_key, x_api_key):
             logger.warning(f"Authentication failed for route {func.__name__} - invalid API key")
             raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -79,6 +80,47 @@ def normalize_project_name(text: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", text.lower())
 
 
+def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Decorator to validate admin API key for maintenance operations.
+
+    This decorator requires the ADMIN_API_KEY via X-API-Key header.
+    Used for admin operations like cleanup, reconciliation, and resource management.
+
+    Args:
+        func: The route function to decorate
+
+    Returns:
+        The decorated function that requires a valid admin API key
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Admin API route {func.__name__} called with admin key authentication")
+
+        x_api_key = request.headers.get("X-API-Key")
+        if not x_api_key:
+            logger.warning(f"Authentication failed for route {func.__name__} - no X-API-Key provided")
+            raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
+
+        if not settings.ADMIN_API_KEY:
+            logger.warning(f"Admin API key not configured - route {func.__name__} is disabled")
+            raise HTTPException(
+                status_code=501,
+                detail="This endpoint requires ADMIN_API_KEY to be configured",
+            )
+
+        if not secrets.compare_digest(x_api_key, settings.ADMIN_API_KEY):
+            logger.warning(f"Authentication failed for route {func.__name__} - invalid admin API key")
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+        logger.debug(f"Admin API key validation successful for route {func.__name__}")
+        return await func(*args, request=request, **kwargs)
+
+    return wrapper
+
+
 def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     Decorator to validate master API key for admin operations.
@@ -110,7 +152,7 @@ def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
                 detail="This endpoint requires MASTER_API_KEY to be configured",
             )
 
-        if x_api_key != settings.MASTER_API_KEY:
+        if not secrets.compare_digest(x_api_key, settings.MASTER_API_KEY):
             logger.warning(f"Authentication failed for route {func.__name__} - invalid master API key")
             raise HTTPException(status_code=401, detail="Invalid API key")
 

@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 SESSION_KEY = "wizard_token"
 """Cookie key — holds only a short UUID, not the full state."""
 
+MODAL_SESSION_KEY = "modal_wizard_token"
+"""Separate cookie key for modal wizard state (prevents collision with full-page wizard)."""
+
 _STORE_DIR: str | None = None
 
 
@@ -116,4 +119,82 @@ def init_wizard_state(
         project_name=project_name,
     )
     save_wizard_state(request, state)
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Modal wizard session (separate key to avoid collisions)
+# ---------------------------------------------------------------------------
+
+
+def _load_state(request: Request, session_key: str) -> WizardState | None:
+    """Generic state loader for any session key."""
+    token = request.session.get(session_key)
+    if token is None:
+        return None
+
+    path = _store_path(token)
+    if not path.exists():
+        request.session.pop(session_key, None)
+        return None
+
+    try:
+        data: dict[str, Any] = json.loads(path.read_text())
+        return WizardState.from_dict(data)
+    except (json.JSONDecodeError, KeyError, TypeError):
+        logger.warning("Invalid state file (key=%s, token=%s), clearing", session_key, token)
+        _clear_state(request, session_key)
+        return None
+
+
+def _save_state(request: Request, state: WizardState, session_key: str) -> None:
+    """Generic state saver for any session key."""
+    token = request.session.get(session_key)
+    if token is None:
+        token = uuid.uuid4().hex
+        request.session[session_key] = token
+    _store_path(token).write_text(json.dumps(state.to_dict()))
+
+
+def _clear_state(request: Request, session_key: str) -> None:
+    """Generic state clearer for any session key."""
+    token = request.session.pop(session_key, None)
+    if token is not None:
+        path = _store_path(token)
+        if path.exists():
+            path.unlink()
+
+
+def get_modal_wizard_state(request: Request) -> WizardState | None:
+    """Load modal wizard state from the file-based store."""
+    return _load_state(request, MODAL_SESSION_KEY)
+
+
+def save_modal_wizard_state(request: Request, state: WizardState) -> None:
+    """Save modal wizard state to the file-based store."""
+    _save_state(request, state, MODAL_SESSION_KEY)
+
+
+def clear_modal_wizard_state(request: Request) -> None:
+    """Remove modal wizard state from both the store and the session cookie."""
+    _clear_state(request, MODAL_SESSION_KEY)
+
+
+def init_modal_wizard_state(
+    request: Request,
+    flow_id: str,
+    first_step: str,
+    active_sections: list[str],
+    project_name: str,
+) -> WizardState:
+    """Initialize a new modal wizard state and save it to the store."""
+    clear_modal_wizard_state(request)
+
+    state = WizardState(
+        flow_id=flow_id,
+        current_step=first_step,
+        active_sections=active_sections,
+        project_name=project_name,
+    )
+    save_modal_wizard_state(request, state)
     return state

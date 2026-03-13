@@ -263,8 +263,8 @@ DEFAULT_NL_TRANSLATIONS = {
     "component.ports.outbound.description": "Poorten voor uitgaand verkeer",
     "component.resources": "Resources",
     "component.resources.description": "CPU en geheugen limieten",
-    "component.uses_services": "Gebruikte Services",
-    "component.uses_services.description": "Services die dit component gebruikt",
+    "component.services": "Gebruikte Services",
+    "component.services.description": "Services die dit component gebruikt",
     "component.uses_components": "Afhankelijke Componenten",
     "component.uses_components.description": "Andere componenten waar dit component van afhankelijk is",
     # Repository form

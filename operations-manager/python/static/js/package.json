@@ -1,0 +1,23 @@
+{
+  "name": "js",
+  "version": "1.0.0",
+  "description": "",
+  "main": "json-enc.js",
+  "scripts": {
+    "build:cm": "esbuild --bundle --format=iife --global-name=CM --minify --outfile=codemirror-bundle.js codemirror-entry.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@codemirror/language": "^6.12.2",
+    "@codemirror/legacy-modes": "^6.5.2",
+    "@codemirror/state": "^6.5.4",
+    "codemirror": "^6.0.2",
+    "esbuild": "^0.27.3"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1"
+  }
+}

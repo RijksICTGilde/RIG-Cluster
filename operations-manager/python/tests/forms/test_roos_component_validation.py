@@ -74,7 +74,7 @@ _COMPONENTS_DATA = {
                 "cpu": {"request": "50m", "limit": "1"},
                 "memory": {"request": "256Mi", "limit": "1Gi"},
             },
-            "uses-services": ["publish-on-web"],
+            "services": ["publish-on-web"],
             "aliases": {"APP_NAME": "frontend"},
         },
     ],

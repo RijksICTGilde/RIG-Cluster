@@ -36,9 +36,9 @@ def _detect_env_var_format(text: str) -> str:
         if not line or line.startswith("#"):
             continue
 
-        # YAML indicators: indentation with colon, no equals sign
-        if ":" in line and "=" not in line and re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*:\s*.+", line):
-            # YAML-style key: value
+        # YAML indicators: colon-based key, no equals sign
+        # Matches both "KEY: value" and "KEY:" (block value on next lines)
+        if ":" in line and "=" not in line and re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*:\s*", line):
             yaml_indicators += 1
 
         # KEY=VALUE indicators

@@ -9,8 +9,8 @@
     {{ bool_attr("disabled", field.readonly) }}
     :options="{{ options_json }}"
     {{ optional_attr("value", value_str) }}
-    {{ optional_attr("invalid", "true" if field.errors else "") }}
-    {{ optional_attr("errorText", field.errors[0] if field.errors else "") }}
+    {{ bool_attr("hasError", field.errors) }}
+    {{ optional_attr("errorMessage", field.errors[0] if field.errors else "") }}
     {{ htmx_attrs(field) }}
     {{ extra_attrs(field) }}
 />{{ render_examples(field) }}

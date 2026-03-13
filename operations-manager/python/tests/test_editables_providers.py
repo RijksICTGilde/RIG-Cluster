@@ -61,10 +61,11 @@ class TestPullPolicyOptionsProvider:
 class TestBaseDomainOptionsProvider:
     def test_returns_options(self):
         options = BaseDomainOptionsProvider().get_options()
-        assert len(options) == 2
+        assert len(options) == 3
         values = [o["value"] for o in options]
         assert "" in values
         assert "rijksapp.nl" in values
+        assert "__custom__" in values
 
 
 class TestFilteredServiceOptionsProvider:
@@ -96,6 +97,33 @@ class TestComponentReferenceOptionsProvider:
     def test_empty_names(self):
         provider = ComponentReferenceOptionsProvider()
         assert provider.get_options() == []
+
+    def test_exclude_references_filters_used_components(self):
+        provider = ComponentReferenceOptionsProvider(
+            component_names=["web", "api", "worker"],
+            exclude_references=["web", "worker"],
+        )
+        options = provider.get_options()
+        assert len(options) == 1
+        assert options[0] == {"value": "api", "label": "api"}
+
+    def test_exclude_references_empty_list_shows_all(self):
+        provider = ComponentReferenceOptionsProvider(
+            component_names=["web", "api"],
+            exclude_references=[],
+        )
+        assert len(provider.get_options()) == 2
+
+    def test_exclude_references_with_include_empty(self):
+        provider = ComponentReferenceOptionsProvider(
+            component_names=["web", "api"],
+            include_empty=True,
+            exclude_references=["web"],
+        )
+        options = provider.get_options()
+        assert len(options) == 2  # empty option + "api"
+        assert options[0]["value"] == ""
+        assert options[1]["value"] == "api"
 
 
 class TestRepositoryOptionsProvider:
@@ -180,13 +208,13 @@ class TestResolveOptionsWithMixedContext:
         This was a bug: the extra keys caused a TypeError, and the fallback
         re-instantiated the provider without any kwargs at all."""
         from opi.forms.visualizers.bridge import resolve_options_for_editable
-        from opi.forms.visualizers.fields.components import COMPONENT_USES_SERVICES
+        from opi.forms.visualizers.fields.components import COMPONENT_SERVICES
 
         context = {
             "project_services": ["publish-on-web", "keycloak"],
             "component_names": ["frontend"],
         }
-        options = resolve_options_for_editable(COMPONENT_USES_SERVICES, context=context)
+        options = resolve_options_for_editable(COMPONENT_SERVICES, context=context)
         values = [o["value"] for o in options]
         assert "publish-on-web" in values
         assert "keycloak" in values

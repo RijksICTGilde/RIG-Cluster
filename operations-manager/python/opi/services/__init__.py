@@ -3,6 +3,13 @@ Services package for centralized service handling.
 """
 
 from .services import ServiceAdapter, ServiceValidationError, VariableDefinition
-from .services_enums import ServiceType
+from .services_enums import CloneFromType, RestoreMode, ServiceType
 
-__all__ = ["ServiceAdapter", "ServiceType", "ServiceValidationError", "VariableDefinition"]
+__all__ = [
+    "CloneFromType",
+    "RestoreMode",
+    "ServiceAdapter",
+    "ServiceType",
+    "ServiceValidationError",
+    "VariableDefinition",
+]

@@ -8,6 +8,7 @@ class ServiceType(Enum):
     PUBLISH_ON_WEB = "publish-on-web"
     KEYCLOAK = "keycloak"
     AUTHORIZATION_WALL = "authorization-wall"
+    METRICS_SCRAPER = "metrics-scraper"
 
     # Storage services
     PERSISTENT_STORAGE = "persistent-storage"
@@ -23,3 +24,21 @@ class ServiceType(Enum):
     # Cache services
     REDIS = "redis"
     NAMESPACE_REDIS = "namespace-redis"
+
+    # Platform services (always-on, not user-selectable)
+    PLATFORM = "platform"
+
+
+class CloneFromType(Enum):
+    """Type of clone-from source for deployment cloning."""
+
+    DEPLOYMENT = "deployment"
+    REMOTE_SOURCE = "remote-source"
+    BACKUP = "backup"
+
+
+class RestoreMode(Enum):
+    """Restore target mode: existing deployment or new deployment."""
+
+    EXISTING = "existing"
+    NEW = "new"

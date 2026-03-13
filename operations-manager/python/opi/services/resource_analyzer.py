@@ -133,6 +133,12 @@ def compute_memory_recommendation(
     # Request should never exceed limit
     recommended_request_mb = min(recommended_request_mb, recommended_limit_mb)
 
+    # Collapse request to limit when the gap is < 10% — a tiny difference adds no value
+    if recommended_limit_mb > 0:
+        gap_ratio = (recommended_limit_mb - recommended_request_mb) / recommended_limit_mb
+        if gap_ratio < 0.10:
+            recommended_request_mb = recommended_limit_mb
+
     # Check if the change is significant enough
     if not has_oom_kills:
         limit_change = abs(recommended_limit_mb - current_limit_mb) / current_limit_mb * 100

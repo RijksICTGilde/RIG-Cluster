@@ -14,6 +14,7 @@ from opi.forms.editables.generators import (
     EncryptedAPIKeyGenerator,
     EncryptedPrivateKeyGenerator,
     ProjectNameGenerator,
+    UserEnvVarsEncryptGenerator,
 )
 
 # --- Pure Editable definitions (data logic only) ---
@@ -38,9 +39,15 @@ API_KEY_GEN_EDITABLE = Editable(
     generator=EncryptedAPIKeyGenerator(),
 )
 
+USER_ENV_VARS_ENCRYPT_GEN_EDITABLE = Editable(
+    yaml_path="_generated/user-env-vars-encrypted",
+    generator=UserEnvVarsEncryptGenerator(),
+)
+
 GENERATED_EDITABLES_PURE: list[Editable] = [
     PROJECT_NAME_EDITABLE,
     AGE_PUBLIC_KEY_GEN_EDITABLE,
     AGE_PRIVATE_KEY_GEN_EDITABLE,
     API_KEY_GEN_EDITABLE,
+    USER_ENV_VARS_ENCRYPT_GEN_EDITABLE,
 ]

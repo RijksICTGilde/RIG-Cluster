@@ -9,7 +9,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from types import TracebackType
 
 from opi.connectors.kubectl import KubectlConnector
@@ -20,7 +20,7 @@ from opi.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class ResourceType(str, Enum):
+class ResourceType(StrEnum):
     """Types of resources that can be backed up and restored."""
 
     PVC = "pvc"

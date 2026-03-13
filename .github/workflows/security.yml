@@ -1,0 +1,124 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC — catch newly disclosed CVEs
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-audit:
+    name: Python dependency audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Run pip-audit
+        run: uv run pip-audit --strict --desc --skip-editable -s osv
+
+  container-scan:
+    name: Container scan — ${{ matrix.image.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: operations-manager
+            dockerfile: operations-manager/Dockerfile
+            context: .
+            target: application
+          - name: rig-backup
+            dockerfile: operations-manager/backup-image/Dockerfile
+            context: operations-manager/backup-image
+            target: ""
+          - name: cmp-kustomize-sops
+            dockerfile: images/cmp-kustomize-sops/Dockerfile
+            context: .
+            target: ""
+          - name: postgresql-with-dictionaries
+            dockerfile: images/postgresql-with-dictionaries/Dockerfile
+            context: images/postgresql-with-dictionaries
+            target: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          target: ${{ matrix.image.target || '' }}
+          load: true
+          tags: ${{ matrix.image.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ matrix.image.name }}:scan'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.image.name }}.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-${{ matrix.image.name }}.sarif'
+          category: 'trivy-${{ matrix.image.name }}'
+
+  sbom:
+    name: Generate SBOM
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for SBOM
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: operations-manager/Dockerfile
+          target: application
+          load: true
+          tags: operations-manager:sbom
+          cache-from: type=gha,scope=operations-manager
+
+      - name: Generate SBOM with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'operations-manager:sbom'
+          format: 'cyclonedx'
+          output: 'sbom-operations-manager.json'
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-operations-manager
+          path: sbom-operations-manager.json
+          retention-days: 90

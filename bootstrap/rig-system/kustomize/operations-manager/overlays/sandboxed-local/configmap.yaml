@@ -54,4 +54,6 @@ data:
     REGISTRY_VERIFY_TLS=true
     IMAGE_UPLOAD_MAX_SIZE_MB=5120
 
+    PROMETHEUS_EXTERNAL_URL=https://prometheus.sandbox.rijksapp.dev
+
     LOG_TO_FILE=false

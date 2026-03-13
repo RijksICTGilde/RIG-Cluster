@@ -1,0 +1,21 @@
+{% if has_urls %}
+<c-card outline="true">
+    <c-layout-flow gap="sm">
+        <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="wereldbol" size="md" />Gegenereerde URL's</c-heading>
+        <c-table>
+            <c-thead><c-tr>
+                <c-th scope="col">Component</c-th>
+                <c-th scope="col">URL</c-th>
+            </c-tr></c-thead>
+            <c-tbody>
+                {% for entry in urls %}
+                <c-tr>
+                    <c-td>{{ entry.component }}</c-td>
+                    <c-td><code>{{ entry.url }}</code></c-td>
+                </c-tr>
+                {% endfor %}
+            </c-tbody>
+        </c-table>
+    </c-layout-flow>
+</c-card>
+{% endif %}

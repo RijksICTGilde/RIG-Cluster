@@ -186,7 +186,7 @@ spec:
       chart: my-application
       version: 1.0.0
       namespace: rig-my-secure-app
-      uses-services:
+      services:
         - publish-on-web
         - keycloak
         - postgresql-database

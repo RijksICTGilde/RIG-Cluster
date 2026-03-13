@@ -23,6 +23,7 @@ The backup system provides:
 │  PVC Backups:                                                       │
 │    POST /api/v1/backup/project/{project}/deployment/{deployment}    │
 │    POST /api/v1/backup/namespace/{namespace}                        │
+│    POST /api/v1/backup/namespace/{namespace}/all                    │
 │    POST /api/v1/backup/pvc/{namespace}/{pvc_name}                   │
 │                                                                     │
 │  Database Backups:                                                  │
@@ -32,6 +33,7 @@ The backup system provides:
 │    POST /api/v1/backup/bucket/{namespace}/{reference_name}          │
 │                                                                     │
 │  GET  /api/v1/backup/status                                         │
+│  GET  /api/v1/backup/runs/{project}/{deployment}                    │
 │                                                                     │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │

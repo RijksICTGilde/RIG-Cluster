@@ -76,3 +76,41 @@ class EncryptedAPIKeyGenerator:
         plain_api_key = generate_api_key()
         encrypted = encrypt_age_content_sync(plain_api_key, public_key)
         return encrypted
+
+
+class UserEnvVarsEncryptGenerator:
+    """Encrypt user-env-vars on each component with the project's AGE public key.
+
+    Iterates over all components and encrypts any non-empty ``user-env-vars``
+    string value. Skips values that are already AGE-encrypted.
+
+    Must run after ``AGEKeyPairGenerator`` so the project public key exists.
+    Uses a ``_generated`` path — the return value is discarded during cleanup.
+    """
+
+    def generate(self, yaml_data: dict[str, Any]) -> Any:
+        from ruamel.yaml.scalarstring import LiteralScalarString
+
+        from opi.utils.age import encrypt_age_content_sync
+
+        public_key = yaml_data.get("config", {}).get("age-public-key")
+        if not public_key:
+            logger.debug("No project public key available, skipping user-env-vars encryption")
+            return True
+
+        for component in yaml_data.get("components", []):
+            if not isinstance(component, dict):
+                continue
+            user_env_vars = component.get("user-env-vars")
+            if not user_env_vars or not isinstance(user_env_vars, str):
+                continue
+            if "BEGIN AGE ENCRYPTED FILE" in user_env_vars:
+                continue
+            encrypted = encrypt_age_content_sync(user_env_vars, public_key)
+            component["user-env-vars"] = LiteralScalarString(encrypted)
+            logger.debug(
+                "Encrypted user-env-vars for component %s",
+                component.get("name", "unknown"),
+            )
+
+        return True

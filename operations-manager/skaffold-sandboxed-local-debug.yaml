@@ -1,0 +1,74 @@
+apiVersion: skaffold/v2beta29
+kind: Config
+metadata:
+  name: operations-manager-sync
+
+build:
+  tagPolicy:
+    customTemplate:
+      template: "latest"
+  local:
+    useBuildkit: true
+  artifacts:
+  - image: ghcr.io/minbzk/base-images/operations-manager/operations-manager
+    context: .
+    docker:
+      dockerfile: operations-manager/Dockerfile
+      buildArgs:
+        BUILDKIT_INLINE_CACHE: "1"
+    sync:
+      manual:
+      - src: 'operations-manager/python/opi/**/*.py'
+        dest: /app/opi
+        strip: 'operations-manager/python/opi/'
+      - src: 'operations-manager/python/opi/templates/**/*'
+        dest: /app/opi/templates
+        strip: 'operations-manager/python/opi/templates/'
+      - src: 'operations-manager/python/manifests/**/*.jinja'
+        dest: /app/manifests
+        strip: 'operations-manager/python/manifests/'
+      - src: 'operations-manager/python/static/**/*'
+        dest: /app/static
+        strip: 'operations-manager/python/static/'
+      # Sync local jinja-roos-components for development
+      - src: '../jinja-roos-components/src/jinja_roos_components/**/*.py'
+        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components
+        strip: '../jinja-roos-components/src/jinja_roos_components/'
+      - src: '../jinja-roos-components/src/jinja_roos_components/static/**/*'
+        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components/static
+        strip: '../jinja-roos-components/src/jinja_roos_components/static/'
+      - src: '../jinja-roos-components/src/jinja_roos_components/templates/**/*'
+        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components/templates
+        strip: '../jinja-roos-components/src/jinja_roos_components/templates/'
+      - src: '../jinja-roos-components/src/jinja_roos_components/definitions/*.json'
+        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components/definitions
+        strip: '../jinja-roos-components/src/jinja_roos_components/definitions/'
+      - src: '../jinja-roos-components/src/jinja_roos_components/*.json'
+        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components
+        strip: '../jinja-roos-components/src/jinja_roos_components/'
+
+deploy:
+  statusCheckDeadlineSeconds: 0
+  kustomize:
+    flags:
+      apply:
+      - --force-conflicts
+      - --server-side=true
+    buildArgs:
+    - --enable-alpha-plugins
+    - --enable-exec
+    - --load-restrictor=LoadRestrictionsNone
+    paths:
+    - bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local-debug
+
+portForward:
+- resourceType: service
+  resourceName: operations-manager
+  namespace: rig-system
+  port: 8000
+  localPort: 9595
+- resourceType: service
+  resourceName: operations-manager
+  namespace: rig-system
+  port: 5678
+  localPort: 5678

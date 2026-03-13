@@ -1,0 +1,60 @@
+{#
+  Restore wizard step 1: Select a backup run to restore.
+
+  Expected context (via yaml_data):
+    - _backup_runs: list of dicts with keys: backup_run_id, timestamp, deployment_name, resource_count, resource_types (list), items (list of backup dicts)
+    - _current_cluster: str
+#}
+{% set backup_runs = _backup_runs | default([]) %}
+
+{% if backup_runs %}
+<c-layout-flow gap="lg">
+    <fieldset>
+        <legend class="rvo-form-field__label"><strong>Backup run selecteren</strong></legend>
+        <p class="rvo-text--sm rvo-text--subtle" style="margin-bottom: 8px;">
+            Selecteer de backup run die u wilt herstellen. Elke run bevat alle resources die tegelijk zijn geback-upt.
+        </p>
+        {% for run in backup_runs %}
+        <label class="rvo-radio-option" style="display: flex; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; margin-bottom: 8px; cursor: pointer;">
+            <input type="radio" name="backup_run_id" value="{{ run.backup_run_id }}"
+                   {% if loop.first %}checked{% endif %}
+                   style="margin-top: 4px;" />
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <code style="font-size: 0.8rem; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw); padding: 2px 6px; border-radius: 4px;">{{ run.backup_run_id }}</code>
+                    <span style="color: var(--rvo-color-grijs-600); font-size: 0.85rem;">{{ run.timestamp | dutch_date }}</span>
+                </div>
+                <div style="margin-top: 6px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 0.85rem;">
+                        <c-icon icon="applicatie" size="sm" color="donkerblauw" />
+                        {{ run.deployment_name }}
+                    </span>
+                    <span style="color: var(--rvo-color-grijs-500); font-size: 0.8rem;">
+                        {{ run.resource_count }} resource(s)
+                    </span>
+                </div>
+                <div style="margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap;">
+                    {% for rt in run.resource_types %}
+                    <span style="display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 500;
+                        {% if rt == 'pvc' %}background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw);
+                        {% elif rt == 'database' %}background: var(--rvo-color-grasgroen-200); color: var(--rvo-color-grasgroen-800);
+                        {% elif rt == 'bucket' %}background: var(--rvo-color-oranje-200); color: var(--rvo-color-oranje-800);
+                        {% endif %}">{{ rt | upper }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+        </label>
+        {% endfor %}
+    </fieldset>
+
+    {# Hidden field to pass deployment name along with selected backup run #}
+    <input type="hidden" name="source_deployment" value="{{ backup_runs[0].deployment_name if backup_runs else '' }}" />
+</c-layout-flow>
+{% else %}
+<c-card padding="md" outline="true" backgroundColor="grijs-050">
+    <c-layout-row gap="md" verticalSpacing="center">
+        <c-icon icon="info" size="md" color="grijs-500" />
+        <p>Geen backup runs gevonden voor dit project.</p>
+    </c-layout-row>
+</c-card>
+{% endif %}

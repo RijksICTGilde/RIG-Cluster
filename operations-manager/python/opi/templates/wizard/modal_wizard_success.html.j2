@@ -1,0 +1,10 @@
+{#
+  Modal Wizard Success — shown for save_only completion.
+#}
+<div class="edit-section-success">
+    <c-icon icon="vinkje" size="xl" color="groen" />
+    <p>Wijzigingen opgeslagen</p>
+    <div class="edit-section-actions" style="margin-top: 1rem;">
+        <c-button kind="primary" label="Sluiten" @click="closeEditModalAndReload()" />
+    </div>
+</div>

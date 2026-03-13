@@ -26,8 +26,8 @@ data:
     DATABASE_HOST=rig-db-rw
     MINIO_HOST=minio:9000
 
-    OWN_DOMAIN="operations-manager.rig.prd1.gn2.quattro.rijksapps.nl"
-    ADDITIONAL_DOMAINS="zad.rijksapp.nl"
+    OWN_DOMAIN=zad.rijksapp.nl
+    ADDITIONAL_DOMAINS="operations-manager.rig.prd1.gn2.quattro.rijksapps.nl"
 
     OIDC_CLIENT_ID=rig-platform-operations-manager
     OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration

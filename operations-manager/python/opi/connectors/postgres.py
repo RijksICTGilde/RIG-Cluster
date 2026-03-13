@@ -1604,7 +1604,7 @@ class PostgresConnector:
                 logger.warning(
                     f"pg_dump produced very little output ({len(clone_out.decode())} bytes) - might be empty dump"
                 )
-                logger.debug(f"Full pg_dump output: {clone_out.decode()}")
+                logger.debug(f"pg_dump output size: {len(clone_out)} bytes")
 
             logger.info("Schema cloned successfully (structure + data)")
 
