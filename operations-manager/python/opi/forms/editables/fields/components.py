@@ -124,7 +124,7 @@ PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
 PERSISTENT_STORAGE_SIZE_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config[*]/size",
     values_provider="StorageSizeOptionsProvider",
-    default="1Gi",
+    default="100Mi",
 )
 
 PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE = Editable(
@@ -156,7 +156,7 @@ TEMP_STORAGE_NAME_EDITABLE = Editable(
 TEMP_STORAGE_SIZE_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config[*]/size",
     values_provider="StorageSizeOptionsProvider",
-    default="1Gi",
+    default="100Mi",
 )
 
 TEMP_STORAGE_MOUNT_PATH_EDITABLE = Editable(

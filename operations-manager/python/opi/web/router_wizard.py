@@ -1480,7 +1480,15 @@ def _build_sequence_summary(
 
             # Extract the child key from yaml_path (last segment without [*])
             child_key = _child_key(child)
-            value = _nested_get(item, child_key)
+            # Use get_value for paths with {filter} syntax (e.g.
+            # services{metrics-scraper}/port) since _nested_get only
+            # handles plain dict keys.
+            if "{" in child_key:
+                from opi.forms.editables.path import get_value
+
+                value = get_value(item, child_key)
+            else:
+                value = _nested_get(item, child_key)
             display = _format_value(child, value, yaml_data)
             if display is not None:
                 item_parts.append(f"<dt>{child.label}</dt><dd>{display}</dd>")

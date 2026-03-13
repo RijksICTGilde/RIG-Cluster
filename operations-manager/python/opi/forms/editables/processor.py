@@ -363,12 +363,27 @@ class EditableFormProcessor:
                     self._write_field(child_ed, concrete_path, value, result)
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
-                    read_path = (
-                        apply_virtualize(concrete_path, child_ed.virtualize) if child_ed.virtualize else concrete_path
-                    )
+                    virt = child_ed.virtualize
+                    read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
                     value = get_value(submitted, read_path)
+                    # Fall back to real path when merged data has no virtual key
+                    if value is None and virt and read_path != concrete_path:
+                        value = get_value(submitted, concrete_path)
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
+                    # Clean up virtual key from result
+                    if virt and read_path != concrete_path:
+                        virtual_key = virt[1]
+                        virtual_parts = read_path.split("/")
+                        parent_parts = []
+                        for part in virtual_parts:
+                            if part.startswith(virtual_key):
+                                break
+                            parent_parts.append(part)
+                        parent_path = "/".join(parent_parts)
+                        parent = smart_get_value(result, parent_path) if parent_path else result
+                        if isinstance(parent, dict):
+                            parent.pop(virtual_key, None)
 
     def _process_nested_sequence_json(
         self,
@@ -393,21 +408,40 @@ class EditableFormProcessor:
         real_seq_path = resolve_path(ed.yaml_path, parent_index)
         virtual_seq_path = apply_virtualize(real_seq_path, virt) if virt else real_seq_path
 
-        # Read from virtual path in submitted data
+        # Read from virtual path in submitted data.  When virtualize is
+        # active the form POSTs under the virtual key (e.g. _services-config).
+        # However, after a step-level submit the data is already merged into
+        # the real path (services{…}/config).  During the final submit the
+        # merged data no longer has the virtual key, so we must fall back to
+        # reading from the real path to avoid overwriting good data with [].
         items = get_value(submitted, virtual_seq_path)
+        if not isinstance(items, list) and virt:
+            items = get_value(submitted, real_seq_path)
         if not isinstance(items, list):
             items = []
 
         # Write to real path in result
         smart_set_value(result, real_seq_path, copy.deepcopy(items))
 
-        # TODO: Evaluate whether stripping virtual keys here is the best approach.
-        #  An alternative would be to strip them in _extract_section_data or via
-        #  a dedicated cleanup pass (similar to _strip_transients). For now this
-        #  prevents the virtual key (e.g. _services-config) from leaking into
-        #  step_data and ultimately into the final project YAML.
+        # Strip the virtual key (e.g. _services-config) from result so it
+        # does not leak into step_data or the final project YAML.
+        # We delete the entire virtual container key from the parent, not
+        # just the leaf — otherwise empty dicts remain.
+        # The virtual key lives under the component dict, so we find the
+        # path segment that starts with the virtual key name and take
+        # everything before it as the parent path.
         if virt and virtual_seq_path != real_seq_path:
-            self._delete_path(result, virtual_seq_path)
+            virtual_key = virt[1]  # e.g. "_services-config"
+            virtual_parts = virtual_seq_path.split("/")
+            parent_parts = []
+            for part in virtual_parts:
+                if part.startswith(virtual_key):
+                    break
+                parent_parts.append(part)
+            parent_path = "/".join(parent_parts)
+            parent = smart_get_value(result, parent_path) if parent_path else result
+            if isinstance(parent, dict):
+                parent.pop(virtual_key, None)
 
         for child_index in range(len(items)):
             for child_vis in vis.children or []:
@@ -420,6 +454,9 @@ class EditableFormProcessor:
                 # Virtual path for reading from submitted data
                 virtual_child_path = apply_virtualize(real_child_path, virt) if virt else real_child_path
                 value = get_value(submitted, virtual_child_path)
+                # Fall back to real path if virtual path has no data
+                if value is None and virt:
+                    value = get_value(submitted, real_child_path)
                 self._validate_field(child_vis, real_child_path, value, errors, context)
                 self._write_field(child_ed, real_child_path, value, result)
 
