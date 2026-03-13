@@ -117,7 +117,7 @@ class TestRenderKeyValueEditor:
             "name": "test",
             "path": "test/aliases",
             "schema_type": str,
-            "widget_type": "key_value_editor",
+            "widget_type": "key_value",
             "label": "Aliassen",
             "attributes": {"kv_format": "env"},
         }

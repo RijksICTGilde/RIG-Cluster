@@ -75,7 +75,10 @@ JSON/form data
 | `forms/field.py` | `FormField` dataclass (intermediate render type) |
 | `forms/renderer.py` | `FormRenderer` — orchestrates layout + widget rendering |
 | `forms/widgets/roos.py` | `ROOSWidgetAdapter` — renders FormField to ROOS HTML |
+| `editables/path.py` | Path resolution with `{K}` dict-key and `{F=V}` field-match filters |
+| `editables/enforcers.py` | Section-level enforcers (admin required, unique names, component services) |
 | `web/router_wizard.py` | Wizard routes (create flow) |
+| `web/router_detail_edit.py` | Detail page inline edit routes |
 | `web/router_project_form.py` | Edit form routes |
 
 ## How to Use It
@@ -150,6 +153,64 @@ This would:
 
 This refactor is not urgent — the current system works — but should be done when the widget adapter or bridge needs significant changes.
 
+## Detail Page Inline Editing
+
+The editable system also powers inline editing from the project detail page. Each section can be opened in an edit modal without navigating to the full wizard.
+
+### Edit Sections
+
+`wizard_sections.py` defines `EDIT_SECTIONS` — a registry of sections available for detail-page editing. These are either dedicated edit sections (with specific `post_save_action` settings) or reused wizard sections:
+
+| Section ID | Purpose | Post-save action |
+|-----------|---------|-----------------|
+| `identity-edit` | Display name + description | `save_only` |
+| `team-edit` | Team members (reuses wizard section) | `save_only` |
+| `components-edit` | Components (reuses wizard layout) | `process_project` |
+| `services-edit` | Services | `process_project` |
+| `keycloak-config` | Keycloak settings (reused) | `save_only` |
+| `postgresql-config` | Database settings (reused) | `save_only` |
+| `auth-wall-config` | Auth wall settings (reused) | `save_only` |
+
+### How It Works
+
+1. Detail page renders edit buttons for each section
+2. Clicking opens a modal with the section's editables rendered as form fields
+3. On submit, `router_detail_edit.py` processes the form data through the same `EditableFormProcessor` pipeline
+4. Based on `post_save_action`: either saves YAML only (`save_only`) or also triggers a full project processing cycle (`process_project`)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `web/router_detail_edit.py` | Edit modal routes (render, submit, sequence actions) |
+| `visualizers/wizard_sections.py` | `EDIT_SECTIONS` registry |
+
+## Path Filter Syntax
+
+The path resolution system supports filter expressions for navigating mixed string/dict lists (common in the v2 YAML format). See [Unified Service References](./unified-service-references.md) for full documentation.
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `key` | Dict key lookup | `name` |
+| `key[N]` | List index | `components[0]` |
+| `key[*]` | Wildcard (all items) | `components[*]` |
+| `key{K}` | Dict-key filter in mixed list | `services{keycloak}` |
+| `key{F=V}` | Field-match filter in list | `config{name=data}` |
+
+This is used by storage editables to navigate directly into service entries:
+```python
+PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/name",
+)
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `editables/path.py` | `get_value()`, `set_value()`, `resolve_path()` with filter support |
+| `tests/test_path_filters.py` | 33 tests for `{K}` and `{F=V}` filter syntax |
+
 ## Testing
 
 ```bash
@@ -160,6 +221,12 @@ uv run pytest tests/test_editables_*.py tests/test_editable_*.py -v
 
 # Wizard tests
 uv run pytest tests/forms/test_wizard_*.py -v
+
+# Detail edit tests
+uv run pytest tests/forms/test_detail_edit.py -v
+
+# Path filter tests
+uv run pytest tests/test_path_filters.py -v
 
 # ROOS component validation (ensures all sections produce valid HTML)
 uv run pytest tests/forms/test_roos_component_validation.py -v

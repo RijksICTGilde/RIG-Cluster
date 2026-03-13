@@ -57,6 +57,11 @@ spec:
             secretKeyRef:
               name: redis-admin-credentials
               key: REDIS_PASSWORD
+        - name: PROMETHEUS_METRICS_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: prometheus-metrics-auth
+              key: token
         volumeMounts:
         - name: kube-api-access
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount

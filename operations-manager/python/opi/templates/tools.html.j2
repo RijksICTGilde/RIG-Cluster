@@ -16,27 +16,19 @@
 
             <form id="age-tool-form" autocomplete="off">
                 <c-layout-flow gap="md">
-                    <div class="rvo-form-field">
-                        <label class="rvo-label" for="public_key">AGE Public Key</label>
-                        <input
-                            type="text"
-                            id="public_key"
-                            name="public_key"
-                            class="rvo-input"
-                            placeholder="age1..."/>
-                        <p class="rvo-text--sm rvo-text--subtle">Required for encryption. Format: age1...</p>
-                    </div>
+                    <c-text-input-field
+                        id="public_key"
+                        name="public_key"
+                        label="AGE Public Key"
+                        placeholder="age1..."
+                        helperText="Required for encryption. Format: age1..." />
 
-                    <div class="rvo-form-field">
-                        <label class="rvo-label" for="private_key">AGE Private Key</label>
-                        <input
-                            type="text"
-                            id="private_key"
-                            name="private_key"
-                            class="rvo-input"
-                            placeholder="AGE-SECRET-KEY-1..."/>
-                        <p class="rvo-text--sm rvo-text--subtle">Required for decryption. Format: AGE-SECRET-KEY-1...</p>
-                    </div>
+                    <c-text-input-field
+                        id="private_key"
+                        name="private_key"
+                        label="AGE Private Key"
+                        placeholder="AGE-SECRET-KEY-1..."
+                        helperText="Required for decryption. Format: AGE-SECRET-KEY-1..." />
 
                     <div class="rvo-form-field">
                         <label class="rvo-label" for="operation">Operation</label>
@@ -47,23 +39,15 @@
                         <p class="rvo-text--sm rvo-text--subtle">Select whether to encrypt or decrypt</p>
                     </div>
 
-                    <div class="rvo-form-field">
-                        <label class="rvo-label" for="input_text">Input Text</label>
-                        <textarea
-                            id="input_text"
-                            name="input_text"
-                            class="rvo-textarea"
-                            rows="8"
-                            placeholder="Enter text here..."></textarea>
-                        <p class="rvo-text--sm rvo-text--subtle">Enter the text to encrypt or decrypt</p>
-                    </div>
+                    <c-textarea-field
+                        id="input_text"
+                        name="input_text"
+                        label="Input Text"
+                        rows="8"
+                        placeholder="Enter text here..."
+                        helperText="Enter the text to encrypt or decrypt" />
 
-                    <button
-                        type="button"
-                        id="submit-btn"
-                        class="rvo-button rvo-button--primary">
-                        Process
-                    </button>
+                    <c-button kind="primary" label="Process" id="submit-btn" @click="handleSubmit(event)" />
                 </c-layout-flow>
             </form>
         </c-card>
@@ -75,10 +59,22 @@
             </div>
             <div id="success-message" style="display: block;">
                 <p class="rvo-text--sm" style="margin-bottom: 0.5rem;">Result (click to copy):</p>
-                <pre id="output-text" style="background-color: #f5f5f5; padding: 1rem; border-radius: 4px; cursor: pointer; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;"></pre>
+                <pre id="output-text" class="output-code-block"></pre>
             </div>
         </c-card>
     </c-layout-flow>
+
+    <style>
+        .output-code-block {
+            background-color: #f5f5f5;
+            padding: 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -89,32 +85,19 @@
             const errorMessage = document.getElementById('error-message');
             const errorText = document.getElementById('error-text');
             const successMessage = document.getElementById('success-message');
-            const operationSelect = document.getElementById('operation');
+            const operationSelect = document.querySelector('[name="operation"]');
 
-            // Cleanup function to remove leading/trailing whitespace and empty lines
             function cleanupText(text) {
-                // Split into lines and trim each line individually
                 let lines = text.split('\n').map(line => line.trim());
-
-                // Remove leading empty lines
-                while (lines.length > 0 && lines[0] === '') {
-                    lines.shift();
-                }
-
-                // Remove trailing empty lines
-                while (lines.length > 0 && lines[lines.length - 1] === '') {
-                    lines.pop();
-                }
-
+                while (lines.length > 0 && lines[0] === '') { lines.shift(); }
+                while (lines.length > 0 && lines[lines.length - 1] === '') { lines.pop(); }
                 return lines.join('\n');
             }
 
-            // Add paste and blur event listeners to clean up content
-            const publicKeyInput = document.getElementById('public_key');
-            const privateKeyInput = document.getElementById('private_key');
-            const inputTextArea = document.getElementById('input_text');
+            const publicKeyInput = document.querySelector('[name="public_key"]');
+            const privateKeyInput = document.querySelector('[name="private_key"]');
+            const inputTextArea = document.querySelector('[name="input_text"]');
 
-            // Handle paste events
             publicKeyInput.addEventListener('paste', function(e) {
                 e.preventDefault();
                 const pastedText = (e.clipboardData || window.clipboardData).getData('text');
@@ -133,94 +116,59 @@
                 inputTextArea.value = cleanupText(pastedText);
             });
 
-            // Handle blur events (when field loses focus)
             publicKeyInput.addEventListener('blur', function() {
-                if (publicKeyInput.value) {
-                    publicKeyInput.value = cleanupText(publicKeyInput.value);
-                }
+                if (publicKeyInput.value) { publicKeyInput.value = cleanupText(publicKeyInput.value); }
             });
 
             privateKeyInput.addEventListener('blur', function() {
-                if (privateKeyInput.value) {
-                    privateKeyInput.value = cleanupText(privateKeyInput.value);
-                }
+                if (privateKeyInput.value) { privateKeyInput.value = cleanupText(privateKeyInput.value); }
             });
 
             inputTextArea.addEventListener('blur', function() {
-                if (inputTextArea.value) {
-                    inputTextArea.value = cleanupText(inputTextArea.value);
-                }
+                if (inputTextArea.value) { inputTextArea.value = cleanupText(inputTextArea.value); }
             });
 
-            submitBtn.addEventListener('click', async function(e) {
+            window.handleSubmit = async function(e) {
                 e.preventDefault();
 
                 const operation = operationSelect.value;
-                const publicKey = document.getElementById('public_key').value.trim();
-                const privateKey = document.getElementById('private_key').value.trim();
-                const inputText = document.getElementById('input_text').value.trim();
+                const publicKey = publicKeyInput.value.trim();
+                const privateKey = privateKeyInput.value.trim();
+                const inputText = inputTextArea.value.trim();
 
-                // Validation
-                if (!inputText) {
-                    showError('Input text is required');
-                    return;
-                }
+                if (!inputText) { showError('Input text is required'); return; }
+                if (operation === 'encrypt' && !publicKey) { showError('Public key is required for encryption'); return; }
+                if (operation === 'decrypt' && !privateKey) { showError('Private key is required for decryption'); return; }
 
-                if (operation === 'encrypt' && !publicKey) {
-                    showError('Public key is required for encryption');
-                    return;
-                }
-
-                if (operation === 'decrypt' && !privateKey) {
-                    showError('Private key is required for decryption');
-                    return;
-                }
-
-                // Prepare form data
                 const formData = new FormData();
                 formData.append('input_text', inputText);
+                if (operation === 'encrypt') { formData.append('public_key', publicKey); }
+                else { formData.append('private_key', privateKey); }
 
-                if (operation === 'encrypt') {
-                    formData.append('public_key', publicKey);
-                } else {
-                    formData.append('private_key', privateKey);
-                }
-
-                // Show loading state
-                submitBtn.textContent = 'Processing...';
+                const btnLabel = submitBtn.querySelector('.rvo-button__label') || submitBtn;
+                btnLabel.textContent = 'Processing...';
                 submitBtn.disabled = true;
 
                 try {
                     const endpoint = operation === 'encrypt' ? '/tools/encrypt' : '/tools/decrypt';
-                    const response = await fetch(endpoint, {
-                        method: 'POST',
-                        body: formData
-                    });
-
+                    const response = await fetch(endpoint, { method: 'POST', body: formData });
                     const data = await response.json();
-
-                    if (data.success) {
-                        showSuccess(data.result);
-                    } else {
-                        showError(data.error || 'Operation failed');
-                    }
+                    if (data.success) { showSuccess(data.result); }
+                    else { showError(data.error || 'Operation failed'); }
                 } catch (error) {
                     showError('Network error: ' + error.message);
                 } finally {
-                    submitBtn.textContent = 'Process';
+                    btnLabel.textContent = 'Process';
                     submitBtn.disabled = false;
                 }
-            });
+            };
 
-            // Copy to clipboard on click
             outputText.addEventListener('click', function() {
                 const text = outputText.textContent;
                 navigator.clipboard.writeText(text).then(function() {
                     const originalText = outputText.textContent;
                     outputText.textContent = 'Copied to clipboard!';
-                    setTimeout(function() {
-                        outputText.textContent = originalText;
-                    }, 1000);
+                    setTimeout(function() { outputText.textContent = originalText; }, 1000);
                 });
             });
 

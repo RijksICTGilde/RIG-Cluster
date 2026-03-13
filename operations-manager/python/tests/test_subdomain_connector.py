@@ -456,10 +456,11 @@ class TestValidateBaseDomain:
         assert error is None
 
     def test_invalid_base_domain(self):
-        """Invalid base domain fails validation."""
+        """Invalid base domain fails validation (must be syntactically invalid)."""
         from opi.connectors.subdomain import validate_base_domain
 
-        is_valid, error = validate_base_domain("invalid.domain", "local")
+        # Custom domains with valid syntax are now accepted, so use a truly invalid domain
+        is_valid, error = validate_base_domain("-invalid", "local")
         assert is_valid is False
         assert "ondersteund" in error.lower()  # Dutch: "geen ondersteund base domain"
 
@@ -531,10 +532,11 @@ class TestBaseDomainValidationInRegister:
 
         connector = SubdomainConnector()
 
+        # Custom domains with valid syntax are now accepted, so use a syntactically invalid domain
         with pytest.raises(BaseDomainValidationError) as exc_info:
             await connector.register(
                 subdomain="myapp",
-                base_domain="invalid.domain",
+                base_domain="-invalid",
                 project_name="my-project",
                 deployment_name="prod",
                 cluster="local",

@@ -1,0 +1,89 @@
+{#
+  Restore wizard step 2: Select target deployment for restore.
+
+  Supports two modes:
+  - existing: restore to an existing deployment (default)
+  - new: create a new deployment as the restore target
+
+  Expected context (via yaml_data):
+    - _cluster_deployments: list of dicts with keys: name, namespace
+    - _current_cluster: str
+    - _source_deployment: str (deployment name from selected backup run)
+    - _restore_mode: str ("existing" or "new", default "existing")
+    - _project_name: str
+#}
+{% set deployments = _cluster_deployments | default([]) %}
+{% set restore_mode = _restore_mode | default("existing") %}
+{% set source_deployment = _source_deployment | default("") %}
+
+<div id="restore-target-content">
+<c-layout-flow gap="lg">
+    {# Mode toggle #}
+    <fieldset>
+        <legend class="rvo-form-field__label"><strong>Herstel modus</strong></legend>
+        <div style="display: flex; gap: 16px; margin-bottom: 8px;">
+            <label class="rvo-radio-option" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; cursor: pointer;{% if restore_mode == 'existing' %} background: var(--rvo-color-hemelblauw-100); border-color: var(--rvo-color-hemelblauw);{% endif %}">
+                <input type="radio" name="restore_mode" value="existing"
+                       {% if restore_mode == "existing" %}checked{% endif %}
+                       hx-get="/projects/{{ _project_name }}/modal-wizard/modal-restore/select-restore-mode?restore_mode=existing"
+                       hx-target="#edit-section-inner"
+                       hx-swap="innerHTML"
+                       style="margin: 0;" />
+                <span>Bestaande deployment</span>
+            </label>
+            <label class="rvo-radio-option" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; cursor: pointer;{% if restore_mode == 'new' %} background: var(--rvo-color-hemelblauw-100); border-color: var(--rvo-color-hemelblauw);{% endif %}">
+                <input type="radio" name="restore_mode" value="new"
+                       {% if restore_mode == "new" %}checked{% endif %}
+                       hx-get="/projects/{{ _project_name }}/modal-wizard/modal-restore/select-restore-mode?restore_mode=new"
+                       hx-target="#edit-section-inner"
+                       hx-swap="innerHTML"
+                       style="margin: 0;" />
+                <span>Nieuwe deployment</span>
+            </label>
+        </div>
+    </fieldset>
+
+    {% if restore_mode == "existing" %}
+    {# Existing deployment selection #}
+    <fieldset>
+        <legend class="rvo-form-field__label"><strong>Doel deployment</strong></legend>
+        <p class="rvo-text--sm rvo-text--subtle" style="margin-bottom: 8px;">
+            De backup wordt hersteld naar een bestaande deployment.
+        </p>
+        {% for dep in deployments %}
+        <label class="rvo-radio-option" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; margin-bottom: 8px; cursor: pointer;">
+            <input type="radio" name="target_deployment" value="{{ dep.name }}"
+                   {% if loop.first %}checked{% endif %}
+                   style="margin: 0;" />
+            <div>
+                <strong>{{ dep.name }}</strong>
+                <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 4px;">{{ dep.namespace }}</span>
+            </div>
+        </label>
+        {% endfor %}
+    </fieldset>
+
+    <c-card padding="md" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-oranje);">
+        <c-layout-row gap="sm" verticalSpacing="center">
+            <c-icon icon="info" size="md" color="oranje" />
+            <div>
+                <strong>Let op</strong>
+                <p class="rvo-text--sm">Het herstellen van een backup overschrijft de huidige data in de geselecteerde deployment. Dit kan niet ongedaan worden gemaakt.</p>
+            </div>
+        </c-layout-row>
+    </c-card>
+
+    {% elif restore_mode == "new" %}
+    {# New deployment — configuration fields are in the next step #}
+    <c-card padding="md" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-hemelblauw);">
+        <c-layout-row gap="sm" verticalSpacing="center">
+            <c-icon icon="info" size="md" color="hemelblauw" />
+            <div>
+                <strong>Nieuwe deployment aanmaken</strong>
+                <p class="rvo-text--sm">In de volgende stap configureert u de naam, het domein en andere instellingen voor de nieuwe deployment.{% if source_deployment %} De componenten en services worden overgenomen van <strong>{{ source_deployment }}</strong>.{% endif %}</p>
+            </div>
+        </c-layout-row>
+    </c-card>
+    {% endif %}
+</c-layout-flow>
+</div>

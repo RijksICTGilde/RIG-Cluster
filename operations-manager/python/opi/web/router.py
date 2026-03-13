@@ -6,27 +6,23 @@ import copy
 import logging
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
-from opi.api.router import SelfServiceComponent, SelfServiceProjectRequest
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.task_manager import create_task
 from opi.core.templates import get_templates
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
-from opi.utils.project_names import generate_project_name
-from opi.utils.project_utils import validate_component_paths, validate_root_component
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
 
 from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
-from .router_project_form import project_form_router
-from .router_self_service import check_subdomain_availability_web, self_service_portal
+from .router_detail_edit import detail_edit_router
+from .router_self_service import check_subdomain_availability_web
 from .router_wizard import wizard_router
 from .services_router import services_router
 
@@ -37,7 +33,7 @@ web_router = APIRouter()
 # Include sub-routers
 web_router.include_router(services_router)
 web_router.include_router(metrics_explorer_router)
-web_router.include_router(project_form_router)
+web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 
 
@@ -85,177 +81,15 @@ async def permission_denied(request: Request) -> HTMLResponse:
     )
 
 
-# Register the self-service portal route
-web_router.add_api_route("/projects/new", self_service_portal, methods=["GET"], response_class=HTMLResponse)
+# Redirect old self-service portal URL to the wizard
+@web_router.get("/projects/new")
+async def redirect_projects_new_to_wizard():
+    """Redirect legacy /projects/new to the wizard-based project creation flow."""
+    return RedirectResponse(url="/forms/wizard/create-project", status_code=302)
+
 
 # SSO-protected subdomain availability check (prevents unauthenticated enumeration)
 web_router.add_api_route("/subdomains/check", check_subdomain_availability_web, methods=["GET"])
-
-
-@web_router.post("/projects/new", response_class=HTMLResponse)
-@requires_sso
-async def process_self_service_form(request: Request, background_tasks: BackgroundTasks):
-    """
-    Process the self-service project creation form submission.
-
-    This endpoint handles the form data from /projects/new and creates the project.
-    It requires SSO authentication and processes the comprehensive form data.
-
-    Returns:
-        HTML response with creation results or error page
-    """
-    try:
-        # Parse form data first (needed for CSRF validation)
-        form_data = await request.form()
-        logger.debug(f"Received form data keys: {list(form_data.keys())}")
-
-        # === CSRF PROTECTION (token + origin/referer validation) ===
-        await _validate_csrf(request, form_data)
-
-        # Get current user for logging
-        user = get_current_user(request)
-        logger.info(f"Processing self-service form submission by user: {user.get('email', 'unknown')}")
-
-        # Extract project details
-        display_name = str(form_data.get("display-name", "")).strip()
-        project_description = str(form_data.get("project-description", "")).strip()
-        cluster = str(form_data.get("cluster", "")).strip()
-
-        # Extract web address configuration
-        domain_mode = str(form_data.get("domain-mode", "component-specific")).strip()
-        subdomain = str(form_data.get("subdomain", "")).strip() or None
-        deployment_name = str(form_data.get("deployment-name", "main")).strip() or "main"
-        # Note: For nice-url mode, subdomain is now globally unique and required
-
-        # Extract external domain configuration
-        base_domain = str(form_data.get("base-domain", "")).strip() or None
-        issuer = str(form_data.get("issuer", "")).strip() or None
-        contact_email = str(form_data.get("contact-email", "")).strip() or None
-
-        # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
-        if domain_mode == "nice-url" and base_domain and not issuer:
-            issuer = "letsencrypt"
-            logger.info(f"Auto-enabled Let's Encrypt issuer for nice-url mode with base domain '{base_domain}'")
-
-        if not display_name or not cluster:
-            raise HTTPException(status_code=400, detail="Project name and cluster are required")
-
-        # Generate compliant technical project name from display name
-        try:
-            project_name, validated_display_name = generate_project_name(display_name)
-            logger.info(f"Generated project name '{project_name}' from display name '{display_name}'")
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid project name: {e}")
-
-        # Extract users (arrays)
-        user_emails = form_data.getlist("user-email[]")
-        user_roles = form_data.getlist("user-role[]")
-
-        # Filter out empty entries
-        user_emails = [str(email).strip() for email in user_emails if str(email).strip()]
-        user_roles = [str(role).strip() for role in user_roles if str(role).strip()]
-
-        # Extract services (checkboxes)
-        services = form_data.getlist("services[]")
-
-        # Extract components - this is more complex as it's dynamic
-        components = []
-        component_index = 0
-        while True:
-            # Check if we have component data for this index
-            comp_type_key = f"components[{component_index}][type]"
-            if comp_type_key not in form_data:
-                break
-
-            comp_type = str(form_data.get(comp_type_key, "deployment")).strip()
-            comp_port = form_data.get(f"components[{component_index}][port]")
-            comp_image = str(form_data.get(f"components[{component_index}][image]", "")).strip()
-            comp_path = str(form_data.get(f"components[{component_index}][path]", "/")).strip() or "/"
-            comp_cpu = str(form_data.get(f"components[{component_index}][cpu_limit]", "")).strip()
-            comp_memory = str(form_data.get(f"components[{component_index}][memory_limit]", "")).strip()
-            comp_env_vars = str(form_data.get(f"components[{component_index}][env_vars]", "")).strip()
-            comp_aliases = str(form_data.get(f"components[{component_index}][aliases]", "")).strip()
-            comp_services = form_data.getlist(f"components[{component_index}][services][]")
-            comp_root = str(form_data.get(f"components[{component_index}][root]", "")).strip().lower() == "true"
-
-            # Parse port as integer
-            try:
-                port = int(str(comp_port)) if comp_port and str(comp_port).strip() else None
-            except ValueError:
-                port = None
-
-            component = SelfServiceComponent(
-                type=comp_type,
-                port=port,
-                image=comp_image or "nginx:latest",
-                path=comp_path,
-                cpu_limit=comp_cpu or None,
-                memory_limit=comp_memory or None,
-                env_vars=comp_env_vars or None,
-                aliases=comp_aliases or None,
-                services=comp_services or None,
-                root=comp_root,
-            )
-            components.append(component)
-            component_index += 1
-
-        # Validate paths when using shared domains
-        if components:
-            try:
-                validate_component_paths([comp.path for comp in components], domain_mode)
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-
-        # Validate root component for nice-url mode
-        if components:
-            try:
-                validate_root_component(
-                    [(f"component-{i + 1}", comp.root, comp.port) for i, comp in enumerate(components)],
-                    domain_mode,
-                )
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-
-        # Create the request object
-        project_data = SelfServiceProjectRequest(
-            project_name=project_name,
-            display_name=display_name,
-            project_description=project_description or None,
-            cluster=cluster,
-            deployment_name=deployment_name,
-            domain_mode=domain_mode,
-            subdomain=subdomain,
-            base_domain=base_domain,
-            issuer=issuer,
-            contact_email=contact_email,
-            user_email=user_emails or None,
-            user_role=user_roles or None,
-            services=services or None,
-            components=components or None,
-        )
-
-        logger.info(
-            f"Starting async processing for project: '{project_name}' (display: '{display_name}') with {len(components)} components"
-        )
-
-        # Create task and start background processing (use display name for user-facing messages)
-        task_id = create_task(display_name)
-
-        # Start the background task with simple processor
-        from opi.core.simple_background import process_project_background
-
-        background_tasks.add_task(process_project_background, task_id, project_data)
-
-        logger.info(f"Started background task {task_id} for project {project_name}")
-
-        # Redirect immediately to progress page
-        return RedirectResponse(url=f"/projects/progress/{task_id}", status_code=302)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error starting background task for self-service form: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error starting project creation: {e!s}")
 
 
 @web_router.get("/projects/progress/{task_id}", response_class=HTMLResponse)
@@ -272,11 +106,20 @@ async def project_progress_page(request: Request, task_id: str):
 
         # Get project info
         project = get_task(task_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-
         user = get_current_user(request)
         templates = get_templates()
+
+        if not project:
+            # Task not found — completed and cleaned up, or never existed
+            return templates.TemplateResponse(
+                "project-progress-done.html.j2",
+                {
+                    "request": request,
+                    "title": "Taak niet beschikbaar",
+                    "menu_items": get_menu_items(user),
+                    "task_id": task_id,
+                },
+            )
 
         return templates.TemplateResponse(
             "project-progress.html.j2",
@@ -306,113 +149,77 @@ async def get_task_status(request: Request, task_id: str):
     Get current task status and progress.
 
     This endpoint is used for polling by the progress page JavaScript.
+    Reads task state from the in-memory TaskProgressManager.
+
+    TODO: Migrate to database-backed AsyncTaskService once TaskProgressManager
+    writes to the database instead of in-memory. See features/futures/
+    migrate-task-progress-to-database.md
     """
-    try:
-        from opi.core.task_manager import TaskStatus, _project_managers, _projects
+    from fastapi.responses import JSONResponse
 
-        # Check if we have project info
-        if task_id not in _projects:
-            raise HTTPException(status_code=404, detail="Project not found")
+    from opi.core.task_manager import TaskStatus, _project_managers, _projects
 
-        project = _projects[task_id]
+    project = _projects.get(task_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Task not found")
 
-        # Get the TaskProgressManager for this project
-        task_manager = _project_managers.get(task_id)
+    task_manager = _project_managers.get(task_id)
 
-        task_hierarchy = []
-        if task_manager:
-            logger.debug(
-                f"Found TaskProgressManager for project {project.project_name} and task {task_id} with {len(task_manager.tasks)} tasks"
-            )
-            # Build the proper task hierarchy from this project's tasks
-            main_tasks = []
-            subtasks_by_parent = {}
+    # Build subtask hierarchy from the in-memory task manager
+    task_hierarchy: list[dict] = []
+    progress = 0
 
-            # Organize this project's tasks
-            for task in task_manager.tasks.values():
-                if task.parent_id is None:
-                    # Main task
-                    main_tasks.append(task)
-                else:
-                    # Subtask
-                    if task.parent_id not in subtasks_by_parent:
-                        subtasks_by_parent[task.parent_id] = []
-                    subtasks_by_parent[task.parent_id].append(task)
+    if task_manager:
+        main_tasks = []
+        subtasks_by_parent: dict[str, list] = {}
 
-            # Build the hierarchy
-            for main_task in main_tasks:
-                task_data = {
-                    "id": main_task.id,
-                    "name": main_task.name,
-                    "status": main_task.status.value,
-                    "created_at": main_task.created_at.isoformat(),
-                    "completed_at": main_task.completed_at.isoformat() if main_task.completed_at else None,
-                    "error": main_task.error,
-                    "subtasks": [],
-                }
+        for task in task_manager.tasks.values():
+            if task.parent_id is None:
+                main_tasks.append(task)
+            else:
+                subtasks_by_parent.setdefault(task.parent_id, []).append(task)
 
-                # Add subtasks if any
-                if main_task.id in subtasks_by_parent:
-                    for subtask in subtasks_by_parent[main_task.id]:
-                        task_data["subtasks"].append(
-                            {
-                                "id": subtask.id,
-                                "name": subtask.name,
-                                "status": subtask.status.value,
-                                "created_at": subtask.created_at.isoformat(),
-                                "completed_at": subtask.completed_at.isoformat() if subtask.completed_at else None,
-                                "error": subtask.error,
-                            }
-                        )
+        for main_task in main_tasks:
+            task_data: dict[str, Any] = {
+                "id": main_task.id,
+                "name": main_task.name,
+                "status": main_task.status.value,
+                "error": main_task.error,
+                "subtasks": [
+                    {
+                        "id": subtask.id,
+                        "name": subtask.name,
+                        "status": subtask.status.value,
+                        "error": subtask.error,
+                    }
+                    for subtask in subtasks_by_parent.get(main_task.id, [])
+                ],
+            }
+            task_hierarchy.append(task_data)
 
-                task_hierarchy.append(task_data)
+        total = len(task_manager.tasks)
+        completed = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
+        progress = int((completed / total * 100) if total > 0 else 0)
 
-            # Calculate progress based on completed tasks
-            total_tasks = len(task_manager.tasks)
-            completed_tasks = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
-            progress = int((completed_tasks / total_tasks * 100) if total_tasks > 0 else 0)
-            logger.debug(f"Progress: {completed_tasks}/{total_tasks} = {progress}%")
-        else:
-            # No task manager yet, starting
-            logger.debug(f"No TaskProgressManager found for {task_id}")
-            progress = 0
+    response_data: dict[str, Any] = {
+        "task_id": task_id,
+        "status": project.status.value,
+        "current_step": project.current_step or "Starting...",
+        "project_name": project.project_name,
+        "progress": progress,
+        "tasks": task_hierarchy,
+    }
 
-        response_data = {
-            "task_id": task_id,
-            "status": project.status.value,
-            "current_step": project.current_step or "Starting...",
-            "project_name": project.project_name,
-            "created_at": project.created_at.isoformat(),
-            "progress": progress,
-            "tasks": task_hierarchy,
-        }
+    if project.logs:
+        response_data["logs"] = project.logs[-50:]
 
-        # Add logs if available
-        if project.logs:
-            response_data["logs"] = project.logs[-50:]  # Last 50 lines
+    if project.events:
+        response_data["events"] = project.events[-20:]
 
-        # Add events if available
-        if project.events:
-            response_data["events"] = project.events[-20:]  # Last 20 events
+    if project.web_addresses:
+        response_data["web_addresses"] = project.web_addresses
 
-        # Add namespace if available
-        if project.namespace:
-            response_data["namespace"] = project.namespace
-
-        # Add web addresses if available
-        if project.web_addresses:
-            response_data["web_addresses"] = project.web_addresses
-
-        from fastapi.responses import JSONResponse
-
-        logger.debug(f"Returning response with {len(task_hierarchy)} tasks, progress={progress}")
-        return JSONResponse(content=response_data)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting task status: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error getting task status: {e!s}")
+    return JSONResponse(content=response_data)
 
 
 @web_router.get("/api/tasks/{task_id}/debug")
@@ -592,6 +399,151 @@ async def delete_project_web(request: Request, project_name: str):
         return JSONResponse(content={"error": f"Error deleting project: {e!s}"}, status_code=500)
 
 
+@web_router.post("/projects/{project_name}/delete-deployment/{deployment_name}")
+@requires_sso
+async def delete_deployment_web(request: Request, project_name: str, deployment_name: str):
+    """Delete a deployment via web interface with SSO validation."""
+    try:
+        from fastapi.responses import JSONResponse
+
+        from opi.manager.project_manager import create_project_manager
+        from opi.services.project_service import get_project_service
+
+        user = get_current_user(request)
+        user_email = user.get("email", "").lower()
+
+        logger.info(
+            f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}"
+        )
+
+        project_service = get_project_service()
+
+        if not project_service.is_user_authorized_for_project(project_name, user_email):
+            return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
+
+        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        if user_role not in ["admin", "owner"]:
+            return JSONResponse(
+                content={"error": f"Alleen admin of owner rollen kunnen deployments verwijderen. Uw rol: {user_role}"},
+                status_code=403,
+            )
+
+        project_manager = create_project_manager()
+
+        logger.info(f"Starting deployment deletion for '{deployment_name}' in '{project_name}' by {user_email}")
+        deletion_results = await project_manager.delete_deployment(project_name, deployment_name)
+
+        if deletion_results["success"]:
+            logger.info(f"Deployment deletion completed successfully: {deployment_name}")
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "message": f"Deployment '{deployment_name}' succesvol verwijderd",
+                    "deletion_results": deletion_results,
+                },
+                status_code=200,
+            )
+        else:
+            errors = deletion_results.get("errors", [])
+            message = f"Deployment '{deployment_name}' verwijderen mislukt"
+            if errors:
+                message += f": {'; '.join(str(e) for e in errors)}"
+            logger.warning(f"Deployment deletion failed for {deployment_name}: {errors}")
+            return JSONResponse(
+                content={"success": False, "error": message, "deletion_results": deletion_results},
+                status_code=207,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing web deployment deletion: {e!s}")
+        return JSONResponse(content={"error": f"Fout bij verwijderen van deployment: {e!s}"}, status_code=500)
+
+
+@web_router.post("/projects/{project_name}/delete-component/{component_name}")
+@requires_sso
+async def delete_component_web(request: Request, project_name: str, component_name: str):
+    """Delete a component from a project via web interface."""
+    try:
+        from fastapi.responses import JSONResponse
+
+        from opi.handlers.project_file_handler import save_project_file
+        from opi.services.project_service import get_project_service
+
+        user = get_current_user(request)
+        user_email = user.get("email", "").lower()
+
+        logger.info(f"Web component deletion request for '{component_name}' in '{project_name}' by user: {user_email}")
+
+        project_service = get_project_service()
+
+        if not project_service.is_user_authorized_for_project(project_name, user_email):
+            return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
+
+        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        if user_role not in ["admin", "owner"]:
+            return JSONResponse(
+                content={"error": f"Alleen admin of owner rollen kunnen components verwijderen. Uw rol: {user_role}"},
+                status_code=403,
+            )
+
+        project = project_service.get_project(project_name)
+        if not project:
+            return JSONResponse(content={"error": "Project niet gevonden"}, status_code=404)
+
+        project_data = project.data or {}
+        components = list(project_data.get("components", []))
+
+        # Find and remove the component by name
+        original_count = len(components)
+        components = [c for c in components if c.get("name") != component_name]
+        if len(components) == original_count:
+            return JSONResponse(content={"error": f"Component '{component_name}' niet gevonden"}, status_code=404)
+
+        project_data["components"] = components
+        save_project_file(project.filename, project_data)
+        project_service.load_project_from_data(project_data, project.filename)
+        logger.info(f"Component '{component_name}' removed from '{project_name}', triggering reprocessing")
+
+        # Trigger background reprocessing to update K8s manifests
+        from io import StringIO
+
+        from ruamel.yaml import YAML
+
+        from opi.core.simple_background import process_project_yaml_background
+        from opi.core.task_manager import create_task
+
+        yaml_instance = YAML()
+        yaml_instance.preserve_quotes = True
+        yaml_instance.width = 4096
+        yaml_output = StringIO()
+        yaml_instance.dump(project_data, yaml_output)
+        yaml_content = yaml_output.getvalue()
+
+        display_name = project_data.get("display-name", project_name)
+        task_id = create_task(display_name)
+
+        from starlette.background import BackgroundTask
+
+        background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
+
+        response = JSONResponse(
+            content={"success": True, "message": f"Component '{component_name}' succesvol verwijderd"},
+            status_code=200,
+            background=background,
+        )
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing web component deletion: {e!s}")
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(content={"error": f"Fout bij verwijderen van component: {e!s}"}, status_code=500)
+
+
 @web_router.get("/test-architecture", response_class=HTMLResponse)
 @requires_sso
 async def test_architecture(request: Request):
@@ -658,15 +610,322 @@ async def formulier_demo_form(request: Request):
 @requires_sso
 async def dashboard(request: Request):
     """
-    Serve the main dashboard page.
+    Serve the main dashboard page with real project data, Prometheus metrics,
+    and ArgoCD status.
 
     Returns:
         HTML response with the dashboard showing project overview, metrics, and activity
     """
     try:
+        from datetime import UTC, datetime
+
+        from opi.core.startup import ensure_projects_fresh
+        from opi.services.project_service import get_project_service
+
         templates = get_templates()
         user = get_current_user(request)
-        return templates.TemplateResponse("dashboard.html.j2", {"request": request, "menu_items": get_menu_items(user)})
+        user_email = user.get("email", "").lower()
+
+        # --- Load user's projects ---
+        await ensure_projects_fresh()
+        project_service = get_project_service()
+        all_projects = project_service.get_all_projects()
+
+        user_projects: list[dict] = []
+        all_namespaces: list[str] = []
+        total_deployments = 0
+        unique_users: set[str] = set()
+
+        for project_name, project in all_projects.items():
+            if not project_service.is_user_authorized_for_project(project_name, user_email):
+                continue
+            project_data = project.data or {}
+            deployments = project_data.get("deployments", [])
+            users = project.users or []
+            total_deployments += len(deployments)
+            for u in users:
+                if hasattr(u, "email") and u.email:
+                    unique_users.add(u.email.lower())
+
+            # Collect k8s namespaces for Prometheus queries
+            project_namespaces: list[str] = []
+            for deployment in deployments:
+                cluster = deployment.get("cluster")
+                namespace = deployment.get("namespace")
+                if cluster and namespace:
+                    from opi.core.cluster_config import get_prefixed_namespace
+
+                    k8s_ns = get_prefixed_namespace(cluster, namespace)
+                    if k8s_ns not in all_namespaces:
+                        all_namespaces.append(k8s_ns)
+                    if k8s_ns not in project_namespaces:
+                        project_namespaces.append(k8s_ns)
+
+            user_projects.append(
+                {
+                    "name": project_name,
+                    "display_name": project_data.get("display-name", project_name),
+                    "description": project_data.get("description", ""),
+                    "deployments": deployments,
+                    "users": users,
+                    "deployment_count": len(deployments),
+                    "user_count": len(users),
+                    "namespaces": project_namespaces,
+                }
+            )
+
+        user_projects.sort(key=lambda p: p["display_name"] or p["name"])
+
+        # --- Query Prometheus metrics (scoped to user's namespaces) ---
+        metrics: dict = {}
+        prometheus_available = False
+        pod_count = 0
+        ns_regex = "|".join(all_namespaces)
+
+        if all_namespaces:
+            try:
+                from opi.connectors.prometheus import get_metrics_connector
+
+                prom = get_metrics_connector()
+                prometheus_available = prom.is_connected
+
+                if prometheus_available:
+                    # CPU usage and limits
+                    cpu_usage_val = 0.0
+                    cpu_limit_val = 0.0
+                    try:
+                        result = prom.custom_query(
+                            f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
+                        )
+                        if result and result[0].get("value"):
+                            cpu_usage_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard CPU usage query failed: {e}")
+
+                    try:
+                        result = prom.custom_query(
+                            f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
+                        )
+                        if result and result[0].get("value"):
+                            cpu_limit_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard CPU limits query failed: {e}")
+
+                    # Memory usage and limits
+                    mem_usage_val = 0.0
+                    mem_limit_val = 0.0
+                    try:
+                        result = prom.custom_query(
+                            f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
+                        )
+                        if result and result[0].get("value"):
+                            mem_usage_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard memory usage query failed: {e}")
+
+                    try:
+                        result = prom.custom_query(
+                            f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
+                        )
+                        if result and result[0].get("value"):
+                            mem_limit_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard memory limits query failed: {e}")
+
+                    # Storage usage and capacity
+                    storage_used_val = 0.0
+                    storage_cap_val = 0.0
+                    try:
+                        result = prom.custom_query(f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})')
+                        if result and result[0].get("value"):
+                            storage_used_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard storage usage query failed: {e}")
+
+                    try:
+                        result = prom.custom_query(
+                            f'sum(kubelet_volume_stats_capacity_bytes{{namespace=~"{ns_regex}"}})'
+                        )
+                        if result and result[0].get("value"):
+                            storage_cap_val = float(result[0]["value"][1])
+                    except Exception as e:
+                        logger.debug(f"Dashboard storage capacity query failed: {e}")
+
+                    # Pod count
+                    try:
+                        result = prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                        if result and result[0].get("value"):
+                            pod_count = int(float(result[0]["value"][1]))
+                    except Exception as e:
+                        logger.debug(f"Dashboard pod count query failed: {e}")
+
+                    # Network traffic time-series (last 30min, 5min step)
+                    network_in_data: list[dict] = []
+                    network_out_data: list[dict] = []
+                    try:
+                        now = datetime.now(UTC)
+                        start = now.timestamp() - 1800  # 30 minutes ago
+                        end = now.timestamp()
+                        in_results = prom.query_range(
+                            f'sum(rate(container_network_receive_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                            start_time=str(int(start)),
+                            end_time=str(int(end)),
+                            step="300",
+                        )
+                        if in_results:
+                            for ts, val in in_results[0].get("values", []):
+                                network_in_data.append(
+                                    {
+                                        "t": datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M"),
+                                        "v": round(float(val) / 1024, 1),
+                                    }
+                                )
+
+                        out_results = prom.query_range(
+                            f'sum(rate(container_network_transmit_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                            start_time=str(int(start)),
+                            end_time=str(int(end)),
+                            step="300",
+                        )
+                        if out_results:
+                            for ts, val in out_results[0].get("values", []):
+                                network_out_data.append(
+                                    {
+                                        "t": datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M"),
+                                        "v": round(float(val) / 1024, 1),
+                                    }
+                                )
+                    except Exception as e:
+                        logger.debug(f"Dashboard network query failed: {e}")
+
+                    # Compute display values
+                    def _pct(used: float, total: float) -> int:
+                        if total <= 0:
+                            return 0
+                        return min(100, round(used / total * 100))
+
+                    def _format_cores(val: float) -> str:
+                        if val < 1:
+                            return f"{int(val * 1000)}m"
+                        return f"{val:.1f}"
+
+                    def _format_gib(val_bytes: float) -> str:
+                        gib = val_bytes / (1024**3)
+                        if gib < 0.1:
+                            mib = val_bytes / (1024**2)
+                            return f"{mib:.0f} MiB"
+                        return f"{gib:.1f} GiB"
+
+                    metrics = {
+                        "cpu_percentage": _pct(cpu_usage_val, cpu_limit_val),
+                        "cpu_usage_display": _format_cores(cpu_usage_val),
+                        "cpu_limit_display": _format_cores(cpu_limit_val),
+                        "memory_percentage": _pct(mem_usage_val, mem_limit_val),
+                        "memory_usage_display": _format_gib(mem_usage_val),
+                        "memory_limit_display": _format_gib(mem_limit_val),
+                        "storage_percentage": _pct(storage_used_val, storage_cap_val),
+                        "storage_usage_display": _format_gib(storage_used_val),
+                        "storage_capacity_display": _format_gib(storage_cap_val),
+                        "network_in_data": network_in_data,
+                        "network_out_data": network_out_data,
+                    }
+                    # Per-project CPU usage for resource comparison bar
+                    for project in user_projects:
+                        proj_ns = project.get("namespaces", [])
+                        if not proj_ns:
+                            project["cpu_cores"] = 0.0
+                            continue
+                        try:
+                            proj_regex = "|".join(proj_ns)
+                            result = prom.custom_query(
+                                f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{proj_regex}",container!=""}}[5m]))'
+                            )
+                            if result and result[0].get("value"):
+                                project["cpu_cores"] = float(result[0]["value"][1])
+                            else:
+                                project["cpu_cores"] = 0.0
+                        except Exception as e:
+                            logger.debug(f"Dashboard per-project CPU query failed for {project['name']}: {e}")
+                            project["cpu_cores"] = 0.0
+
+            except Exception as e:
+                logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
+
+        total_cpu_usage = sum(p.get("cpu_cores", 0) for p in user_projects)
+
+        # --- Query ArgoCD status per project ---
+        argocd_available = False
+        try:
+            from opi.connectors.argo import create_argo_connector
+            from opi.utils.naming import generate_argocd_application_name
+
+            argo_connector = create_argo_connector()
+            argocd_available = argo_connector.auth_token is not None
+
+            if argocd_available:
+                for project in user_projects:
+                    deployment_statuses: list[str] = []
+                    latest_deploy: str | None = None
+                    for deployment in project.get("deployments", []):
+                        deployment_name = deployment.get("name")
+                        if not deployment_name:
+                            continue
+                        try:
+                            app_name = generate_argocd_application_name(project["name"], deployment_name)
+                            status_data = await argo_connector.get_application_status(app_name)
+                            if status_data:
+                                health = status_data.get("status", {}).get("health", {}).get("status", "Unknown")
+                                deployment_statuses.append(health)
+                                # Extract last deployed timestamp
+                                operation_state = status_data.get("status", {}).get("operationState", {})
+                                finished_at = operation_state.get("finishedAt") or status_data.get("status", {}).get(
+                                    "reconciledAt"
+                                )
+                                if finished_at and (not latest_deploy or finished_at > latest_deploy):
+                                    latest_deploy = finished_at
+                            else:
+                                deployment_statuses.append("Unknown")
+                        except Exception as e:
+                            logger.debug(f"Dashboard: ArgoCD status for {deployment_name}: {e}")
+                            deployment_statuses.append("Unknown")
+
+                    # Derive overall project health (worst status wins)
+                    if "Degraded" in deployment_statuses:
+                        project["health"] = "Degraded"
+                    elif "Progressing" in deployment_statuses:
+                        project["health"] = "Progressing"
+                    elif "Healthy" in deployment_statuses:
+                        project["health"] = "Healthy"
+                    else:
+                        project["health"] = "Unknown"
+                    project["last_deployed"] = latest_deploy
+        except Exception as e:
+            logger.warning(f"Dashboard: failed to connect to ArgoCD: {e}")
+            for project in user_projects:
+                project["health"] = "Unknown"
+
+        # Compute health counts for summary banner
+        health_counts = {"Healthy": 0, "Progressing": 0, "Degraded": 0, "Unknown": 0}
+        for p in user_projects:
+            health_counts[p.get("health", "Unknown")] += 1
+
+        return templates.TemplateResponse(
+            "dashboard.html.j2",
+            {
+                "request": request,
+                "menu_items": get_menu_items(user),
+                "active_projects": len(user_projects),
+                "total_deployments": total_deployments,
+                "total_users": len(unique_users),
+                "pod_count": pod_count,
+                "prometheus_available": prometheus_available,
+                "argocd_available": argocd_available,
+                "metrics": metrics,
+                "projects": user_projects,
+                "health_counts": health_counts,
+                "total_cpu_usage": total_cpu_usage,
+            },
+        )
 
     except Exception as e:
         import traceback
@@ -783,6 +1042,7 @@ async def project_details(request: Request, project_name: str):
         logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
+
             raw_user_env_vars = component.get("user-env-vars")
             logger.info(
                 f"Component '{component_name}': has user-env-vars={raw_user_env_vars is not None}, type={type(raw_user_env_vars).__name__ if raw_user_env_vars else 'None'}"
@@ -924,6 +1184,7 @@ async def project_details(request: Request, project_name: str):
                     subdomain = deployment.get("subdomain")
                     base_domain = deployment.get("base-domain")
                     hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                    domain_format = deployment.get("domain-format")
 
                     for component in deployment.get("components", []):
                         component_name = component.get("reference")
@@ -942,6 +1203,7 @@ async def project_details(request: Request, project_name: str):
                                     subdomain=subdomain,
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
+                                    domain_format=domain_format,
                                 )
 
                                 # Create links for all ingress hostnames
@@ -982,6 +1244,7 @@ async def project_details(request: Request, project_name: str):
                                 subdomain = deployment.get("subdomain")
                                 base_domain = deployment.get("base-domain")
                                 hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                                domain_format = deployment.get("domain-format")
 
                                 ingress_map = get_component_ingress_map(
                                     component_name=component_name,
@@ -991,6 +1254,7 @@ async def project_details(request: Request, project_name: str):
                                     subdomain=subdomain,
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
+                                    domain_format=domain_format,
                                 )
 
                                 # Create links for all ingress hostnames
@@ -1010,81 +1274,15 @@ async def project_details(request: Request, project_name: str):
                                     f"Failed to generate ingress link for component {component_name} in deployment {deployment['name']}: {ingress_error}"
                                 )
 
-        # Fetch Prometheus time-series metrics for each deployment's components
-        deployment_metrics_timeseries: dict[str, dict[str, dict[str, list]]] = {}
-        # Track discovered workloads for helm-based deployments (for template display)
-        discovered_workloads: dict[str, list[dict[str, Any]]] = {}
-        # Track PVC storage data per deployment (namespace-level)
-        deployment_pvc_storage: dict[str, dict[str, dict[str, Any]]] = {}
+        # Check Prometheus availability (metrics are lazy-loaded via HTMX)
         prometheus_available = False
         try:
             from opi.connectors.prometheus import get_metrics_connector
-            from opi.core.cluster_config import get_prefixed_namespace
 
             prom = get_metrics_connector()
             prometheus_available = prom.is_connected
-
-            if prometheus_available:
-                for deployment in project_details["deployments"]:
-                    deployment_name = deployment.get("name")
-                    base_namespace = deployment.get("namespace")
-                    cluster = deployment.get("cluster")
-                    components = deployment.get("components", [])
-                    helm_charts = deployment.get("helm-charts", [])
-
-                    if not deployment_name or not base_namespace or not cluster:
-                        continue
-
-                    # Get the actual Kubernetes namespace with cluster prefix
-                    k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
-
-                    if components:
-                        # Component-based deployment: use predefined components
-                        component_names = [c.get("reference") for c in components if c.get("reference")]
-                        if component_names:
-                            metrics = prom.get_deployment_component_metrics_timeseries(
-                                namespace=k8s_namespace,
-                                components=component_names,
-                                deployment_name=deployment_name,
-                                duration_minutes=60,
-                                step_minutes=5,
-                            )
-                            deployment_metrics_timeseries[deployment_name] = metrics
-                            logger.debug(f"Fetched time-series metrics for deployment {deployment_name}")
-
-                    elif helm_charts:
-                        # Helm-based deployment: discover workloads dynamically
-                        workloads = prom.discover_workloads_in_namespace(k8s_namespace)
-                        if workloads:
-                            discovered_workloads[deployment_name] = workloads
-                            metrics = prom.get_discovered_workload_metrics_timeseries(
-                                namespace=k8s_namespace,
-                                workloads=workloads,
-                                duration_minutes=60,
-                                step_minutes=5,
-                            )
-                            deployment_metrics_timeseries[deployment_name] = metrics
-                            logger.debug(
-                                f"Discovered {len(workloads)} workloads and fetched metrics for helm deployment {deployment_name}"
-                            )
-
-                    # Fetch PVC storage data for the namespace (works for both component and helm deployments)
-                    try:
-                        pvc_storage = prom.get_pvc_storage_by_namespace(
-                            namespace=k8s_namespace,
-                            duration_minutes=60,
-                            step_minutes=5,
-                        )
-                        if pvc_storage:
-                            deployment_pvc_storage[deployment_name] = pvc_storage
-                            logger.debug(
-                                f"Fetched PVC storage for {len(pvc_storage)} PVCs in deployment {deployment_name}"
-                            )
-                    except Exception as pvc_error:
-                        logger.warning(f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}")
-
-        except Exception as metrics_error:
-            logger.warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
+        except Exception as e:
+            logger.debug(f"Prometheus not available: {e}")
 
         # Fetch ArgoCD status for each deployment
         from typing import Any
@@ -1112,29 +1310,28 @@ async def project_details(request: Request, project_name: str):
                                 sync = status.get("sync", {})
                                 operation_state = status.get("operationState", {})
 
-                                # Extract errors from resources and conditions
                                 errors = []
-                                for resource in status.get("resources", []):
-                                    resource_health = resource.get("health", {})
-                                    health_status = resource_health.get("status")
-                                    health_msg = resource_health.get("message", "")
-                                    if health_status in ["Degraded", "Missing"]:
-                                        error_msg = health_msg or "Unknown error"
-                                        resource_name = (
-                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
-                                        )
-                                        errors.append({"resource": resource_name, "message": error_msg})
-                                    elif health_status == "Progressing" and health_msg:
-                                        resource_name = (
-                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
-                                        )
-                                        errors.append({"resource": resource_name, "message": health_msg})
-
-                                # Fetch resource tree for child-level errors (Pods, ReplicaSets)
-                                # This reveals errors like image pull failures that don't show
-                                # on top-level resources
                                 app_health = health.get("status", "Unknown")
-                                if app_health not in ("Healthy",):
+
+                                if app_health != "Healthy":
+                                    # Extract errors from top-level resources
+                                    for resource in status.get("resources", []):
+                                        resource_health = resource.get("health", {})
+                                        health_status = resource_health.get("status")
+                                        health_msg = resource_health.get("message", "")
+                                        if health_status in ["Degraded", "Missing"]:
+                                            error_msg = health_msg or "Unknown error"
+                                            resource_name = (
+                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                            )
+                                            errors.append({"resource": resource_name, "message": error_msg})
+                                        elif health_status == "Progressing" and health_msg:
+                                            resource_name = (
+                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                            )
+                                            errors.append({"resource": resource_name, "message": health_msg})
+
+                                    # Fetch resource tree for child-level errors (Pods, ReplicaSets)
                                     try:
                                         tree_nodes = await argo_connector.get_application_resource_tree(app_name)
                                         for node in tree_nodes:
@@ -1144,8 +1341,6 @@ async def project_details(request: Request, project_name: str):
                                             if not node_health_msg:
                                                 continue
                                             node_kind = node.get("kind", "")
-                                            # Only include child resources (Pods, ReplicaSets)
-                                            # that have actionable error messages
                                             if node_kind not in ("Pod", "ReplicaSet"):
                                                 continue
                                             if node_health_status in ("Degraded", "Missing"):
@@ -1159,8 +1354,7 @@ async def project_details(request: Request, project_name: str):
                                     except Exception as tree_error:
                                         logger.debug(f"Could not fetch resource tree for {app_name}: {tree_error}")
 
-                                    # Fetch Kubernetes events from the namespace for
-                                    # actionable details (e.g. ImagePullBackOff, CrashLoopBackOff)
+                                    # Fetch Kubernetes events from the namespace
                                     try:
                                         from opi.connectors.kubectl import KubectlConnector
                                         from opi.core.cluster_config import get_prefixed_namespace
@@ -1177,38 +1371,46 @@ async def project_details(request: Request, project_name: str):
                                                     reason = event.get("reason", "")
                                                     msg = event.get("message", "")
                                                     if msg:
-                                                        errors.append(
-                                                            {
-                                                                "resource": f"Event/{obj}",
-                                                                "message": f"[{reason}] {msg}",
-                                                            }
-                                                        )
+                                                        error_entry = {
+                                                            "resource": f"Event/{obj}",
+                                                            "message": f"[{reason}] {msg}",
+                                                        }
+                                                        event_time = event.get("time")
+                                                        if event_time:
+                                                            error_entry["timestamp"] = event_time
+                                                        errors.append(error_entry)
                                     except Exception as events_error:
                                         logger.debug(
                                             f"Could not fetch namespace events for {deployment_name}: {events_error}"
                                         )
 
-                                # Extract per-resource sync failures from syncResult
-                                sync_result = operation_state.get("syncResult", {})
-                                for resource in sync_result.get("resources", []):
-                                    if resource.get("status") == "SyncFailed":
-                                        resource_name = (
-                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                    # Extract per-resource sync failures from syncResult
+                                    sync_result = operation_state.get("syncResult", {})
+                                    for resource in sync_result.get("resources", []):
+                                        if resource.get("status") == "SyncFailed":
+                                            resource_name = (
+                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                            )
+                                            error_msg = resource.get("message", "Sync failed")
+                                            errors.append({"resource": resource_name, "message": error_msg})
+
+                                    # Extract application-level conditions
+                                    for condition in status.get("conditions", []):
+                                        condition_type = condition.get("type", "Unknown")
+                                        condition_msg = condition.get("message", "")
+                                        if condition_msg:
+                                            errors.append({"resource": condition_type, "message": condition_msg})
+
+                                    # Check for sync operation errors
+                                    if operation_state.get("phase") in ("Failed", "Error"):
+                                        op_message = operation_state.get("message", "Sync operation failed")
+                                        errors.append(
+                                            {
+                                                "resource": "SyncOperation",
+                                                "message": op_message,
+                                                "timestamp": operation_state.get("finishedAt"),
+                                            }
                                         )
-                                        error_msg = resource.get("message", "Sync failed")
-                                        errors.append({"resource": resource_name, "message": error_msg})
-
-                                # Extract application-level conditions
-                                for condition in status.get("conditions", []):
-                                    condition_type = condition.get("type", "Unknown")
-                                    condition_msg = condition.get("message", "")
-                                    if condition_msg:
-                                        errors.append({"resource": condition_type, "message": condition_msg})
-
-                                # Check for sync operation errors
-                                if operation_state.get("phase") in ("Failed", "Error"):
-                                    op_message = operation_state.get("message", "Sync operation failed")
-                                    errors.append({"resource": "SyncOperation", "message": op_message})
 
                                 # Get last sync time
                                 last_sync = None
@@ -1339,6 +1541,7 @@ async def project_details(request: Request, project_name: str):
                     subdomain = deployment.get("subdomain")
                     base_domain = deployment.get("base-domain")
                     hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                    domain_format = deployment.get("domain-format")
 
                     # Generate ingress links for each component in this deployment
                     for component in deployment.get("components", []):
@@ -1359,6 +1562,7 @@ async def project_details(request: Request, project_name: str):
                                     subdomain=subdomain,
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
+                                    domain_format=domain_format,
                                 )
 
                                 for ingress_name, hostname in ingress_map.items():
@@ -1394,6 +1598,7 @@ async def project_details(request: Request, project_name: str):
                             subdomain = deployment.get("subdomain")
                             base_domain = deployment.get("base-domain")
                             hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                            domain_format = deployment.get("domain-format")
 
                             ingress_map = get_component_ingress_map(
                                 component_name=component["name"],
@@ -1403,6 +1608,7 @@ async def project_details(request: Request, project_name: str):
                                 subdomain=subdomain,
                                 base_domain=base_domain,
                                 hostname_format=hostname_format,
+                                domain_format=domain_format,
                             )
 
                             for ingress_name, hostname in ingress_map.items():
@@ -1426,6 +1632,8 @@ async def project_details(request: Request, project_name: str):
 
         cluster_base_domains = get_cluster_base_domains_for_template()
 
+        from opi.forms.visualizers.flows import SERVICE_CONFIG_MODAL_FLOWS
+
         return templates.TemplateResponse(
             "project-details.html.j2",
             {
@@ -1436,9 +1644,6 @@ async def project_details(request: Request, project_name: str):
                 "user": user,
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
-                "deployment_metrics_timeseries": deployment_metrics_timeseries,
-                "deployment_pvc_storage": deployment_pvc_storage,
-                "discovered_workloads": discovered_workloads,
                 "prometheus_available": prometheus_available,
                 "argocd_status": argocd_status,
                 "argocd_available": argocd_available,
@@ -1447,6 +1652,7 @@ async def project_details(request: Request, project_name: str):
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
                 "csrf_token": csrf_token,
+                "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
             },
         )
 
@@ -1471,6 +1677,119 @@ async def project_details(request: Request, project_name: str):
                 error_msg += f"\nSource: {lines[line_num].strip()}"
 
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+
+
+@web_router.get("/projects/details/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def deployment_metrics_fragment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Return metrics HTML fragment for a single deployment (HTMX lazy-load)."""
+    from typing import Any
+
+    from opi.core.startup import ensure_projects_fresh
+    from opi.services.project_service import get_project_service
+
+    templates = get_templates()
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    await ensure_projects_fresh()
+
+    project_service = get_project_service()
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    project = project_service.get_project(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_data = project.data or {}
+    deployments = project_data.get("deployments", [])
+
+    # Find the requested deployment
+    deployment = None
+    for d in deployments:
+        if d.get("name") == deployment_name:
+            deployment = d
+            break
+
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    base_namespace = deployment.get("namespace")
+    cluster = deployment.get("cluster")
+    components = deployment.get("components", [])
+    helm_charts = deployment.get("helm-charts", [])
+
+    metrics: dict[str, dict[str, Any]] = {}
+    discovered_workloads: list[dict[str, Any]] = []
+    pvc_storage: dict[str, dict[str, Any]] = {}
+
+    if base_namespace and cluster:
+        try:
+            from opi.connectors.prometheus import get_metrics_connector
+            from opi.core.cluster_config import get_prefixed_namespace
+
+            prom = get_metrics_connector()
+            if prom.is_connected:
+                k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
+
+                if components:
+                    component_names = [c.get("reference") for c in components if c.get("reference")]
+                    if component_names:
+                        metrics = prom.get_deployment_component_metrics_timeseries(
+                            namespace=k8s_namespace,
+                            components=component_names,
+                            deployment_name=deployment_name,
+                            duration_minutes=60,
+                            step_minutes=5,
+                        )
+                elif helm_charts:
+                    workloads = prom.discover_workloads_in_namespace(k8s_namespace)
+                    if workloads:
+                        discovered_workloads = workloads
+                        metrics = prom.get_discovered_workload_metrics_timeseries(
+                            namespace=k8s_namespace,
+                            workloads=workloads,
+                            duration_minutes=60,
+                            step_minutes=5,
+                        )
+
+                try:
+                    pvc_data = prom.get_pvc_storage_by_namespace(
+                        namespace=k8s_namespace,
+                        duration_minutes=60,
+                        step_minutes=5,
+                    )
+                    if pvc_data:
+                        # Filter PVCs to only those belonging to this deployment
+                        # PVC names follow the pattern: {deployment_name}-{component_name}-...
+                        prefix = f"{deployment_name}-"
+                        pvc_storage = {name: data for name, data in pvc_data.items() if name.startswith(prefix)}
+                except Exception as pvc_error:
+                    logging.getLogger(__name__).warning(
+                        f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}"
+                    )
+        except Exception as metrics_error:
+            logging.getLogger(__name__).warning(f"Failed to fetch Prometheus metrics: {metrics_error}")
+
+    # Build a deployment-like object for the template (needs .name and .components attributes)
+    class DeploymentContext:
+        def __init__(self, name: str, components: list):
+            self.name = name
+            self.components = [type("C", (), {"reference": c.get("reference")})() for c in components]
+
+    deployment_ctx = DeploymentContext(deployment_name, components)
+
+    return templates.TemplateResponse(
+        "partials/deployment_metrics.html.j2",
+        {
+            "request": request,
+            "deployment": deployment_ctx,
+            "metrics": metrics,
+            "discovered_workloads": discovered_workloads,
+            "pvc_storage": pvc_storage,
+        },
+    )
 
 
 @web_router.get("/projects/{project_name}/deployments/{deployment_name}/domain-settings")
@@ -1767,8 +2086,10 @@ async def _update_keycloak_redirect_uris_for_deployment(
         for component_ref in component_refs:
             for component in project_data.get("components", []):
                 if component.get("name") == component_ref:
-                    uses_services = component.get("uses-services", [])
-                    component_services = ServiceAdapter.parse_services_from_strings(uses_services)
+                    service_names = ServiceAdapter.extract_service_names_from_project_services(
+                        component.get("services", [])
+                    )
+                    component_services = ServiceAdapter.parse_services_from_strings(service_names)
                     if ServiceType.KEYCLOAK in component_services:
                         sso_components.append(component_ref)
                     break
@@ -2351,6 +2672,18 @@ async def projects_overview(request: Request):
                 error_msg += f"\nSource: {lines[line_num].strip()}"
 
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+
+
+@web_router.get("/about", response_class=HTMLResponse)
+async def about_platform(request: Request):
+    """Serve the 'About the platform' page."""
+    try:
+        templates = get_templates()
+        user = get_current_user(request)
+        return templates.TemplateResponse("about.html.j2", {"request": request, "menu_items": get_menu_items(user)})
+    except Exception as e:
+        logger.error(f"Error serving about page: {e!s}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @web_router.get("/architecture", response_class=HTMLResponse)

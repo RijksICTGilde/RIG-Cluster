@@ -42,6 +42,26 @@ rules:
     verbs:
       - get
   # ==========================================================================
+  # Deployment Monitoring Permissions
+  # Used by: OOM watcher, deploy status checks, resource monitoring
+  # ==========================================================================
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - list
+  # Events listing for deployment monitoring and progress reporting
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - get
+      - list
+      - watch
+  # ==========================================================================
   # PVC Backup System Permissions
   # See: features/pvc-backup-system.md for documentation
   # ==========================================================================

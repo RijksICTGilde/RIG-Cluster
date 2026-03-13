@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
+    from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
-from opi.services import ServiceType
+from opi.services import CloneFromType, ServiceType
 from opi.utils.naming import generate_database_name
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
@@ -497,7 +498,7 @@ class DatabaseManager:
         clone_source_ref: str | None = None
         if clone_from:
             clone_type = clone_from.get("type")
-            if clone_type == "remote-source":
+            if clone_type == CloneFromType.REMOTE_SOURCE.value:
                 # Handle remote source cloning directly
                 remote_source_name = clone_from.get("reference")
                 if project_data is None:
@@ -556,9 +557,16 @@ class DatabaseManager:
                     schema=target.get("schema", db_schema),
                     password=result.get("resolved_password", db_password),
                 )
-            elif clone_type == "deployment":
+            elif clone_type == CloneFromType.DEPLOYMENT.value:
                 # Local deployment clone - extract reference name
                 clone_source_ref = clone_from.get("reference")
+            elif clone_type == CloneFromType.BACKUP.value:
+                # Backup restore: skip live cloning, database will be filled by restore
+                logger.info(
+                    f"Clone-from type 'backup' for deployment '{deployment_name}': "
+                    "skipping live database clone, data will come from backup restore"
+                )
+                clone_from = None
             else:
                 raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
 
@@ -689,12 +697,11 @@ class DatabaseManager:
 
             # Record revision in project file (handles both generation and revision tracking)
             if project_data:
-                initial_gen = final_generation if final_generation is not None else 1
                 self.project_manager._revision_manager.record_clone(
                     project_data=project_data,
                     deployment_name=deployment_name,
                     service_type=service_type,
-                    generation=initial_gen,
+                    generation=final_generation,
                     resource_name=db_database,
                     source=f"deployment:{clone_source_ref}",
                 )
@@ -992,6 +999,76 @@ class DatabaseManager:
         deletion_results["success"] = len(deletion_results["errors"]) == 0
 
         return deletion_results
+
+    async def handle_service_removal(
+        self,
+        project_name: str,
+        deployment_name: str,
+        deployment_data: dict[str, Any],
+        project_data: dict[str, Any],
+        marked_for_deletion_service: "MarkedForDeletionService | None" = None,
+    ) -> dict[str, Any]:
+        """Handle cleanup when PostgreSQL service is removed from a deployment.
+
+        If a ``MarkedForDeletionService`` is provided the database and user are
+        marked for deferred deletion (allowing recovery).  Otherwise they are
+        deleted immediately via ``delete_resources_for_deployment``.
+
+        Args:
+            project_name: Name of the project.
+            deployment_name: Name of the deployment losing the service.
+            deployment_data: The deployment dict from the *previous* YAML.
+            project_data: The *previous* project YAML (so internal service
+                checks still pass).
+            marked_for_deletion_service: Optional service for deferred deletion.
+
+        Returns:
+            Structured result dict with operations, errors, success.
+        """
+        cluster = deployment_data.get("cluster", "")
+
+        result: dict[str, Any] = {
+            "service": "database",
+            "deployment": deployment_name,
+            "trigger": "service_removal",
+            "operations": [],
+            "success": True,
+            "errors": [],
+        }
+
+        if marked_for_deletion_service is not None:
+            db_name = generate_database_name(project_name, deployment_name)
+            for rtype, rname in [
+                ("postgresql_database", db_name),
+                ("postgresql_user", db_name),
+            ]:
+                await marked_for_deletion_service.mark_resource(
+                    resource_type=rtype,
+                    resource_name=rname,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    metadata={"server": settings.DATABASE_HOST},
+                )
+            result["operations"].append(
+                {
+                    "type": "mark_for_deletion",
+                    "resource_type": "postgresql_database",
+                    "resource_name": db_name,
+                    "status": "marked",
+                }
+            )
+            logger.info(
+                "Marked database resources for deferred deletion: %s (project=%s, deployment=%s)",
+                db_name,
+                project_name,
+                deployment_name,
+            )
+        else:
+            result = await self.delete_resources_for_deployment(project_data, deployment_data)
+            result["trigger"] = "service_removal"
+
+        return result
 
     def _project_uses_namespace_postgresql(self, project_data: dict[str, Any]) -> bool:
         """
@@ -1830,7 +1907,7 @@ class DatabaseManager:
                     result["operations"].append({"type": "database_prepared", "status": "created"})
 
                     # Record revision for initial creation
-                    current_gen = generation if generation is not None else 1
+                    current_gen = generation if generation is not None else 0
                     service_type = (
                         ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
                         if uses_namespace_postgresql

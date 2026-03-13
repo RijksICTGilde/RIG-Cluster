@@ -201,12 +201,6 @@ class DatabasePool:
             with self._tracking_lock:
                 self._active_connections[conn_id] = connection_info
 
-            logger.debug(
-                f"Acquired connection {conn_id} from pool ({self.host}) "
-                f"by {caller_info} (task: {task_name}). "
-                f"Active connections: {len(self._active_connections)}"
-            )
-
             return conn
         except TimeoutError:
             logger.error(
@@ -238,14 +232,7 @@ class DatabasePool:
             with self._tracking_lock:
                 connection_info = self._active_connections.pop(conn_id, None)
 
-            if connection_info:
-                hold_time = time.time() - connection_info.acquired_at
-                logger.debug(
-                    f"Released connection {conn_id} to pool ({self.host}) "
-                    f"acquired by {connection_info.caller_info} "
-                    f"(held for {hold_time:.2f}s). Active connections: {len(self._active_connections)}"
-                )
-            else:
+            if not connection_info:
                 logger.warning(
                     f"Released untracked connection {conn_id} to pool ({self.host}). "
                     f"This may indicate a connection tracking issue."

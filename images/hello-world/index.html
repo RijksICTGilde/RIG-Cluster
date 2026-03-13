@@ -1,11 +1,135 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="nl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hello World</title>
+    <title>Hello World — Rijks ICT Gilde</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'RijksoverheidSansText', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #0F172A;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header bar — mimics <c-header> */
+        .header {
+            background-color: #154273;
+            padding: 12px 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .header svg { flex-shrink: 0; }
+        .header-text { color: #fff; line-height: 1.3; }
+        .header-title { font-size: 14px; font-weight: 700; }
+        .header-subtitle { font-size: 11px; opacity: 0.85; }
+
+        /* Hero — mimics <c-hero size="lg" overlay> */
+        .hero {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            min-height: calc(100vh - 100px);
+            background: url('hero.jpg') center center / cover no-repeat;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(
+                160deg,
+                rgba(21, 66, 115, 0.92) 0%,
+                rgba(1, 104, 155, 0.80) 50%,
+                rgba(21, 66, 115, 0.88) 100%
+            );
+        }
+        .hero-content {
+            position: relative;
+            z-index: 1;
+            padding: 48px 24px;
+            max-width: 900px;
+        }
+        .hero h1 {
+            font-size: clamp(3rem, 10vw, 7rem);
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: -0.02em;
+            line-height: 1.05;
+            margin-bottom: 24px;
+            text-shadow: 0 2px 30px rgba(0,0,0,0.25);
+        }
+        .hero p {
+            font-size: clamp(1rem, 2.5vw, 1.35rem);
+            color: rgba(255,255,255,0.9);
+            line-height: 1.6;
+            max-width: 640px;
+            margin: 0 auto 32px;
+        }
+        .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 6px;
+            padding: 10px 24px;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            backdrop-filter: blur(4px);
+        }
+
+        /* Footer */
+        .footer {
+            background: #154273;
+            color: rgba(255,255,255,0.7);
+            text-align: center;
+            padding: 16px;
+            font-size: 13px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Hello World!</h1>
+
+    <!-- Header -->
+    <div class="header">
+        <!-- Rijksoverheid logo (simplified crown) -->
+        <svg width="44" height="30" viewBox="0 0 44 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="24" width="44" height="6" rx="1" fill="#fff"/>
+            <circle cx="22" cy="6" r="3.5" fill="#fff"/>
+            <circle cx="10" cy="10" r="2.5" fill="#fff"/>
+            <circle cx="34" cy="10" r="2.5" fill="#fff"/>
+            <path d="M6 22 L10 12 L16 16 L22 8 L28 16 L34 12 L38 22 Z" fill="#fff"/>
+        </svg>
+        <div class="header-text">
+            <div class="header-title">Rijks ICT Gilde</div>
+            <div class="header-subtitle">Ministerie van Binnenlandse Zaken en Koninkrijksrelaties</div>
+        </div>
+    </div>
+
+    <!-- Hero -->
+    <div class="hero">
+        <div class="hero-content">
+            <h1>Hello RIG World!</h1>
+            <p>
+                Tech consultants met verschillende expertises werken samen aan
+                data-, AI-, software- en security-vraagstukken voor het Nederland van morgen.
+            </p>
+            <span class="badge">Zelfservice Applicatie Deployment</span>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        Rijks ICT Gilde &mdash; Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie
+    </div>
+
 </body>
 </html>

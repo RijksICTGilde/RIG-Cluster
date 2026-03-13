@@ -30,6 +30,7 @@ from opi.web.menu import get_menu_items
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
     from opi.forms.visualizers.sections import FormSection
+    from opi.forms.wizard.state import WizardState
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,68 @@ def _render_step_html(
     edit_mode: bool = False,
 ) -> str:
     """Render the form fields for a single wizard step."""
+    import copy
+
+    from opi.forms.editables.service_path import smart_get_value, smart_set_value
+
     renderer = _create_renderer()
     if not section.layout:
         return ""
+
+    # General solution: restore transient fields from their parent values before rendering.
+    # When a transient field is deferred to a parent, the transient is stripped from saved state.
+    # But for rendering, we need the transient field value so the input shows the correct value.
+    # For each transient field with a depends_on relationship, restore from the dependency.
+    render_data = copy.deepcopy(yaml_data)
+
+    if section.section_id == "domains":
+        logger.debug("[domains render START] processing %d editables", len(section.editables))
+
+    def _restore_transient_fields(editables: list[Any], data: dict[str, Any]) -> None:
+        """Recursively restore transient fields from their dependencies, including children."""
+        for editable in editables:
+            ed = editable.editable
+
+            if section.section_id == "domains":
+                logger.debug(
+                    "[domains render] checking editable: path=%s, transient=%s, depends_on=%s, has_children=%s",
+                    ed.yaml_path,
+                    ed.transient,
+                    ed.depends_on,
+                    bool(editable.children),
+                )
+
+            # Recursively process children (for GROUP editables)
+            if editable.children:
+                _restore_transient_fields(editable.children, data)
+
+            # Check if this is a transient field that depends on another field
+            if ed.transient and ed.depends_on:
+                # Get the dependency value (the parent field value)
+                dep_value = smart_get_value(data, ed.depends_on)
+
+                if section.section_id == "domains":
+                    logger.debug(
+                        "[domains render] FOUND transient field %s, dep_value=%s",
+                        ed.yaml_path,
+                        dep_value,
+                    )
+
+                # If the parent has a non-sentinel value, it's a custom value - restore it to the transient for display
+                if dep_value and dep_value != "__custom__":
+                    # Restore this transient field from the parent for display
+                    smart_set_value(data, ed.yaml_path, dep_value)
+                    logger.debug(
+                        "[domains render] RESTORED transient field %s from dependency %s (value=%s)",
+                        ed.yaml_path,
+                        ed.depends_on,
+                        dep_value,
+                    )
+
+    _restore_transient_fields(section.editables, render_data)
+
+    yaml_data = render_data
+
     return renderer.render_fields_from_editables(
         editables=section.editables,
         yaml_data=yaml_data,
@@ -274,7 +334,9 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 
-        # Seed the components step with one default component
+        # Seed the components step with one default component.
+        # The services checkbox is left unset (None) so the renderer
+        # auto-populates it with all project-level services on first render.
         state.store_step_data(
             "components",
             {
@@ -285,20 +347,21 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
                         "ports": {"inbound": [8080], "outbound": [80, 443]},
                         "resources": {
                             "cpu": {"request": "50m", "limit": "1"},
-                            "memory": {"request": "256Mi", "limit": "1Gi"},
+                            "memory": {"request": "256Mi", "limit": "512Mi"},
                         },
                     },
                 ],
             },
         )
 
-        # Seed the domains step with default deployment
+        # Seed the domains step with default domain mode only.
+        # Do NOT include "name" here — it comes from the deployment step
+        # and the index-based merge in get_merged_data() would overwrite it.
         state.store_step_data(
             "domains",
             {
                 "deployments": [
                     {
-                        "name": "productie",
                         "domain-mode": "component-specific",
                     },
                 ],
@@ -365,6 +428,11 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     project_data = project.data
     if not project_data:
         raise HTTPException(status_code=500, detail="Project data niet beschikbaar")
+
+    # Populate transient fields for deferred editables (e.g. custom domain text input)
+    processor = EditableFormProcessor()
+    for section in flow.sections:
+        processor.populate_deferred_fields(project_data, section.editables)
 
     # Pre-fill step data from existing project
     step_data = _split_data_across_sections(flow, project_data)
@@ -445,6 +513,112 @@ def _split_data_across_sections(
 
 
 # ---------------------------------------------------------------------------
+# Shared navigation helper
+# ---------------------------------------------------------------------------
+
+
+def _resolve_goto_target(
+    goto: str,
+    current_section_id: str,
+    active_section_ids: list[str],
+) -> str | None:
+    """Resolve a navigation direction to a concrete section_id.
+
+    Args:
+        goto: Direction — "next", "prev", "review", or a section_id.
+        current_section_id: The section the user is currently on.
+        active_section_ids: Ordered list of active section_ids.
+
+    Returns:
+        A section_id to navigate to, "review" for summary, or None if
+        at the end with no review.
+    """
+    if goto == "review":
+        return "review"
+
+    try:
+        current_idx = active_section_ids.index(current_section_id)
+    except ValueError:
+        return active_section_ids[0] if active_section_ids else None
+
+    if goto == "next":
+        if current_idx < len(active_section_ids) - 1:
+            return active_section_ids[current_idx + 1]
+        return None  # past last step
+
+    if goto == "prev":
+        if current_idx > 0:
+            return active_section_ids[current_idx - 1]
+        return active_section_ids[0]  # already at first step
+
+    # Specific section_id (from step indicator jump)
+    if goto in active_section_ids:
+        return goto
+
+    # Unknown goto — stay on current
+    logger.warning("[resolve_goto] unknown goto=%r, staying on %s", goto, current_section_id)
+    return current_section_id
+
+
+async def _navigate_to_step(
+    request: Request,
+    state: WizardState,
+    flow_id: str,
+    target_section_id: str,
+    templates: Any,
+) -> HTMLResponse:
+    """Save state and render the target step.
+
+    Used by both forward navigation (after validation) and jump/back
+    navigation (skip validation).  Runs validation on load when the
+    target step already has stored data, so errors are shown immediately.
+    """
+    target_section = _get_section_from_flow(flow_id, target_section_id)
+    state.current_step = target_section_id
+    save_wizard_state(request, state)
+    logger.info(
+        "[navigate] target=%s, active_sections=%s, current_step=%s",
+        target_section_id,
+        state.active_sections,
+        state.current_step,
+    )
+
+    yaml_data = state.get_merged_data()
+    edit_mode = state.project_name is not None
+
+    # Validate on load only for steps the user has explicitly completed (forward-validated).
+    # Steps that merely have saved data from back-navigation should not show errors.
+    errors: dict[str, list[str]] | None = None
+    if target_section_id in state.completed_steps and target_section_id in state.step_data:
+        processor = EditableFormProcessor()
+        _, errors = await processor.process_json_submission(
+            state.step_data[target_section_id],
+            target_section.editables,
+            yaml_data,
+            edit_mode=edit_mode,
+        )
+        if not errors:
+            errors = None
+
+    step_html = _render_step_html(
+        target_section,
+        yaml_data=yaml_data,
+        errors=errors,
+        edit_mode=edit_mode,
+    )
+    context = _build_step_context(
+        request,
+        flow_id,
+        target_section,
+        step_html,
+        errors=errors,
+    )
+    response = templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+    response.headers["HX-Push-Url"] = f"/forms/wizard/{flow_id}/step/{target_section_id}"
+    return response
+
+
+# ---------------------------------------------------------------------------
 # HTMX: load a step (GET)
 # ---------------------------------------------------------------------------
 
@@ -452,35 +626,50 @@ def _split_data_across_sections(
 @wizard_router.get("/{flow_id}/step/{section_id}", response_class=HTMLResponse)
 @requires_sso
 async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse:
-    """Load a wizard step via HTMX or direct browser navigation."""
+    """Load a wizard step via HTMX or direct browser navigation.
+
+    For HTMX requests, delegates to ``_navigate_to_step`` which validates
+    stored data on load.  For direct browser access, renders the full page.
+    """
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
         # No session — redirect to the wizard start page which will init state
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=302)  # type: ignore[return-value]
 
-    section = _get_section_from_flow(flow_id, section_id)
-
-    # Update current step
-    state.current_step = section_id
-    save_wizard_state(request, state)
-
-    # Render with any previously stored data for this step
-    yaml_data = state.get_merged_data()
-    step_html = _render_step_html(
-        section,
-        yaml_data=yaml_data,
-        edit_mode=state.project_name is not None,
-    )
-
     templates = get_templates()
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if is_htmx:
-        # HTMX partial: return just the step fragment
-        context = _build_step_context(request, flow_id, section, step_html)
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return await _navigate_to_step(request, state, flow_id, section_id, templates)
 
     # Direct browser access: return the full page with the step embedded
+    section = _get_section_from_flow(flow_id, section_id)
+    state.current_step = section_id
+    save_wizard_state(request, state)
+
+    yaml_data = state.get_merged_data()
+    edit_mode = state.project_name is not None
+
+    # Validate on load only for completed steps (not just saved from back-navigation)
+    errors: dict[str, list[str]] | None = None
+    if section_id in state.completed_steps and section_id in state.step_data:
+        processor = EditableFormProcessor()
+        _, errors = await processor.process_json_submission(
+            state.step_data[section_id],
+            section.editables,
+            yaml_data,
+            edit_mode=edit_mode,
+        )
+        if not errors:
+            errors = None
+
+    step_html = _render_step_html(
+        section,
+        yaml_data=yaml_data,
+        errors=errors,
+        edit_mode=edit_mode,
+    )
+
     flow = get_flow(flow_id)
     user = get_current_user(request)
     active_sections = resolve_active_sections(flow, state.step_data)
@@ -500,7 +689,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
             "section": section,
             "step_html": step_html,
             "preset_html": preset_html,
-            "errors": {},
+            "errors": errors or {},
             "global_errors": [],
             "show_review": flow.show_review,
             "menu_items": get_menu_items(user),
@@ -517,11 +706,16 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
 @wizard_router.post("/{flow_id}/step/{section_id}", response_model=None)
 @requires_sso
 async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse | RedirectResponse:
-    """Validate step data and advance to the next step.
+    """Process form data and navigate to the requested step.
 
     Also handles sequence add/remove actions when ``_seq_action`` is present
-    in the form data.  The same endpoint is reused so that current field values
-    are preserved via the normal form submission.
+    in the form data.
+
+    Navigation directions (controlled by ``_goto``):
+    - ``"next"`` or empty: validate + advance to next step
+    - ``"prev"``: save without validation + go to previous step
+    - ``"review"``: validate + show summary page
+    - any section_id: save without validation + jump to that step
     """
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -539,7 +733,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     seq_path = body.pop("_seq_path", None)
     seq_index = body.pop("_seq_index", None)
     is_rerender = body.pop("_rerender", None) == "1"
-    goto = body.pop("_goto", "")
+    goto = body.pop("_goto", "next")
 
     # body is now the nested step data
     submitted_data = body
@@ -561,30 +755,61 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     yaml_data = state.get_merged_data()
     edit_mode = state.project_name is not None
 
+    # Build enforcer context with out-of-scope metadata
+    enforcer_context = {"project_name": state.project_name, "edit_mode": edit_mode}
+
     # Process the nested JSON: validate, convert, and write to yaml in one pass.
-    # Item counts come from the submitted data (form truth), not stale session.
-    submitted_yaml, errors = processor.process_json_submission(
+    submitted_yaml, errors = await processor.process_json_submission(
         submitted_data,
         section.editables,
         yaml_data,
         edit_mode=edit_mode,
+        enforcer_context=enforcer_context,
     )
+
+    # CENTRALIZED VALIDATION LOGGING - field-level validation
+    if errors:
+        logger.warning(
+            "[%s validation FAILED] field-level errors: %s",
+            section_id,
+            errors,
+        )
+    else:
+        logger.info("[%s validation PASSED] field-level validation ok", section_id)
 
     # Handle re-render request (e.g., toggle changed): save values, clear hidden
     # depends_on fields, and re-render the same step without advancing.
     if is_rerender:
-        processor.clear_hidden_depends_on(section.editables, submitted_yaml)
+        from opi.forms.editables.service_path import smart_get_value as _sgv
 
-        section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
-        section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
+        logger.info(
+            "[RERENDER %s] services in submitted_yaml BEFORE clear_hidden: %r",
+            section_id,
+            _sgv(submitted_yaml, "components[0]/services"),
+        )
+        processor.clear_hidden_depends_on(section.editables, submitted_yaml)
+        logger.info(
+            "[RERENDER %s] services in submitted_yaml AFTER clear_hidden: %r",
+            section_id,
+            _sgv(submitted_yaml, "components[0]/services"),
+        )
+
+        section_data = _extract_section_data(section.editables, submitted_yaml)
         state.store_step_data(section_id, section_data)
         save_wizard_state(request, state)
 
+        logger.info(
+            "[RERENDER %s] services passed to renderer: %r",
+            section_id,
+            _sgv(submitted_yaml, "components[0]/services"),
+        )
         step_html = _render_step_html(section, yaml_data=submitted_yaml, edit_mode=edit_mode)
         context = _build_step_context(request, flow_id, section, step_html)
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
-    logger.debug("Step %s validation errors: %s", section_id, errors)
+    # --- Resolve navigation direction ---
+    is_forward = goto in ("next", "review")
+    logger.info("[submit_step %s] goto=%r, is_forward=%s", section_id, goto, is_forward)
 
     # Auto-add service dependencies when leaving the services step
     if section_id == "services" and isinstance(submitted_yaml.get("services"), list):
@@ -592,8 +817,8 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
         submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
 
-    if errors:
-        # Re-render current step with errors, using submitted values so input is preserved
+    # Forward navigation (Next / Review): block on field-level validation errors
+    if is_forward and errors:
         step_html = _render_step_html(
             section,
             yaml_data=submitted_yaml,
@@ -609,58 +834,71 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
+    # Forward navigation: run section-level enforcer for cross-field validation
+    if is_forward and section.enforcer:
+        global_errors = await processor.enforce_sections(submitted_yaml, [section], enforcer_context)
+
+        # CENTRALIZED VALIDATION LOGGING - section-level (enforcer) validation
+        if global_errors:
+            logger.warning(
+                "[%s validation FAILED] section-level (enforcer) errors: %s",
+                section_id,
+                global_errors,
+            )
+            step_html = _render_step_html(
+                section,
+                yaml_data=submitted_yaml,
+                errors=errors,
+                edit_mode=edit_mode,
+            )
+            context = _build_step_context(
+                request,
+                flow_id,
+                section,
+                step_html,
+                errors=errors,
+                global_errors=global_errors,
+            )
+            return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        else:
+            logger.info("[%s validation PASSED] section-level (enforcer) validation ok", section_id)
+
     # Store converted YAML-format data for this section
-    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
-    section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
+    section_data = _extract_section_data(section.editables, submitted_yaml)
     state.store_step_data(section_id, section_data)
-    state.mark_completed(section_id)
+
+    # CENTRALIZED LOGGING - navigation decision point
+    logger.info(
+        "[%s] All validations passed. Forward navigation: is_forward=%s, goto=%r",
+        section_id,
+        is_forward,
+        goto,
+    )
+    if is_forward:
+        state.mark_completed(section_id)
 
     # Re-resolve active sections (services step may add/remove conditional steps)
     active_section_ids = resolve_active_section_ids(flow, state.step_data)
     state.active_sections = active_section_ids
-
-    # Stash data for sections that became inactive (e.g. keycloak-config when
-    # keycloak is deselected) and restore for sections that became active again.
     state.stash_inactive_sections(active_section_ids)
 
-    # "Naar samenvatting" button: skip to review if validation passed
-    if goto == "review" and flow.show_review:
+    # --- Resolve target step ---
+    target_section_id = _resolve_goto_target(goto, section_id, active_section_ids)
+    logger.info("[submit_step %s] resolved target=%s", section_id, target_section_id)
+
+    # Review page
+    if target_section_id == "review":
         save_wizard_state(request, state)
         return await _render_review(request, flow_id, templates)
 
-    # Determine next step
-    active_sections = resolve_active_sections(flow, state.step_data)
-
-    try:
-        current_idx = [s.section_id for s in active_sections].index(section_id)
-    except ValueError:
-        current_idx = -1
-
-    if current_idx < len(active_sections) - 1:
-        # Navigate to next step
-        next_section = active_sections[current_idx + 1]
-        state.current_step = next_section.section_id
+    # Submit (last step, no review)
+    if target_section_id is None:
         save_wizard_state(request, state)
+        if flow.show_review:
+            return await _render_review(request, flow_id, templates)
+        return await _do_submit(request, flow_id, templates)
 
-        yaml_data = state.get_merged_data()
-        step_html = _render_step_html(
-            next_section,
-            yaml_data=yaml_data,
-            edit_mode=state.project_name is not None,
-        )
-        context = _build_step_context(request, flow_id, next_section, step_html)
-        response = templates.TemplateResponse("wizard/wizard_step.html.j2", context)
-        response.headers["HX-Push-Url"] = f"/forms/wizard/{flow_id}/step/{next_section.section_id}"
-        return response
-
-    # Last step - go to review or submit
-    save_wizard_state(request, state)
-
-    if flow.show_review:
-        return await _render_review(request, flow_id, templates)
-
-    # No review step: submit directly
-    return await _do_submit(request, flow_id, templates)
+    return await _navigate_to_step(request, state, flow_id, target_section_id, templates)
 
 
 # ---------------------------------------------------------------------------
@@ -829,7 +1067,7 @@ async def _handle_sequence_action(
     processor = EditableFormProcessor()
     yaml_data = state.get_merged_data()
     edit_mode = state.project_name is not None
-    yaml_data, _errors = processor.process_json_submission(
+    yaml_data, _errors = await processor.process_json_submission(
         submitted_data,
         section.editables,
         yaml_data,
@@ -863,6 +1101,23 @@ async def _handle_sequence_action(
     templates = get_templates()
     context = _build_step_context(request, flow_id, section, step_html)
     return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+
+
+def _prune_empty_dicts(data: Any) -> None:
+    """Recursively remove empty dict values from nested data structures.
+
+    After field removal (e.g. restrict-access/enabled deleted via
+    remove_when_none), empty parent dicts like ``restrict-access: {}``
+    may remain.  This cleans them up so the YAML output stays tidy.
+    """
+    if isinstance(data, dict):
+        for key in list(data.keys()):
+            _prune_empty_dicts(data[key])
+            if isinstance(data[key], dict) and not data[key]:
+                del data[key]
+    elif isinstance(data, list):
+        for item in data:
+            _prune_empty_dicts(item)
 
 
 def _normalize_component_paths(final_data: dict[str, Any]) -> None:
@@ -1079,6 +1334,69 @@ async def _render_review(
     )
 
 
+def _extract_section_data(
+    editables: list[Any],
+    submitted_yaml: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract section data, keeping only fields owned by this section's editables.
+
+    For simple top-level keys (e.g. ``components``, ``services``) this copies
+    the entire value — same as before.
+
+    For indexed paths into a shared list (e.g. ``deployments[0]/name`` vs
+    ``deployments[0]/domain-format``), the list items are pruned to only
+    include fields that this section's editables define.  This prevents
+    one section from capturing (and later overwriting) another section's
+    fields during the shallow merge in ``get_merged_data()``.
+    """
+    import copy
+
+    # Collect which top-level keys this section uses, and for indexed list
+    # paths, which sub-fields it owns (e.g. deployments -> {name}).
+    section_keys: set[str] = set()
+    indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
+
+    def _collect_leaf_paths(vis_list: list[Any]) -> None:
+        for vis in vis_list:
+            # Groups are transparent — collect their children's paths
+            if vis.children and str(vis.widget) == "group":
+                _collect_leaf_paths(vis.children)
+                continue
+
+            parts = vis.editable.yaml_path.split("/")
+            top = parts[0]
+            top_key = top.split("[")[0]
+            section_keys.add(top_key)
+
+            if "[" in top and len(parts) >= 2:
+                # e.g. deployments[0]/base-domain -> owns "base-domain"
+                field_name = parts[1].split("[")[0]
+                indexed_fields.setdefault(top_key, set()).add(field_name)
+
+    _collect_leaf_paths(editables)
+
+    result: dict[str, Any] = {}
+    for key in section_keys:
+        if key not in submitted_yaml:
+            continue
+        value = submitted_yaml[key]
+
+        if key in indexed_fields and isinstance(value, list):
+            # Prune list items to only owned fields
+            owned = indexed_fields[key]
+            pruned = []
+            for item in value:
+                if isinstance(item, dict):
+                    pruned.append({k: copy.deepcopy(v) for k, v in item.items() if k in owned})
+                else:
+                    pruned.append(copy.deepcopy(item))
+            result[key] = pruned
+        else:
+            result[key] = copy.deepcopy(value)
+
+    return result
+
+
 def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> str:
     """Build an HTML summary for a section's data.
 
@@ -1092,14 +1410,19 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
 
     parts: list[str] = []
 
-    for editable in section.editables:
-        if str(editable.widget) == "sequence":
-            parts.append(_build_sequence_summary(editable, yaml_data))
-        else:
-            value = smart_get_value(yaml_data, editable.editable.yaml_path)
-            display = _format_value(editable, value)
-            if display is not None:
-                parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
+    def _collect_summary(vis_list: list[Any]) -> None:
+        for editable in vis_list:
+            if str(editable.widget) == "group":
+                _collect_summary(editable.children or [])
+            elif str(editable.widget) == "sequence":
+                parts.append(_build_sequence_summary(editable, yaml_data))
+            else:
+                value = smart_get_value(yaml_data, editable.editable.yaml_path)
+                display = _format_value(editable, value, yaml_data)
+                if display is not None:
+                    parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
+
+    _collect_summary(section.editables)
 
     return "\n".join(parts) if parts else "<p><em>Geen gegevens ingevuld</em></p>"
 
@@ -1132,18 +1455,41 @@ def _build_sequence_summary(
 
         for child in children:
             if str(child.widget) == "sequence":
-                # Nested sequence: summarize inline
-                child_key = child.editable.yaml_path.split("/")[-1].split("[")[0]
-                child_items = item.get(child_key, [])
+                # Nested sequence: navigate using full relative path
+                # (handles {filter} syntax like services{persistent-storage}/config)
+                from opi.forms.editables.path import get_value
+
+                relative_path = _child_key(child)
+                child_items = get_value(item, relative_path)
                 if child_items and isinstance(child_items, list):
-                    formatted = ", ".join(str(v) for v in child_items)
+                    summaries = []
+                    for ci in child_items:
+                        if isinstance(ci, dict) and child.children:
+                            parts_ci = []
+                            for cc in child.children:
+                                cc_key = cc.editable.yaml_path.split("/")[-1].split("[")[0]
+                                cc_val = ci.get(cc_key)
+                                if cc_val is not None:
+                                    parts_ci.append(str(cc_val))
+                            summaries.append(" — ".join(parts_ci) if parts_ci else str(ci))
+                        else:
+                            summaries.append(str(ci))
+                    formatted = ", ".join(summaries)
                     item_parts.append(f"<dt>{child.label}</dt><dd>{formatted}</dd>")
                 continue
 
             # Extract the child key from yaml_path (last segment without [*])
             child_key = _child_key(child)
-            value = _nested_get(item, child_key)
-            display = _format_value(child, value)
+            # Use get_value for paths with {filter} syntax (e.g.
+            # services{metrics-scraper}/port) since _nested_get only
+            # handles plain dict keys.
+            if "{" in child_key:
+                from opi.forms.editables.path import get_value
+
+                value = get_value(item, child_key)
+            else:
+                value = _nested_get(item, child_key)
+            display = _format_value(child, value, yaml_data)
             if display is not None:
                 item_parts.append(f"<dt>{child.label}</dt><dd>{display}</dd>")
 
@@ -1208,7 +1554,7 @@ def _nested_get(data: dict[str, Any], path: str) -> Any:
     return current
 
 
-def _format_value(editable: Any, value: Any) -> str | None:
+def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> str | None:
     """Format a value for display in the summary.
 
     Returns None if the value is empty/unset and should be omitted.
@@ -1219,7 +1565,10 @@ def _format_value(editable: Any, value: Any) -> str | None:
     # Apply converter.view() for display if available (e.g. ServiceListConverter
     # extracts service names from mixed str/dict lists)
     if editable.editable.converter:
-        value = editable.editable.converter.view(value)
+        try:
+            value = editable.editable.converter.view(value, yaml_data=yaml_data)
+        except TypeError:
+            value = editable.editable.converter.view(value)
 
     # Resolve option labels for select/radio/checkbox_group/service_cards fields
     if editable.editable.values_provider and str(editable.widget) in (
@@ -1237,10 +1586,10 @@ def _format_value(editable: Any, value: Any) -> str | None:
     if isinstance(value, dict):
         # Key-value editor or similar
         formatted = ", ".join(f"{k}={v}" for k, v in value.items())
-        return formatted if formatted else None
+        return formatted or None
 
     display = str(value)
-    return display if display else None
+    return display or None
 
 
 def _resolve_option_labels(editable: Any, value: Any) -> str:
@@ -1275,56 +1624,14 @@ async def submit_wizard(request: Request, flow_id: str) -> HTMLResponse | Redire
     return await _do_submit(request, flow_id, templates)
 
 
-def _flatten_yaml_for_validation(
-    editables: list[Any],
-    yaml_data: dict[str, Any],
-) -> dict[str, Any]:
-    """Flatten structured YAML data into form-style flat keys for validation.
-
-    The processor's validate_editables() expects flat keys like
-    ``users[0]/email``, but merged YAML data is nested.  This function
-    walks the editables, resolves each path against the YAML structure,
-    and returns a flat dict that the processor can validate.
-
-    Fields hidden via ``should_render_editable`` are excluded so they
-    are not validated.
-    """
-    from opi.forms.editables.path import resolve_path
-    from opi.forms.editables.service_path import smart_get_value
-    from opi.forms.visualizers.bridge import should_render_editable
-
-    flat: dict[str, Any] = {}
-
-    for editable in editables:
-        if not should_render_editable(editable, yaml_data):
-            continue
-
-        if str(editable.widget) == "sequence":
-            items = smart_get_value(yaml_data, editable.editable.yaml_path) or []
-            if not isinstance(items, list):
-                continue
-            for index in range(len(items)):
-                for child in editable.children or []:
-                    if not should_render_editable(child, yaml_data):
-                        continue
-                    if str(child.widget) == "sequence":
-                        # Nested sequence
-                        parent_path = resolve_path(child.editable.yaml_path, index)
-                        nested_items = smart_get_value(yaml_data, parent_path) or []
-                        if not isinstance(nested_items, list):
-                            continue
-                        for ci in range(len(nested_items)):
-                            for gc in child.children or []:
-                                gc_path = resolve_path(gc.editable.yaml_path, index)
-                                gc_path = resolve_path(gc_path, ci)
-                                flat[gc_path] = smart_get_value(yaml_data, gc_path)
-                    else:
-                        concrete = resolve_path(child.editable.yaml_path, index)
-                        flat[concrete] = smart_get_value(yaml_data, concrete)
-        else:
-            flat[editable.editable.yaml_path] = smart_get_value(yaml_data, editable.editable.yaml_path)
-
-    return flat
+def _collect_all_editable_paths(editables) -> set[str]:
+    """Recursively collect yaml_paths from editables, including group children."""
+    paths: set[str] = set()
+    for vis in editables:
+        paths.add(vis.editable.yaml_path)
+        if vis.children:
+            paths.update(_collect_all_editable_paths(vis.children))
+    return paths
 
 
 def _section_has_errors(
@@ -1374,15 +1681,32 @@ async def _do_submit(
     # Merge all step data and do final validation
     yaml_data = state.get_merged_data()
     processor = EditableFormProcessor()
-    flat = _flatten_yaml_for_validation(all_editables, yaml_data)
-    errors = processor.validate_editables(flat, all_editables, yaml_data)
+
+    # Strip values for fields hidden by depends_on/show_when (e.g. subdomain
+    # when the selected domain-format doesn't use it)
+    processor.clear_hidden_depends_on(all_editables, yaml_data)
+
+    enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
+
+    # Validate and build final YAML in a single pass.
+    # The merged yaml_data is both the "submitted" values and the base —
+    # process_json_submission reads from it, validates, converts, and
+    # strips transients for the final output.
+    final_data, errors = await processor.process_json_submission(
+        yaml_data,
+        all_editables,
+        yaml_data,
+        edit_mode=state.project_name is not None,
+        enforcer_context=enforcer_context,
+        strip_transients=True,
+    )
 
     if errors:
         # Find the first section with errors and navigate there
         logger.warning("Final validation failed: %s", errors)
         error_section = active_sections[0]
         for section in active_sections:
-            section_paths = {e.editable.yaml_path for e in section.editables}
+            section_paths = _collect_all_editable_paths(section.editables)
             if _section_has_errors(section_paths, errors):
                 error_section = section
                 break
@@ -1407,7 +1731,7 @@ async def _do_submit(
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
     # Cross-section enforcement
-    global_errors = processor.enforce_sections(yaml_data, active_sections)
+    global_errors = await processor.enforce_sections(yaml_data, active_sections, enforcer_context=enforcer_context)
     if global_errors:
         logger.warning("Section enforcement failed: %s", global_errors)
         first_section = active_sections[0]
@@ -1424,9 +1748,8 @@ async def _do_submit(
         )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
-    # Build final YAML — use flattened data so apply_to_yaml can find
-    # sequence child values via their concrete paths.
-    final_data = processor.apply_to_yaml(flat, all_editables, yaml_data)
+    # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
+    _prune_empty_dicts(final_data)
 
     # Merge rewrite-path into path field for each component
     _normalize_component_paths(final_data)
@@ -1536,15 +1859,28 @@ def _apply_literal_scalars(data: dict[str, Any]) -> None:
     """
     from ruamel.yaml.scalarstring import LiteralScalarString
 
+    def _literalize(d: dict, key: str) -> None:
+        value = d.get(key)
+        if isinstance(value, str) and "\n" in value:
+            d[key] = LiteralScalarString(value)
+
     config = data.get("config", {})
     for key in ("age-private-key", "api-key"):
-        value = config.get(key)
-        if isinstance(value, str) and "\n" in value:
-            config[key] = LiteralScalarString(value)
+        _literalize(config, key)
 
-    # Also handle repository passwords
     for repo in data.get("repositories", []):
         if isinstance(repo, dict):
-            password = repo.get("password")
-            if isinstance(password, str) and "\n" in password:
-                repo["password"] = LiteralScalarString(password)
+            _literalize(repo, "password")
+
+    # Component-level user-env-vars (create flow)
+    for comp in data.get("components", []):
+        if isinstance(comp, dict):
+            _literalize(comp, "user-env-vars")
+
+    # Deployment-level configuration and component-level user-env-vars (edit/add flows)
+    for dep in data.get("deployments", []):
+        if isinstance(dep, dict):
+            _literalize(dep, "configuration")
+            for comp in dep.get("components", []):
+                if isinstance(comp, dict):
+                    _literalize(comp, "user-env-vars")

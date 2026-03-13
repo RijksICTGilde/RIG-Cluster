@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from opi.forms.editables.converters import (
+    EmptyToNoneConverter,
     ServiceListConverter,
 )
 from opi.forms.editables.editable import Editable
@@ -23,6 +24,7 @@ SERVICES_EDITABLE = Editable(
 KEYCLOAK_TEMPLATE_EDITABLE = Editable(
     yaml_path="services/keycloak/config/template",
     values_provider="KeycloakTemplateOptionsProvider",
+    default="sso-support",
 )
 
 KEYCLOAK_REDIRECT_URI_ITEM_EDITABLE = Editable(
@@ -39,6 +41,8 @@ KEYCLOAK_REDIRECT_URIS_EDITABLE = Editable(
 
 KEYCLOAK_RESTRICT_ACCESS_EDITABLE = Editable(
     yaml_path="services/keycloak/config/restrict-access/enabled",
+    converter=EmptyToNoneConverter(),
+    remove_when_none=True,
 )
 
 KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE = Editable(

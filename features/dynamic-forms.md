@@ -13,7 +13,7 @@ The same underlying architecture powers both the "create project" and "edit proj
 The system uses a three-layer separation:
 
 ```
-Layer 1 - Field Definition:  ProjectEditable (YAML path + validators + converters + providers)
+Layer 1 - Field Definition:  Editable (YAML path + validators + converters + providers)
 Layer 2 - Layout:            LayoutElement tree (Fieldset / Row / Column / Sequence)
 Layer 3 - Rendering:         WidgetAdapter -> ROOSWidgetAdapter (concrete HTML)
 
@@ -72,24 +72,29 @@ The resolver (`opi/forms/wizard/resolver.py`) evaluates these conditions after e
 
 ### Defining a new editable field
 
-Add a `ProjectEditable` to the appropriate file in `opi/forms/editables/fields/`:
+Add a `Editable` to the appropriate file in `opi/forms/editables/fields/`:
 
 ```python
 # opi/forms/editables/fields/identity.py
-MY_FIELD = ProjectEditable(
+MY_FIELD_EDITABLE = Editable(
     yaml_path="my-field",
-    widget="text",
+    required=True,
+    validator=some_validator,
+)
+
+# opi/forms/visualizers/fields/identity.py
+MY_FIELD = EditableVisualizer(
+    editable=MY_FIELD_EDITABLE,
+    widget=WidgetType.TEXT,
     label="My Field",
     description="Short description",
     help_text="Extended explanation shown in a collapsible section",
-    required=True,
-    validator=some_validator,
 )
 ```
 
 ### Creating a new section
 
-Add a `FormSection` to `opi/forms/editables/wizard_sections.py`:
+Add a `FormSection` to `opi/forms/visualizers/wizard_sections.py`:
 
 ```python
 MY_SECTION = FormSection(
@@ -121,7 +126,7 @@ MY_CONDITIONAL_SECTION = FormSection(
 
 ### Adding a section to a flow
 
-Edit `opi/forms/editables/flows.py`. The position in the `sections` list determines the step order:
+Edit `opi/forms/visualizers/flows.py`. The position in the `sections` list determines the step order:
 
 ```python
 CREATE_FLOW = FormFlow(
@@ -169,6 +174,8 @@ MY_SECTION = FormSection(
 | `auth-wall-config` | Authorization wall configuratie | Yes | `authorization-wall` in services |
 | `team` | Projectleden | No | - |
 | `components` | Componenten | No | - |
+| `domains` | Webadres | No | - |
+| `deployment` | Deployment | No | - |
 | `deployments` | Deployments | No | - |
 | `config` | Configuratie | No (read-only) | - |
 
@@ -187,12 +194,13 @@ MY_SECTION = FormSection(
 
 | File | Purpose |
 |------|---------|
-| `opi/forms/editables/editable.py` | `ProjectEditable` dataclass |
-| `opi/forms/editables/section.py` | `FormSection` dataclass |
-| `opi/forms/editables/flow.py` | `FormFlow` dataclass |
+| `opi/forms/editables/editable.py` | `Editable` dataclass |
 | `opi/forms/editables/fields/*.py` | Field definitions by domain |
-| `opi/forms/editables/wizard_sections.py` | Section instances |
-| `opi/forms/editables/flows.py` | Flow definitions + registry |
+| `opi/forms/visualizers/visualizer.py` | `EditableVisualizer` dataclass |
+| `opi/forms/visualizers/fields/*.py` | Visualizer definitions by domain |
+| `opi/forms/visualizers/sections.py` | `FormSection` dataclass |
+| `opi/forms/visualizers/flows.py` | `FormFlow` dataclass + flow registry |
+| `opi/forms/visualizers/wizard_sections.py` | Section and flow instances |
 | `opi/forms/wizard/state.py` | `WizardState` + `WizardSteps` |
 | `opi/forms/wizard/session.py` | Session storage helpers |
 | `opi/forms/wizard/resolver.py` | Conditional section resolution |

@@ -399,8 +399,10 @@ class PVCBackupManager(BaseBackupManager):
                     continue
 
                 # Get storage definitions from the BASE component
+                from opi.handlers.project_file_handler import extract_storage_from_component_services
+
                 base_component = base_components.get(component_name, {})
-                storages = base_component.get("storage", [])
+                storages = extract_storage_from_component_services(base_component)
 
                 for idx, storage in enumerate(storages):
                     # Skip non-persistent storage (ephemeral doesn't have PVCs)

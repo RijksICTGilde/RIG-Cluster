@@ -10,8 +10,9 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.editables.editable import WidgetType, apply_virtualize
 from opi.forms.editables.path import get_value, resolve_path
-from opi.forms.editables.service_path import smart_get_value, smart_set_value
+from opi.forms.editables.service_path import smart_delete_value, smart_get_value, smart_set_value
 from opi.forms.visualizers.bridge import should_render_editable
 
 logger = logging.getLogger(__name__)
@@ -38,73 +39,16 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
+def _converter_write(converter: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> Any:
+    """Call converter.write() passing yaml_data when accepted."""
+    try:
+        return converter.write(value, yaml_data=yaml_data)
+    except TypeError:
+        return converter.write(value)
+
+
 class EditableFormProcessor:
     """Processes form submissions through the editables pipeline."""
-
-    def parse_form_data(
-        self,
-        form_data: Any,
-        editables: list[EditableVisualizer],
-    ) -> dict[str, Any]:
-        """
-        Parse flat HTML form data into a dict keyed by YAML paths.
-
-        HTML form names use the YAML path format (e.g., "users[0]/email",
-        "components[1]/ports/inbound"). Multi-value fields (checkboxes)
-        use "path[]" naming convention.
-
-        Returns:
-            dict mapping yaml_path -> submitted value
-        """
-        parsed: dict[str, Any] = {}
-
-        for key in form_data:
-            if key.endswith("[]"):
-                parsed[key.rstrip("[]")] = form_data.getlist(key)
-            else:
-                parsed[key] = form_data.get(key)
-
-        return parsed
-
-    def validate_editables(
-        self,
-        parsed: dict[str, Any],
-        editables: list[EditableVisualizer],
-        yaml_data: dict[str, Any],
-    ) -> dict[str, list[str]]:
-        """
-        Run each editable's validator on the parsed form data.
-
-        For sequence editables, validates each item's child editables.
-
-        Returns:
-            dict mapping yaml_path -> list of error messages.
-            Empty dict means no errors.
-        """
-        errors: dict[str, list[str]] = {}
-
-        for vis in editables:
-            ed = vis.editable
-            if str(vis.widget) == "sequence":
-                items = smart_get_value(yaml_data, ed.yaml_path) or []
-                if not isinstance(items, list):
-                    logger.debug("validate: %s not a list in yaml_data, skipping", ed.yaml_path)
-                    continue
-                logger.debug("validate: %s has %d items", ed.yaml_path, len(items))
-                for index in range(len(items)):
-                    for child_vis in vis.children or []:
-                        child_ed = child_vis.editable
-                        if str(child_vis.widget) == "sequence":
-                            self._validate_nested_sequence(child_vis, parsed, yaml_data, errors, parent_index=index)
-                        else:
-                            concrete_path = resolve_path(child_ed.yaml_path, index)
-                            value = parsed.get(concrete_path)
-                            self._validate_field(child_vis, concrete_path, value, errors)
-            else:
-                value = parsed.get(ed.yaml_path)
-                self._validate_field(vis, ed.yaml_path, value, errors)
-
-        return errors
 
     @staticmethod
     def _validate_field(
@@ -112,6 +56,7 @@ class EditableFormProcessor:
         path: str,
         value: Any,
         errors: dict[str, list[str]],
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Validate a single field for required and custom validator rules."""
         ed = vis.editable
@@ -119,61 +64,37 @@ class EditableFormProcessor:
             errors.setdefault(path, []).append("Dit veld is verplicht")
             return
         if ed.validator:
-            field_errors = ed.validator.validate(value)
+            try:
+                field_errors = ed.validator.validate(value, context=context or {})
+            except TypeError:
+                field_errors = ed.validator.validate(value)
             if field_errors:
                 errors.setdefault(path, []).extend(field_errors)
 
-    def _validate_nested_sequence(
-        self,
-        vis: EditableVisualizer,
-        parsed: dict[str, Any],
-        yaml_data: dict[str, Any],
-        errors: dict[str, list[str]],
-        parent_index: int,
-    ) -> None:
-        """Validate children of a nested sequence."""
-        ed = vis.editable
-        concrete_path = resolve_path(ed.yaml_path, parent_index)
-        items = smart_get_value(yaml_data, concrete_path) or []
-        if not isinstance(items, list):
-            logger.debug("validate_nested: %s not a list, skipping", concrete_path)
-            return
-        logger.debug("validate_nested: %s has %d items", concrete_path, len(items))
-        for child_index in range(len(items)):
-            for child_vis in vis.children or []:
-                child_ed = child_vis.editable
-                child_path = resolve_path(child_ed.yaml_path, parent_index)
-                child_path = resolve_path(child_path, child_index)
-                value = parsed.get(child_path)
-                self._validate_field(child_vis, child_path, value, errors)
-
-    def enforce_sections(
+    async def enforce_sections(
         self,
         yaml_data: dict[str, Any],
         sections: list[FormSection],
+        enforcer_context: dict[str, Any] | None = None,
     ) -> list[str]:
         """
         Run section-level enforcers.
 
+        Args:
+            enforcer_context: Optional metadata for enforcers (e.g. project_name).
+
         Returns:
             List of global error messages. Empty means all passed.
         """
+        ctx = enforcer_context or {}
         global_errors: list[str] = []
         for section in sections:
             if section.enforcer:
                 try:
-                    section.enforcer.enforce(yaml_data, {})
+                    await section.enforcer.enforce(yaml_data, ctx)
                 except ValueError as e:
                     global_errors.append(str(e))
         return global_errors
-
-    def enforce_parts(
-        self,
-        yaml_data: dict[str, Any],
-        sections: list[FormSection],
-    ) -> list[str]:
-        """Backward compatibility alias for enforce_sections."""
-        return self.enforce_sections(yaml_data, sections)
 
     def clear_hidden_depends_on(
         self,
@@ -188,11 +109,13 @@ class EditableFormProcessor:
         """
         for vis in editables:
             ed = vis.editable
+            if vis.widget == WidgetType.GROUP:
+                self.clear_hidden_depends_on(vis.children or [], yaml_data)
+                continue
             if not ed.depends_on:
                 continue
-            if not should_render_editable(vis, yaml_data):
-                # Remove the value from YAML
-                smart_set_value(yaml_data, ed.yaml_path, None)
+            if not should_render_editable(vis, yaml_data, siblings=editables):
+                smart_delete_value(yaml_data, ed.yaml_path)
 
     def apply_generators(
         self,
@@ -219,127 +142,40 @@ class EditableFormProcessor:
         result.pop("_generated", None)
         return result
 
-    def apply_to_yaml(
-        self,
-        parsed: dict[str, Any],
-        editables: list[EditableVisualizer],
-        yaml_data: dict[str, Any],
-        edit_mode: bool = False,
-    ) -> dict[str, Any]:
-        """
-        Write validated form values back into the YAML dict.
-
-        - Deep-copies yaml_data first (preserves original)
-        - Skips readonly fields
-        - Skips readonly_on_edit fields when edit_mode=True
-        - Applies converter.write() before set_value()
-
-        Returns:
-            New yaml_data dict with values applied.
-        """
-        result = copy.deepcopy(yaml_data)
-
-        for vis in editables:
-            ed = vis.editable
-            if vis.readonly:
-                continue
-            if vis.readonly_on_edit and edit_mode:
-                continue
-
-            widget = str(vis.widget)
-            if widget == "sequence":
-                self._apply_sequence_to_yaml(vis, parsed, result, edit_mode)
-            elif widget == "checkbox":
-                # Unchecked checkboxes are absent from form data; treat as False.
-                raw = parsed.get(ed.yaml_path)
-                value: Any = bool(raw) if raw else False
-                if ed.converter:
-                    value = ed.converter.write(value)
-                smart_set_value(result, ed.yaml_path, value)
-            elif widget == "checkbox_group":
-                value = _coerce_to_list(parsed.get(ed.yaml_path))
-                if ed.converter:
-                    value = ed.converter.write(value)
-                smart_set_value(result, ed.yaml_path, value)
-            else:
-                value = parsed.get(ed.yaml_path)
-                if value is not None:
-                    if ed.converter:
-                        value = ed.converter.write(value)
-                    smart_set_value(result, ed.yaml_path, value)
-
-        return result
-
-    def _apply_sequence_to_yaml(
-        self,
-        vis: EditableVisualizer,
-        parsed: dict[str, Any],
-        yaml_data: dict[str, Any],
-        edit_mode: bool,
-    ) -> None:
-        """Apply sequence field values back to YAML."""
-        ed = vis.editable
-        items = smart_get_value(yaml_data, ed.yaml_path) or []
-        if not isinstance(items, list):
-            return
-        for index in range(len(items)):
-            for child_vis in vis.children or []:
-                child_ed = child_vis.editable
-                if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
-                    continue
-                if str(child_vis.widget) == "sequence":
-                    self._apply_nested_sequence_to_yaml(child_vis, parsed, yaml_data, edit_mode, parent_index=index)
-                elif str(child_vis.widget) == "checkbox_group":
-                    concrete_path = resolve_path(child_ed.yaml_path, index)
-                    value = _coerce_to_list(parsed.get(concrete_path))
-                    if child_ed.converter:
-                        value = child_ed.converter.write(value)
-                    smart_set_value(yaml_data, concrete_path, value)
-                else:
-                    concrete_path = resolve_path(child_ed.yaml_path, index)
-                    value = parsed.get(concrete_path)
-                    if value is not None:
-                        if child_ed.converter:
-                            value = child_ed.converter.write(value)
-                        smart_set_value(yaml_data, concrete_path, value)
-
-    def _apply_nested_sequence_to_yaml(
-        self,
-        vis: EditableVisualizer,
-        parsed: dict[str, Any],
-        yaml_data: dict[str, Any],
-        edit_mode: bool,
-        parent_index: int,
-    ) -> None:
-        """Apply nested sequence values back to YAML."""
-        ed = vis.editable
-        concrete_path = resolve_path(ed.yaml_path, parent_index)
-        items = smart_get_value(yaml_data, concrete_path) or []
-        if not isinstance(items, list):
-            return
-        for child_index in range(len(items)):
-            for child_vis in vis.children or []:
-                child_ed = child_vis.editable
-                if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
-                    continue
-                child_path = resolve_path(child_ed.yaml_path, parent_index)
-                child_path = resolve_path(child_path, child_index)
-                value = parsed.get(child_path)
-                if value is not None:
-                    if child_ed.converter:
-                        value = child_ed.converter.write(value)
-                    smart_set_value(yaml_data, child_path, value)
-
     # ------------------------------------------------------------------
     # JSON submission pipeline (nested structure, no flat intermediate)
     # ------------------------------------------------------------------
 
-    def process_json_submission(
+    @staticmethod
+    def _write_field(
+        editable: Editable,
+        path: str,
+        value: Any,
+        data: dict[str, Any],
+    ) -> None:
+        """Convert and write a single field value, respecting remove_when_none.
+
+        Centralises the convert-then-write logic so ``remove_when_none``,
+        converter dispatch, and ``smart_set_value`` / ``smart_delete_value``
+        live in exactly one place.
+        """
+        if value is None:
+            return
+        if editable.converter:
+            value = _converter_write(editable.converter, value, data)
+        if not value and editable.remove_when_none:
+            smart_delete_value(data, path)
+        else:
+            smart_set_value(data, path, value)
+
+    async def process_json_submission(
         self,
         submitted: dict[str, Any],
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
         edit_mode: bool = False,
+        enforcer_context: dict[str, Any] | None = None,
+        strip_transients: bool = False,
     ) -> tuple[dict[str, Any], dict[str, list[str]]]:
         """Process a nested JSON form submission in a single pass.
 
@@ -348,9 +184,15 @@ class EditableFormProcessor:
         and writes to a deep-copy of *yaml_data* using ``smart_set_value``
         (which correctly handles the mixed services list format).
 
-        The key improvement over the flat-key pipeline: **sequence item
-        counts come from the submitted data** (the form's truth), not
-        from stale session state.
+        Sequence item counts come from the submitted data (the form's
+        truth), not from stale session state.
+
+        Args:
+            enforcer_context: Optional metadata for enforcers (e.g. project_name).
+            strip_transients: When True, remove transient fields from the
+                output. Use for final project submission; leave False for
+                wizard steps where both parent and transient values must
+                persist in session state.
 
         Returns:
             ``(result_yaml, errors)`` tuple.
@@ -362,39 +204,98 @@ class EditableFormProcessor:
             ed = vis.editable
             if vis.readonly or (vis.readonly_on_edit and edit_mode):
                 continue
+            if not should_render_editable(vis, result, siblings=editables):
+                continue
 
-            widget = str(vis.widget)
-            if widget == "sequence":
+            if vis.widget == WidgetType.GROUP:
+                await self._process_group_json(
+                    vis,
+                    submitted,
+                    result,
+                    errors,
+                    edit_mode,
+                    enforcer_context,
+                )
+            elif vis.widget == WidgetType.SEQUENCE:
                 self._process_sequence_json(
                     vis,
                     submitted,
                     result,
                     errors,
                     edit_mode,
+                    enforcer_context,
                 )
-            elif widget == "checkbox":
-                # Unchecked checkboxes are absent from JSON; treat as False.
+            elif vis.widget == WidgetType.CHECKBOX:
                 raw = get_value(submitted, ed.yaml_path)
                 value: Any = bool(raw) if raw else False
-                self._validate_field(vis, ed.yaml_path, value, errors)
-                if ed.converter:
-                    value = ed.converter.write(value)
-                smart_set_value(result, ed.yaml_path, value)
-            elif widget == "checkbox_group":
+                self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(ed, ed.yaml_path, value, result)
+            elif vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(get_value(submitted, ed.yaml_path))
-                self._validate_field(vis, ed.yaml_path, value, errors)
-                if ed.converter:
-                    value = ed.converter.write(value)
-                smart_set_value(result, ed.yaml_path, value)
+                self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(ed, ed.yaml_path, value, result)
             else:
                 value = get_value(submitted, ed.yaml_path)
-                self._validate_field(vis, ed.yaml_path, value, errors)
-                if value is not None:
-                    if ed.converter:
-                        value = ed.converter.write(value)
-                    smart_set_value(result, ed.yaml_path, value)
+                self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(ed, ed.yaml_path, value, result)
+
+        self._resolve_deferrals(result, editables)
+
+        if strip_transients:
+            self._strip_transients(result, editables)
 
         return result, errors
+
+    async def _process_group_json(
+        self,
+        vis: EditableVisualizer,
+        submitted: dict[str, Any],
+        result: dict[str, Any],
+        errors: dict[str, list[str]],
+        edit_mode: bool,
+        enforcer_context: dict[str, Any] | None = None,
+    ) -> None:
+        """Process a group editable: validate children, then run parent enforcer.
+
+        A group is a non-repeating parent that wraps related fields under a
+        common path. Unlike sequences, there is no index iteration — children
+        are processed directly. The group's enforcer provides cross-field
+        validation after all children pass individual validation.
+        """
+        ed = vis.editable
+        errors_before = len(errors)
+
+        # Process each child through the same dispatch logic
+        group_children = vis.children or []
+        for child_vis in group_children:
+            child_ed = child_vis.editable
+            if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
+                continue
+            if not should_render_editable(child_vis, result, siblings=group_children):
+                continue
+
+            if child_vis.widget == WidgetType.GROUP:
+                await self._process_group_json(child_vis, submitted, result, errors, edit_mode, enforcer_context)
+            elif child_vis.widget == WidgetType.CHECKBOX:
+                raw = get_value(submitted, child_ed.yaml_path)
+                value: Any = bool(raw) if raw else False
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(child_ed, child_ed.yaml_path, value, result)
+            elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
+                value = _coerce_to_list(get_value(submitted, child_ed.yaml_path))
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(child_ed, child_ed.yaml_path, value, result)
+            else:
+                value = get_value(submitted, child_ed.yaml_path)
+                self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
+                self._write_field(child_ed, child_ed.yaml_path, value, result)
+
+        # Run parent enforcer only if children introduced no new errors
+        if len(errors) == errors_before and ed.enforcer:
+            try:
+                await ed.enforcer.enforce(result, enforcer_context or {})
+            except ValueError as e:
+                errors.setdefault(ed.yaml_path, []).append(str(e))
 
     def _process_sequence_json(
         self,
@@ -403,6 +304,7 @@ class EditableFormProcessor:
         result: dict[str, Any],
         errors: dict[str, list[str]],
         edit_mode: bool,
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Process a sequence editable from nested JSON.
 
@@ -415,15 +317,36 @@ class EditableFormProcessor:
         if not isinstance(items, list):
             items = []
 
+        # Save existing items so we can restore readonly fields after overwriting
+        original_items = smart_get_value(result, ed.yaml_path) or []
+
         # Write the submitted items into result (correct count + raw values)
         smart_set_value(result, ed.yaml_path, copy.deepcopy(items))
 
+        # In edit mode, readonly fields aren't rendered in the form and are
+        # therefore absent from the submission.  Restore their values from
+        # the original data so they don't get silently dropped.
+        if edit_mode and isinstance(original_items, list):
+            result_items = smart_get_value(result, ed.yaml_path) or []
+            for i in range(min(len(result_items), len(original_items))):
+                if not (isinstance(result_items[i], dict) and isinstance(original_items[i], dict)):
+                    continue
+                for child_vis in vis.children or []:
+                    if not (child_vis.readonly or child_vis.readonly_on_edit):
+                        continue
+                    last_seg = child_vis.editable.yaml_path.rsplit("/", 1)[-1]
+                    if last_seg in original_items[i]:
+                        result_items[i][last_seg] = copy.deepcopy(original_items[i][last_seg])
+
+        seq_children_json = vis.children or []
         for index in range(len(items)):
-            for child_vis in vis.children or []:
+            for child_vis in seq_children_json:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                if str(child_vis.widget) == "sequence":
+                if not should_render_editable(child_vis, result, index=index, siblings=seq_children_json):
+                    continue
+                if child_vis.widget == WidgetType.SEQUENCE:
                     self._process_nested_sequence_json(
                         child_vis,
                         submitted,
@@ -431,22 +354,36 @@ class EditableFormProcessor:
                         errors,
                         edit_mode,
                         index,
+                        context,
                     )
-                elif str(child_vis.widget) == "checkbox_group":
+                elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
                     value = _coerce_to_list(get_value(submitted, concrete_path))
-                    self._validate_field(child_vis, concrete_path, value, errors)
-                    if child_ed.converter:
-                        value = child_ed.converter.write(value)
-                    smart_set_value(result, concrete_path, value)
+                    self._validate_field(child_vis, concrete_path, value, errors, context)
+                    self._write_field(child_ed, concrete_path, value, result)
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
-                    value = get_value(submitted, concrete_path)
-                    self._validate_field(child_vis, concrete_path, value, errors)
-                    if value is not None:
-                        if child_ed.converter:
-                            value = child_ed.converter.write(value)
-                        smart_set_value(result, concrete_path, value)
+                    virt = child_ed.virtualize
+                    read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
+                    value = get_value(submitted, read_path)
+                    # Fall back to real path when merged data has no virtual key
+                    if value is None and virt and read_path != concrete_path:
+                        value = get_value(submitted, concrete_path)
+                    self._validate_field(child_vis, concrete_path, value, errors, context)
+                    self._write_field(child_ed, concrete_path, value, result)
+                    # Clean up virtual key from result
+                    if virt and read_path != concrete_path:
+                        virtual_key = virt[1]
+                        virtual_parts = read_path.split("/")
+                        parent_parts = []
+                        for part in virtual_parts:
+                            if part.startswith(virtual_key):
+                                break
+                            parent_parts.append(part)
+                        parent_path = "/".join(parent_parts)
+                        parent = smart_get_value(result, parent_path) if parent_path else result
+                        if isinstance(parent, dict):
+                            parent.pop(virtual_key, None)
 
     def _process_nested_sequence_json(
         self,
@@ -456,27 +393,357 @@ class EditableFormProcessor:
         errors: dict[str, list[str]],
         edit_mode: bool,
         parent_index: int,
+        context: dict[str, Any] | None = None,
     ) -> None:
-        """Process a nested sequence from JSON (e.g. additional-clients[0]/redirect-uris)."""
+        """Process a nested sequence from JSON (e.g. additional-clients[0]/redirect-uris).
+
+        When the editable has a ``virtualize`` mapping, form field names use a
+        virtual path segment (e.g. ``_services-config`` instead of ``services``)
+        to avoid collisions with sibling fields that share the real path prefix.
+        Submitted data is read from the virtual path; validated and written to
+        the real path in the result.
+        """
         ed = vis.editable
-        concrete_seq_path = resolve_path(ed.yaml_path, parent_index)
-        items = get_value(submitted, concrete_seq_path)
+        virt = ed.virtualize
+        real_seq_path = resolve_path(ed.yaml_path, parent_index)
+        virtual_seq_path = apply_virtualize(real_seq_path, virt) if virt else real_seq_path
+
+        # Read from virtual path in submitted data.  When virtualize is
+        # active the form POSTs under the virtual key (e.g. _services-config).
+        # However, after a step-level submit the data is already merged into
+        # the real path (services{…}/config).  During the final submit the
+        # merged data no longer has the virtual key, so we must fall back to
+        # reading from the real path to avoid overwriting good data with [].
+        items = get_value(submitted, virtual_seq_path)
+        if not isinstance(items, list) and virt:
+            items = get_value(submitted, real_seq_path)
         if not isinstance(items, list):
             items = []
 
-        # Write the nested list (correct count)
-        smart_set_value(result, concrete_seq_path, copy.deepcopy(items))
+        # Write to real path in result
+        smart_set_value(result, real_seq_path, copy.deepcopy(items))
+
+        # Strip the virtual key (e.g. _services-config) from result so it
+        # does not leak into step_data or the final project YAML.
+        # We delete the entire virtual container key from the parent, not
+        # just the leaf — otherwise empty dicts remain.
+        # The virtual key lives under the component dict, so we find the
+        # path segment that starts with the virtual key name and take
+        # everything before it as the parent path.
+        if virt and virtual_seq_path != real_seq_path:
+            virtual_key = virt[1]  # e.g. "_services-config"
+            virtual_parts = virtual_seq_path.split("/")
+            parent_parts = []
+            for part in virtual_parts:
+                if part.startswith(virtual_key):
+                    break
+                parent_parts.append(part)
+            parent_path = "/".join(parent_parts)
+            parent = smart_get_value(result, parent_path) if parent_path else result
+            if isinstance(parent, dict):
+                parent.pop(virtual_key, None)
 
         for child_index in range(len(items)):
             for child_vis in vis.children or []:
                 child_ed = child_vis.editable
                 if child_vis.readonly or (child_vis.readonly_on_edit and edit_mode):
                     continue
-                child_path = resolve_path(child_ed.yaml_path, parent_index)
-                child_path = resolve_path(child_path, child_index)
-                value = get_value(submitted, child_path)
-                self._validate_field(child_vis, child_path, value, errors)
-                if value is not None:
-                    if child_ed.converter:
-                        value = child_ed.converter.write(value)
-                    smart_set_value(result, child_path, value)
+                # Real path for validation + writing
+                real_child_path = resolve_path(child_ed.yaml_path, parent_index)
+                real_child_path = resolve_path(real_child_path, child_index)
+                # Virtual path for reading from submitted data
+                virtual_child_path = apply_virtualize(real_child_path, virt) if virt else real_child_path
+                value = get_value(submitted, virtual_child_path)
+                # Fall back to real path if virtual path has no data
+                if value is None and virt:
+                    value = get_value(submitted, real_child_path)
+                self._validate_field(child_vis, real_child_path, value, errors, context)
+                self._write_field(child_ed, real_child_path, value, result)
+
+    # ------------------------------------------------------------------
+    # Deferral and transient field handling
+    # ------------------------------------------------------------------
+
+    def _collect_editables_with_paths(
+        self,
+        editables: list[EditableVisualizer],
+        data: dict[str, Any],
+    ) -> list[tuple[Editable, str]]:
+        """Collect all editables with their concrete paths.
+
+        For sequence children, resolves wildcard paths to concrete
+        indexed paths based on the actual items in data.
+        """
+        result: list[tuple[Editable, str]] = []
+        for vis in editables:
+            ed = vis.editable
+            if vis.widget == WidgetType.GROUP:
+                # Recurse into group children (no index iteration)
+                result.extend(self._collect_editables_with_paths(vis.children or [], data))
+            elif vis.widget == WidgetType.SEQUENCE:
+                items = smart_get_value(data, ed.yaml_path) or []
+                if isinstance(items, list):
+                    for index in range(len(items)):
+                        for child_vis in vis.children or []:
+                            child_ed = child_vis.editable
+                            concrete = resolve_path(child_ed.yaml_path, index)
+                            result.append((child_ed, concrete))
+            else:
+                result.append((ed, ed.yaml_path))
+        return result
+
+    def _resolve_deferrals(
+        self,
+        data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> None:
+        """Resolve defers_to relationships: copy transient value to parent path.
+
+        For each editable with ``defers_to`` and ``defer_when``, checks if the
+        condition is met on the current value. If so, copies the value from
+        the deferred (transient) field path into this editable's path.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
+            if not ed.defers_to or not ed.defer_when:
+                continue
+            current_value = smart_get_value(data, concrete_path)
+
+            # CENTRALIZED DEFERRAL LOGGING
+            logger.debug(
+                "[deferral check] path=%s, current_value=%s, defers_to=%s",
+                concrete_path,
+                current_value,
+                ed.defers_to,
+            )
+
+            if ed.defer_when.check(current_value):
+                # Resolve the deferred path with the same index context
+                deferred_path = ed.defers_to
+                if "[*]" in deferred_path and "[*]" not in concrete_path:
+                    # Extract index from concrete_path and apply to deferred_path
+                    import re
+
+                    m = re.search(r"\[(\d+)\]", concrete_path)
+                    if m:
+                        deferred_path = deferred_path.replace("[*]", f"[{m.group(1)}]", 1)
+                deferred_value = smart_get_value(data, deferred_path)
+
+                # CENTRALIZED DEFERRAL LOGGING
+                logger.debug(
+                    "[deferral execute] %s -> %s (deferred_value=%s)",
+                    deferred_path,
+                    concrete_path,
+                    deferred_value,
+                )
+
+                if deferred_value is not None:
+                    smart_set_value(data, concrete_path, deferred_value)
+                    logger.info(
+                        "[deferral SUCCESS] copied %s to %s (value=%s)",
+                        deferred_path,
+                        concrete_path,
+                        deferred_value,
+                    )
+                else:
+                    logger.warning(
+                        "[deferral SKIPPED] deferred_value is None at path %s",
+                        deferred_path,
+                    )
+
+    def _restore_sentinel_values(
+        self,
+        data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> None:
+        """Restore sentinel values after deferral for wizard state preservation.
+
+        After deferral copies the transient value to the parent, we restore the
+        parent back to its sentinel value (e.g., "__custom__") so that:
+        1. Form display logic can detect the sentinel
+        2. Transient field value can be restored during form rendering
+        3. Both values are preserved in wizard state for navigation
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
+            if not ed.defers_to or not ed.defer_when:
+                continue
+
+            # Get the transient field value (what was copied TO the parent)
+            deferred_path = ed.defers_to
+            transient_value = smart_get_value(data, deferred_path)
+
+            # If the transient has a value, restore parent to sentinel
+            if transient_value is not None:
+                # Determine the sentinel value (usually "__custom__")
+                sentinel = "__custom__"
+                if isinstance(ed.defer_when, object) and hasattr(ed.defer_when, "sentinel"):
+                    sentinel = ed.defer_when.sentinel
+
+                smart_set_value(data, concrete_path, sentinel)
+                logger.debug(
+                    "[restore_sentinel] restored %s -> %s (sentinel=%s, kept transient=%s)",
+                    concrete_path,
+                    sentinel,
+                    sentinel,
+                    transient_value,
+                )
+
+    def _strip_transients(
+        self,
+        data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> None:
+        """Remove all transient field values from the output data.
+
+        Transient fields participate in form state but must not persist
+        to the final YAML output.
+        """
+        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
+            if ed.transient:
+                self._delete_path(data, concrete_path)
+
+    @staticmethod
+    def _delete_path(data: dict[str, Any], path: str) -> None:
+        """Delete a leaf key from nested data by its path.
+
+        Navigates to the parent container using all segments except the
+        last, then pops the leaf key from the parent dict.
+        """
+        parts = path.split("/")
+        if len(parts) == 1:
+            data.pop(parts[0], None)
+            return
+        # Navigate to the parent of the leaf
+        parent_path = "/".join(parts[:-1])
+        parent = smart_get_value(data, parent_path)
+        if isinstance(parent, dict):
+            parent.pop(parts[-1], None)
+
+    def propagate_renames(
+        self,
+        original_data: dict[str, Any],
+        result_data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> list[str]:
+        """Detect renamed fields and cascade changes to all target references.
+
+        Compares old vs new values for editables with ``rename_targets``.
+        When a rename is detected, walks each target path (which may contain
+        ``[*]`` wildcards) and replaces old_name → new_name in-place.
+
+        Returns:
+            List of human-readable rename descriptions for logging.
+        """
+        renames: list[str] = []
+        for ed, concrete_path in self._collect_editables_with_paths(editables, result_data):
+            if not ed.rename_targets:
+                continue
+            old_value = smart_get_value(original_data, concrete_path)
+            new_value = smart_get_value(result_data, concrete_path)
+            if old_value and new_value and str(old_value) != str(new_value):
+                old_name = str(old_value)
+                new_name = str(new_value)
+                for target_path in ed.rename_targets:
+                    count = self._apply_rename(result_data, target_path, old_name, new_name)
+                    if count:
+                        renames.append(f"{old_name} → {new_name} in {target_path} ({count}x)")
+        return renames
+
+    @staticmethod
+    def _apply_rename(
+        data: dict[str, Any],
+        wildcard_path: str,
+        old_name: str,
+        new_name: str,
+    ) -> int:
+        """Walk a wildcard path and replace old_name → new_name at leaf positions.
+
+        Handles two kinds of leaf values:
+        - String field: ``"frontend"`` → ``"web-app"``
+        - List membership: ``["frontend", "backend"]`` → ``["web-app", "backend"]``
+
+        Returns the number of replacements made.
+        """
+        segments = wildcard_path.split("/")
+        count = 0
+
+        def _walk(current: Any, depth: int) -> int:
+            nonlocal count
+            if depth >= len(segments):
+                return count
+
+            seg = segments[depth]
+            is_last = depth == len(segments) - 1
+
+            # Parse segment: "key[*]", "key[0]", or plain "key"
+            if "[*]" in seg:
+                key = seg.replace("[*]", "")
+                items = current.get(key) if isinstance(current, dict) else None
+                if not isinstance(items, list):
+                    return count
+                if is_last:
+                    # The target IS the list itself — replace members
+                    for i, item in enumerate(items):
+                        if item == old_name:
+                            items[i] = new_name
+                            count += 1
+                else:
+                    for item in items:
+                        _walk(item, depth + 1)
+            else:
+                child = current.get(seg) if isinstance(current, dict) else None
+                if child is None:
+                    return count
+                if is_last:
+                    if isinstance(child, str) and child == old_name:
+                        current[seg] = new_name
+                        count += 1
+                    elif isinstance(child, list):
+                        for i, item in enumerate(child):
+                            if item == old_name:
+                                child[i] = new_name
+                                count += 1
+                else:
+                    _walk(child, depth + 1)
+            return count
+
+        _walk(data, 0)
+        return count
+
+    def populate_deferred_fields(
+        self,
+        data: dict[str, Any],
+        editables: list[EditableVisualizer],
+    ) -> None:
+        """Prepare data for editing by populating transient fields.
+
+        When loading stored data, a deferred field (e.g. custom domain text
+        input) has no stored value. This method detects when the parent's
+        stored value triggers the defer condition (via converter.view) and
+        copies the stored value into the transient field path so the form
+        renders correctly.
+        """
+        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
+            if not ed.defers_to or not ed.defer_when:
+                continue
+            stored_value = smart_get_value(data, concrete_path)
+            if not stored_value:
+                continue
+            # Apply converter.view to get the display value (e.g. "__custom__")
+            display_value = ed.converter.view(stored_value) if ed.converter else stored_value
+            if ed.defer_when.check(display_value):
+                deferred_path = ed.defers_to
+                if "[*]" in deferred_path and "[*]" not in concrete_path:
+                    import re
+
+                    m = re.search(r"\[(\d+)\]", concrete_path)
+                    if m:
+                        deferred_path = deferred_path.replace("[*]", f"[{m.group(1)}]", 1)
+                smart_set_value(data, deferred_path, stored_value)

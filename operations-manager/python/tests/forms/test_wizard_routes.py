@@ -12,7 +12,6 @@ from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.wizard.state import WizardState
 from opi.web.router_wizard import (
     _build_section_summary,
-    _flatten_yaml_for_validation,
     _get_section_from_flow,
     _render_step_html,
     _section_has_errors,
@@ -147,58 +146,6 @@ class TestBuildSectionSummary:
         )
         html = _build_section_summary(section, {"name": "proj"})
         assert "Custom: proj" in html
-
-
-class TestFlattenYamlForValidation:
-    """Test flattening structured YAML into flat form-style keys."""
-
-    def test_flattens_simple_fields(self):
-        editables = [
-            EditableVisualizer(editable=Editable(yaml_path="name"), widget=WidgetType.TEXT, label="Naam"),
-            EditableVisualizer(
-                editable=Editable(yaml_path="description"), widget=WidgetType.TEXTAREA, label="Omschrijving"
-            ),
-        ]
-        yaml_data = {"name": "test-proj", "description": "A test"}
-        flat = _flatten_yaml_for_validation(editables, yaml_data)
-        assert flat == {"name": "test-proj", "description": "A test"}
-
-    def test_flattens_sequence_children(self):
-        child = EditableVisualizer(
-            editable=Editable(yaml_path="users[*]/email", required=True),
-            widget=WidgetType.TEXT,
-            label="Email",
-        )
-        seq = EditableVisualizer(
-            editable=Editable(yaml_path="users"),
-            widget=WidgetType.SEQUENCE,
-            label="Team",
-            children=[child],
-        )
-        yaml_data = {"users": [{"email": "a@b.com"}, {"email": "c@d.com"}]}
-        flat = _flatten_yaml_for_validation([seq], yaml_data)
-        assert flat["users[0]/email"] == "a@b.com"
-        assert flat["users[1]/email"] == "c@d.com"
-
-    def test_skips_hidden_editables(self):
-        visible = EditableVisualizer(
-            editable=Editable(yaml_path="name"),
-            widget=WidgetType.TEXT,
-            label="Naam",
-        )
-        hidden = EditableVisualizer(
-            editable=Editable(
-                yaml_path="subdomain",
-                depends_on="mode",
-                show_when={"value": "custom"},
-            ),
-            widget=WidgetType.TEXT,
-            label="Subdomein",
-        )
-        yaml_data = {"name": "test", "mode": "default", "subdomain": "old"}
-        flat = _flatten_yaml_for_validation([visible, hidden], yaml_data)
-        assert "name" in flat
-        assert "subdomain" not in flat
 
 
 class TestSectionHasErrors:

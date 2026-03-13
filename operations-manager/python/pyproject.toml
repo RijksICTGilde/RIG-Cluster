@@ -47,6 +47,15 @@ dependencies = [
     "python-keycloak>=5.3.0",
     "prometheus-api-client>=0.7.0",
     "prometheus-client>=0.24.1",
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "opentelemetry-instrumentation-aiohttp-client>=0.48b0",
+    "opentelemetry-instrumentation-asyncpg>=0.48b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "opentelemetry-instrumentation-logging>=0.48b0",
 ]
 
 [dependency-groups]
@@ -72,6 +81,8 @@ dev = [
     "setuptools>=80.8.0",
     "djlint>=1.36.1",
     "debugpy>=1.8.0",
+    "pytest>=9.0.2",
+    "pip-audit>=2.7.0",
 ]
 
 
@@ -183,7 +194,7 @@ title = "opi"
 testpaths = [
     "tests"
 ]
-addopts = "--strict-markers -v -q -m 'not requires_infra'"
+addopts = "--strict-markers -v -q -m 'not requires_infra and not e2e'"
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::UserWarning"
@@ -194,7 +205,9 @@ faulthandler_timeout = 60
 markers = [
    "slow: marks tests as slow",
    "enable_auth: marks tests that require authentication",
-   "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)"
+   "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)",
+   "e2e: marks end-to-end browser tests (require playwright and chromium)",
+   "sandbox: marks tests that require a running sandbox cluster"
 ]
 pythonpath = "."
 
@@ -215,6 +228,7 @@ authorized_licenses = [
     "BSD",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "3-Clause BSD",
     "CNRI-Python",
     "GNU General Public License v2 or later (GPLv2+)",
     "GNU General Public License v3 or later (GPLv3+)",

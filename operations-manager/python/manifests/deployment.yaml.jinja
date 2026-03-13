@@ -19,10 +19,12 @@ spec:
   template:
     metadata:
       annotations:
-        # Prometheus scraping annotations
+{% if metrics_config %}
+        # Prometheus scraping annotations (metrics-scraper service enabled)
         prometheus.io/scrape: "true"
-        prometheus.io/port: "{{ metrics_port if metrics_port else application_port }}"
-        prometheus.io/path: "{{ metrics_path if metrics_path else '/metrics' }}"
+        prometheus.io/port: "{{ metrics_config.port if metrics_config.port else application_port }}"
+        prometheus.io/path: "{{ metrics_config.path if metrics_config.path else '/metrics' }}"
+{% endif %}
       labels:
         app: "{{ name }}"
         project: "{{ project.name }}"

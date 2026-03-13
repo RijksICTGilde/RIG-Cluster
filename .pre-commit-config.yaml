@@ -32,3 +32,17 @@ repos:
         language: system
         files: ^operations-manager/python/.*\.(html|html\.j2)$
         pass_filenames: false
+
+      - id: pyright
+        name: pyright
+        entry: uv run --directory operations-manager/python pyright
+        language: system
+        files: ^operations-manager/python/.*\.py$
+        pass_filenames: false
+
+      - id: djlint
+        name: djlint
+        entry: uv run --directory operations-manager/python djlint --lint opi/templates/
+        language: system
+        files: ^operations-manager/python/.*\.(html|html\.j2)$
+        pass_filenames: false

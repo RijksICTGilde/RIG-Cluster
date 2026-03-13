@@ -11,6 +11,7 @@
     rows="{{ field.attributes.get('rows', '4') }}"
     {{ optional_attr("invalid", "true" if field.errors else "") }}
     {{ optional_attr("errorText", field.errors[0] if field.errors else "") }}
+    {{ optional_attr("value", (field.value|string if field.value else '')) }}
     {{ htmx_attrs(field) }}
     {{ extra_attrs(field) }}
 >{{ (field.value|string if field.value else '')|e }}</c-textarea-field>{{ render_examples(field) }}

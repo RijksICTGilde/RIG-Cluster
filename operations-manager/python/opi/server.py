@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -12,17 +14,20 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from opi.api.admin_router import admin_router
 from opi.api.auth_routes import auth_router
 from opi.api.backup_router import backup_router
+from opi.api.federation_router import federation_router
 from opi.api.image_router import image_router
 from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
-from opi.api.metrics_router import metrics_router
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
+from opi.api.task_router import task_router
+from opi.api.v2.router import v2_router
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
@@ -55,6 +60,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     if settings.ENABLE_TRACEMALLOC:
         setup_tracemalloc()
 
+    # Set up OpenTelemetry tracing
+    from opi.core.tracing import setup_tracing
+
+    setup_tracing(app)
+
     # Logging is already initialized via early_logging import
     logger.info(f"Starting {PROJECT_NAME} version {VERSION}")
     # logger.info(f"Settings: {mask.secrets(get_settings().model_dump())}")
@@ -73,7 +83,97 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Start periodic task cleanup
     start_periodic_cleanup()
 
+    # Start async task worker if enabled (combined mode)
+    _worker_instance = None
+    _worker_asyncio_task = None
+    if settings.TASK_WORKER_ENABLED:
+        try:
+            from opi.core.async_task_service import AsyncTaskService, TaskType  # type: ignore[reportMissingImports]
+            from opi.core.database_pools import get_database_pool
+            from opi.core.task_worker import TaskWorker  # type: ignore[reportMissingImports]
+
+            pool = get_database_pool("main")
+            task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+            app.state.task_service = task_service
+
+            _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
+
+            # Register handlers (imported locally to avoid circular imports)
+            from opi.core.task_handlers_components import (  # type: ignore[reportMissingImports]
+                handle_add_component,
+                handle_add_component_to_deployment,
+                handle_add_service,
+            )
+            from opi.core.task_handlers_deployment import (  # type: ignore[reportMissingImports]
+                handle_delete_deployment,
+                handle_update_image,
+            )
+            from opi.core.task_handlers_operations import (  # type: ignore[reportMissingImports]
+                handle_clone_bucket,
+                handle_clone_database,
+                handle_refresh_deployment,
+                handle_refresh_project,
+            )
+            from opi.core.task_handlers_project import (  # type: ignore[reportMissingImports]
+                handle_create_project,
+                handle_upsert_deployment,
+            )
+
+            _worker_instance.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
+            _worker_instance.register_handler(TaskType.UPSERT_DEPLOYMENT, handle_upsert_deployment)
+            _worker_instance.register_handler(TaskType.UPDATE_IMAGE, handle_update_image)
+            _worker_instance.register_handler(TaskType.DELETE_DEPLOYMENT, handle_delete_deployment)
+            _worker_instance.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
+            _worker_instance.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
+            _worker_instance.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+            _worker_instance.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
+            _worker_instance.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
+            _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
+            _worker_instance.register_handler(TaskType.ADD_SERVICE, handle_add_service)
+
+            _worker_asyncio_task = asyncio.create_task(_worker_instance.run())
+            logger.info("Task worker started in combined mode")
+        except Exception as e:
+            logger.error(f"Failed to start task worker: {e}")
+    else:
+        # Frontend-only mode: still create task_service for API endpoints
+        try:
+            from opi.core.async_task_service import AsyncTaskService  # type: ignore[reportMissingImports]
+            from opi.core.database_pools import get_database_pool
+
+            pool = get_database_pool("main")
+            task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+            app.state.task_service = task_service
+            logger.info("Task service initialized (worker disabled)")
+        except Exception as e:
+            logger.warning(f"Failed to initialize task service: {e}")
+
+    # Initialize federation service if configured as master
+    if settings.FEDERATION_ROLE == "master" and settings.FEDERATION_PEERS:
+        try:
+            from opi.core.federation_config import FederationRegistry
+            from opi.core.federation_service import FederationService
+
+            registry = FederationRegistry.from_settings(settings.FEDERATION_PEERS, settings.CLUSTER_MANAGER)
+            fed_task_service = getattr(app.state, "task_service", None)
+            if fed_task_service and registry.is_enabled():
+                app.state.federation_service = FederationService(registry, fed_task_service)
+                logger.info("Federation service initialized (master mode, %d peers)", len(registry.get_all_peers()))
+            else:
+                logger.warning("Federation peers configured but task_service not available or no peers")
+        except Exception as e:
+            logger.error(f"Failed to initialize federation service: {e}")
+
     yield
+
+    # Stop task worker
+    if _worker_instance is not None:
+        await _worker_instance.stop()
+    if _worker_asyncio_task is not None:
+        _worker_asyncio_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _worker_asyncio_task
+        logger.info("Task worker stopped")
 
     # Stop peak memory tracking
     from opi.core.metrics import stop_peak_memory_tracking
@@ -97,6 +197,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.info("Database pools closed successfully")
     except Exception as e:
         logger.error(f"Error closing database pools: {e}")
+
+    # Shut down OpenTelemetry tracing (flush pending spans)
+    from opi.core.tracing import shutdown_tracing
+
+    shutdown_tracing()
 
     logger.info(f"Stopping application {PROJECT_NAME} version {VERSION}")
     logging.shutdown()
@@ -154,6 +259,17 @@ def create_app() -> FastAPI:
                     if isinstance(method, dict) and "operationId" in method:
                         method["security"] = [{"APIKeyHeader": []}]
 
+        # Sort paths: V2 first, then v1, for clarity in docs
+        paths = openapi_schema.get("paths", {})
+        sorted_paths = dict(sorted(paths.items(), key=lambda p: (not p[0].startswith("/api/v2"), p[0])))
+        openapi_schema["paths"] = sorted_paths
+
+        # Add API version info
+        openapi_schema["info"]["x-api-info"] = {
+            "v1_status": "deprecated - use /api/v2 endpoints",
+            "v2_status": "current - recommended",
+        }
+
         app.openapi_schema = openapi_schema
         return app.openapi_schema
 
@@ -181,10 +297,13 @@ def create_app() -> FastAPI:
     app.include_router(backup_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(restore_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(image_router, include_in_schema=True)  # Image upload proxy
-    app.include_router(metrics_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_websocket_router, include_in_schema=False)  # WebSocket for log streaming
     app.include_router(resource_router, include_in_schema=True)  # Resource tuning & sanitization
+    app.include_router(v2_router, include_in_schema=True)  # V2 async API endpoints
+    app.include_router(task_router, include_in_schema=True)  # Async task status API
+    app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
+    app.include_router(admin_router, include_in_schema=True)  # Admin cleanup/reconciliation API
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint
     app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs
@@ -256,12 +375,13 @@ if __name__ == "__main__":
         uvicorn.run("opi.server:app", host="0.0.0.0", port=8000, reload=False)
     elif settings.DEBUG_MODE == "reload":
         # Reload mode: Fast iteration, no debugging
-        logger.info("🔥 Hot-reload mode: File changes will auto-reload")
+        logger.info("🔥 Hot-reload mode: File changes will auto-reload (debounce: 2.5s)")
         uvicorn.run(
             "opi.server:app",
             host="0.0.0.0",
             port=8000,
             reload=True,
+            reload_delay=2.5,  # Wait 2.5s for file changes to settle before reloading
             reload_dirs=["/app/opi", "/app/templates", "/app/manifests"],
         )
     else:
