@@ -1933,9 +1933,8 @@
     function openEditModal(flowId, title) {
         isEditSubmitting = false;
 
-        // Set title
-        var titleEl = document.getElementById('edit-section-title');
-        titleEl.innerHTML = '<span class="utrecht-icon rvo-icon rvo-icon-bewerken rvo-icon--lg rvo-icon--donkerblauw" style="background-color: var(--rvo-color-donkerblauw);"></span>' + title;
+        // Set title text (icon is already in the DOM via Jinja preprocessing)
+        document.getElementById('edit-section-title-text').textContent = title;
 
         // Hide error
         var errorEl = document.getElementById('edit-section-error');
