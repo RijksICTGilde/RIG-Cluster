@@ -33,7 +33,7 @@ jobs:
         run: uv sync --all-groups
 
       - name: Run pip-audit
-        run: uv run pip-audit --strict --desc --skip-editable
+        run: uv run pip-audit --strict --desc --skip-editable -s osv
 
   container-scan:
     name: Container scan — ${{ matrix.image.name }}
