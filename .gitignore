@@ -40,3 +40,6 @@ secrets-overview-*.yaml
 /bootstrap/rig-system/kustomize/overlays/sandboxed-local/decrypt-sops.yaml
 /bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-admin-secret.yaml.sops.yaml
 /.claude/worktrees/
+
+# E2E test screenshots (generated artifacts)
+/operations-manager/python/tests/e2e/screenshots/

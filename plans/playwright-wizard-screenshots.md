@@ -1,6 +1,6 @@
 # Plan: Playwright Wizard Screenshot Tests
 
-## Status: PARTIALLY COMPLETE — waiting on Docker image rebuild
+## Status: MOSTLY COMPLETE — 6/8 tests pass, 2 need fixing
 
 ## What's Done
 
@@ -16,39 +16,31 @@ All code is committed and pushed to `claude/editwizard` (commit 3abcce1):
 | `tests/e2e/test_wizard_flows.py` | DONE | 8 wizard flow test scenarios |
 | `features/e2e-ui-testing.md` | DONE | Feature documentation |
 
-## What's Blocked
+## What's Done Since Last Session
 
-**Playwright can't launch Chromium** — the developer Docker image was missing system libraries (libglib2.0, libnss3, etc.). DistributedClaude added them to the Dockerfile (commit a3535e9 on master). The image needs to be rebuilt and this session restarted.
+- Chromium system deps installed via `uv run playwright install-deps chromium`
+- Added `--no-sandbox` fixture to conftest.py for container environments
+- Screenshot test passes — 9 screenshots generated (all wizard steps)
+- Screenshots committed and pushed to `claude/editwizard`
 
-## What To Do After Image Rebuild
+## Current Test Results (6/8 pass)
 
-1. Install Playwright browser:
-   ```bash
-   cd /workspace/operations-manager/python
-   export PATH="/home/claude/.local/share/mise/installs/python/3.13.12/bin:$HOME/.local/bin:$PATH"
-   uv sync
-   uv run playwright install chromium
-   ```
+| Test | Status | Issue |
+|------|--------|-------|
+| test_screenshots_each_step | PASS | |
+| test_wizard_with_keycloak_service | PASS | |
+| test_wizard_with_postgresql_service | PASS | |
+| test_back_navigation_preserves_data | PASS | |
+| test_validation_blocks_advance | PASS | |
+| test_conditional_steps_hidden | PASS | |
+| test_full_wizard_no_services | FAIL | Review page doesn't show project name in body text |
+| test_review_shows_summary | FAIL | Same — `name in body` assertion fails on review page |
 
-2. Run the wizard screenshot test:
-   ```bash
-   E2E_SCREENSHOT_DIR=./screenshots uv run pytest tests/e2e/test_wizard_flows.py::TestWizardScreenshots -m "e2e and not sandbox" -v --timeout=60
-   ```
+## What Needs Fixing
 
-3. Run ALL wizard flow tests:
-   ```bash
-   uv run pytest tests/e2e/test_wizard_flows.py -m "e2e and not sandbox" -v --timeout=60
-   ```
-
-4. Run all E2E tests to verify nothing broke:
-   ```bash
-   uv run pytest tests/e2e/ -m "e2e and not sandbox" -v --timeout=60
-   ```
-
-5. View screenshots:
-   ```bash
-   ls -la ./screenshots/
-   ```
+The 2 failing tests assert `project_name in page.text_content("body")` on the review page.
+The review page renders but the project name may be in an attribute or different element.
+Need to investigate what the review page actually shows and fix the assertions.
 
 ## Key Design Decisions
 
