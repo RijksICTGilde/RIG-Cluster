@@ -104,7 +104,6 @@ COPY keys/git-server-key keys/git-server-key.pub /app/keys/
 
 # Copy specific environment files (rarely change)
 COPY operations-manager/python/.env /app/
-COPY operations-manager/python/.env.local /app/
 COPY operations-manager/python/.env.production /app/
 
 # Copy Alembic configuration (for database migrations)
