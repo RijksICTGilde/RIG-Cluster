@@ -264,24 +264,22 @@ class WizardHelper:
     def _click_and_wait_for_step_change(self, locator, timeout: float = 10000) -> None:
         """Click a button and wait for the HTMX swap to complete.
 
-        Captures a snapshot of the wizard-step-inner element before clicking,
-        then waits until the element is replaced (HTMX innerHTML swap recreates
-        it). This works for all cases: step change, validation re-render,
-        review page navigation.
+        Uses HTMX request tracking to detect when the swap is done, rather than
+        DOM mutation detection which can race with other page updates.
         """
-        # Mark the current step element so we can detect when it's replaced
-        self.page.evaluate("document.querySelector('#wizard-step-inner')?.setAttribute('data-stale', '1')")
+        # Install a one-shot listener that sets a flag when HTMX finishes settling
+        self.page.evaluate("""() => {
+            window.__htmxSettled = false;
+            document.addEventListener('htmx:afterSettle', function handler() {
+                window.__htmxSettled = true;
+                document.removeEventListener('htmx:afterSettle', handler);
+            });
+        }""")
 
         locator.click()
-        self.page.wait_for_load_state("networkidle", timeout=timeout)
 
-        # Wait until the stale marker is gone (element was replaced by HTMX swap)
+        # Wait for HTMX to settle (swap complete)
         self.page.wait_for_function(
-            """() => {
-                const el = document.querySelector('#wizard-step-inner');
-                // Either: element replaced (no stale attr) or element gone (review)
-                if (!el) return true;
-                return !el.hasAttribute('data-stale');
-            }""",
+            "() => window.__htmxSettled === true",
             timeout=timeout,
         )
