@@ -66,8 +66,9 @@ class TestWizardFullFlow:
 
         # Verify we reached review: page should contain the project name
         auth_page.wait_for_load_state("networkidle")
+        auth_page.screenshot(path="/tmp/wizard-debug-review.png", full_page=True)
         body = auth_page.text_content("body") or ""
-        assert name in body, f"Project name '{name}' not on review page"
+        assert name in body, f"Project name '{name}' not on review page. URL: {auth_page.url}"
 
     def test_wizard_with_keycloak_service(self, app_server: str, auth_page: Page) -> None:
         """Select Keycloak service and verify a config step appears."""

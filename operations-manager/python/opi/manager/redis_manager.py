@@ -539,6 +539,11 @@ class RedisManager:
 
                 scope = f"{key_prefix}*" if key_prefix else "* (all keys)"
                 logger.info(f"Created/updated Redis ACL user: {username} (keys+channels: {scope})")
+
+                # Persist ACL changes to disk so users survive Redis restarts
+                save_response = await RedisManager._send_redis_command(reader, writer, "ACL", "SAVE")
+                if not save_response.startswith("+OK"):
+                    logger.warning(f"ACL SAVE failed after creating user {username}: {save_response}")
             finally:
                 writer.close()
                 await writer.wait_closed()
@@ -568,6 +573,11 @@ class RedisManager:
                 response = await RedisManager._send_redis_command(reader, writer, "ACL", "DELUSER", username)
                 # Response is :1 for deleted, :0 for not found — both are acceptable
                 logger.info(f"Deleted Redis ACL user: {username} (response: {response})")
+
+                # Persist ACL changes to disk so deletions survive Redis restarts
+                save_response = await RedisManager._send_redis_command(reader, writer, "ACL", "SAVE")
+                if not save_response.startswith("+OK"):
+                    logger.warning(f"ACL SAVE failed after deleting user {username}: {save_response}")
             finally:
                 writer.close()
                 await writer.wait_closed()

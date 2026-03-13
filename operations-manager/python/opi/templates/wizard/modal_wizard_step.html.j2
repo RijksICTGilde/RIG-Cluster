@@ -57,24 +57,20 @@
 
         <div class="wizard-step__actions" id="edit-section-actions">
             {% if not steps.is_first %}
-            <c-button kind="secondary" showIcon="before" icon="delta-naar-links"
+            <c-button kind="secondary" label="Vorige" showIcon="before" icon="delta-naar-links"
                       hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ steps.prev }}"
-                      hx-target="#edit-section-inner" hx-swap="innerHTML">
-                Vorige
-            </c-button>
+                      hx-target="#edit-section-inner" hx-swap="innerHTML" />
             {% else %}
-            <c-button type="button" kind="tertiary" @click="closeEditModal()">Annuleren</c-button>
+            <c-button type="button" kind="tertiary" label="Annuleren" @click="closeEditModal()" />
             {% endif %}
 
             <div class="wizard-step__actions-right">
                 {% if steps.is_last %}
-                <c-button type="submit" kind="primary" showIcon="before" icon="publicatie">
-                    {% if flow_id is defined and flow_id in ("modal-backup", "modal-restore") %}Verder{% else %}Opslaan{% endif %}
-                </c-button>
+                <c-button type="submit" kind="primary" showIcon="before" icon="publicatie"
+                    label="{% if flow_id is defined and flow_id in ('modal-backup', 'modal-restore') %}Verder{% else %}Opslaan{% endif %}" />
                 {% else %}
-                <c-button type="submit" kind="primary" showIcon="after" icon="delta-naar-rechts">
-                    Volgende
-                </c-button>
+                <c-button type="submit" kind="primary" label="Volgende"
+                          showIcon="after" icon="delta-naar-rechts" />
                 {% endif %}
             </div>
         </div>

@@ -59,51 +59,41 @@
 
         <div class="wizard-step__actions">
             {% if not steps.is_first %}
-            <c-button kind="secondary"
+            <c-button kind="secondary" label="Vorige"
                       showIcon="before" icon="delta-naar-links"
                       hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
                       hx-target="#wizard-step-content"
                       hx-swap="innerHTML"
                       hx-include="#wizard-step-form"
                       hx-vals='{"_goto": "prev"}'
-                      hx-ext="json-enc">
-                Vorige
-            </c-button>
+                      hx-ext="json-enc" />
             {% else %}
             <span></span>
             {% endif %}
 
             <div class="wizard-step__actions-right">
                 {% if all_steps_completed and show_review and not steps.is_last %}
-                <c-button kind="tertiary"
+                <c-button kind="tertiary" label="Naar samenvatting"
                           showIcon="after" icon="delta-naar-rechts"
                           hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
                           hx-target="#wizard-step-content"
                           hx-swap="innerHTML"
                           hx-include="#wizard-step-form"
                           hx-vals='{"_goto": "review"}'
-                          hx-ext="json-enc">
-                    Naar samenvatting
-                </c-button>
+                          hx-ext="json-enc" />
                 {% endif %}
 
                 {% if steps.is_last %}
                     {% if show_review %}
-                    <c-button type="submit" kind="primary"
-                              showIcon="after" icon="delta-naar-rechts">
-                        Controleren
-                    </c-button>
+                    <c-button type="submit" kind="primary" label="Controleren"
+                              showIcon="after" icon="delta-naar-rechts" />
                     {% else %}
-                    <c-button type="submit" kind="primary"
-                              showIcon="before" icon="publicatie">
-                        Opslaan
-                    </c-button>
+                    <c-button type="submit" kind="primary" label="Opslaan"
+                              showIcon="before" icon="publicatie" />
                     {% endif %}
                 {% else %}
-                <c-button type="submit" kind="primary"
-                          showIcon="after" icon="delta-naar-rechts">
-                    Volgende
-                </c-button>
+                <c-button type="submit" kind="primary" label="Volgende"
+                          showIcon="after" icon="delta-naar-rechts" />
                 {% endif %}
             </div>
         </div>

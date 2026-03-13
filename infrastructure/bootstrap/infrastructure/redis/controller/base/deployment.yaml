@@ -23,6 +23,21 @@ spec:
         fsGroup: 999
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: init-aclfile
+        image: redis:7-alpine
+        command: ["sh", "-c", "test -f /data/users.acl || touch /data/users.acl"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
       containers:
       - name: redis
         image: redis:7-alpine
@@ -32,6 +47,8 @@ spec:
         - $(REDIS_PASSWORD)
         - --appendonly
         - "yes"
+        - --aclfile
+        - /data/users.acl
         ports:
         - containerPort: 6379
           name: redis
