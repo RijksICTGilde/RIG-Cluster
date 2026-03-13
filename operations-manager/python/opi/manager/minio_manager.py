@@ -1018,7 +1018,7 @@ class MinioManager:
                 logger.info(f"Skipping data copy - source bucket {source_bucket} does not exist")
 
             # Record revision for initial creation
-            initial_gen = current_generation if current_generation is not None else 1
+            initial_gen = current_generation if current_generation is not None else 0
             self.project_manager._revision_manager.record_clone(
                 project_data=project_data,
                 deployment_name=target_deployment_name,
@@ -1829,7 +1829,7 @@ class MinioManager:
 
                 # Record revision for initial creation (if not already incremented)
                 if not generation_was_incremented:
-                    initial_gen = current_generation if current_generation is not None else 1
+                    initial_gen = current_generation if current_generation is not None else 0
                     source_desc = f"external:{source_host}:{source_port}/{source_bucket}"
                     self.project_manager._revision_manager.record_clone(
                         project_data=project_data,

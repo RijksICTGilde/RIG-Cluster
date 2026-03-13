@@ -156,7 +156,7 @@
                 {% set unique_services = all_services|sum(start=[])|map('service_name')|unique|list %}
                 <div class="summary-number">{{ (projects|map(attribute='services')|map('length')|sum) or 0 }}</div>
                 <div class="summary-label">Services actief</div>
-                <div class="summary-change">Across alle projecten</div>
+                <div class="summary-change">In alle projecten</div>
             </c-layout-flow>
         </c-card>
 

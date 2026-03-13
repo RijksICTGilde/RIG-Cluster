@@ -1156,6 +1156,18 @@ tasks:
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
+  publish-hello-world-seventies:
+    desc: "Build and publish the hello-world-seventies image to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/hello-world-seventies
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: hello-world-seventies
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          PLATFORMS: linux/amd64,linux/arm64
+
   build-postgresql-image:
     desc: "Build and load PostgreSQL image with dictionary files into kind cluster"
     cmds:

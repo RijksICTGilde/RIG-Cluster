@@ -7,6 +7,20 @@ from typing import Any
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_format
 
 
+def _get_default_domain() -> str:
+    """Return the first supported domain for the current cluster."""
+    from opi.core.cluster_config import CLUSTER_CONFIG
+    from opi.core.config import settings
+
+    cluster = settings.CLUSTER_MANAGER
+    if cluster and cluster in CLUSTER_CONFIG:
+        raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
+        if raw:
+            entry = raw[0]
+            return entry["domain"] if isinstance(entry, dict) else entry
+    return "domein.nl"
+
+
 def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     """Compute URL preview context from wizard form data.
 
@@ -35,8 +49,12 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
     base_domain = dep.get("base-domain") or ""
     custom_domain = dep.get("base-domain:custom") or ""
 
-    # Resolve the domain: use custom if sentinel, else base_domain, else placeholder
-    domain = custom_domain or "voorbeeld.nl" if base_domain == "__custom__" else base_domain or "domein.nl"
+    # Resolve the domain: custom when sentinel, selected value, or cluster default.
+    # Explicit if/else avoids the operator-precedence trap of chained `or`/ternary.
+    if base_domain == "__custom__":  # noqa: SIM108
+        domain = custom_domain or "voorbeeld.nl"
+    else:
+        domain = base_domain or _get_default_domain()
 
     project_name = yaml_data.get("name") or "projectid"
 

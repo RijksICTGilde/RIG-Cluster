@@ -1907,7 +1907,7 @@ class DatabaseManager:
                     result["operations"].append({"type": "database_prepared", "status": "created"})
 
                     # Record revision for initial creation
-                    current_gen = generation if generation is not None else 1
+                    current_gen = generation if generation is not None else 0
                     service_type = (
                         ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
                         if uses_namespace_postgresql
