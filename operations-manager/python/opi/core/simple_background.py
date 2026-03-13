@@ -336,9 +336,6 @@ async def process_project_yaml_background(task_id: str, project_name: str, yaml_
                 await project_manager.close()
 
             if processing_result:
-                monitor_task = task_progress_manager.add_subtask(deploy_task, "ArgoCD & deployment monitoring")
-                await _monitor_argocd_and_deployment(task_id, project_name, task_progress_manager, monitor_task)
-
                 task_progress_manager.complete_task(deploy_task)
                 task_progress_manager.update_current_step(f"Project {project_name} succesvol geimplementeerd")
                 task_progress_manager.complete_project()

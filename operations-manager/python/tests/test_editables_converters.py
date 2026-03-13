@@ -111,9 +111,9 @@ class TestKeyValueConverter:
         assert "OTHER: val2" in result
 
     def test_read_dict_env_format(self):
-        """Dict values are always serialized via yaml.dump (KEY: value)."""
+        """Dict values with env fmt produce KEY=value lines."""
         result = KeyValueConverter(fmt="env").read({"KEY": "value"})
-        assert "KEY: value" in result
+        assert "KEY=value" in result
 
     def test_read_string_passthrough(self):
         """String values are returned as-is."""

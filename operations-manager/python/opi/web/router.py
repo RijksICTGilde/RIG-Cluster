@@ -149,79 +149,75 @@ async def get_task_status(request: Request, task_id: str):
     Get current task status and progress.
 
     This endpoint is used for polling by the progress page JavaScript.
-    Reads task state from the database via AsyncTaskService.
+    Reads task state from the in-memory TaskProgressManager.
+
+    TODO: Migrate to database-backed AsyncTaskService once TaskProgressManager
+    writes to the database instead of in-memory. See features/futures/
+    migrate-task-progress-to-database.md
     """
     from fastapi.responses import JSONResponse
 
-    from opi.core.cluster_config import get_prefixed_namespace
+    from opi.core.task_manager import TaskStatus, _project_managers, _projects
 
-    task_service = getattr(request.app.state, "task_service", None)
-    if task_service is None:
-        raise HTTPException(status_code=503, detail="Task service not available")
-
-    task = await task_service.get_task(task_id)
-    if task is None:
+    project = _projects.get(task_id)
+    if project is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Build subtask hierarchy from the flat subtasks list
-    subtasks_raw = task.get("subtasks") or []
-    main_tasks = []
-    children_by_parent: dict[str, list[dict]] = {}
-    for st in subtasks_raw:
-        parent_id = st.get("parent_id")
-        if parent_id is None:
-            main_tasks.append(st)
-        else:
-            children_by_parent.setdefault(parent_id, []).append(st)
+    task_manager = _project_managers.get(task_id)
 
-    task_hierarchy = []
-    for mt in main_tasks:
-        task_data = {
-            "id": mt.get("id"),
-            "name": mt.get("name"),
-            "status": mt.get("status"),
-            "created_at": mt.get("created_at"),
-            "completed_at": mt.get("completed_at"),
-            "error": mt.get("error"),
-            "subtasks": [
-                {
-                    "id": child.get("id"),
-                    "name": child.get("name"),
-                    "status": child.get("status"),
-                    "created_at": child.get("created_at"),
-                    "completed_at": child.get("completed_at"),
-                    "error": child.get("error"),
-                }
-                for child in children_by_parent.get(mt.get("id"), [])
-            ],
-        }
-        task_hierarchy.append(task_data)
+    # Build subtask hierarchy from the in-memory task manager
+    task_hierarchy: list[dict] = []
+    progress = 0
 
-    progress = task.get("progress_percent") or 0
-    namespace = get_prefixed_namespace(task["cluster"], task["project_name"])
+    if task_manager:
+        main_tasks = []
+        subtasks_by_parent: dict[str, list] = {}
 
-    response_data = {
+        for task in task_manager.tasks.values():
+            if task.parent_id is None:
+                main_tasks.append(task)
+            else:
+                subtasks_by_parent.setdefault(task.parent_id, []).append(task)
+
+        for main_task in main_tasks:
+            task_data: dict[str, Any] = {
+                "id": main_task.id,
+                "name": main_task.name,
+                "status": main_task.status.value,
+                "error": main_task.error,
+                "subtasks": [
+                    {
+                        "id": subtask.id,
+                        "name": subtask.name,
+                        "status": subtask.status.value,
+                        "error": subtask.error,
+                    }
+                    for subtask in subtasks_by_parent.get(main_task.id, [])
+                ],
+            }
+            task_hierarchy.append(task_data)
+
+        total = len(task_manager.tasks)
+        completed = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
+        progress = int((completed / total * 100) if total > 0 else 0)
+
+    response_data: dict[str, Any] = {
         "task_id": task_id,
-        "status": task["status"],
-        "current_step": task.get("current_step") or "Starting...",
-        "project_name": task["project_name"],
-        "created_at": task["created_at"].isoformat() if task.get("created_at") else None,
+        "status": project.status.value,
+        "current_step": project.current_step or "Starting...",
+        "project_name": project.project_name,
         "progress": progress,
         "tasks": task_hierarchy,
-        "namespace": namespace,
     }
 
-    logs = task.get("logs")
-    if logs:
-        response_data["logs"] = logs[-50:]
+    if project.logs:
+        response_data["logs"] = project.logs[-50:]
 
-    events = task.get("events")
-    if events:
-        response_data["events"] = events[-20:]
+    if project.events:
+        response_data["events"] = project.events[-20:]
 
-    web_addresses = task.get("web_addresses")
-    if web_addresses:
-        response_data["web_addresses"] = web_addresses
+    if project.web_addresses:
+        response_data["web_addresses"] = project.web_addresses
 
     return JSONResponse(content=response_data)
 

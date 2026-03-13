@@ -72,7 +72,7 @@ class TestSequenceEditables:
     def test_components_sequence_has_children(self):
         assert str(COMPONENTS_SEQUENCE.widget) == "sequence"
         assert COMPONENTS_SEQUENCE.children is not None
-        assert len(COMPONENTS_SEQUENCE.children) == 15
+        assert len(COMPONENTS_SEQUENCE.children) == 17
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):
