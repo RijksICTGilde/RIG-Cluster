@@ -26,7 +26,22 @@ spec:
       initContainers:
       - name: init-aclfile
         image: redis:7-alpine
-        command: ["sh", "-c", "test -f /data/users.acl || touch /data/users.acl"]
+        command:
+        - sh
+        - -c
+        - |
+          if [ ! -s /data/users.acl ]; then
+            echo "user default on >$REDIS_PASSWORD ~* &* +@all" > /data/users.acl
+            echo "Initialized ACL file with default user"
+          else
+            echo "ACL file already exists, skipping initialization"
+          fi
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin-credentials
+              key: REDIS_PASSWORD
         securityContext:
           allowPrivilegeEscalation: false
           runAsNonRoot: true
@@ -43,8 +58,6 @@ spec:
         image: redis:7-alpine
         command:
         - redis-server
-        - --requirepass
-        - $(REDIS_PASSWORD)
         - --appendonly
         - "yes"
         - --aclfile
