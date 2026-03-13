@@ -14,11 +14,11 @@
                 <p class="rvo-text--subtle">Beschikbare backups per deployment (alleen voor cluster: {{ current_cluster }})</p>
             </div>
             <c-layout-flow row="true" gap="sm">
-                <c-button kind="secondary" size="sm" showIcon="before" icon="iconen-toevoegen"
-                          @click="openEditModal('modal-backup', 'Backup aanmaken')">Backup aanmaken</c-button>
+                <c-button kind="secondary" size="sm" label="Backup aanmaken" showIcon="before" icon="iconen-toevoegen"
+                          @click="openEditModal('modal-backup', 'Backup aanmaken')" />
                 {% if ns.has_backups %}
-                <c-button kind="secondary" size="sm" showIcon="before" icon="terug"
-                          @click="openEditModal('modal-restore', 'Backup herstellen')">Herstellen</c-button>
+                <c-button kind="secondary" size="sm" label="Herstellen" showIcon="before" icon="terug"
+                          @click="openEditModal('modal-restore', 'Backup herstellen')" />
                 {% endif %}
             </c-layout-flow>
         </c-layout-flow>

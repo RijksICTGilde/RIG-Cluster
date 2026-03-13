@@ -10,9 +10,9 @@
                 <p class="rvo-text--subtle">Bezig met verwijderen...</p>
             </div>
             <c-layout-flow gap="sm" row="true" id="danger-confirm-actions">
-                <c-button kind="secondary" @click="hideDangerConfirmation()">Annuleren</c-button>
-                <c-button kind="warning" id="danger-confirm-btn" showIcon="before" icon="verwijderen"
-                          @click="executeDangerAction()">Verwijderen</c-button>
+                <c-button kind="secondary" label="Annuleren" @click="hideDangerConfirmation()" />
+                <c-button kind="warning" label="Verwijderen" id="danger-confirm-btn" showIcon="before" icon="verwijderen"
+                          @click="executeDangerAction()" />
             </c-layout-flow>
         </c-layout-flow>
     </div>
@@ -23,7 +23,7 @@
 <div id="edit-section-modal" class="edit-section-modal" role="dialog" aria-modal="true" aria-labelledby="edit-section-title" data-project-name="{{ project.name }}">
     <div class="edit-section-header">
         <c-heading type="h2" id="edit-section-title"><c-icon icon="bewerken" size="lg" color="donkerblauw" /><span id="edit-section-title-text"></span></c-heading>
-        <c-button kind="tertiary" size="sm" showIcon="before" icon="kruis"
+        <c-button kind="tertiary" size="sm" label="Sluiten" showIcon="before" icon="kruis"
                   className="edit-modal-close-btn"
                   @click="closeEditModal()" />
     </div>

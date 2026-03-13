@@ -4,8 +4,8 @@
         <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
             <c-heading type="h2"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
             {% if user_role in ["admin", "owner"] %}
-            <c-button kind="secondary" size="sm" showIcon="before" icon="plus"
-                      @click="openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen')">Toevoegen</c-button>
+            <c-button kind="secondary" size="sm" label="Toevoegen" showIcon="before" icon="plus"
+                      @click="openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen')" />
             {% endif %}
         </c-layout-flow>
         <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
@@ -23,9 +23,9 @@
                         </div>
                         {% if user_role in ["admin", "owner"] %}
                         <c-layout-flow row="true" gap="xs">
-                            <c-button kind="secondary" size="sm" showIcon="before" icon="bewerken"
+                            <c-button kind="secondary" size="sm" label="Bewerken" showIcon="before" icon="bewerken"
                                 @click="openEditModal('modal-edit-component-{{ loop.index0 }}', 'Component bewerken — {{ component.name }}')" />
-                            <c-button kind="warning" size="sm" showIcon="before" icon="verwijderen"
+                            <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
                                 @click="showDangerConfirmation('component', '{{ component.name }}', 'Weet u zeker dat u component &quot;{{ component.name }}&quot; wilt verwijderen?')" />
                         </c-layout-flow>
                         {% endif %}

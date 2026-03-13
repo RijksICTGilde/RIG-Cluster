@@ -4,8 +4,8 @@
         <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
             <c-heading type="h2"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
             {% if user_role in ["admin", "owner"] %}
-            <c-button kind="secondary" size="sm" showIcon="before" icon="bewerken"
-                      @click="openEditModal('modal-edit-team', 'Projectleden beheren')">Bewerken</c-button>
+            <c-button kind="secondary" size="sm" label="Bewerken" showIcon="before" icon="bewerken"
+                      @click="openEditModal('modal-edit-team', 'Projectleden beheren')" />
             {% endif %}
         </c-layout-flow>
         <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>

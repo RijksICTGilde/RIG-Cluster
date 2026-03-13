@@ -10,11 +10,9 @@
                     <strong style="color: var(--rvo-color-rood-600);">Project "{{ project.display_name or project.name }}" verwijderen</strong>
                     <p class="rvo-text--subtle rvo-text--sm" style="margin: 0;">Verwijdert het volledige project inclusief alle deployments, services en configuratie. Dit kan niet ongedaan worden gemaakt.</p>
                 </div>
-                <c-button kind="warning" size="sm"
+                <c-button kind="warning" size="sm" label="Project verwijderen"
                           showIcon="before" icon="verwijderen"
-                          @click="showDangerConfirmation('project', '{{ project.name }}', 'Weet u zeker dat u het volledige project &quot;{{ project.display_name or project.name }}&quot; wilt verwijderen? Dit verwijdert ALLE deployments, services en configuratie.')">
-                    Project verwijderen
-                </c-button>
+                          @click="showDangerConfirmation('project', '{{ project.name }}', 'Weet u zeker dat u het volledige project &quot;{{ project.display_name or project.name }}&quot; wilt verwijderen? Dit verwijdert ALLE deployments, services en configuratie.')" />
             </div>
         </c-card>
     </c-layout-flow>

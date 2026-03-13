@@ -470,29 +470,13 @@
         display: inline-block;
     }
 
-    /* Copy button label toggle */
-    .copy-btn__copied {
-        display: none;
-    }
-
-    .copy-btn__label {
-        display: inline;
-    }
-
+    /* Copy button copied state */
     .copy-btn.is-copied {
         color: var(--rvo-color-groen) !important;
     }
 
     .copy-btn.is-copied .rvo-icon {
         color: var(--rvo-color-groen) !important;
-    }
-
-    .copy-btn.is-copied .copy-btn__label {
-        display: none;
-    }
-
-    .copy-btn.is-copied .copy-btn__copied {
-        display: inline;
     }
 
     /* Environment Variables Section */
@@ -2114,8 +2098,10 @@
         navigator.clipboard.writeText(codeEl.textContent.trim()).then(function() {
             var btn = event.target.closest('.copy-btn');
             if (btn) {
+                btn.setAttribute('label', 'Gekopieerd!');
                 btn.classList.add('is-copied');
                 setTimeout(function() {
+                    btn.setAttribute('label', 'Kopieer');
                     btn.classList.remove('is-copied');
                 }, 2000);
             }

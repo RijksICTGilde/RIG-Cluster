@@ -270,9 +270,7 @@ class WizardHelper:
         review page navigation.
         """
         # Mark the current step element so we can detect when it's replaced
-        self.page.evaluate(
-            "document.querySelector('#wizard-step-inner')?.setAttribute('data-stale', '1')"
-        )
+        self.page.evaluate("document.querySelector('#wizard-step-inner')?.setAttribute('data-stale', '1')")
 
         locator.click()
         self.page.wait_for_load_state("networkidle", timeout=timeout)

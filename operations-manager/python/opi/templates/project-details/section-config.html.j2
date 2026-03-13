@@ -17,14 +17,11 @@
                     <c-button
                         kind="tertiary"
                         size="sm"
+                        label="Kopieer"
                         showIcon="before"
                         icon="document-blanco"
                         class="copy-btn"
-                        aria-label="Kopieer project naam"
-                        @click="copyToClipboard('.config-code', event, '.config-item')">
-                        <span class="copy-btn__label">Kopieer</span>
-                        <span class="copy-btn__copied">Gekopieerd!</span>
-                    </c-button>
+                        @click="copyToClipboard('.config-code', event, '.config-item')" />
                 </div>
             </div>
 
@@ -55,14 +52,11 @@
                     <c-button
                         kind="tertiary"
                         size="sm"
+                        label="Kopieer"
                         showIcon="before"
                         icon="document-blanco"
                         class="copy-btn"
-                        aria-label="Kopieer Age Public Key"
-                        @click="copyToClipboard('.config-code', event, '.config-item')">
-                        <span class="copy-btn__label">Kopieer</span>
-                        <span class="copy-btn__copied">Gekopieerd!</span>
-                    </c-button>
+                        @click="copyToClipboard('.config-code', event, '.config-item')" />
                 </div>
             </div>
             {% endif %}

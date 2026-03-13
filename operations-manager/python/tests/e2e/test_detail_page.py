@@ -70,9 +70,7 @@ def test_detail_page_shows_deployments(app_server: str, auth_page: Page) -> None
     assert "local" in body  # cluster name
 
 
-def test_detail_page_screenshot(
-    app_server: str, auth_page: Page, screenshot_dir: Path
-) -> None:
+def test_detail_page_screenshot(app_server: str, auth_page: Page, screenshot_dir: Path) -> None:
     """Take full-page screenshot of the detail page."""
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
