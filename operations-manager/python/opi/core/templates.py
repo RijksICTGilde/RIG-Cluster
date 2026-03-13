@@ -15,6 +15,7 @@ from jinja_roos_components import setup_components
 from jinja_roos_components.extension import ComponentExtension
 from starlette.requests import Request
 
+from opi.core.config import BUILD_DATE, VERSION
 from opi.core.i18n import get_current_translation, get_requested_language
 
 # Dutch month names
@@ -132,6 +133,8 @@ setup_components(
 
 # Add global variables that components might need
 templates.env.globals["roos_assets_base_url"] = "/static/roos/dist/"
+templates.env.globals["version"] = VERSION
+templates.env.globals["build_date"] = BUILD_DATE
 
 # Register custom filters
 templates.env.filters["service_name"] = get_service_name

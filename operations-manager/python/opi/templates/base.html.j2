@@ -36,6 +36,12 @@
             </main>
 
             {# Footer #}
+            {% set version_label = 'ZAD ' + version + (' (' + build_date + ')' if build_date else '') %}
+            {% if version != '0.1.0' %}
+                {% set version_menu = [{'content': version_label, 'link': 'https://github.com/RijksICTGilde/RIG-Cluster/commit/' + version}] %}
+            {% else %}
+                {% set version_menu = [{'content': version_label}] %}
+            {% endif %}
             <c-footer
                 maxWidth="lg"
                 :primaryMenu="[
@@ -48,17 +54,7 @@
                         ]
                     }
                 ]"
-                :secondaryMenu="[
-                    {
-                        'label': 'Organisatie',
-                        'items': [
-                            {'content': 'Over ODC-Noord', 'link': '/organization'},
-                            {'content': 'Privacyverklaring', 'link': '/privacy'},
-                            {'content': 'Toegankelijkheid', 'link': '/accessibility'},
-                            {'content': 'Cookieverklaring', 'link': '/cookies'}
-                        ]
-                    }
-                ]" />
+                :secondaryMenu="version_menu" />
         </c-layout-flow>
 
         <style>

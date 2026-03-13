@@ -2687,6 +2687,9 @@ tasks:
       - |
         echo "Updating operations-manager deployment..."
         SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local --load-restrictor LoadRestrictionsNone | kubectl apply -f -
+        kubectl set env deployment/operations-manager -n {{.RIG_NAMESPACE}} \
+          ZAD_VERSION="$(git describe --tags --always)" \
+          ZAD_BUILD_DATE="$(date +%Y-%m-%d)"
         kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo "Operations manager updated successfully"
     silent: true

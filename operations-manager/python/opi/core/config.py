@@ -11,7 +11,8 @@ from opi.utils.logging_config import setup_logging
 logger = logging.getLogger(__name__)
 
 PROJECT_NAME: str = "OPI"
-VERSION: str = "0.1.0"  # replace in CI/CD pipeline
+VERSION: str = os.environ.get("ZAD_VERSION", "0.1.0")
+BUILD_DATE: str = os.environ.get("ZAD_BUILD_DATE", "")
 PROJECT_DESCRIPTION: str = "OPI - Operational Platform Interface"
 
 
