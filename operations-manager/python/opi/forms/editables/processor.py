@@ -47,6 +47,16 @@ def _converter_write(converter: Any, value: Any, yaml_data: dict[str, Any] | Non
         return converter.write(value)
 
 
+def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:
+    """Read a field value from submitted data, respecting virtualize."""
+    virt = ed.virtualize
+    read_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
+    value = get_value(submitted, read_path)
+    if value is None and virt and read_path != ed.yaml_path:
+        value = get_value(submitted, ed.yaml_path)
+    return value
+
+
 class EditableFormProcessor:
     """Processes form submissions through the editables pipeline."""
 
@@ -142,6 +152,56 @@ class EditableFormProcessor:
         result.pop("_generated", None)
         return result
 
+    def apply_dependent_generators(
+        self,
+        editables: list[EditableVisualizer],
+        yaml_data: dict[str, Any],
+    ) -> None:
+        """Run generators for editables that have both depends_on and a generator.
+
+        These are computed fields whose value is derived from another field
+        (e.g., issuer derived from base-domain). Mutates ``yaml_data`` in
+        place. When the generated value is falsy and ``remove_when_none``
+        is set, the key is removed from the YAML.
+
+        Recurses into GROUP widgets to find nested computed editables.
+        Also walks the editable children tree directly, so computed fields
+        defined in an editable group (without a visualizer) are picked up.
+        """
+        for vis in editables:
+            ed = vis.editable
+            if vis.widget == WidgetType.GROUP:
+                self.apply_dependent_generators(vis.children or [], yaml_data)
+                # Also check editable children that have no visualizer counterpart
+                self._apply_editable_generators(ed.children or [], yaml_data)
+                continue
+            if not ed.generator or not ed.depends_on:
+                continue
+            self._run_generator(ed, yaml_data)
+
+    def _apply_editable_generators(
+        self,
+        editables: list[Editable],
+        yaml_data: dict[str, Any],
+    ) -> None:
+        """Walk raw editable children for dependent generators."""
+        for ed in editables:
+            if ed.children:
+                self._apply_editable_generators(ed.children, yaml_data)
+            if not ed.generator or not ed.depends_on:
+                continue
+            self._run_generator(ed, yaml_data)
+
+    @staticmethod
+    def _run_generator(ed: Editable, yaml_data: dict[str, Any]) -> None:
+        """Execute a single dependent generator and write the result."""
+        assert ed.generator is not None  # noqa: S101 - caller guarantees this
+        value = ed.generator.generate(yaml_data)
+        if not value and ed.remove_when_none:
+            smart_delete_value(yaml_data, ed.yaml_path)
+        elif value is not None:
+            smart_set_value(yaml_data, ed.yaml_path, value)
+
     # ------------------------------------------------------------------
     # JSON submission pipeline (nested structure, no flat intermediate)
     # ------------------------------------------------------------------
@@ -226,16 +286,16 @@ class EditableFormProcessor:
                     enforcer_context,
                 )
             elif vis.widget == WidgetType.CHECKBOX:
-                raw = get_value(submitted, ed.yaml_path)
+                raw = _read_submitted(submitted, ed)
                 value: Any = bool(raw) if raw else False
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
             elif vis.widget == WidgetType.CHECKBOX_GROUP:
-                value = _coerce_to_list(get_value(submitted, ed.yaml_path))
+                value = _coerce_to_list(_read_submitted(submitted, ed))
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
             else:
-                value = get_value(submitted, ed.yaml_path)
+                value = _read_submitted(submitted, ed)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
 
@@ -258,7 +318,7 @@ class EditableFormProcessor:
         """Process a group editable: validate children, then run parent enforcer.
 
         A group is a non-repeating parent that wraps related fields under a
-        common path. Unlike sequences, there is no index iteration — children
+        common path. Unlike sequences, there is no index iteration - children
         are processed directly. The group's enforcer provides cross-field
         validation after all children pass individual validation.
         """
@@ -277,16 +337,16 @@ class EditableFormProcessor:
             if child_vis.widget == WidgetType.GROUP:
                 await self._process_group_json(child_vis, submitted, result, errors, edit_mode, enforcer_context)
             elif child_vis.widget == WidgetType.CHECKBOX:
-                raw = get_value(submitted, child_ed.yaml_path)
+                raw = _read_submitted(submitted, child_ed)
                 value: Any = bool(raw) if raw else False
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(child_ed, child_ed.yaml_path, value, result)
             elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
-                value = _coerce_to_list(get_value(submitted, child_ed.yaml_path))
+                value = _coerce_to_list(_read_submitted(submitted, child_ed))
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(child_ed, child_ed.yaml_path, value, result)
             else:
-                value = get_value(submitted, child_ed.yaml_path)
+                value = _read_submitted(submitted, child_ed)
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(child_ed, child_ed.yaml_path, value, result)
 
@@ -426,7 +486,7 @@ class EditableFormProcessor:
         # Strip the virtual key (e.g. _services-config) from result so it
         # does not leak into step_data or the final project YAML.
         # We delete the entire virtual container key from the parent, not
-        # just the leaf — otherwise empty dicts remain.
+        # just the leaf - otherwise empty dicts remain.
         # The virtual key lives under the component dict, so we find the
         # path segment that starts with the virtual key name and take
         # everything before it as the parent path.
@@ -689,7 +749,7 @@ class EditableFormProcessor:
                 if not isinstance(items, list):
                     return count
                 if is_last:
-                    # The target IS the list itself — replace members
+                    # The target IS the list itself - replace members
                     for i, item in enumerate(items):
                         if item == old_name:
                             items[i] = new_name

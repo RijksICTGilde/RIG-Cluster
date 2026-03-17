@@ -3,7 +3,7 @@
 Merges the FlowMode/FormFlow dataclasses (from editables/flow.py) and
 predefined flow instances (from editables/flows.py) into one module.
 
-Step order is determined by the sections list — the first section
+Step order is determined by the sections list - the first section
 in the list is step 1, the second is step 2, etc. Conditional
 sections (e.g., keycloak-config) are included in the list but
 only shown when their visibility condition is met.
@@ -23,7 +23,6 @@ from opi.forms.visualizers.wizard_sections import (
     COMPONENTS_SECTION,
     CONFIG_DISPLAY_SECTION,
     DEPLOYMENTS_SECTION,
-    DOMAIN_SECTION,
     IDENTITY_EDIT_SECTION,
     IDENTITY_SECTION,
     KEYCLOAK_CONFIG_SECTION,
@@ -34,7 +33,8 @@ from opi.forms.visualizers.wizard_sections import (
     SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
     TEAM_SECTION,
-    WIZARD_DEPLOYMENT_SECTION,
+    build_deployment_wizard_section,
+    build_domain_section,
 )
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class FormFlow:
     htmx_base_url: str = ""
     save_per_section: bool = True
     generated_editables: list[Editable] = field(default_factory=list)
-    """Editables with generators — computed at submit time, not rendered in forms."""
+    """Editables with generators - computed at submit time, not rendered in forms."""
 
 
 CREATE_FLOW = FormFlow(
@@ -74,8 +74,8 @@ CREATE_FLOW = FormFlow(
         AUTH_WALL_CONFIG_SECTION,
         TEAM_SECTION,
         COMPONENTS_SECTION,
-        WIZARD_DEPLOYMENT_SECTION,
-        DOMAIN_SECTION,
+        build_deployment_wizard_section(0),
+        build_domain_section(0),
     ],
     show_review=True,
     htmx_base_url="/forms/wizard",
@@ -104,7 +104,7 @@ EDIT_FLOW = FormFlow(
 
 
 # ---------------------------------------------------------------------------
-# Modal edit flows — focused mini-wizards for the detail-page edit modal
+# Modal edit flows - focused mini-wizards for the detail-page edit modal
 # ---------------------------------------------------------------------------
 
 MODAL_EDIT_IDENTITY_FLOW = FormFlow(
@@ -277,9 +277,9 @@ def build_deployment_add_flow(
 
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config."""
-    from opi.forms.visualizers.wizard_sections import build_domain_edit_section
+    from opi.forms.visualizers.wizard_sections import build_domain_section
 
-    section = build_domain_edit_section(deployment_index)
+    section = build_domain_section(deployment_index, edit_mode=True)
     return FormFlow(
         flow_id=f"modal-edit-domain-{deployment_index}",
         title="Webadres bewerken",

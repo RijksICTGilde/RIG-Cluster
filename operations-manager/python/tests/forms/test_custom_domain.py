@@ -267,9 +267,9 @@ class TestSequenceDeferral:
 
         processor.populate_deferred_fields(data, editables)
 
-        # First deployment has custom domain — should be populated
+        # First deployment has custom domain - should be populated
         assert data["deployments"][0].get("base-domain:custom") == "custom1.nl"
-        # Second has supported domain — no population
+        # Second has supported domain - no population
         assert "base-domain:custom" not in data["deployments"][1]
 
 
@@ -282,14 +282,14 @@ class TestDomainEditableDefinitions:
     def test_create_wizard_base_domain_has_defers_to(self):
         from opi.forms.editables.fields.domains import DOMAIN_BASE_DOMAIN_EDITABLE
 
-        assert DOMAIN_BASE_DOMAIN_EDITABLE.defers_to == "deployments[0]/base-domain:custom"
+        assert DOMAIN_BASE_DOMAIN_EDITABLE.defers_to == "deployments[*]/base-domain:custom"
         assert DOMAIN_BASE_DOMAIN_EDITABLE.defer_when is not None
 
     def test_create_wizard_custom_field_is_transient(self):
         from opi.forms.editables.fields.domains import DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE
 
         assert DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE.transient is True
-        assert DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE.yaml_path == "deployments[0]/base-domain:custom"
+        assert DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE.yaml_path == "deployments[*]/base-domain:custom"
 
     def test_edit_wizard_base_domain_has_defers_to(self):
         from opi.forms.editables.fields.deployments import DEPLOYMENT_BASE_DOMAIN_EDITABLE
@@ -367,3 +367,83 @@ class TestValidateBaseDomainCustom:
 
         is_valid, _error = validate_base_domain("nodots")
         assert is_valid is False
+
+
+# ---------------------------------------------------------------------------
+# Issuer generator via apply_dependent_generators
+# ---------------------------------------------------------------------------
+
+
+class TestIssuerGenerator:
+    """Verify the issuer is computed from editable children (no visualizer needed)."""
+
+    def test_issuer_set_for_configured_domain(self, monkeypatch):
+        """Issuer is written when base-domain matches a cluster config entry."""
+        from opi.forms.editables.processor import EditableFormProcessor
+        from opi.forms.visualizers.flows import build_domain_edit_flow
+
+        monkeypatch.setattr(
+            "opi.core.config.settings.CLUSTER_MANAGER",
+            "sandboxed-local",
+        )
+
+        flow = build_domain_edit_flow(0)
+        yaml_data = {
+            "deployments": [{"base-domain": "robbertuittenbroek.nl", "domain-format": "component.subdomain.domain"}],
+        }
+
+        processor = EditableFormProcessor()
+        for section in flow.sections:
+            processor.apply_dependent_generators(section.editables, yaml_data)
+
+        assert yaml_data["deployments"][0].get("issuer") == "letsencrypt"
+
+    def test_issuer_removed_for_domain_without_issuer(self, monkeypatch):
+        """No issuer key when the domain has no issuer configured."""
+        from opi.forms.editables.processor import EditableFormProcessor
+        from opi.forms.visualizers.flows import build_domain_edit_flow
+
+        monkeypatch.setattr(
+            "opi.core.config.settings.CLUSTER_MANAGER",
+            "sandboxed-local",
+        )
+
+        flow = build_domain_edit_flow(0)
+        yaml_data = {
+            "deployments": [
+                {"base-domain": "sandbox.rijksapp.dev", "domain-format": "component.subdomain.domain", "issuer": "old"}
+            ],
+        }
+
+        processor = EditableFormProcessor()
+        for section in flow.sections:
+            processor.apply_dependent_generators(section.editables, yaml_data)
+
+        assert "issuer" not in yaml_data["deployments"][0]
+
+    def test_issuer_set_for_second_deployment(self, monkeypatch):
+        """Issuer works correctly when editing deployment index 1."""
+        from opi.forms.editables.processor import EditableFormProcessor
+        from opi.forms.visualizers.flows import build_domain_edit_flow
+
+        monkeypatch.setattr(
+            "opi.core.config.settings.CLUSTER_MANAGER",
+            "sandboxed-local",
+        )
+
+        flow = build_domain_edit_flow(1)
+        yaml_data = {
+            "deployments": [
+                {"base-domain": "sandbox.rijksapp.dev"},
+                {"base-domain": "robbertuittenbroek.nl", "domain-format": "component.subdomain.domain"},
+            ],
+        }
+
+        processor = EditableFormProcessor()
+        for section in flow.sections:
+            processor.apply_dependent_generators(section.editables, yaml_data)
+
+        # Deployment 0 should be untouched
+        assert "issuer" not in yaml_data["deployments"][0]
+        # Deployment 1 should have issuer
+        assert yaml_data["deployments"][1].get("issuer") == "letsencrypt"

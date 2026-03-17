@@ -1,4 +1,4 @@
-"""Reindex editable paths — resolve [0] placeholders to concrete [N] indices.
+"""Reindex editable paths - resolve [0] placeholders to concrete [N] indices.
 
 Used when editing a specific sequence item (e.g. deployment 2's domain config)
 from editables originally defined with a fixed [0] index.
@@ -18,8 +18,8 @@ def replace_segment_editable(ed: Editable, old_segment: str, new_segment: str) -
     """Replace a specific path segment in all editable paths.
 
     Unlike ``materialize_wildcard_editable`` (which replaces the *first* ``[*]``),
-    this targets a specific substring — e.g. ``"deployments[*]"`` →
-    ``"deployments[0]"`` — leaving other wildcards like ``components[*]``
+    this targets a specific substring - e.g. ``"deployments[*]"`` →
+    ``"deployments[0]"`` - leaving other wildcards like ``components[*]``
     intact.
     """
 
@@ -68,12 +68,21 @@ def materialize_wildcard_editable(ed: Editable, index: int) -> Editable:
 
     children = [materialize_wildcard_editable(c, index) for c in ed.children] if ed.children else ed.children
 
+    # Clone generator with updated deployment_index if it has one
+    generator = ed.generator
+    if generator and hasattr(generator, "deployment_index"):
+        import copy
+
+        generator = copy.copy(generator)
+        generator.deployment_index = index  # type: ignore[attr-defined]
+
     return dataclasses.replace(
         ed,
         yaml_path=_replace(ed.yaml_path) or ed.yaml_path,
         depends_on=_replace(ed.depends_on),
         defers_to=_replace(ed.defers_to),
         children=children,
+        generator=generator,
     )
 
 
@@ -86,6 +95,25 @@ def materialize_wildcard_visualizer(vis: EditableVisualizer, index: int) -> Edit
         editable=materialize_wildcard_editable(vis.editable, index),
         children=children,
     )
+
+
+def materialize_wildcard_layout(layout: list[Any], index: int) -> list[Any]:
+    """Replace ``[*]`` with ``[index]`` in layout path strings and DisplayBlock context.
+
+    Counterpart to ``materialize_wildcard_visualizer`` for layout lists.
+    """
+    from opi.forms.layout import DisplayBlock
+
+    target = f"[{index}]"
+    result: list[Any] = []
+    for item in layout:
+        if isinstance(item, str):
+            result.append(item.replace("[*]", target, 1))
+        elif isinstance(item, DisplayBlock) and "deployment_index" in item.context:
+            result.append(dataclasses.replace(item, context={**item.context, "deployment_index": index}))
+        else:
+            result.append(item)
+    return result
 
 
 def reindex_editable(ed: Editable, from_index: int, to_index: int) -> Editable:

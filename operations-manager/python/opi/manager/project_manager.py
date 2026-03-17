@@ -4,6 +4,7 @@ Processing means it can create, update, or delete any resources defined in a pro
 """
 
 import asyncio
+import contextlib
 import glob
 import logging
 import os
@@ -111,7 +112,6 @@ from opi.utils.sops import encrypt_to_sops_files
 from opi.utils.yaml_util import (
     dump_yaml_to_string,
     find_value_by_jsonpath,
-    load_yaml_from_string,
 )
 
 if TYPE_CHECKING:
@@ -372,6 +372,10 @@ class ProjectManager:
         or None if processing succeeded.
         """
         return self._processing_error
+
+    def get_processing_exception(self) -> Exception | None:
+        """Get the original exception from the most recent processing failure."""
+        return getattr(self, "_processing_exception", None)
 
     async def get_repositories(self) -> list[dict[str, Any]]:
         """
@@ -712,47 +716,6 @@ class ProjectManager:
 
         logger.debug(f"Alias '{alias_name}' categorized as service='{service_category}', source='{source_type}'")
         return service_category, source_type
-
-    async def _cleanup_deployment_ingresses(self, deployment_name: str, namespace: str) -> int:
-        """
-        Delete existing ingresses for a deployment before regenerating.
-
-        This is used when domain mode changes to ensure orphaned ingresses from the
-        old configuration are cleaned up before creating new ones.
-
-        Args:
-            deployment_name: Name of the deployment
-            namespace: Kubernetes namespace
-
-        Returns:
-            Number of ingresses deleted
-        """
-        logger.info(f"Cleaning up existing ingresses for deployment '{deployment_name}' in namespace '{namespace}'")
-
-        try:
-            # Get all ingresses with the deployment label
-            label_selector = f"app.kubernetes.io/part-of={deployment_name}"
-            ingresses = await self._kubectl_connector.get_resources_by_label(
-                "ingress", namespace=namespace, label_selector=label_selector
-            )
-
-            deleted_count = 0
-            for ingress in ingresses:
-                name = ingress.get("metadata", {}).get("name")
-                if name:
-                    success = await self._kubectl_connector.delete_resource("ingress", name, namespace)
-                    if success:
-                        deleted_count += 1
-                        logger.info(f"Deleted ingress '{name}' from namespace '{namespace}'")
-                    else:
-                        logger.warning(f"Failed to delete ingress '{name}'")
-
-            logger.info(f"Cleaned up {deleted_count} ingress(es) for deployment '{deployment_name}'")
-            return deleted_count
-
-        except Exception as e:
-            logger.error(f"Error cleaning up ingresses for deployment '{deployment_name}': {e}")
-            return 0
 
     async def _rollback_subdomain_if_needed(self) -> bool:
         """
@@ -1142,57 +1105,6 @@ class ProjectManager:
 
         except Exception as e:
             logger.error(f"Failed to save encrypted configs: {e}")
-
-    async def _get_project_data_with_decrypted_configs(self) -> dict[str, Any]:
-        """
-        Get project data with decrypted deployment configurations for display purposes.
-
-        Returns:
-            Project data dictionary with decrypted configuration variables
-        """
-        project_data = await self.get_contents()
-        deployments = project_data.get("deployments", [])
-
-        # Get project private key for decryption
-        private_key = None
-        try:
-            private_key = await get_decoded_project_private_key(project_data)
-        except Exception as e:
-            logger.warning(f"Could not get project private key for config decryption: {e}")
-            return project_data
-
-        if not private_key:
-            return project_data
-
-        # Process each deployment to decrypt its configuration
-        processed_deployments = []
-        for deployment in deployments:
-            deployment_copy = deployment.copy()
-
-            if "configuration" in deployment:
-                try:
-                    # Decrypt the configuration
-                    decrypted_yaml = await decrypt_age_content(deployment["configuration"], private_key)
-
-                    # Parse the YAML using yaml_util
-                    config_data = load_yaml_from_string(decrypted_yaml)
-
-                    deployment_copy["decrypted_configuration"] = config_data
-                    logger.debug(f"Decrypted configuration for deployment: {deployment.get('name')}")
-
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt configuration for deployment {deployment.get('name')}: {e}")
-                    deployment_copy["decrypted_configuration"] = None
-            else:
-                deployment_copy["decrypted_configuration"] = None
-
-            processed_deployments.append(deployment_copy)
-
-        # Update project data with processed deployments
-        project_data_copy = project_data.copy()
-        project_data_copy["deployments"] = processed_deployments
-
-        return project_data_copy
 
     async def get_git_connector_for_argocd(self) -> GitConnector:
         if self.__git_connector_for_argocd is None:
@@ -2137,7 +2049,7 @@ class ProjectManager:
             their temp directories. The ProjectFileHandler caches file paths
             from the first call, so a second call would reference deleted paths.
             To process multiple deployments, call this method once without
-            deployment_name — process_project() handles all cluster deployments
+            deployment_name - process_project() handles all cluster deployments
             internally.
         """
 
@@ -3765,19 +3677,18 @@ class ProjectManager:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
                     await self._bootstrap_manager.execute_bootstrap_for_deployment(project_data, deployment)
 
-            # Register the project with decrypted configuration data
+            # Register the project with the original (encrypted) data.
+            # The web UI does its own decryption for display via deepcopy.
             api_key = await self.get_api_key()
             project_name = await self.get_name()
             project_service = get_project_service()
-            # TODO: find out why this is needed.. ?
             filename = (
                 os.path.basename(self._project_file_relative_path)
                 if self._project_file_relative_path
                 else f"{project_name}.yaml"
             )
 
-            # Get project data with decrypted configurations for display
-            project_data_with_configs = await self._get_project_data_with_decrypted_configs()
+            project_data_with_configs = await self.get_contents()
 
             # Extract users from project data
             users_data = project_data_with_configs.get("users", [])
@@ -3805,6 +3716,7 @@ class ProjectManager:
         except Exception as e:
             logger.exception(f"Error processing project: {e}")
             self._processing_error = str(e)
+            self._processing_exception = e
             return False
         finally:
             pass
@@ -3856,12 +3768,6 @@ class ProjectManager:
         if not components:
             logger.warning(f"No components found in deployment {deployment_name}, skipping")
             return []
-
-        # Clean up existing ingresses before regenerating manifests
-        # This handles domain mode changes where old ingresses would become orphaned
-        deleted_ingress_count = await self._cleanup_deployment_ingresses(deployment_name, namespace)
-        if deleted_ingress_count > 0:
-            logger.info(f"Cleaned up {deleted_ingress_count} existing ingress(es) before regenerating")
 
         # Register subdomain for nice-url mode (with rollback on failure)
         domain_mode = deployment.get("domain-mode")
@@ -4101,7 +4007,7 @@ class ProjectManager:
                 logger.info(f"Found deployment-level resource overrides for component: {component_name}")
                 component_resources.update(deployment_resources)
 
-            # Extract disabled state — disabled components get replicas: 0
+            # Extract disabled state - disabled components get replicas: 0
             # Check deployment-level first, falls back to component-definition level
             is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
                 project_data, deployment_name, component_reference
@@ -5213,6 +5119,51 @@ class ProjectManager:
         full_path = await self.get_project_full_file_path()
         self.__has_contents = True
         return await self._project_file_handler.read_project_file(full_path)
+
+    async def get_decrypted_view(self) -> dict[str, Any]:
+        """
+        Return a throwaway deep copy of the project data with all AGE-encrypted
+        values decrypted. This is for display purposes only -- the returned dict
+        must never be stored or written back to git.
+        """
+        import copy
+
+        project_data = await self.get_contents()
+        view = copy.deepcopy(project_data)
+
+        try:
+            private_key = await get_decoded_project_private_key(project_data)
+        except Exception as e:
+            logger.warning(f"Could not get project private key for decrypted view: {e}")
+            return view
+
+        if not private_key:
+            return view
+
+        await self._decrypt_tree(view, private_key)
+        return view
+
+    async def _decrypt_tree(self, data: Any, private_key: str) -> None:
+        """Recursively walk data and decrypt any AGE-encrypted string values in place."""
+        age_header = "-----BEGIN AGE ENCRYPTED FILE-----"
+
+        if isinstance(data, dict):
+            for key in list(data.keys()):
+                value = data[key]
+                if isinstance(value, str) and age_header in value:
+                    try:
+                        data[key] = await decrypt_age_content(value, private_key)
+                    except Exception:
+                        logger.debug(f"Failed to decrypt field '{key}', leaving as-is")
+                elif isinstance(value, dict | list):
+                    await self._decrypt_tree(value, private_key)
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                if isinstance(item, str) and age_header in item:
+                    with contextlib.suppress(Exception):
+                        data[i] = await decrypt_age_content(item, private_key)
+                elif isinstance(item, dict | list):
+                    await self._decrypt_tree(item, private_key)
 
     async def _get_by_json_path(self, json_path: str) -> Any:
         """

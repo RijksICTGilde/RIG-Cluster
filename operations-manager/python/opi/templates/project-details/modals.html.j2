@@ -1,3 +1,14 @@
+{# Help modal - populated via fetch from wizard.js #}
+<div id="service-help-backdrop" class="service-help-backdrop" onclick="closeServiceHelp()"></div>
+<div id="service-help-modal" class="service-help-modal" role="dialog" aria-modal="true">
+    <div class="service-help-modal__header">
+        <c-icon icon="kruis" size="xl" color="grijs-600"
+                class="service-help-modal__close"
+                @click="closeServiceHelp()" />
+    </div>
+    <div id="service-help-content" class="service-help-modal__body"></div>
+</div>
+
 {# Danger Zone Confirmation Modal #}
 <div id="danger-confirm-backdrop" class="edit-section-backdrop" onclick="hideDangerConfirmation()"></div>
 <div id="danger-confirm-modal" class="edit-section-modal" role="dialog" aria-modal="true" style="width: 500px; max-width: 90vw; max-height: auto;">

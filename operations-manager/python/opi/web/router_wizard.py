@@ -323,6 +323,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
             first_step=active_section_ids[0],
             active_sections=active_section_ids,
         )
+        state.populate_virt_mappings(flow.sections)
 
         # Seed template data (repositories, base config) as the lowest-priority layer
         from opi.forms.editables.template import load_project_template
@@ -355,7 +356,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         )
 
         # Seed the domains step with default domain mode only.
-        # Do NOT include "name" here — it comes from the deployment step
+        # Do NOT include "name" here - it comes from the deployment step
         # and the index-based merge in get_merged_data() would overwrite it.
         state.store_step_data(
             "domains",
@@ -452,6 +453,7 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
         active_sections=active_section_ids,
         project_name=project_name,
     )
+    state.populate_virt_mappings(flow.sections)
     state.step_data = step_data
     # Mark all sections with data as completed
     for section_id in active_section_ids:
@@ -495,6 +497,10 @@ def _split_data_across_sections(
 
     Each section gets the subset of project_data that its editables reference.
     This allows the wizard to pre-fill each step with existing values.
+
+    Editables with ``virtualize`` store their data under the virtual key
+    (e.g. ``_services-config``) so config sections don't collide with the
+    service selection list in ``services``.
     """
     from opi.forms.editables.service_path import smart_get_value
 
@@ -502,11 +508,22 @@ def _split_data_across_sections(
     for section in flow.sections:
         section_data: dict[str, Any] = {}
         for editable in section.editables:
-            value = smart_get_value(project_data, editable.editable.yaml_path)
+            ed = editable.editable
+            value = smart_get_value(project_data, ed.yaml_path)
             if value is not None:
-                # Store using the top-level key from the yaml_path
-                top_key = editable.editable.yaml_path.split("/")[0].split("[")[0]
-                section_data[top_key] = project_data.get(top_key, value)
+                if ed.virtualize:
+                    # Store under virtual key to avoid collisions.
+                    # Extract the service-specific config block.
+                    virt_key = ed.virtualize[1]
+                    parts = ed.yaml_path.split("/")
+                    if len(parts) >= 2:
+                        svc_name = parts[1]
+                        svc_config = smart_get_value(project_data, f"services/{svc_name}")
+                        if svc_config is not None:
+                            section_data.setdefault(virt_key, {})[svc_name] = svc_config
+                else:
+                    top_key = ed.yaml_path.split("/")[0].split("[")[0]
+                    section_data[top_key] = project_data.get(top_key, value)
         if section_data:
             step_data[section.section_id] = section_data
     return step_data
@@ -525,7 +542,7 @@ def _resolve_goto_target(
     """Resolve a navigation direction to a concrete section_id.
 
     Args:
-        goto: Direction — "next", "prev", "review", or a section_id.
+        goto: Direction - "next", "prev", "review", or a section_id.
         current_section_id: The section the user is currently on.
         active_section_ids: Ordered list of active section_ids.
 
@@ -555,7 +572,7 @@ def _resolve_goto_target(
     if goto in active_section_ids:
         return goto
 
-    # Unknown goto — stay on current
+    # Unknown goto - stay on current
     logger.warning("[resolve_goto] unknown goto=%r, staying on %s", goto, current_section_id)
     return current_section_id
 
@@ -633,7 +650,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     """
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
-        # No session — redirect to the wizard start page which will init state
+        # No session - redirect to the wizard start page which will init state
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=302)  # type: ignore[return-value]
 
     templates = get_templates()
@@ -738,7 +755,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # body is now the nested step data
     submitted_data = body
 
-    # Check for sequence add/remove action — handle before normal validation
+    # Check for sequence add/remove action - handle before normal validation
     if seq_action in ("add", "remove"):
         return await _handle_sequence_action(
             request,
@@ -758,29 +775,18 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Build enforcer context with out-of-scope metadata
     enforcer_context = {"project_name": state.project_name, "edit_mode": edit_mode}
 
-    # Process the nested JSON: validate, convert, and write to yaml in one pass.
-    submitted_yaml, errors = await processor.process_json_submission(
-        submitted_data,
-        section.editables,
-        yaml_data,
-        edit_mode=edit_mode,
-        enforcer_context=enforcer_context,
-    )
-
-    # CENTRALIZED VALIDATION LOGGING - field-level validation
-    if errors:
-        logger.warning(
-            "[%s validation FAILED] field-level errors: %s",
-            section_id,
-            errors,
-        )
-    else:
-        logger.info("[%s validation PASSED] field-level validation ok", section_id)
-
-    # Handle re-render request (e.g., toggle changed): save values, clear hidden
-    # depends_on fields, and re-render the same step without advancing.
+    # Re-render only (preview update) — process submission but skip validation
+    # to prevent spurious "required" errors on newly-visible fields with defaults.
     if is_rerender:
         from opi.forms.editables.service_path import smart_get_value as _sgv
+
+        submitted_yaml, _errors = await processor.process_json_submission(
+            submitted_data,
+            section.editables,
+            yaml_data,
+            edit_mode=edit_mode,
+            enforcer_context=enforcer_context,
+        )
 
         logger.info(
             "[RERENDER %s] services in submitted_yaml BEFORE clear_hidden: %r",
@@ -806,6 +812,25 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         step_html = _render_step_html(section, yaml_data=submitted_yaml, edit_mode=edit_mode)
         context = _build_step_context(request, flow_id, section, step_html)
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+
+    # Process the nested JSON: validate, convert, and write to yaml in one pass.
+    submitted_yaml, errors = await processor.process_json_submission(
+        submitted_data,
+        section.editables,
+        yaml_data,
+        edit_mode=edit_mode,
+        enforcer_context=enforcer_context,
+    )
+
+    # CENTRALIZED VALIDATION LOGGING - field-level validation
+    if errors:
+        logger.warning(
+            "[%s validation FAILED] field-level errors: %s",
+            section_id,
+            errors,
+        )
+    else:
+        logger.info("[%s validation PASSED] field-level validation ok", section_id)
 
     # --- Resolve navigation direction ---
     is_forward = goto in ("next", "review")
@@ -935,8 +960,7 @@ async def toggle_preset(
         _apply_preset(preset, yaml_data)
 
     # Store updated data back into wizard state
-    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
-    section_data = {k: v for k, v in yaml_data.items() if k in section_keys}
+    section_data = _extract_section_data(section.editables, yaml_data)
     state.store_step_data(section_id, section_data)
     save_wizard_state(request, state)
 
@@ -1092,8 +1116,7 @@ async def _handle_sequence_action(
     smart_set_value(yaml_data, seq_path, items)
 
     # Persist the updated data
-    section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
-    section_data = {k: v for k, v in yaml_data.items() if k in section_keys}
+    section_data = _extract_section_data(section.editables, yaml_data)
     state.store_step_data(section_id, section_data)
     save_wizard_state(request, state)
 
@@ -1149,8 +1172,6 @@ def _assemble_deployment(final_data: dict[str, Any]) -> None:
     that the project manager expects:
 
     - Sets ``name``, ``cluster``, ``namespace``, ``repository``
-    - Copies domain fields (``domain-mode``, ``subdomain``, ``base-domain``)
-    - Auto-enables ``issuer: letsencrypt`` for nice-url + base-domain
     - Builds ``components`` array from component names
     - Converts ``root-component`` to ``root: true`` on the matching component
     """
@@ -1167,19 +1188,13 @@ def _assemble_deployment(final_data: dict[str, Any]) -> None:
     elif isinstance(clusters, str):
         deployment["cluster"] = clusters
 
-    # Set namespace to project name — ProjectManager's get_prefixed_namespace()
+    # Set namespace to project name - ProjectManager's get_prefixed_namespace()
     # adds the cluster-specific prefix (e.g. "rig-") at deployment time.
     project_name = final_data.get("name", "")
     if project_name:
         deployment["namespace"] = project_name
 
     deployment.setdefault("repository", "main-repo")
-
-    # Auto-enable Let's Encrypt for nice-url mode
-    domain_mode = deployment.get("domain-mode")
-    base_domain = deployment.get("base-domain")
-    if domain_mode == "nice-url" and base_domain:
-        deployment.setdefault("issuer", "letsencrypt")
 
     # Build deployment components from project components
     components = final_data.get("components", [])
@@ -1341,13 +1356,18 @@ def _extract_section_data(
     """Extract section data, keeping only fields owned by this section's editables.
 
     For simple top-level keys (e.g. ``components``, ``services``) this copies
-    the entire value — same as before.
+    the entire value - same as before.
 
     For indexed paths into a shared list (e.g. ``deployments[0]/name`` vs
     ``deployments[0]/domain-format``), the list items are pruned to only
     include fields that this section's editables define.  This prevents
     one section from capturing (and later overwriting) another section's
     fields during the shallow merge in ``get_merged_data()``.
+
+    When an editable uses ``virtualize``, the data is read from the real
+    top-level key in *submitted_yaml* but stored under the virtual key in
+    the result.  This avoids collisions between e.g. service selection
+    (``services``) and per-service config (``_services-config``).
     """
     import copy
 
@@ -1355,18 +1375,24 @@ def _extract_section_data(
     # paths, which sub-fields it owns (e.g. deployments -> {name}).
     section_keys: set[str] = set()
     indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
+    # real_key -> virtual_key for virtualized editables
+    virt_mapping: dict[str, str] = {}
 
     def _collect_leaf_paths(vis_list: list[Any]) -> None:
         for vis in vis_list:
-            # Groups are transparent — collect their children's paths
+            # Groups are transparent - collect their children's paths
             if vis.children and str(vis.widget) == "group":
                 _collect_leaf_paths(vis.children)
                 continue
 
-            parts = vis.editable.yaml_path.split("/")
+            ed = vis.editable
+            parts = ed.yaml_path.split("/")
             top = parts[0]
             top_key = top.split("[")[0]
             section_keys.add(top_key)
+
+            if ed.virtualize:
+                virt_mapping[ed.virtualize[0]] = ed.virtualize[1]
 
             if "[" in top and len(parts) >= 2:
                 # e.g. deployments[0]/base-domain -> owns "base-domain"
@@ -1380,6 +1406,8 @@ def _extract_section_data(
         if key not in submitted_yaml:
             continue
         value = submitted_yaml[key]
+        # Use virtual key for storage when applicable
+        store_key = virt_mapping.get(key, key)
 
         if key in indexed_fields and isinstance(value, list):
             # Prune list items to only owned fields
@@ -1390,9 +1418,9 @@ def _extract_section_data(
                     pruned.append({k: copy.deepcopy(v) for k, v in item.items() if k in owned})
                 else:
                     pruned.append(copy.deepcopy(item))
-            result[key] = pruned
+            result[store_key] = pruned
         else:
-            result[key] = copy.deepcopy(value)
+            result[store_key] = copy.deepcopy(value)
 
     return result
 
@@ -1425,6 +1453,70 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
     _collect_summary(section.editables)
 
     return "\n".join(parts) if parts else "<p><em>Geen gegevens ingevuld</em></p>"
+
+
+def _build_section_fields(
+    section: FormSection,
+    yaml_data: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build structured field data for a section (template renders the HTML).
+
+    Returns a list of field dicts, each with:
+      - label: display label
+      - value: str or list[str]
+      - is_list: True when value should be rendered as a bullet list
+      - html: pre-rendered HTML (for sequences / custom summary_fn)
+    """
+    from opi.forms.editables.service_path import smart_get_value
+
+    fields: list[dict[str, Any]] = []
+
+    def _collect(vis_list: list[Any]) -> None:
+        for editable in vis_list:
+            if str(editable.widget) == "group":
+                _collect(editable.children or [])
+            elif str(editable.widget) == "sequence":
+                fields.append({"html": _build_sequence_summary(editable, yaml_data)})
+            elif str(editable.widget) == "service_cards":
+                value = smart_get_value(yaml_data, editable.editable.yaml_path)
+                labels = _resolve_service_labels(editable, value, yaml_data)
+                if labels:
+                    fields.append({"label": "Services", "value": labels, "is_list": True})
+            else:
+                value = smart_get_value(yaml_data, editable.editable.yaml_path)
+                display = _format_value(editable, value, yaml_data)
+                if display is not None:
+                    fields.append({"label": editable.label, "value": display, "is_list": False})
+
+    if section.summary_fn:
+        fields.append({"html": section.summary_fn(yaml_data)})
+    else:
+        _collect(section.editables)
+
+    return fields
+
+
+def _resolve_service_labels(editable: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> list[str]:
+    """Resolve selected service values to their display labels."""
+    from opi.forms.visualizers.bridge import resolve_options_for_editable
+
+    if value is None or value == "" or value == []:
+        return []
+
+    if editable.editable.converter:
+        try:
+            value = editable.editable.converter.view(value, yaml_data=yaml_data)
+        except TypeError:
+            value = editable.editable.converter.view(value)
+
+    try:
+        options = resolve_options_for_editable(editable)
+    except Exception:
+        return [str(v) for v in value] if isinstance(value, list) else [str(value)]
+
+    label_map = {str(opt.get("value", "")): opt.get("label", str(opt.get("value", ""))) for opt in options}
+    items = value if isinstance(value, list) else [value]
+    return [label_map.get(str(v), str(v)) for v in items]
 
 
 def _build_sequence_summary(
@@ -1471,7 +1563,7 @@ def _build_sequence_summary(
                                 cc_val = ci.get(cc_key)
                                 if cc_val is not None:
                                     parts_ci.append(str(cc_val))
-                            summaries.append(" — ".join(parts_ci) if parts_ci else str(ci))
+                            summaries.append(" - ".join(parts_ci) if parts_ci else str(ci))
                         else:
                             summaries.append(str(ci))
                     formatted = ", ".join(summaries)
@@ -1599,7 +1691,7 @@ def _resolve_option_labels(editable: Any, value: Any) -> str:
     try:
         options = resolve_options_for_editable(editable)
     except Exception:
-        # Provider failed — fall back to raw value
+        # Provider failed - fall back to raw value
         return str(value) if not isinstance(value, list) else ", ".join(str(v) for v in value)
 
     label_map = {str(opt.get("value", "")): opt.get("label", str(opt.get("value", ""))) for opt in options}
@@ -1686,10 +1778,13 @@ async def _do_submit(
     # when the selected domain-format doesn't use it)
     processor.clear_hidden_depends_on(all_editables, yaml_data)
 
+    # Compute derived values (e.g. issuer from base-domain)
+    processor.apply_dependent_generators(all_editables, yaml_data)
+
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
 
     # Validate and build final YAML in a single pass.
-    # The merged yaml_data is both the "submitted" values and the base —
+    # The merged yaml_data is both the "submitted" values and the base -
     # process_json_submission reads from it, validates, converts, and
     # strips transients for the final output.
     final_data, errors = await processor.process_json_submission(
@@ -1807,7 +1902,7 @@ async def _start_project_creation(
     """Start background project creation via the existing pipeline.
 
     Generates the YAML content from the wizard data and feeds it into
-    ``process_project_background`` — the same pipeline used by the
+    ``process_project_background`` - the same pipeline used by the
     original form.  This handles git commit, ProjectManager deployment,
     ArgoCD sync, and progress tracking.
     """

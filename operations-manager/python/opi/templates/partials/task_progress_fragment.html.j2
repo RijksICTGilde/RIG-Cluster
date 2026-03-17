@@ -1,24 +1,30 @@
 {#
-  Modal Wizard Progress Fragment - server-rendered progress with HTMX polling.
+  Generic task progress fragment - server-rendered progress with HTMX polling.
 
   Replaces itself every 2s until the task completes or fails.
+  Can be used inline (e.g. inside a deployment card) or in a modal.
 
   Required context:
     - task_id: str
-    - project_name: str
+    - progress_url: str (the HTMX poll endpoint URL)
     - progress: int (0-100)
     - current_step: str
-    - tasks: list of task dicts (name, status, subtasks)
     - status: str ("running", "completed", "failed")
+  Optional:
+    - tasks: list of task dicts (name, status, subtasks)
     - error: str | None
+    - container_id: str (default: "task-progress-{{ task_id }}")
+    - success_message: str (default: "Wijzigingen succesvol verwerkt!")
+    - on_complete: str | None (JavaScript to run on Ok click, e.g. "location.reload()")
 #}
-<div id="modal-progress-container"
+{% set _container_id = container_id | default("task-progress-" ~ task_id) %}
+{% set _success_msg = success_message | default("Wijzigingen succesvol verwerkt!") %}
+<div id="{{ _container_id }}"
      {% if status not in ("completed", "failed") %}
-     hx-get="/projects/{{ project_name }}/modal-wizard/progress/{{ task_id }}"
+     hx-get="{{ progress_url }}"
      hx-trigger="every 2s"
-     hx-target="#modal-progress-container"
+     hx-target="#{{ _container_id }}"
      hx-swap="outerHTML"
-     hx-target-404="#modal-progress-container"
      {% endif %}>
 
     <div class="edit-progress-bar-wrapper">
@@ -26,7 +32,7 @@
     </div>
 
     {% if status == "completed" %}
-    <p class="edit-progress-step" style="color: var(--rvo-color-groen-700);">Wijzigingen succesvol verwerkt!</p>
+    <p class="edit-progress-step rvo-text--groen-700">{{ _success_msg }}</p>
     {% elif status == "failed" %}
     <p class="edit-progress-step edit-progress-error">Verwerking mislukt: {{ error or "Onbekende fout" }}</p>
     {% else %}
@@ -50,7 +56,7 @@
         </div>
         {% if task.subtasks %}
         {% for subtask in task.subtasks %}
-        <div class="edit-progress-task-item" style="padding-left: var(--rvo-space-lg);">
+        <div class="edit-progress-task-item edit-progress-subtask">
             {% if subtask.status == "completed" %}
             <c-icon icon="vinkje" size="sm" color="groen" />
             {% elif subtask.status == "failed" %}
@@ -68,17 +74,13 @@
     </div>
     {% endif %}
 
-    {% if status == "completed" %}
+    {% if status == "completed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
-        <c-button kind="tertiary" label="Bekijk volledige voortgang"
-                  @click="window.open('/projects/progress/{{ task_id }}', '_blank')" />
-        <c-button kind="primary" label="Ok" @click="closeEditModalAndReload()" />
+        <c-button kind="primary" label="Ok" @click="{{ on_complete }}" />
     </div>
-    {% elif status == "failed" %}
+    {% elif status == "failed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
-        <c-button kind="tertiary" label="Bekijk details"
-                  @click="window.open('/projects/progress/{{ task_id }}', '_blank')" />
-        <c-button kind="primary" label="Sluiten" @click="closeEditModalAndReload()" />
+        <c-button kind="primary" label="Sluiten" @click="{{ on_complete }}" />
     </div>
     {% endif %}
 </div>

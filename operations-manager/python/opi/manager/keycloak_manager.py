@@ -195,6 +195,7 @@ class KeycloakManager:
                 keycloak_secret = KeycloakSecret(
                     client_id=keycloak_credentials["client_id"],
                     client_secret=keycloak_credentials["client_secret"],
+                    public_client_id=keycloak_credentials["public_client_id"],
                     discovery_url=keycloak_credentials.get("discovery_url", ""),
                     base_url=keycloak_credentials["base_url"],
                     realm=keycloak_credentials["realm"],
@@ -906,6 +907,7 @@ class KeycloakManager:
                     updated_secret = KeycloakSecret(
                         client_id=existing_credentials.client_id,
                         client_secret=existing_credentials.client_secret,
+                        public_client_id=existing_credentials.public_client_id,
                         discovery_url=discovery_url,
                         base_url=base_url,
                         realm=realm_name,
@@ -974,6 +976,7 @@ class KeycloakManager:
             keycloak_secret = KeycloakSecret(
                 client_id=client_info["client_id"],
                 client_secret=client_info["client_secret"],
+                public_client_id=client_info.get("public_client_id", ""),
                 discovery_url=realm_discovery_url,
                 base_url=keycloak_url,
                 realm=realm_name,
@@ -1941,9 +1944,11 @@ class KeycloakManager:
         credentials = await self._get_external_keycloak_credentials(config, project_private_key)
 
         # Create KeycloakSecret instance with the external credentials
+        # External keycloak has no ZAD-managed public client
         keycloak_secret = KeycloakSecret(
             client_id=credentials["client_id"],
             client_secret=credentials["client_secret"],
+            public_client_id="",
             discovery_url=credentials["discovery_url"],
             base_url=credentials["base_url"],
             realm=credentials["realm"],

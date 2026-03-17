@@ -2,6 +2,7 @@
 Web routes for serving HTML pages (non-API endpoints).
 """
 
+import asyncio
 import copy
 import logging
 from typing import TYPE_CHECKING
@@ -11,6 +12,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
+
+from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
@@ -27,6 +30,8 @@ from .router_wizard import wizard_router
 from .services_router import services_router
 
 logger = logging.getLogger(__name__)
+
+_background_tasks: set[asyncio.Task[None]] = set()
 
 web_router = APIRouter()
 
@@ -110,7 +115,7 @@ async def project_progress_page(request: Request, task_id: str):
         templates = get_templates()
 
         if not project:
-            # Task not found — completed and cleaned up, or never existed
+            # Task not found - completed and cleaned up, or never existed
             return templates.TemplateResponse(
                 "project-progress-done.html.j2",
                 {
@@ -1345,33 +1350,35 @@ async def project_details(request: Request, project_name: str):
                                                 continue
                                             if node_health_status in ("Degraded", "Missing"):
                                                 node_name = node.get("name", "unknown")
-                                                errors.append(
-                                                    {
-                                                        "resource": f"{node_kind}/{node_name}",
-                                                        "message": node_health_msg,
-                                                    }
-                                                )
+                                                node_error: dict[str, str] = {
+                                                    "resource": f"{node_kind}/{node_name}",
+                                                    "message": node_health_msg,
+                                                }
+                                                node_created = node.get("createdAt")
+                                                if node_created:
+                                                    node_error["timestamp"] = node_created
+                                                errors.append(node_error)
                                     except Exception as tree_error:
                                         logger.debug(f"Could not fetch resource tree for {app_name}: {tree_error}")
 
-                                    # Fetch Kubernetes events from the namespace
-                                    try:
-                                        from opi.connectors.kubectl import KubectlConnector
-                                        from opi.core.cluster_config import get_prefixed_namespace
+                                    # Fetch recent Warning events when Degraded or when errors already found
+                                    if app_health == "Degraded" or errors:
+                                        try:
+                                            from opi.connectors.kubectl import KubectlConnector
+                                            from opi.core.cluster_config import get_prefixed_namespace
 
-                                        base_ns = deployment.get("namespace")
-                                        dep_cluster = deployment.get("cluster")
-                                        if base_ns and dep_cluster:
-                                            k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
-                                            kubectl = KubectlConnector()
-                                            events = await kubectl.get_namespace_events(k8s_ns, limit=30)
-                                            for event in events:
-                                                if event.get("type") == "Warning":
+                                            base_ns = deployment.get("namespace")
+                                            dep_cluster = deployment.get("cluster")
+                                            if base_ns and dep_cluster:
+                                                k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
+                                                kubectl = KubectlConnector()
+                                                events = await kubectl.get_namespace_events(k8s_ns, limit=30)
+                                                for event in events:
                                                     obj = event.get("object", "unknown")
                                                     reason = event.get("reason", "")
                                                     msg = event.get("message", "")
                                                     if msg:
-                                                        error_entry = {
+                                                        error_entry: dict[str, str] = {
                                                             "resource": f"Event/{obj}",
                                                             "message": f"[{reason}] {msg}",
                                                         }
@@ -1379,10 +1386,10 @@ async def project_details(request: Request, project_name: str):
                                                         if event_time:
                                                             error_entry["timestamp"] = event_time
                                                         errors.append(error_entry)
-                                    except Exception as events_error:
-                                        logger.debug(
-                                            f"Could not fetch namespace events for {deployment_name}: {events_error}"
-                                        )
+                                        except Exception as events_error:
+                                            logger.debug(
+                                                f"Could not fetch namespace events for {deployment_name}: {events_error}"
+                                            )
 
                                     # Extract per-resource sync failures from syncResult
                                     sync_result = operation_state.get("syncResult", {})
@@ -1418,6 +1425,26 @@ async def project_details(request: Request, project_name: str):
                                     last_sync = operation_state.get("finishedAt")
                                 elif sync.get("status") == "Synced":
                                     last_sync = status.get("reconciledAt")
+
+                                # Compute relative age for each error with a timestamp
+                                from datetime import datetime
+
+                                now = datetime.now(UTC)
+                                for error in errors:
+                                    ts = error.get("timestamp")
+                                    if not ts:
+                                        continue
+                                    try:
+                                        dt = datetime.fromisoformat(ts)
+                                        diff_min = int((now - dt).total_seconds() / 60)
+                                        if diff_min < 1:
+                                            error["age"] = "zojuist"
+                                        elif diff_min < 60:
+                                            error["age"] = f"{diff_min} min geleden"
+                                        else:
+                                            error["age"] = f"{diff_min // 60} uur geleden"
+                                    except (ValueError, TypeError):
+                                        pass
 
                                 argocd_status[deployment_name] = {
                                     "app_name": app_name,
@@ -2873,3 +2900,162 @@ async def decrypt_text(request: Request):
     except Exception as e:
         logger.error(f"Error decrypting text: {e!s}")
         return JSONResponse(content={"error": f"Decryption failed: {e!s}"}, status_code=500)
+
+
+@web_router.get("/projects/details/{project_name}/memory-check/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def deployment_memory_check(
+    request: Request, project_name: str, deployment_name: str, id_prefix: str | None = None
+) -> HTMLResponse:
+    """Return a memory overprovision warning fragment (HTMX lazy-load)."""
+    from opi.core.startup import ensure_projects_fresh
+    from opi.services.project_service import get_project_service
+    from opi.services.resource_tuning_service import check_deployment_resources
+
+    templates = get_templates()
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    await ensure_projects_fresh()
+
+    project_service = get_project_service()
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        return HTMLResponse("")
+
+    try:
+        warnings = check_deployment_resources(project_name, deployment_name)
+    except Exception as e:
+        logger.debug(f"Memory check failed for {project_name}/{deployment_name}: {e}")
+        return HTMLResponse("")
+
+    container_id = f"memory-check-{id_prefix or deployment_name}"
+
+    return templates.TemplateResponse(
+        "project-details/_memory-check.html.j2",
+        {
+            "request": request,
+            "memory_warnings": warnings,
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "container_id": container_id,
+        },
+    )
+
+
+@web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
+@requires_sso
+async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
+    """Generic task progress fragment for HTMX polling."""
+    from typing import Any
+
+    from opi.core.task_manager import TaskStatus, _project_managers, _projects
+
+    templates = get_templates()
+
+    if task_id not in _projects:
+        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
+
+    project = _projects[task_id]
+    task_manager = _project_managers.get(task_id)
+
+    task_hierarchy: list[dict[str, Any]] = []
+    progress = 0
+
+    if task_manager:
+        main_tasks = []
+        subtasks_by_parent: dict[str, list] = {}
+
+        for task in task_manager.tasks.values():
+            if task.parent_id is None:
+                main_tasks.append(task)
+            else:
+                subtasks_by_parent.setdefault(task.parent_id, []).append(task)
+
+        for main_task in main_tasks:
+            task_data: dict[str, Any] = {
+                "name": main_task.name,
+                "status": main_task.status.value,
+                "subtasks": [],
+            }
+            if main_task.id in subtasks_by_parent:
+                for subtask in subtasks_by_parent[main_task.id]:
+                    task_data["subtasks"].append({"name": subtask.name, "status": subtask.status.value})
+            task_hierarchy.append(task_data)
+
+        total = len(task_manager.tasks)
+        completed = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
+        progress = int((completed / total * 100) if total > 0 else 0)
+
+    context = {
+        "task_id": task_id,
+        "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
+        "progress": progress,
+        "current_step": project.current_step or "Verwerking gestart...",
+        "tasks": task_hierarchy,
+        "status": project.status.value,
+        "error": getattr(project, "error", None),
+        "on_complete": "location.reload()",
+    }
+
+    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    return HTMLResponse(content=rendered)
+
+
+@web_router.post("/projects/{project_name}/tune/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def tune_deployment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Start resource tuning as a background task and return progress fragment."""
+    from opi.core.startup import ensure_projects_fresh
+    from opi.core.task_manager import complete_task, create_task, fail_task, update_progress
+    from opi.services.project_service import get_project_service
+    from opi.services.resource_tuning_service import tune_deployment_resources
+
+    templates = get_templates()
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    await ensure_projects_fresh()
+
+    project_service = get_project_service()
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    task_id = create_task(project_name)
+    update_progress(task_id, 0, "Resource tuning gestart...")
+
+    async def _run_tune() -> None:
+        try:
+            update_progress(task_id, 25, "Prometheus metrics ophalen...")
+            result = await tune_deployment_resources(project_name, deployment_name)
+            msg = f"{len(result.changes)} component(s) aangepast" if result.changes else "Geen aanpassingen nodig"
+            update_progress(task_id, 100, msg)
+            complete_task(task_id, {"changes": len(result.changes)})
+        except Exception as e:
+            logger.error(f"Tune task failed for {project_name}/{deployment_name}: {e}")
+            fail_task(task_id, str(e))
+
+    task = asyncio.create_task(_run_tune(), name=f"tune-{project_name}-{deployment_name}")
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    context = {
+        "task_id": task_id,
+        "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
+        "progress": 0,
+        "current_step": "Resource tuning gestart...",
+        "tasks": [],
+        "status": "running",
+        "success_message": "Resources succesvol aangepast!",
+        "on_complete": "location.reload()",
+    }
+
+    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    return HTMLResponse(content=rendered)

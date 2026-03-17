@@ -39,6 +39,7 @@ from opi.forms.wizard.session import (
 )
 from opi.web.router_wizard import (
     _empty_sequence_item,
+    _extract_section_data,
     _find_sequence_editable,
     _split_data_across_sections,
 )
@@ -388,7 +389,7 @@ def _start_deployment(project_name: str, result_yaml: dict[str, Any]) -> tuple[s
 
 
 # ---------------------------------------------------------------------------
-# Sequence endpoint (add/remove list items) — shared by both old and modal flows
+# Sequence endpoint (add/remove list items) - shared by both old and modal flows
 # ---------------------------------------------------------------------------
 
 
@@ -476,7 +477,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     flow = get_flow(flow_id, **flow_context)
 
     # When adding a new deployment, ensure an empty slot at the target index.
-    # Always use len(deployments) as the actual index — the URL index may be
+    # Always use len(deployments) as the actual index - the URL index may be
     # stale if the page wasn't reloaded after a previous add.
     if flow_id.startswith("modal-add-deployment-"):
         from opi.core.config import settings
@@ -514,6 +515,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     )
     state.step_data = step_data
     state.locked_services = _extract_services(project_data)
+    state.populate_virt_mappings(flow.sections)
 
     # Always include config in template_data so converters can access project keys (e.g. for AGE decryption)
     state.template_data = {"config": project_data.get("config", {})}
@@ -532,8 +534,8 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         state.template_data["services"] = project_data.get("services", [])
         state.template_data["deployments"] = project_data.get("deployments", [])
 
-    # Deployment edit/add flows need component names for the reference provider
-    if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
+    # Deployment/domain edit/add flows need component names for the reference provider
+    if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-", "modal-edit-domain-")):
         components = project_data.get("components", [])
         state.template_data["components"] = components
 
@@ -558,6 +560,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # Render first step
     section = _get_section_from_flow(flow, first_step)
     yaml_data = state.get_merged_data()
+
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
     rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
@@ -581,6 +584,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
     save_modal_wizard_state(request, state)
 
     yaml_data = state.get_merged_data()
+
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
     rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
@@ -648,7 +652,24 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
     submitted_data = _pad_sparse_submission(body, flow_id)
 
-    # Backup/restore sections have no editables — store raw form data directly
+    # Re-render only (preview update, e.g. service checkbox toggled) — process
+    # the submission to get merged data but skip validation so newly-visible
+    # fields with defaults don't show spurious "required" errors.
+    if is_rerender:
+        processor = EditableFormProcessor()
+        yaml_data = state.get_merged_data()
+        submitted_yaml, _errors = await processor.process_json_submission(
+            submitted_data,
+            section.editables,
+            yaml_data,
+            edit_mode=True,
+        )
+        save_modal_wizard_state(request, state)
+        step_html = _render_section_html(section, submitted_yaml, locked_services=None)
+        rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+        return HTMLResponse(content=rendered)
+
+    # Backup/restore sections have no editables - store raw form data directly
     if _is_backup_restore_flow(flow_id) and not section.editables:
         state.store_step_data(section_id, submitted_data)
         state.mark_completed(section_id)
@@ -701,18 +722,9 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             return HTMLResponse(content=rendered)
 
         # Store step data
-        section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in section.editables}
-        section_data = {k: v for k, v in submitted_yaml.items() if k in section_keys}
+        section_data = _extract_section_data(section.editables, submitted_yaml)
         state.store_step_data(section_id, section_data)
         state.mark_completed(section_id)
-
-    # Re-render only (preview update) — stay on the same step
-    if is_rerender:
-        save_modal_wizard_state(request, state)
-        yaml_data = state.get_merged_data()
-        step_html = _render_section_html(section, submitted_yaml, locked_services=None)
-        rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
-        return HTMLResponse(content=rendered)
 
     # Re-resolve active sections (services may add/remove conditional steps)
     active_section_ids = resolve_active_section_ids(flow, state.step_data)
@@ -748,16 +760,17 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         save_modal_wizard_state(request, state)
 
         yaml_data = state.get_merged_data()
+
         step_html = _render_section_html(next_section, yaml_data, locked_services=None)
         rendered = _render_modal_step(request, flow_id, next_section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
-    # All steps completed — show review if flow requires it
+    # All steps completed - show review if flow requires it
     if flow.show_review:
         save_modal_wizard_state(request, state)
         return _render_modal_review(request, project_name, flow_id, active_sections, state)
 
-    # No review needed — do the final submit
+    # No review needed - do the final submit
     save_modal_wizard_state(request, state)
     return await _modal_do_submit(request, project_name, flow_id)
 
@@ -765,7 +778,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/skip", response_class=HTMLResponse)
 @requires_sso
 async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
-    """'Later configureren' — save accumulated data and trigger deployment."""
+    """'Later configureren' - save accumulated data and trigger deployment."""
     if _is_backup_restore_flow(flow_id):
         _require_project_member_access(request, project_name)
     else:
@@ -781,7 +794,7 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/confirm", response_class=HTMLResponse)
 @requires_sso
 async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
-    """Confirm after review — execute the final submit."""
+    """Confirm after review - execute the final submit."""
     if _is_backup_restore_flow(flow_id):
         _require_project_member_access(request, project_name)
     else:
@@ -858,18 +871,19 @@ def _render_modal_review(
     state,
 ) -> HTMLResponse:
     """Render the review/confirmation page for the modal wizard."""
-    from opi.web.router_wizard import _build_section_summary
+    from opi.web.router_wizard import _build_section_fields
 
     yaml_data = state.get_merged_data()
+
     section_summaries = []
     for section in active_sections:
-        summary_html = _build_section_summary(section, yaml_data)
+        fields = _build_section_fields(section, yaml_data)
         section_summaries.append(
             {
                 "section_id": section.section_id,
                 "title": section.title,
                 "icon": section.icon,
-                "summary_html": summary_html,
+                "fields": fields,
             }
         )
 
@@ -877,7 +891,7 @@ def _render_modal_review(
     steps = state.get_steps(section_meta)
 
     # Detect removed services for the review warning
-    # Only relevant for flows that edit services — skip for deployment add/edit flows
+    # Only relevant for flows that edit services - skip for deployment add/edit flows
     warnings: list[str] = []
     has_services_section = any("services" in s.section_id for s in active_sections)
     if state.locked_services and has_services_section:
@@ -986,6 +1000,13 @@ async def _modal_do_submit(
         if section.post_merge:
             section.post_merge(existing_data, merged_data)
 
+    # Compute derived values (e.g. issuer from base-domain)
+    from opi.forms.editables.processor import EditableFormProcessor
+
+    processor = EditableFormProcessor()
+    for section in active_sections:
+        processor.apply_dependent_generators(section.editables, existing_data)
+
     # Ensure AGE-encrypted multiline values use literal block scalars
     from opi.web.router_wizard import _apply_literal_scalars
 
@@ -1032,7 +1053,7 @@ async def _handle_backup_restore_submit(
     state,
     templates,
 ) -> HTMLResponse:
-    """Handle backup/restore wizard submission — no project file changes."""
+    """Handle backup/restore wizard submission - no project file changes."""
     from opi.core.backup_tasks import run_backup_task, run_restore_task
     from opi.core.task_manager import create_task
 
@@ -1133,7 +1154,20 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
     templates = get_templates()
 
     if task_id not in _projects:
-        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
+        context = {
+            "task_id": task_id,
+            "project_name": project_name,
+            "progress": 0,
+            "current_step": "",
+            "tasks": [],
+            "status": "failed",
+            "error": "Taak niet meer beschikbaar (herstart of verlopen)",
+        }
+        rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
+        process_components = templates.env.filters.get("process_components")
+        if process_components:
+            rendered = str(process_components(rendered))
+        return HTMLResponse(content=rendered, status_code=404)
 
     project = _projects[task_id]
     task_manager = _project_managers.get(task_id)
