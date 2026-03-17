@@ -1,4 +1,4 @@
-# Plan: Modal Wizard — Best of Both Worlds
+# Plan: Modal Wizard - Best of Both Worlds
 
 ## Context
 
@@ -7,7 +7,7 @@ The edit modal on the project details page has a broken wizard flow. A previous 
 2. Buttons use plain `<button>` instead of `<c-button>` components
 3. The client-side approach duplicates what the wizard engine already does perfectly
 
-**Goal**: Keep the modal UI but drive it with the proven server-side wizard engine (`WizardState`, `FormFlow`, `resolve_active_section_ids`, conditional sections). Even single-step edits go through a 1-step wizard — one system for everything.
+**Goal**: Keep the modal UI but drive it with the proven server-side wizard engine (`WizardState`, `FormFlow`, `resolve_active_section_ids`, conditional sections). Even single-step edits go through a 1-step wizard - one system for everything.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ The edit modal on the project details page has a broken wizard flow. A previous 
 
 ## Files to Modify/Create
 
-### 1. `operations-manager/python/opi/forms/visualizers/flows.py` — Define mini-flows
+### 1. `operations-manager/python/opi/forms/visualizers/flows.py` - Define mini-flows
 
 Add focused FormFlows for each edit action. Reuse existing FormSection definitions.
 
@@ -76,38 +76,38 @@ MODAL_EDIT_AUTH_WALL_FLOW = FormFlow(
 
 Register all in `FLOW_REGISTRY`. Add a lookup dict mapping old section_id → flow_id for backwards compat.
 
-### 2. `operations-manager/python/opi/forms/wizard/session.py` — Separate session key for modal
+### 2. `operations-manager/python/opi/forms/wizard/session.py` - Separate session key for modal
 
 Add `MODAL_SESSION_KEY = "modal_wizard_token"` with corresponding `get_modal_wizard_state`, `save_modal_wizard_state`, `init_modal_wizard_state`, `clear_modal_wizard_state` functions. These are thin wrappers reusing the same file-based storage pattern, just with a different session key. This prevents modal wizard state from colliding with a full-page create wizard.
 
-### 3. `operations-manager/python/opi/web/router_detail_edit.py` — New modal wizard endpoints
+### 3. `operations-manager/python/opi/web/router_detail_edit.py` - New modal wizard endpoints
 
 Replace the current GET/POST edit endpoints with wizard-driven modal endpoints. Reuse heavily from `router_wizard.py`.
 
-**`GET /projects/{name}/modal-wizard/{flow_id}`** — Initialize and return first step:
+**`GET /projects/{name}/modal-wizard/{flow_id}`** - Initialize and return first step:
 - Load project data, split across sections via `_split_data_across_sections()` (reuse from router_wizard)
 - Resolve active sections via `resolve_active_section_ids()`
 - Init `WizardState` with `project_name` set (edit mode) using modal session key
 - Render first step with `_render_step_html()` (reuse from router_wizard)
 - Return `modal_wizard_step.html.j2` template
 
-**`GET /projects/{name}/modal-wizard/{flow_id}/step/{section_id}`** — Load step (for back-navigation):
+**`GET /projects/{name}/modal-wizard/{flow_id}/step/{section_id}`** - Load step (for back-navigation):
 - Load state from modal session
 - Update `current_step`
 - Render step, return template
 
-**`POST /projects/{name}/modal-wizard/{flow_id}/step/{section_id}`** — Submit step:
+**`POST /projects/{name}/modal-wizard/{flow_id}/step/{section_id}`** - Submit step:
 - Load state, validate with `EditableFormProcessor`
 - If errors → re-render current step with errors
 - If valid → store data, re-resolve active sections, stash inactive
 - If more steps → render next step, return HTML
 - If last step → call `_modal_do_submit()` (see below)
 
-**`POST /projects/{name}/modal-wizard/{flow_id}/skip`** — "Later configureren":
+**`POST /projects/{name}/modal-wizard/{flow_id}/skip`** - "Later configureren":
 - Load state, determine which steps have data
 - Save accumulated data, trigger deployment, return progress HTML
 
-**`_modal_do_submit()`** — Final submission:
+**`_modal_do_submit()`** - Final submission:
 - Merge all step data via `state.get_merged_data()`
 - Save to project file (like `_save_existing_project`)
 - Determine `post_save_action`:
@@ -116,7 +116,7 @@ Replace the current GET/POST edit endpoints with wizard-driven modal endpoints. 
 
 Keep existing `/projects/{name}/edit/{section_id}/sequence` endpoint for add/remove list items (it's used by wizard.js sequence dispatch in modal context).
 
-### 4. `operations-manager/python/opi/templates/wizard/modal_wizard_step.html.j2` — New template
+### 4. `operations-manager/python/opi/templates/wizard/modal_wizard_step.html.j2` - New template
 
 Adapted from `wizard_step.html.j2` for modal context:
 
@@ -206,7 +206,7 @@ Key differences from wizard_step.html.j2:
 - Uses `project_name` and `flow_id` in URLs
 - Template context includes `step_base_url` and `step_target` for indicator template
 
-### 5. `operations-manager/python/opi/templates/wizard/modal_wizard_progress.html.j2` — Progress template
+### 5. `operations-manager/python/opi/templates/wizard/modal_wizard_progress.html.j2` - Progress template
 
 Returned when deployment is triggered. Contains the progress UI that JS will poll:
 
@@ -223,7 +223,7 @@ Returned when deployment is triggered. Contains the progress UI that JS will pol
 
 JS picks up `data-task-id` and starts polling (bridges HTMX → JS for progress).
 
-### 6. `operations-manager/python/opi/templates/wizard/modal_wizard_success.html.j2` — Success template
+### 6. `operations-manager/python/opi/templates/wizard/modal_wizard_success.html.j2` - Success template
 
 Returned for save_only completion:
 
@@ -237,9 +237,9 @@ Returned for save_only completion:
 </div>
 ```
 
-### 7. `operations-manager/python/opi/templates/project-details.html.j2` — Simplify JS
+### 7. `operations-manager/python/opi/templates/project-details.html.j2` - Simplify JS
 
-**`openEditModal(flowId, title)`** — Simplified:
+**`openEditModal(flowId, title)`** - Simplified:
 - Show modal (backdrop + modal classes)
 - Set title
 - Fetch `GET /projects/{name}/modal-wizard/{flowId}`
@@ -249,13 +249,13 @@ Returned for save_only completion:
 
 **Remove**:
 - `editStepTracker`, `initEditStepTracker`, `buildStepQueryParams`, `loadEditStep`
-- `submitEditModal()` — HTMX handles form submission
-- `collectFormData()`, `parseKeyToSegments`, `setNestedValue`, `cleanArrays`, `buildNestedFromFlat` — form data collected by `hx-ext="json-enc"`
+- `submitEditModal()` - HTMX handles form submission
+- `collectFormData()`, `parseKeyToSegments`, `setNestedValue`, `cleanArrays`, `buildNestedFromFlat` - form data collected by `hx-ext="json-enc"`
 - The broken `X-Next-Sections` header handling
 
 **Keep**:
 - `closeEditModal()`, `closeEditModalAndReload()`, `handleEditBackdropClick()`
-- `showModalProgress()` / `pollEditProgress()` — but triggered by observing `data-task-id` on HTMX swap
+- `showModalProgress()` / `pollEditProgress()` - but triggered by observing `data-task-id` on HTMX swap
 
 **Add HTMX afterSwap listener** to detect when progress HTML is swapped in:
 ```javascript
@@ -302,16 +302,16 @@ When user clicks "Later configureren" on a config step:
 5. Returns progress HTML
 6. User sees deployment progress, then close button
 
-This deploys the service additions without the config — config can be edited later via individual config edit buttons on the details page.
+This deploys the service additions without the config - config can be edited later via individual config edit buttons on the details page.
 
 ## Functions to Reuse from `router_wizard.py`
 
 These should be extracted to shared helpers or imported:
-- `_split_data_across_sections(flow, project_data)` — pre-fill step data from project
-- `_render_step_html(section, yaml_data, errors, edit_mode)` — render form fields
-- `_get_section_from_flow(flow_id, section_id)` — lookup section in flow
-- `resolve_active_section_ids`, `resolve_active_sections`, `get_section_metadata` — already in `wizard.resolver`
-- `EditableFormProcessor` — already in `forms.editables.processor`
+- `_split_data_across_sections(flow, project_data)` - pre-fill step data from project
+- `_render_step_html(section, yaml_data, errors, edit_mode)` - render form fields
+- `_get_section_from_flow(flow_id, section_id)` - lookup section in flow
+- `resolve_active_section_ids`, `resolve_active_sections`, `get_section_metadata` - already in `wizard.resolver`
+- `EditableFormProcessor` - already in `forms.editables.processor`
 
 ## Sequence Actions (Add/Remove List Items)
 

@@ -138,10 +138,10 @@ def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool
     in which case truthiness of *dep_value* decides).
 
     Supported operators:
-    - ``{"contains": "value"}`` — dep_value is a list containing "value"
-    - ``{"contains_any": [...]}`` — dep_value is a list containing any value
-    - ``{"field": "value"}`` — dep_value equals "value"
-    - ``{"field": ["v1", "v2"]}`` — dep_value is in the list
+    - ``{"contains": "value"}`` - dep_value is a list containing "value"
+    - ``{"contains_any": [...]}`` - dep_value is a list containing any value
+    - ``{"field": "value"}`` - dep_value equals "value"
+    - ``{"field": ["v1", "v2"]}`` - dep_value is in the list
     """
     if show_when is None:
         return bool(dep_value)

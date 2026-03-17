@@ -571,7 +571,7 @@ class RedisManager:
                     raise RuntimeError(f"Redis admin AUTH failed: {response}")
 
                 response = await RedisManager._send_redis_command(reader, writer, "ACL", "DELUSER", username)
-                # Response is :1 for deleted, :0 for not found — both are acceptable
+                # Response is :1 for deleted, :0 for not found - both are acceptable
                 logger.info(f"Deleted Redis ACL user: {username} (response: {response})")
 
                 # Persist ACL changes to disk so deletions survive Redis restarts

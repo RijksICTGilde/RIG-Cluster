@@ -15,6 +15,7 @@ from ruamel.yaml import YAML
 
 from opi.connectors.git import GitConnector
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.utils.age import decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
 
@@ -842,7 +843,7 @@ class ProjectFileHandler:
                 raw_resources = comp.get("resources")
                 if raw_resources is None:
                     return None
-                # Parse without defaults — return only what's explicitly set
+                # Parse without defaults - return only what's explicitly set
                 return _parse_resources_block_partial(raw_resources)
         return None
 
@@ -992,6 +993,129 @@ class ProjectFileHandler:
             f"Component '{component_reference}' not found in deployment '{deployment_name}' for resource update"
         )
         return False
+
+    def append_component_resource_history(
+        self,
+        project_data: dict[str, Any],
+        component_name: str,
+        entry: dict[str, Any],
+        max_entries: int = 5,
+    ) -> bool:
+        """
+        Append a resource history entry to a component definition.
+
+        Inserts at the front (newest first) and prunes to max_entries.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            component_name: Name of the component
+            entry: History entry dict with timestamp, limits, source, reason
+            max_entries: Maximum history entries to keep
+
+        Returns:
+            True if the component was found and updated
+        """
+        components = project_data.get("components", [])
+        for comp in components:
+            if comp.get("name") == component_name:
+                if "resources" not in comp:
+                    comp["resources"] = {}
+                history = comp["resources"].get("history", [])
+                history.insert(0, entry)
+                comp["resources"]["history"] = history[:max_entries]
+                return True
+        return False
+
+    def append_deployment_component_resource_history(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+        entry: dict[str, Any],
+        max_entries: int = 5,
+    ) -> bool:
+        """
+        Append a resource history entry to a deployment-level component override.
+
+        Inserts at the front (newest first) and prunes to max_entries.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+            entry: History entry dict with timestamp, limits, source, reason
+            max_entries: Maximum history entries to keep
+
+        Returns:
+            True if the deployment component was found and updated
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                if "resources" not in comp:
+                    comp["resources"] = {}
+                history = comp["resources"].get("history", [])
+                history.insert(0, entry)
+                comp["resources"]["history"] = history[:max_entries]
+                return True
+        return False
+
+    def get_resource_history_floor(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+    ) -> float | None:
+        """
+        Get the OOM watcher memory floor from resource history.
+
+        Checks both deployment-component and component-definition history.
+        Returns the highest OOM watcher limit found in the most recent
+        oom-watcher entry at either level.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+
+        Returns:
+            Floor value in MB, or None if no OOM watcher entries exist
+        """
+        floor_mb: float | None = None
+
+        # Check deployment-component history
+        for dep in project_data.get("deployments", []):
+            if dep.get("name") != deployment_name:
+                continue
+            for comp in dep.get("components", []):
+                if comp.get("reference") != component_reference:
+                    continue
+                for entry in comp.get("resources", {}).get("history", []):
+                    if entry.get("source") == "oom-watcher":
+                        value = entry.get("limits", {}).get("memory")
+                        if value:
+                            mb = _k8s_memory_to_mb(value)
+                            floor_mb = max(floor_mb or 0, mb)
+                        break  # only check most recent oom-watcher entry
+
+        # Check component-definition history
+        for comp in project_data.get("components", []):
+            if comp.get("name") != component_reference:
+                continue
+            for entry in comp.get("resources", {}).get("history", []):
+                if entry.get("source") == "oom-watcher":
+                    value = entry.get("limits", {}).get("memory")
+                    if value:
+                        mb = _k8s_memory_to_mb(value)
+                        floor_mb = max(floor_mb or 0, mb)
+                    break
+
+        return floor_mb
 
     def extract_deployment_component_disabled(
         self, project_data: dict[str, Any], deployment_name: str, component_reference: str
@@ -1584,7 +1708,7 @@ class ProjectFileHandler:
         backup_config = self.extract_backup_config(project_data)
         project_backup_enabled = backup_config.get("enabled", False)
 
-        # Then check per-storage override — look in component services for storage config
+        # Then check per-storage override - look in component services for storage config
         storage_backup = None
         component = self._find_component(project_data, component_name)
         if component:
@@ -2581,7 +2705,7 @@ def extract_service_names_from_component(component: dict[str, Any]) -> list[str]
     When both keys exist, results are merged and deduplicated.
 
     Dict entries with ``None`` or empty values (e.g. ``{"persistent-storage": null}``)
-    are skipped — these are unconfigured placeholders left by the form system.
+    are skipped - these are unconfigured placeholders left by the form system.
 
     Args:
         component: A component dict from project data

@@ -6,7 +6,7 @@ Users can now specify their own custom domain (e.g. `mijnorganisatie.nl`) for de
 
 ## How it works
 
-The base-domain dropdown includes an "Eigen domein..." option. When selected, a text input appears where the user can type their custom domain. On submission, the custom domain value replaces the sentinel in the final YAML — no `__custom__` sentinel or transient field ever persists.
+The base-domain dropdown includes an "Eigen domein..." option. When selected, a text input appears where the user can type their custom domain. On submission, the custom domain value replaces the sentinel in the final YAML - no `__custom__` sentinel or transient field ever persists.
 
 ### Create wizard flow
 
@@ -36,7 +36,7 @@ class EditableCondition(Protocol):
     def check(self, value: Any) -> bool: ...
 ```
 
-Concrete implementation: `SentinelValueCondition` — returns True when the value equals a configurable sentinel string (default: `__custom__`).
+Concrete implementation: `SentinelValueCondition` - returns True when the value equals a configurable sentinel string (default: `__custom__`).
 
 ### `transient` flag on Editable
 

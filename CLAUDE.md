@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Interaction Guidelines
 
-Think and act as a Principal Engineer. Be a critical thinker — do not agree with requests unless the approach is sound. Objectively outline alternatives when they exist. Always present a plan and wait for confirmation before implementing.
+Think and act as a Principal Engineer. Be a critical thinker - do not agree with requests unless the approach is sound. Objectively outline alternatives when they exist. Always present a plan and wait for confirmation before implementing.
 
 **Core principles**: KISS, YAGNI, SOLID, DRY. Prioritize clarity over cleverness, simplicity over flexibility. No "just in case" features, no premature abstractions.
 
@@ -12,14 +12,14 @@ Think and act as a Principal Engineer. Be a critical thinker — do not agree wi
 
 ## Architecture Overview
 
-**RIG-Cluster** is a Kubernetes platform for RIG projects in ODC-Noord. At its core is **ZAD** (Zelfservice Applicatie Deployment) — a self-service portal where developers define their infrastructure needs in a declarative YAML project file. ZAD provisions databases, storage, authentication, generates Kubernetes manifests, and deploys via ArgoCD.
+**RIG-Cluster** is a Kubernetes platform for RIG projects in ODC-Noord. At its core is **ZAD** (Zelfservice Applicatie Deployment) - a self-service portal where developers define their infrastructure needs in a declarative YAML project file. ZAD provisions databases, storage, authentication, generates Kubernetes manifests, and deploys via ArgoCD.
 
 ### How It Works
 
 ```
 Project File (YAML)
        |
-Operations Manager (OPI) — FastAPI app deployed per cluster
+Operations Manager (OPI) - FastAPI app deployed per cluster
        |
        +-- Connectors: Git, Keycloak, PostgreSQL, MinIO, ArgoCD, kubectl
        |
@@ -27,9 +27,9 @@ Operations Manager (OPI) — FastAPI app deployed per cluster
        |
        v
 Three Git Repositories (managed by OPI):
-  1. zad-projects          — project definitions
-  2. zad-argo-user-applications — ArgoCD Application manifests
-  3. zad-deployments       — generated K8s manifests + secrets
+  1. zad-projects          - project definitions
+  2. zad-argo-user-applications - ArgoCD Application manifests
+  3. zad-deployments       - generated K8s manifests + secrets
        |
        v
 ArgoCD (GitOps) --> Kubernetes Cluster
@@ -37,7 +37,7 @@ ArgoCD (GitOps) --> Kubernetes Cluster
 
 ### Distributed Model
 
-Each cluster runs its own Operations Manager instance. Each instance only manages resources for its configured `CLUSTER_MANAGER` cluster — no cross-cluster resource creation.
+Each cluster runs its own Operations Manager instance. Each instance only manages resources for its configured `CLUSTER_MANAGER` cluster - no cross-cluster resource creation.
 
 ## Repository Structure
 
@@ -87,7 +87,7 @@ RIG-Cluster/
 
 ## Logs and Debugging
 
-The Operations Manager runs as a Kubernetes pod — there are no local log files. Always use `kubectl logs`:
+The Operations Manager runs as a Kubernetes pod - there are no local log files. Always use `kubectl logs`:
 
 ```bash
 # Operations Manager logs (sandbox)

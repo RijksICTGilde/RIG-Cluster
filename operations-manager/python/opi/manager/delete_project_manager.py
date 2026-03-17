@@ -1327,7 +1327,7 @@ class DeleteProjectManager:
             # Step 6: Delete service resources (calls service managers)
             logger.info(f"Deleting service resources for {project_name}/{deployment_name}")
 
-            # Delete Keycloak resources (always immediate — ephemeral)
+            # Delete Keycloak resources (always immediate - ephemeral)
             keycloak_results = await self.project_manager._keycloak_manager.delete_resources_for_deployment(
                 project_data, deployment
             )
@@ -1359,7 +1359,7 @@ class DeleteProjectManager:
                     )
                 except (KeyError, ValueError):
                     logger.warning(
-                        "Database pool not available — cannot use deferred deletion, falling back to immediate deletion"
+                        "Database pool not available - cannot use deferred deletion, falling back to immediate deletion"
                     )
 
             # Delete/mark database resources

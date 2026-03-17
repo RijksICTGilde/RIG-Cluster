@@ -1132,7 +1132,7 @@ class PostgresConnector:
         conn = await self._get_or_create_connection(target_database)
         quoted_schema = self._quote_identifier(target_schema)
 
-        # Check if schema already exists — if it does, something is wrong (e.g. leftover
+        # Check if schema already exists - if it does, something is wrong (e.g. leftover
         # from a previous failed clone). This is the same safety check as in
         # _execute_pgdump_clone, but we must do it here before we create the schema.
         schema_exists = await conn.fetchval(
@@ -1487,11 +1487,11 @@ class PostgresConnector:
 
             # Step 1: Check if source schema exists in target database (safety check)
             # When schema_precreated=True, the schema was already verified and created by
-            # _precreate_extensions_for_clone() — skip the check to avoid duplication.
+            # _precreate_extensions_for_clone() - skip the check to avoid duplication.
             if schema_precreated:
                 logger.info(
                     f"Source schema '{source_schema}' was pre-created in target database "
-                    f"'{target_database}' for extensions — skipping existence check"
+                    f"'{target_database}' for extensions - skipping existence check"
                 )
 
                 # The schema was created by admin via _precreate_extensions_for_clone().
@@ -1523,7 +1523,7 @@ class PostgresConnector:
                         )
                         await drop_public_process.communicate()
                     else:
-                        # Schema exists but was NOT pre-created — likely a leftover from a
+                        # Schema exists but was NOT pre-created - likely a leftover from a
                         # previous failed clone. This is a legitimate safety concern.
                         raise Exception(
                             f"Source schema '{source_schema}' already exists in target database '{target_database}'. "

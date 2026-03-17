@@ -24,7 +24,7 @@ async def _monitor_argocd_and_deployment(
 
     The ``user-applications`` App-of-Apps creates individual ArgoCD
     Application resources for each project deployment (e.g.
-    ``myproject-staging``).  Those project apps are what we care about —
+    ``myproject-staging``).  Those project apps are what we care about -
     the parent ``user-applications`` syncs on its own schedule and may
     stay ``OutOfSync`` long after the project apps are ready.
     """
@@ -294,7 +294,7 @@ async def process_project_yaml_background(task_id: str, project_name: str, yaml_
             return
         task_progress_manager.complete_task(validate_task)
 
-        # Step 2: YAML already generated — skip generation step
+        # Step 2: YAML already generated - skip generation step
         yaml_task = task_progress_manager.add_task("YAML configuratie controleren")
         logger.debug(f"Task {task_id}: Using pre-built YAML content ({len(yaml_content)} chars)")
         task_progress_manager.complete_task(yaml_task)

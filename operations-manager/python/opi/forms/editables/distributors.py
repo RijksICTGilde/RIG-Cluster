@@ -1,4 +1,4 @@
-"""List distributors — retarget and merge items from a temp structure into existing lists.
+"""List distributors - retarget and merge items from a temp structure into existing lists.
 
 A distributor takes a temporary list (produced by a wizard section) where each
 item mirrors the final shape, matches items to entries in an existing list by

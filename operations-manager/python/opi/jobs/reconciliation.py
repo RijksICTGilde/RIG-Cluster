@@ -551,7 +551,7 @@ async def _purge_pvc(
     1. Checks out the deployment git repo via a ProjectManager.
     2. Deletes the marked manifest file.
     3. Regenerates ``kustomization.yaml`` so the file is no longer listed.
-    4. Commits and pushes — ArgoCD will then prune the PVC.
+    4. Commits and pushes - ArgoCD will then prune the PVC.
     """
     resource_name = mark["resource_name"]
     project_name = mark["project_name"]

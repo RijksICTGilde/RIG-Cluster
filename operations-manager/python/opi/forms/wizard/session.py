@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SESSION_KEY = "wizard_token"
-"""Cookie key — holds only a short UUID, not the full state."""
+"""Cookie key - holds only a short UUID, not the full state."""
 
 MODAL_SESSION_KEY = "modal_wizard_token"
 """Separate cookie key for modal wizard state (prevents collision with full-page wizard)."""

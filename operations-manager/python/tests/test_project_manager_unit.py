@@ -10,7 +10,7 @@ from opi.manager.project_manager import ProjectManager
 
 
 class TestAsyncCorrectness:
-    """All calls to async functions must use await — missing await silently returns a coroutine object."""
+    """All calls to async functions must use await - missing await silently returns a coroutine object."""
 
     def test_decrypt_age_content_calls_are_awaited(self):
         """Every call to decrypt_age_content in project_manager must be awaited.

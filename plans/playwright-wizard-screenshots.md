@@ -1,6 +1,6 @@
 # Plan: Playwright Wizard Screenshot Tests
 
-## Status: MOSTLY COMPLETE — 6/8 tests pass, 2 need fixing
+## Status: MOSTLY COMPLETE - 6/8 tests pass, 2 need fixing
 
 ## What's Done
 
@@ -8,7 +8,7 @@ All code is committed and pushed to `claude/editwizard` (commit 3abcce1):
 
 | File | Status | Description |
 |------|--------|-------------|
-| `tests/e2e/testserver.py` | DONE | Test server module — standalone + fixture-compatible |
+| `tests/e2e/testserver.py` | DONE | Test server module - standalone + fixture-compatible |
 | `tests/e2e/fixtures/projects/test-project.yaml` | DONE | Realistic test project YAML |
 | `tests/e2e/fixtures/projects/test-project-with-services.yaml` | DONE | Test project with Keycloak + PostgreSQL |
 | `tests/e2e/conftest.py` | DONE | Refactored `app_server` to use testserver, added `screenshot_dir` fixture |
@@ -20,7 +20,7 @@ All code is committed and pushed to `claude/editwizard` (commit 3abcce1):
 
 - Chromium system deps installed via `uv run playwright install-deps chromium`
 - Added `--no-sandbox` fixture to conftest.py for container environments
-- Screenshot test passes — 9 screenshots generated (all wizard steps)
+- Screenshot test passes - 9 screenshots generated (all wizard steps)
 - Screenshots committed and pushed to `claude/editwizard`
 
 ## Current Test Results (6/8 pass)
@@ -34,7 +34,7 @@ All code is committed and pushed to `claude/editwizard` (commit 3abcce1):
 | test_validation_blocks_advance | PASS | |
 | test_conditional_steps_hidden | PASS | |
 | test_full_wizard_no_services | FAIL | Review page doesn't show project name in body text |
-| test_review_shows_summary | FAIL | Same — `name in body` assertion fails on review page |
+| test_review_shows_summary | FAIL | Same - `name in body` assertion fails on review page |
 
 ## What Needs Fixing
 
@@ -54,14 +54,14 @@ Need to investigate what the review page actually shows and fix the assertions.
 - Added `screenshot_dir` fixture (configurable via `E2E_SCREENSHOT_DIR` env var)
 
 ### Test Scenarios (8 tests)
-1. `test_full_wizard_no_services` — full flow → submit → redirect
-2. `test_wizard_with_keycloak_service` — select Keycloak → config step
-3. `test_wizard_with_postgresql_service` — select PostgreSQL → config step
-4. `test_back_navigation_preserves_data` — back button preserves form data
-5. `test_validation_blocks_advance` — empty fields block advancement
-6. `test_review_shows_summary` — review page shows entered data
-7. `test_conditional_steps_hidden` — no services → no service config steps
-8. `test_screenshots_each_step` — screenshot every wizard step
+1. `test_full_wizard_no_services` - full flow → submit → redirect
+2. `test_wizard_with_keycloak_service` - select Keycloak → config step
+3. `test_wizard_with_postgresql_service` - select PostgreSQL → config step
+4. `test_back_navigation_preserves_data` - back button preserves form data
+5. `test_validation_blocks_advance` - empty fields block advancement
+6. `test_review_shows_summary` - review page shows entered data
+7. `test_conditional_steps_hidden` - no services → no service config steps
+8. `test_screenshots_each_step` - screenshot every wizard step
 
 ## Troubleshooting
 

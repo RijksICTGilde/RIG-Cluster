@@ -271,11 +271,11 @@ DOMAIN_SECTION = FormSection(
     editables=[DOMAIN_CONFIG],
     layout=[
         TemplatePartial(template="wizard/partials/domain_info.html.j2"),
-        "deployments[0]/base-domain",
-        "deployments[0]/base-domain:custom",
-        "deployments[0]/domain-format",
-        "deployments[0]/subdomain",
-        "deployments[0]/root-component",
+        "deployments[*]/base-domain",
+        "deployments[*]/base-domain:custom",
+        "deployments[*]/domain-format",
+        "deployments[*]/subdomain",
+        "deployments[*]/root-component",
         DisplayBlock(
             display_id="url-preview",
             compute=_compute_url_preview,
@@ -293,9 +293,32 @@ WIZARD_DEPLOYMENT_SECTION = FormSection(
     editables=[WIZARD_DEPLOYMENT_NAME],
     layout=[
         TemplatePartial(template="wizard/partials/deployment_info.html.j2"),
-        "deployments[0]/name",
+        "deployments[*]/name",
     ],
 )
+
+
+def build_deployment_wizard_section(deployment_index: int) -> FormSection:
+    """Build a deployment wizard section targeting a specific deployment.
+
+    Materializes the WIZARD_DEPLOYMENT_SECTION wildcards (``[*]``) to
+    ``[deployment_index]``.
+    """
+    from opi.forms.editables.reindex import materialize_wildcard_layout, materialize_wildcard_visualizer
+
+    editables = [materialize_wildcard_visualizer(e, deployment_index) for e in WIZARD_DEPLOYMENT_SECTION.editables]
+    base_layout = WIZARD_DEPLOYMENT_SECTION.layout if isinstance(WIZARD_DEPLOYMENT_SECTION.layout, list) else []
+    layout = materialize_wildcard_layout(list(base_layout), deployment_index)
+
+    return FormSection(
+        section_id=WIZARD_DEPLOYMENT_SECTION.section_id,
+        title=WIZARD_DEPLOYMENT_SECTION.title,
+        icon=WIZARD_DEPLOYMENT_SECTION.icon,
+        description=WIZARD_DEPLOYMENT_SECTION.description,
+        editables=editables,
+        layout=layout,
+    )
+
 
 AUTH_WALL_CONFIG_SECTION = FormSection(
     section_id="auth-wall-config",
@@ -346,6 +369,48 @@ COMPONENTS_EDIT_SECTION = FormSection(
     post_save_action="process_project",
 )
 
+
+def _strip_removed_services_from_components(
+    project_data: dict[str, Any],
+    _wizard_data: dict[str, Any],
+) -> None:
+    """Remove services from components that are no longer in the project services list.
+
+    When a user removes a service from the root ``services`` list, the
+    component-level ``services`` lists must be updated to match.  Otherwise
+    the YAML becomes inconsistent and the service-removal detection in
+    ``cleanup_removed_services_from_yaml_change`` won't fire (it checks
+    component-level usage).
+    """
+    project_services = set(_extract_services(project_data))
+    for comp in project_data.get("components", []):
+        if not isinstance(comp, dict):
+            continue
+        comp_services = comp.get("services")
+        if not isinstance(comp_services, list):
+            continue
+        comp["services"] = [svc for svc in comp_services if _service_entry_name(svc) in project_services]
+
+
+def _service_entry_name(entry: Any) -> str | None:
+    """Return the service name from a component services entry.
+
+    Handles plain strings (``"keycloak"``), service-keyed dicts
+    (``{"persistent-storage": {...}}``), and legacy name dicts
+    (``{"name": "keycloak"}``).
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        if "name" in entry:
+            return entry["name"]
+        # Single-key service dict
+        keys = list(entry.keys())
+        if len(keys) == 1:
+            return keys[0]
+    return None
+
+
 SERVICES_EDIT_SECTION = FormSection(
     section_id="services-edit",
     title="Services beheren",
@@ -354,6 +419,7 @@ SERVICES_EDIT_SECTION = FormSection(
     editables=[SERVICES],
     layout=["services"],
     post_save_action="process_project",
+    post_merge=_strip_removed_services_from_components,
 )
 
 # Registry of sections available for detail-page editing.
@@ -373,28 +439,42 @@ EDIT_SECTIONS: dict[str, FormSection] = {
 # ---------------------------------------------------------------------------
 
 
-def build_domain_edit_section(deployment_index: int) -> FormSection:
-    """Build a domain edit section targeting a specific deployment.
+def build_domain_section(deployment_index: int, *, edit_mode: bool = False) -> FormSection:
+    """Build a domain section targeting a specific deployment.
 
-    Clones the wizard's DOMAIN_SECTION with all ``[0]`` path references
-    replaced by ``[deployment_index]``, so the form reads/writes to the
-    correct deployment in the YAML data.
+    Materializes the DOMAIN_SECTION wildcards (``[*]``) to
+    ``[deployment_index]``, so the form reads/writes to the correct
+    deployment in the YAML data.
+
+    In edit mode the section triggers a project reprocess on save;
+    in create mode the wizard handles submission as a whole.
     """
-    from opi.forms.editables.reindex import reindex_layout, reindex_visualizer
+    from opi.forms.editables.reindex import materialize_wildcard_layout, materialize_wildcard_visualizer
 
-    editables = [reindex_visualizer(e, 0, deployment_index) for e in DOMAIN_SECTION.editables]
+    editables = [materialize_wildcard_visualizer(e, deployment_index) for e in DOMAIN_SECTION.editables]
     base_layout = DOMAIN_SECTION.layout if isinstance(DOMAIN_SECTION.layout, list) else []
-    layout = reindex_layout(list(base_layout), 0, deployment_index)
+    layout = materialize_wildcard_layout(list(base_layout), deployment_index)
+
+    if edit_mode:
+        section_id = f"domain-edit-{deployment_index}"
+        title = "Webadres bewerken"
+        description = "Wijzig het webadres voor deze deployment"
+        post_save_action = "process_project"
+    else:
+        section_id = "domains"
+        title = DOMAIN_SECTION.title
+        description = DOMAIN_SECTION.description
+        post_save_action = "save_only"
 
     return FormSection(
-        section_id=f"domain-edit-{deployment_index}",
-        title="Webadres bewerken",
-        icon="wereldbol",
-        description="Wijzig het webadres voor deze deployment",
+        section_id=section_id,
+        title=title,
+        icon=DOMAIN_SECTION.icon,
+        description=description,
         enforcer=DomainConfigEnforcer(deployment_index=deployment_index),
         editables=editables,
         layout=layout,
-        post_save_action="process_project",
+        post_save_action=post_save_action,
     )
 
 
@@ -609,7 +689,7 @@ def build_deployment_edit_section(
 
 
 # ---------------------------------------------------------------------------
-# Backup & Restore sections (modal wizard, no editables — custom templates)
+# Backup & Restore sections (modal wizard, no editables - custom templates)
 # ---------------------------------------------------------------------------
 
 
@@ -749,7 +829,7 @@ def build_deployment_add_info_section(deployment_index: int) -> FormSection:
     """
     editables = _materialize_new_deployment_fields(deployment_index, _NEW_DEPLOYMENT_INFO_VISUALIZERS)
 
-    # The name visualizer has readonly_on_edit=True — override for add flows
+    # The name visualizer has readonly_on_edit=True - override for add flows
     name_vis = editables[0]
     editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
 
@@ -788,10 +868,10 @@ def build_deployment_add_components_section(
 def build_deployment_add_domain_section(deployment_index: int) -> FormSection:
     """Build the domain section for adding a new deployment.
 
-    Reuses build_domain_edit_section which already has the full DOMAIN_SECTION
+    Reuses build_domain_section which already has the full DOMAIN_SECTION
     with URL preview, info partial, root-component, and DomainConfigEnforcer.
     """
-    return build_domain_edit_section(deployment_index)
+    return build_domain_section(deployment_index, edit_mode=True)
 
 
 ALL_SECTIONS: list[FormSection] = [

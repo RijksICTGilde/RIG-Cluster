@@ -1,4 +1,4 @@
-name: Docker — Supporting Images
+name: Docker - Supporting Images
 
 on:
   workflow_dispatch:

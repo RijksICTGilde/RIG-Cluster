@@ -1,7 +1,7 @@
 """
 Resource analyzer for computing memory recommendations based on observed usage.
 
-Pure logic module with no I/O — all data is passed in as arguments.
+Pure logic module with no I/O - all data is passed in as arguments.
 """
 
 import logging
@@ -133,7 +133,7 @@ def compute_memory_recommendation(
     # Request should never exceed limit
     recommended_request_mb = min(recommended_request_mb, recommended_limit_mb)
 
-    # Collapse request to limit when the gap is < 10% — a tiny difference adds no value
+    # Collapse request to limit when the gap is < 10% - a tiny difference adds no value
     if recommended_limit_mb > 0:
         gap_ratio = (recommended_limit_mb - recommended_request_mb) / recommended_limit_mb
         if gap_ratio < 0.10:

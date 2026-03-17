@@ -784,7 +784,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
         None,
         description=(
             "Component reference to mark as root. Only applicable for dot-variant domain formats "
-            "(e.g., 'component.deployment.subdomain') — the root component receives traffic at the "
+            "(e.g., 'component.deployment.subdomain') - the root component receives traffic at the "
             "bare subdomain without a component prefix."
         ),
         example="frontend",
@@ -1521,7 +1521,7 @@ async def add_service(
     project level.  If ``components`` is provided, those components'
     ``services`` lists are updated as well.
 
-    The request always succeeds — if the service already exists it is
+    The request always succeeds - if the service already exists it is
     reported in ``services_skipped`` / ``warnings``.
 
     Headers:

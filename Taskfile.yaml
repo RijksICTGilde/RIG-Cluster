@@ -133,6 +133,18 @@ tasks:
           echo "✅ Prometheus CRD already exists in the cluster."
         fi
 
+        # Check if cert-manager Issuer CRD exists
+        if ! kubectl get crd issuers.cert-manager.io &>/dev/null; then
+          echo "⚠️  WARNING: cert-manager Issuer CRD not found in the cluster."
+          echo "⚠️  Applying fake cert-manager CRD so Issuer resources can be created."
+
+          kubectl apply -f bootstrap/crd/cert-manager/fake-cert-manager.yaml
+
+          echo "✅ Fake cert-manager CRD applied successfully."
+        else
+          echo "✅ cert-manager Issuer CRD already exists in the cluster."
+        fi
+
         # Download the operator source
         echo "Downloading ArgoCD Operator source code..."
         curl -sL "https://github.com/argoproj-labs/argocd-operator/archive/refs/tags/{{.VERSION}}.tar.gz" -o $TEMP_DIR/argocd-operator.tar.gz

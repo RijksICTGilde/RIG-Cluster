@@ -53,7 +53,7 @@ def detect_schema_version(project_data: dict[str, Any]) -> int:
         if isinstance(dep, dict) and "uses-services" in dep:
             return 1
 
-    # No version field and no uses-services found — assume latest (v2).
+    # No version field and no uses-services found - assume latest (v2).
     # Only files with explicit uses-services are v1.
     return LATEST_SCHEMA_VERSION
 
@@ -233,7 +233,7 @@ def _cleanup_stale_v1_keys(project_data: dict[str, Any]) -> bool:
         project_name = project_data.get("name", "unknown")
         comp_name = component.get("name", "?")
         logger.warning(
-            f"Project '{project_name}' component '{comp_name}' has stale v1 keys on a v2 file — merging into services"
+            f"Project '{project_name}' component '{comp_name}' has stale v1 keys on a v2 file - merging into services"
         )
         _merge_stale_v1_into_v2(component)
         cleaned = True

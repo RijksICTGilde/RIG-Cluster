@@ -6,8 +6,8 @@ Interactive modal wizards for creating backups and restoring from backups direct
 
 Adds two buttons to the Backups section of the project details page:
 
-- **Backup aanmaken** — Opens a wizard to create a backup of a deployment's resources (PVCs, databases, MinIO buckets)
-- **Herstellen** — Opens a wizard to restore from an existing backup run (only visible when backups exist)
+- **Backup aanmaken** - Opens a wizard to create a backup of a deployment's resources (PVCs, databases, MinIO buckets)
+- **Herstellen** - Opens a wizard to restore from an existing backup run (only visible when backups exist)
 
 Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSection` with `TemplatePartial` layouts) with custom `post_save_action` types (`trigger_backup` / `trigger_restore`).
 
@@ -49,14 +49,14 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 
 ### Key Design Decisions
 
-- **No project file changes**: Backup/restore flows skip the YAML save step — they trigger operations directly (except when creating a new deployment, which modifies the project file)
+- **No project file changes**: Backup/restore flows skip the YAML save step - they trigger operations directly (except when creating a new deployment, which modifies the project file)
 - **Member-level auth**: Any project member can create backups and restore, not just admins/owners
 - **Template context via yaml_data**: `TemplatePartial` rendering was extended to pass `yaml_data` as template context, enabling dynamic data (deployments, backup runs) in wizard partials
 - **Custom post_save_action**: New action types `trigger_backup` and `trigger_restore` are handled in `_modal_do_submit()`, which creates background tasks instead of saving project files
 - **Async context building**: Backup run data is gathered asynchronously during wizard initialization
 - **HTMX deployment selection**: Changing the deployment dropdown triggers an HTMX GET to re-render the wizard step with updated resource type checkboxes for the selected deployment
-- **Backupable service registry**: Services declare backup support via `backup_label` on their `ServiceDefinition`. The wizard dynamically discovers backupable services from `ServiceAdapter.get_backupable_labels()` — no hardcoded service type checks in the wizard code. Adding backup support for a new service type only requires setting `backup_label` on its definition.
-- **Empty service filtering**: Dict service entries with `None` or empty values (e.g. `{"persistent-storage": null}`) are skipped during backup detection — these are unconfigured placeholders left by the form system, not active services. The wizard submission also strips these entries to keep project files clean.
+- **Backupable service registry**: Services declare backup support via `backup_label` on their `ServiceDefinition`. The wizard dynamically discovers backupable services from `ServiceAdapter.get_backupable_labels()` - no hardcoded service type checks in the wizard code. Adding backup support for a new service type only requires setting `backup_label` on its definition.
+- **Empty service filtering**: Dict service entries with `None` or empty values (e.g. `{"persistent-storage": null}`) are skipped during backup detection - these are unconfigured placeholders left by the form system, not active services. The wizard submission also strips these entries to keep project files clean.
 - **v1/v2 compatibility**: Service detection works with both v2 (`services` key) and v1 (`uses-services` key) project file formats.
 - **Clone-from type enums**: Clone types (`deployment`, `remote-source`, `backup`) and restore modes (`existing`, `new`) use `CloneFromType` and `RestoreMode` enums from `opi.services.services_enums` for type-safe comparison instead of raw strings.
 
@@ -82,7 +82,7 @@ When restoring to a new deployment, PVC backup data is pre-created **before** in
 1. Deployment is created in the project file
 2. Namespace is created via `ProjectManager.check_and_create_namespaces()` (reusing existing method)
 3. PVCs are created and filled with backup data via `backup_manager.restore_to_project_pvc()`
-4. `process_project_from_git` runs — ArgoCD adopts the existing PVCs (the `Replace=false` sync-option on `pvc.yaml.jinja` prevents recreation)
+4. `process_project_from_git` runs - ArgoCD adopts the existing PVCs (the `Replace=false` sync-option on `pvc.yaml.jinja` prevents recreation)
 5. Non-PVC resources (database, MinIO) are restored after infrastructure is ready
 
 PVC naming for the new deployment uses generation 0 (no version suffix), while the source PVC name preserves the original generation for Kopia snapshot lookup.

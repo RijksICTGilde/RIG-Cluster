@@ -36,7 +36,7 @@ class TestCreateRepository:
 
             assert result is True
 
-            # Inspect the git init call (3rd call — after check and mkdir)
+            # Inspect the git init call (3rd call - after check and mkdir)
             calls = mock_exec.call_args_list
             assert len(calls) == 3, f"Expected 3 subprocess calls, got {len(calls)}"
 

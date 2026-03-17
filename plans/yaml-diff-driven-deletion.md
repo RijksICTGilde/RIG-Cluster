@@ -57,10 +57,10 @@ Table with unique index on `(resource_type, resource_name, cluster)` to prevent 
 **New file**: `opi/api/admin_router.py`
 
 Authenticated via `ADMIN_API_KEY`, all trigger endpoints default to `dry_run=true`:
-- `GET /api/v2/admin/marked-for-deletion` — list marks
-- `POST /api/v2/admin/cleanup/trigger` — purge expired marks for a project
-- `POST /api/v2/admin/reconciliation/trigger` — full reconciliation
-- `DELETE /api/v2/admin/marked-for-deletion/{mark_id}` — cancel a scheduled deletion
+- `GET /api/v2/admin/marked-for-deletion` - list marks
+- `POST /api/v2/admin/cleanup/trigger` - purge expired marks for a project
+- `POST /api/v2/admin/reconciliation/trigger` - full reconciliation
+- `DELETE /api/v2/admin/marked-for-deletion/{mark_id}` - cancel a scheduled deletion
 
 ### 6. Wiring in `process_project_from_git()`
 

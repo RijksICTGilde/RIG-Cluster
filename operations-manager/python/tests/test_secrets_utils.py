@@ -284,6 +284,54 @@ class TestUserSecret:
         assert data == {}
 
 
+class TestKeycloakSecretPublicClient:
+    """Tests for KeycloakSecret public_client_id field."""
+
+    def _make_secret(self, public_client_id: str = "myproject-dev-public") -> KeycloakSecret:
+        return KeycloakSecret(
+            client_id="myproject-dev",
+            client_secret="super-secret",
+            public_client_id=public_client_id,
+            discovery_url="https://keycloak.example.com/realms/myrealm/.well-known/openid-configuration",
+            base_url="https://keycloak.example.com",
+            realm="myrealm",
+        )
+
+    def test_to_k8s_secret_data_includes_public_client_id(self):
+        """to_k8s_secret_data includes OIDC_PUBLIC_CLIENT_ID key."""
+        secret = self._make_secret()
+        data = secret.to_k8s_secret_data()
+
+        assert data["OIDC_PUBLIC_CLIENT_ID"] == "myproject-dev-public"
+
+    def test_to_k8s_secret_data_includes_confidential_client(self):
+        """to_k8s_secret_data still includes the confidential client fields."""
+        secret = self._make_secret()
+        data = secret.to_k8s_secret_data()
+
+        assert data["OIDC_CLIENT_ID"] == "myproject-dev"
+        assert data["OIDC_CLIENT_SECRET"] == "super-secret"
+
+    def test_to_k8s_secret_data_empty_public_client_id(self):
+        """to_k8s_secret_data includes empty OIDC_PUBLIC_CLIENT_ID for external keycloak."""
+        secret = self._make_secret(public_client_id="")
+        data = secret.to_k8s_secret_data()
+
+        assert data["OIDC_PUBLIC_CLIENT_ID"] == ""
+
+    def test_round_trip(self):
+        """KeycloakSecret round-trips through to_k8s_secret_data and from_k8s_secret_data."""
+        original = self._make_secret()
+        restored = KeycloakSecret.from_k8s_secret_data(original.to_k8s_secret_data())
+
+        assert restored.client_id == original.client_id
+        assert restored.client_secret == original.client_secret
+        assert restored.public_client_id == original.public_client_id
+        assert restored.discovery_url == original.discovery_url
+        assert restored.base_url == original.base_url
+        assert restored.realm == original.realm
+
+
 class TestGetSecretName:
     """Tests for BaseSecret.get_secret_name across all subclasses."""
 

@@ -101,7 +101,7 @@ def _assert_202_shape(response: Any, expected_task_type: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Test classes — one per endpoint
+# Test classes - one per endpoint
 # ---------------------------------------------------------------------------
 
 

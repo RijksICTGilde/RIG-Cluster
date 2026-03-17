@@ -28,9 +28,9 @@ CloudNativePG has built-in support for PgBouncer via the `Pooler` custom resourc
 | `transaction` | Connection returned to pool after each transaction | Best efficiency, breaks prepared statements and advisory locks |
 | `session` | Connection held for entire client session | Safe for all features, lower efficiency |
 
-**Keycloak requires `session` mode** — it uses prepared statements and potentially advisory locks via Hibernate. Transaction pooling causes intermittent query failures.
+**Keycloak requires `session` mode** - it uses prepared statements and potentially advisory locks via Hibernate. Transaction pooling causes intermittent query failures.
 
-**Project workloads can use `transaction` mode** — most web applications issue independent queries per request and don't rely on session-level features.
+**Project workloads can use `transaction` mode** - most web applications issue independent queries per request and don't rely on session-level features.
 
 ### Design Decision: Keep Infrastructure Direct, Pool Applications
 
@@ -44,7 +44,7 @@ This avoids complexity of managing two poolers with different modes.
 
 The Operations Manager itself performs DDL operations (CREATE DATABASE, CREATE USER, GRANT) which require direct PostgreSQL access. These admin connections must bypass PgBouncer. Only the application credentials stored in `DatabaseSecret` should point to the pooler.
 
-This is already naturally separated — `database_manager.py` creates its own `PostgresConnector` with admin credentials, while `DatabaseSecret` is what gets injected into application pods.
+This is already naturally separated - `database_manager.py` creates its own `PostgresConnector` with admin credentials, while `DatabaseSecret` is what gets injected into application pods.
 
 ### Tuning Parameters
 
@@ -52,7 +52,7 @@ Based on observed production patterns:
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| `default_pool_size` | `10` | 10 server connections per user/database pair; with ~20 databases, this gives 200 max server conns — matching PostgreSQL's `max_connections=200` |
+| `default_pool_size` | `10` | 10 server connections per user/database pair; with ~20 databases, this gives 200 max server conns - matching PostgreSQL's `max_connections=200` |
 | `max_client_conn` | `500` | Allow up to 500 client connections to PgBouncer; these are cheap (PgBouncer uses ~2KB per client) |
 | `min_pool_size` | `2` | Keep 2 connections warm per pool to avoid latency on first query |
 | `reserve_pool_size` | `5` | 5 extra connections when pool is exhausted |
@@ -279,18 +279,18 @@ After pooling is active and stable, consider:
 
 ### Zero-Downtime Rollout
 
-1. **Deploy pooler** — creates new `rig-db-pooler-rw` service alongside existing `rig-db-rw`
-2. **Test with one project** — manually change one project's `DatabaseSecret` host to pooler endpoint, verify application works
-3. **Roll out to all projects** — update `get_database_pooler()` to return pooler endpoint, redeploy affected projects via ArgoCD
-4. **Monitor for 1 week** — watch PgBouncer metrics for connection issues
-5. **Reduce max_connections** — once confident, lower PostgreSQL `max_connections`
+1. **Deploy pooler** - creates new `rig-db-pooler-rw` service alongside existing `rig-db-rw`
+2. **Test with one project** - manually change one project's `DatabaseSecret` host to pooler endpoint, verify application works
+3. **Roll out to all projects** - update `get_database_pooler()` to return pooler endpoint, redeploy affected projects via ArgoCD
+4. **Monitor for 1 week** - watch PgBouncer metrics for connection issues
+5. **Reduce max_connections** - once confident, lower PostgreSQL `max_connections`
 
 ### Rollback
 
 If issues arise:
 1. Change `get_database_pooler()` to return the direct `rig-db-rw` endpoint (same as `get_database_server()`)
 2. ArgoCD will resync secrets with direct endpoint
-3. Pods restart with direct connection — no PgBouncer in the path
+3. Pods restart with direct connection - no PgBouncer in the path
 4. Pooler resource can remain deployed (unused) or be removed
 
 ### Per-Project Testing Checklist
@@ -311,7 +311,7 @@ Before enabling pooler for a project, verify:
 |------|-----------|
 | **Application uses prepared statements** | Test per-project; fall back to direct connection for incompatible apps |
 | **Admin DDL through pooler** | Admin paths (`database_manager.py`) always use direct endpoint |
-| **Secret rotation during migration** | ArgoCD syncs new secrets, triggers pod restart — brief downtime per deployment |
+| **Secret rotation during migration** | ArgoCD syncs new secrets, triggers pod restart - brief downtime per deployment |
 | **PgBouncer pod crashes** | CNPG restarts it automatically; clients reconnect via service |
 | **Pool exhaustion** | Monitor `client_waiting` metric; increase `default_pool_size` or add pooler replicas |
 
@@ -365,8 +365,8 @@ PGBOUNCER_MAX_CLIENT_CONN: int = 500
 
 ## Related
 
-- `infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml` — shared database cluster
-- `manifests/postgresql-cluster.yaml.jinja` — namespace-specific database template
-- `opi/core/cluster_config.py` — database endpoint resolution
-- `opi/manager/database_manager.py` — admin database operations
-- `features/postgresql-connection-limits.md` — related connection limit changes
+- `infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml` - shared database cluster
+- `manifests/postgresql-cluster.yaml.jinja` - namespace-specific database template
+- `opi/core/cluster_config.py` - database endpoint resolution
+- `opi/manager/database_manager.py` - admin database operations
+- `features/postgresql-connection-limits.md` - related connection limit changes

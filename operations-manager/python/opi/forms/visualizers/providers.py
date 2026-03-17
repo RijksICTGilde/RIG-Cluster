@@ -388,7 +388,7 @@ class ClusterBaseDomainOptionsProvider:
             options.append({"value": "__custom__", "label": "Eigen domein..."})
             return options
 
-        # Fallback: no matching cluster config — return empty with custom option
+        # Fallback: no matching cluster config - return empty with custom option
         return [{"value": "__custom__", "label": "Eigen domein..."}]
 
 

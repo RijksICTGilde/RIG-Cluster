@@ -8,7 +8,7 @@ The goal is to make `domain-format` the primary user-facing control and hide the
 
 ### Backend constraint
 
-`domain-mode` is deeply used in the backend (project_manager, keycloak_manager) — it drives `HostnameFormat.from_domain_mode()`, subdomain registration, root component logic, and path validation. We **cannot simply remove** domain-mode. Instead, we'll:
+`domain-mode` is deeply used in the backend (project_manager, keycloak_manager) - it drives `HostnameFormat.from_domain_mode()`, subdomain registration, root component logic, and path validation. We **cannot simply remove** domain-mode. Instead, we'll:
 - Make `domain-format` the primary UI control
 - **Auto-derive** `domain-mode` from the selected `domain-format` via a generator editable (computed at submit time)
 - Keep `domain-mode` in the YAML for backward compatibility with the backend
@@ -78,7 +78,7 @@ Reverse-map logic (using `DOMAIN_MODE_DEFAULT_FORMAT`):
 
 Register in `opi/forms/editables/fields/config_generated.py` → `GENERATED_EDITABLES_PURE`.
 
-### 3. Update `DOMAIN_FORMAT_EDITABLE` — remove dependency on domain-mode
+### 3. Update `DOMAIN_FORMAT_EDITABLE` - remove dependency on domain-mode
 
 **File:** `opi/forms/editables/fields/domains.py`
 
@@ -94,11 +94,11 @@ DOMAIN_FORMAT_EDITABLE = Editable(
 )
 ```
 
-### 4. Update `DomainFormatOptionsProvider` — show all options
+### 4. Update `DomainFormatOptionsProvider` - show all options
 
 **File:** `opi/forms/visualizers/providers.py`
 
-Remove the `domain_mode` filtering. Show all 4 template IDs. The dot vs dash variant is auto-selected at deploy time — user doesn't choose it explicitly.
+Remove the `domain_mode` filtering. Show all 4 template IDs. The dot vs dash variant is auto-selected at deploy time - user doesn't choose it explicitly.
 
 ```python
 class DomainFormatOptionsProvider:
@@ -143,7 +143,7 @@ DOMAIN_BASE_DOMAIN_EDITABLE = Editable(
     validator=BaseDomainValidator(),
 )
 
-# Show root-component for formats WITHOUT {component} — user must pick which
+# Show root-component for formats WITHOUT {component} - user must pick which
 # component gets the "bare" hostname (others are routed by path)
 DOMAIN_ROOT_COMPONENT_EDITABLE = Editable(
     yaml_path="deployments[0]/root-component",
@@ -248,7 +248,7 @@ options.append({
 
 **File:** `opi/forms/editables/enforcers.py`
 
-Add a `DomainDotSupportEnforcer` that checks: if the selected base-domain does not support dots, the system will use the dash variant. This is informational — not an error per se (the system auto-falls back to dashes). But the user should know the resulting URL pattern differs from what the dot labels suggest.
+Add a `DomainDotSupportEnforcer` that checks: if the selected base-domain does not support dots, the system will use the dash variant. This is informational - not an error per se (the system auto-falls back to dashes). But the user should know the resulting URL pattern differs from what the dot labels suggest.
 
 This enforcer should be a **section-level enforcer** on the domain section.
 
@@ -307,16 +307,16 @@ domain-format (domain section)
 
 ## Files to Modify
 
-1. `opi/forms/visualizers/wizard_sections.py` — Replace domain-mode with domain-format in section
-2. `opi/forms/editables/fields/domains.py` — Update editables, add generator
-3. `opi/forms/editables/fields/components.py` — Add depends_on for path/rewrite-path
-4. `opi/forms/editables/fields/deployments.py` — Update depends_on for deployment edit
-5. `opi/forms/editables/fields/config_generated.py` — Register domain-mode generator
-6. `opi/forms/visualizers/fields/domains.py` — Update DOMAIN_FORMAT attributes
-7. `opi/forms/visualizers/providers.py` — Update DomainFormatOptionsProvider, ClusterBaseDomainOptionsProvider
-8. `opi/core/cluster_config.py` — Add per-domain dot support metadata
-9. `opi/forms/editables/enforcers.py` — Add dot-support cross-validation
-10. `opi/templates/wizard/partials/domain_info.html.j2` — Update info text
+1. `opi/forms/visualizers/wizard_sections.py` - Replace domain-mode with domain-format in section
+2. `opi/forms/editables/fields/domains.py` - Update editables, add generator
+3. `opi/forms/editables/fields/components.py` - Add depends_on for path/rewrite-path
+4. `opi/forms/editables/fields/deployments.py` - Update depends_on for deployment edit
+5. `opi/forms/editables/fields/config_generated.py` - Register domain-mode generator
+6. `opi/forms/visualizers/fields/domains.py` - Update DOMAIN_FORMAT attributes
+7. `opi/forms/visualizers/providers.py` - Update DomainFormatOptionsProvider, ClusterBaseDomainOptionsProvider
+8. `opi/core/cluster_config.py` - Add per-domain dot support metadata
+9. `opi/forms/editables/enforcers.py` - Add dot-support cross-validation
+10. `opi/templates/wizard/partials/domain_info.html.j2` - Update info text
 11. Tests
 
 ## Verification

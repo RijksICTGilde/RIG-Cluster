@@ -46,11 +46,11 @@ Added:
 
 These are intentionally not migrated:
 
-- **Log viewer panel** — complex interactive component with custom dark-theme styling
-- **Avatar circles** — custom `border-radius: 50%` initials display
-- **Deployment selector tabs** — custom tab behavior with JS state management
-- **JS-managed selects** (metrics-explorer) — dynamically populated via `innerHTML`
-- **Conditional `display: none`** — toggled by JavaScript at runtime
+- **Log viewer panel** - complex interactive component with custom dark-theme styling
+- **Avatar circles** - custom `border-radius: 50%` initials display
+- **Deployment selector tabs** - custom tab behavior with JS state management
+- **JS-managed selects** (metrics-explorer) - dynamically populated via `innerHTML`
+- **Conditional `display: none`** - toggled by JavaScript at runtime
 
 ## Remaining Opportunities
 

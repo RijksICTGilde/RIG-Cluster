@@ -1,16 +1,16 @@
-# Plan: BIO2 Security Pipeline — Docker CI/CD, Vulnerability Scanning, Renovate
+# Plan: BIO2 Security Pipeline - Docker CI/CD, Vulnerability Scanning, Renovate
 
 ## Summary
 
 Three capabilities for BIO2 compliance (A8.08 vulnerability management):
 
-1. **Docker build & publish** — CalVer + SHA hybrid versioning
-2. **Vulnerability scanning** — pip-audit + Trivy + SBOM generation
-3. **Renovate replaces Dependabot** — unified dependency management including infra manifests
+1. **Docker build & publish** - CalVer + SHA hybrid versioning
+2. **Vulnerability scanning** - pip-audit + Trivy + SBOM generation
+3. **Renovate replaces Dependabot** - unified dependency management including infra manifests
 
 ## Implementation
 
-### 1. `.github/workflows/docker.yml` — ZAD (Operations Manager)
+### 1. `.github/workflows/docker.yml` - ZAD (Operations Manager)
 
 **Automated CI pipeline for the main application image.**
 
@@ -22,7 +22,7 @@ Three capabilities for BIO2 compliance (A8.08 vulnerability management):
 - **Cache**: GitHub Actions cache (`type=gha`)
 - CalVer git tag created automatically on main
 
-### 2. `.github/workflows/docker-images.yml` — Supporting Images
+### 2. `.github/workflows/docker-images.yml` - Supporting Images
 
 **Manual trigger only (`workflow_dispatch`) for other images.**
 
@@ -31,7 +31,7 @@ Three capabilities for BIO2 compliance (A8.08 vulnerability management):
 - **Tagging**: CalVer + `sha-xxx` + `latest`
 - Shared CalVer calculation in `prepare` job
 
-### 3. `.github/workflows/security.yml` — Vulnerability Scanning
+### 3. `.github/workflows/security.yml` - Vulnerability Scanning
 
 - **Triggers**: Push to main, PRs, weekly schedule (Monday 6am UTC)
 - **Jobs**:
@@ -40,19 +40,19 @@ Three capabilities for BIO2 compliance (A8.08 vulnerability management):
   - `sbom`: CycloneDX SBOM generation (main only), uploaded as artifact
 - SARIF results uploaded to GitHub Security tab
 
-### 4. `renovate.json` — Replaces Dependabot
+### 4. `renovate.json` - Replaces Dependabot
 
 - `.github/dependabot.yml` deleted
 - Renovate covers: Python (uv), GitHub Actions, Dockerfiles, **Kubernetes manifests** (infra + bootstrap)
 - Weekly schedule, grouped minor+patch updates
 - Requires Renovate GitHub App installation on the repo (manual step)
 
-### 5. `pyproject.toml` — pip-audit added to dev dependencies
+### 5. `pyproject.toml` - pip-audit added to dev dependencies
 
-### 6. `Taskfile.yaml` — Local scanning tasks
+### 6. `Taskfile.yaml` - Local scanning tasks
 
-- `task security-audit` — runs pip-audit locally
-- `task security-scan-image` — builds and scans with Trivy locally
+- `task security-audit` - runs pip-audit locally
+- `task security-scan-image` - builds and scans with Trivy locally
 
 ## Manual Steps After Merge
 
