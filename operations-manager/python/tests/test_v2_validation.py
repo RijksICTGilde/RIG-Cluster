@@ -363,8 +363,8 @@ class TestAddComponentValidation:
     @pytest.mark.parametrize(
         "memory_limit",
         [
-            pytest.param("256Mi", id="not-allowed-256Mi"),
-            pytest.param("2Gi", id="not-allowed-2Gi"),
+            pytest.param("16Mi", id="below-min-16Mi"),
+            pytest.param("2Gi", id="above-max-2Gi"),
             pytest.param("bogus", id="bogus-value"),
         ],
     )

@@ -123,8 +123,8 @@ COMPONENTS_SECTION = FormSection(
                     description="Geheugen limieten voor dit component. Gebruik de standaardwaarden als je niet zeker weet wat je nodig hebt. Dit kan later aangepast worden. "
                     "Deze waardes zijn een richtlijn, de waardes zullen aangepast worden aan het daadwerkelijke gebruik.",
                     children=[
-                        "resources/memory/request",
-                        "resources/memory/limit",
+                        "resources/requests/memory",
+                        "resources/limits/memory",
                     ],
                 ),
                 Fieldset(
@@ -207,6 +207,7 @@ KEYCLOAK_CONFIG_SECTION = FormSection(
     icon="sleutel",
     description="SSO en authenticatie-instellingen",
     visible=lambda data: "keycloak" in _extract_services(data),
+    post_save_action="process_project",
     editables=[
         KEYCLOAK_TEMPLATE,
         KEYCLOAK_REDIRECT_URIS,
@@ -255,6 +256,7 @@ POSTGRESQL_CONFIG_SECTION = FormSection(
     icon="database",
     description="PostgreSQL database-instellingen",
     visible=lambda data: "namespace-postgresql-database" in _extract_services(data),
+    post_save_action="process_project",
     editables=[POSTGRESQL_INSTANCES, POSTGRESQL_STORAGE],
     layout=[
         "services/namespace-postgresql-database/config/instances",
@@ -326,6 +328,7 @@ AUTH_WALL_CONFIG_SECTION = FormSection(
     icon="sleutel",
     description="Instellingen voor de toegangspagina",
     visible=lambda data: "authorization-wall" in _extract_services(data),
+    post_save_action="process_project",
     editables=[AUTH_WALL_BANNER],
     layout=["services/authorization-wall/config/banner"],
 )

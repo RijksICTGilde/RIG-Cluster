@@ -213,6 +213,11 @@ async def _purge_marks(
     for mark in pvc_marks:
         await _purge_pvc(mark, service, results, dry_run)
 
+    # Deployment manifests (deferred from failed ArgoCD app deletion)
+    manifest_marks = [m for m in marks if m["resource_type"] == "deployment_manifests"]
+    for mark in manifest_marks:
+        await _purge_deployment_manifests(mark, service, results, dry_run)
+
     # Namespaces (only when all conditions met)
     for mark in namespace_marks:
         await _purge_namespace(mark, service, pool, results, dry_run)
@@ -637,6 +642,124 @@ async def _purge_pvc(
 
     except Exception as e:
         error_msg = f"Failed to purge PVC manifest '{resource_name}': {e}"
+        logger.exception(error_msg)
+        results["errors"].append(error_msg)
+
+
+async def _purge_deployment_manifests(
+    mark: dict,
+    service: MarkedForDeletionService,
+    results: dict[str, list],
+    dry_run: bool,
+) -> None:
+    """Purge deployment manifests that were deferred because ArgoCD app deletion timed out.
+
+    Only deletes manifests if the ArgoCD application is confirmed gone.
+    If the app still exists, the mark is kept for the next reconciliation run.
+    """
+    resource_name = mark["resource_name"]
+    project_name = mark["project_name"]
+    deployment_name = mark["deployment_name"]
+    cluster = mark["cluster"]
+    metadata = mark.get("metadata", {})
+    if isinstance(metadata, str):
+        import json
+
+        metadata = json.loads(metadata)
+
+    repository_name = metadata.get("repository_name", "")
+    argocd_app_name = metadata.get("argocd_app_name", "")
+
+    try:
+        # Check if the ArgoCD application is still alive
+        from opi.connectors import create_argo_connector
+
+        argo_connector = create_argo_connector()
+        try:
+            app_exists = await argo_connector.application_exists(argocd_app_name)
+        except PermissionError:
+            app_exists = False  # AppProject gone = app gone
+
+        if app_exists:
+            logger.info(
+                "ArgoCD application '%s' still exists - keeping manifests for '%s' (will retry next run)",
+                argocd_app_name,
+                resource_name,
+            )
+            return
+
+        logger.info(
+            "ArgoCD application '%s' is gone - proceeding with manifest cleanup for '%s'",
+            argocd_app_name,
+            resource_name,
+        )
+
+        if dry_run:
+            logger.info("[DRY RUN] Would purge deployment manifests: %s", resource_name)
+            results["purged"].append({"type": "deployment_manifests", "name": resource_name})
+            return
+
+        # Look up the project to get the git connector
+        from opi.manager.project_manager import ProjectManager
+        from opi.services.project_service import get_project_service
+        from opi.utils.naming import generate_deployment_manifest_path
+
+        project = get_project_service().get_project(project_name)
+        if not project:
+            logger.warning(
+                "Project '%s' not found - cannot clean up manifests for '%s'. Removing mark.",
+                project_name,
+                resource_name,
+            )
+            await service.delete_mark(mark["id"])
+            results["purged"].append({"type": "deployment_manifests", "name": resource_name})
+            return
+
+        async with ProjectManager(project_file_relative_path=f"projects/{project.filename}") as pm:
+            project_data = await pm.get_contents()
+            repositories = project_data.get("repositories", [])
+            repo_config = None
+            for repo in repositories:
+                if repo.get("name") == repository_name:
+                    repo_config = repo
+                    break
+
+            if not repo_config:
+                logger.warning(
+                    "Repository '%s' not found in project '%s' - cannot clean up manifests. Removing mark.",
+                    repository_name,
+                    project_name,
+                )
+                await service.delete_mark(mark["id"])
+                results["purged"].append({"type": "deployment_manifests", "name": resource_name})
+                return
+
+            manifest_connector = await pm.get_git_connector_for_deployment(repository_name, repo_config)
+            repo_path = repo_config.get("path", "")
+            deployment_folder_path = generate_deployment_manifest_path(
+                cluster, project_name, deployment_name, repo_path
+            )
+
+            await manifest_connector.ensure_repo_cloned()
+            folder_full_path = os.path.join(await manifest_connector.get_working_dir(), deployment_folder_path)
+
+            if os.path.exists(folder_full_path):
+                import shutil
+
+                shutil.rmtree(folder_full_path)
+                commit_message = (
+                    f"Deferred cleanup: delete deployment '{deployment_name}' manifests from project '{project_name}'"
+                )
+                await manifest_connector.commit_and_push_changes(commit_message)
+                logger.info("Purged deployment manifests: %s", deployment_folder_path)
+            else:
+                logger.info("Deployment manifests already removed: %s", deployment_folder_path)
+
+        await service.delete_mark(mark["id"])
+        results["purged"].append({"type": "deployment_manifests", "name": resource_name})
+
+    except Exception as e:
+        error_msg = f"Failed to purge deployment manifests '{resource_name}': {e}"
         logger.exception(error_msg)
         results["errors"].append(error_msg)
 

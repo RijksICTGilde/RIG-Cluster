@@ -86,22 +86,33 @@ class EditableFormProcessor:
         yaml_data: dict[str, Any],
         sections: list[FormSection],
         enforcer_context: dict[str, Any] | None = None,
+        field_errors: dict[str, list[str]] | None = None,
     ) -> list[str]:
         """
         Run section-level enforcers.
 
         Args:
             enforcer_context: Optional metadata for enforcers (e.g. project_name).
+            field_errors: When provided, ``FieldError`` exceptions are
+                merged into this dict (keyed by field path) instead of
+                appearing in the returned global errors list.
 
         Returns:
             List of global error messages. Empty means all passed.
         """
+        from opi.forms.editables.enforcers import FieldError
+
         ctx = enforcer_context or {}
         global_errors: list[str] = []
         for section in sections:
             if section.enforcer:
                 try:
                     await section.enforcer.enforce(yaml_data, ctx)
+                except FieldError as e:
+                    if field_errors is not None:
+                        field_errors.setdefault(e.field_path, []).append(str(e))
+                    else:
+                        global_errors.append(str(e))
                 except ValueError as e:
                     global_errors.append(str(e))
         return global_errors

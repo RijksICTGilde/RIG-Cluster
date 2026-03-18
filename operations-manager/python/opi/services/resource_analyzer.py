@@ -26,9 +26,8 @@ class ResourceRecommendation:
     reason: str
 
 
-def _k8s_memory_to_mb(value: str) -> float:
-    """
-    Convert a Kubernetes memory string to megabytes.
+def parse_k8s_memory_to_mi(value: str) -> float:
+    """Convert a Kubernetes memory string to MiB (mebibytes).
 
     Supports: Mi, Gi, M, G, Ki, and plain bytes.
 
@@ -36,7 +35,10 @@ def _k8s_memory_to_mb(value: str) -> float:
         value: Kubernetes memory string (e.g., "512Mi", "1Gi", "536870912")
 
     Returns:
-        Value in megabytes
+        Value in MiB
+
+    Raises:
+        ValueError: If the value cannot be parsed or uses an unknown unit.
     """
     value = value.strip()
     match = re.match(r"^(\d+(?:\.\d+)?)\s*([A-Za-z]*)$", value)
@@ -59,6 +61,15 @@ def _k8s_memory_to_mb(value: str) -> float:
         raise ValueError(f"Unknown memory unit: {unit}")
 
     return num * multipliers[unit]
+
+
+def _k8s_memory_to_mb(value: str) -> float:
+    """Convert a Kubernetes memory string to megabytes.
+
+    Alias for :func:`parse_k8s_memory_to_mi` (MiB and MB are used
+    interchangeably in this codebase since all values are binary).
+    """
+    return parse_k8s_memory_to_mi(value)
 
 
 def _mb_to_k8s_memory(mb: float) -> str:

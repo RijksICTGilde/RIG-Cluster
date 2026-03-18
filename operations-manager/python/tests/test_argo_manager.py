@@ -1,12 +1,20 @@
-"""Tests for ArgoManager.wait_for_application_synced."""
+"""Tests for ArgoManager.wait_for_application_synced and ArgoConnector.refresh_application."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.connectors.argo import ArgoConnector
 from opi.manager.argo_manager import ArgoManager
 
 
-def _make_status(sync: str, health: str, operation_phase: str | None = None, operation_message: str = "") -> dict:
+def _make_status(
+    sync: str,
+    health: str,
+    operation_phase: str | None = None,
+    operation_message: str = "",
+    reconciled_at: str | None = None,
+) -> dict:
     """Build a minimal ArgoCD application status dict."""
     status: dict = {
         "status": {
@@ -19,6 +27,8 @@ def _make_status(sync: str, health: str, operation_phase: str | None = None, ope
             "phase": operation_phase,
             "message": operation_message,
         }
+    if reconciled_at:
+        status["status"]["reconciledAt"] = reconciled_at
     return status
 
 
@@ -154,3 +164,183 @@ class TestWaitForApplicationSynced:
             await argo_manager.wait_for_application_synced("my-app", timeout=10, poll_interval=1)
 
         mock_connector.get_application_status.assert_not_called()
+
+
+class TestStaleStatusProtection:
+    """Tests for the refreshed_after parameter that prevents acting on stale status."""
+
+    @pytest.mark.asyncio
+    async def test_degraded_ignored_while_status_is_stale(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Should not raise on Degraded when reconciledAt hasn't moved past refreshed_after."""
+        mock_connector.get_application_status = AsyncMock(
+            side_effect=[
+                # First poll: stale Degraded (reconciledAt == refreshed_after)
+                _make_status("Synced", "Degraded", reconciled_at="2026-03-17T10:00:00Z"),
+                # Second poll: fresh and healthy
+                _make_status("Synced", "Healthy", reconciled_at="2026-03-17T10:01:00Z"),
+            ]
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await argo_manager.wait_for_application_synced(
+                "my-app", timeout=30, poll_interval=2, refreshed_after="2026-03-17T10:00:00Z"
+            )
+
+        assert result is True
+        assert mock_connector.get_application_status.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_degraded_raised_once_status_is_fresh(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Should raise on Degraded once reconciledAt has moved past refreshed_after."""
+        mock_connector.get_application_status = AsyncMock(
+            return_value=_make_status("Synced", "Degraded", reconciled_at="2026-03-17T10:02:00Z"),
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            pytest.raises(RuntimeError, match="is degraded"),
+        ):
+            await argo_manager.wait_for_application_synced(
+                "my-app", timeout=10, poll_interval=1, refreshed_after="2026-03-17T10:00:00Z"
+            )
+
+    @pytest.mark.asyncio
+    async def test_sync_failed_ignored_while_stale(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Should not raise on Failed operationState when status is stale."""
+        mock_connector.get_application_status = AsyncMock(
+            side_effect=[
+                # Stale Failed status
+                _make_status(
+                    "OutOfSync",
+                    "Progressing",
+                    operation_phase="Failed",
+                    operation_message="old error",
+                    reconciled_at="2026-03-17T10:00:00Z",
+                ),
+                # Fresh and healthy
+                _make_status("Synced", "Healthy", reconciled_at="2026-03-17T10:01:00Z"),
+            ]
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await argo_manager.wait_for_application_synced(
+                "my-app", timeout=30, poll_interval=2, refreshed_after="2026-03-17T10:00:00Z"
+            )
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_no_refreshed_after_preserves_existing_behavior(
+        self, argo_manager: ArgoManager, mock_connector: AsyncMock
+    ):
+        """Without refreshed_after, Degraded should raise immediately (backwards compat)."""
+        mock_connector.get_application_status = AsyncMock(
+            return_value=_make_status("Synced", "Degraded"),
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            pytest.raises(RuntimeError, match="is degraded"),
+        ):
+            await argo_manager.wait_for_application_synced("my-app", timeout=10, poll_interval=1)
+
+    @pytest.mark.asyncio
+    async def test_stale_then_fresh_degraded(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Should skip stale Degraded, then raise once fresh Degraded arrives."""
+        mock_connector.get_application_status = AsyncMock(
+            side_effect=[
+                # Stale Degraded
+                _make_status("Synced", "Degraded", reconciled_at="2026-03-17T10:00:00Z"),
+                # Fresh but still Degraded
+                _make_status("Synced", "Degraded", reconciled_at="2026-03-17T10:01:00Z"),
+            ]
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(RuntimeError, match="is degraded"),
+        ):
+            await argo_manager.wait_for_application_synced(
+                "my-app", timeout=30, poll_interval=2, refreshed_after="2026-03-17T10:00:00Z"
+            )
+
+
+class TestRefreshApplicationReturnsReconciledAt:
+    """Tests for ArgoConnector.refresh_application returning reconciledAt."""
+
+    @pytest.fixture
+    def connector(self) -> ArgoConnector:
+        return ArgoConnector(server_host="localhost", server_port=8080, username="admin", password="admin")
+
+    @pytest.mark.asyncio
+    async def test_returns_reconciled_at_on_success(self, connector: ArgoConnector):
+        """Should parse and return reconciledAt from the refresh response."""
+        response_body = json.dumps(
+            {
+                "status": {
+                    "reconciledAt": "2026-03-17T10:54:33Z",
+                    "sync": {"status": "Synced"},
+                    "health": {"status": "Healthy"},
+                }
+            }
+        )
+
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, response_body)
+        ):
+            result = await connector.refresh_application("my-app")
+
+        assert result == "2026-03-17T10:54:33Z"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_failure(self, connector: ArgoConnector):
+        """Should return None when the refresh API call fails."""
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(500, "error")
+        ):
+            result = await connector.refresh_application("my-app")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_exception(self, connector: ArgoConnector):
+        """Should return None when the request raises an exception."""
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=Exception("connection error")
+        ):
+            result = await connector.refresh_application("my-app")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_reconciled_at_missing(self, connector: ArgoConnector):
+        """Should return None when the response has no reconciledAt field."""
+        response_body = json.dumps({"status": {"sync": {"status": "Synced"}}})
+
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, response_body)
+        ):
+            result = await connector.refresh_application("my-app")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_truthiness_for_existing_callers(self, connector: ArgoConnector):
+        """Callers that do `if not await refresh_application(...)` should still work."""
+        response_body = json.dumps({"status": {"reconciledAt": "2026-03-17T10:00:00Z"}})
+
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, response_body)
+        ):
+            result = await connector.refresh_application("my-app")
+
+        # String is truthy, so `if not result` is False — same as old `True` return
+        assert result
+        assert result

@@ -347,8 +347,8 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
                         "path": "/",
                         "ports": {"inbound": [8080], "outbound": [80, 443]},
                         "resources": {
-                            "cpu": {"request": "50m", "limit": "1"},
-                            "memory": {"request": "256Mi", "limit": "512Mi"},
+                            "requests": {"cpu": "50m", "memory": "256Mi"},
+                            "limits": {"cpu": "1", "memory": "512Mi"},
                         },
                     },
                 ],
@@ -861,7 +861,9 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # Forward navigation: run section-level enforcer for cross-field validation
     if is_forward and section.enforcer:
-        global_errors = await processor.enforce_sections(submitted_yaml, [section], enforcer_context)
+        global_errors = await processor.enforce_sections(
+            submitted_yaml, [section], enforcer_context, field_errors=errors
+        )
 
         # CENTRALIZED VALIDATION LOGGING - section-level (enforcer) validation
         if global_errors:
@@ -1826,19 +1828,30 @@ async def _do_submit(
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
     # Cross-section enforcement
-    global_errors = await processor.enforce_sections(yaml_data, active_sections, enforcer_context=enforcer_context)
-    if global_errors:
-        logger.warning("Section enforcement failed: %s", global_errors)
-        first_section = active_sections[0]
-        state.current_step = first_section.section_id
+    enforce_field_errors: dict[str, list[str]] = {}
+    global_errors = await processor.enforce_sections(
+        yaml_data, active_sections, enforcer_context=enforcer_context, field_errors=enforce_field_errors
+    )
+    if global_errors or enforce_field_errors:
+        logger.warning("Section enforcement failed: global=%s field=%s", global_errors, enforce_field_errors)
+        # Find the section that owns the first field error
+        error_section = active_sections[0]
+        if enforce_field_errors:
+            for section in active_sections:
+                section_paths = _collect_all_editable_paths(section.editables)
+                if _section_has_errors(section_paths, enforce_field_errors):
+                    error_section = section
+                    break
+        state.current_step = error_section.section_id
         save_wizard_state(request, state)
 
-        step_html = _render_step_html(first_section, yaml_data=yaml_data)
+        step_html = _render_step_html(error_section, yaml_data=yaml_data, errors=enforce_field_errors)
         context = _build_step_context(
             request,
             flow_id,
-            first_section,
+            error_section,
             step_html,
+            errors=enforce_field_errors,
             global_errors=global_errors,
         )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)

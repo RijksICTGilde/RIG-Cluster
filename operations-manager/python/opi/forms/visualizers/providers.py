@@ -233,27 +233,53 @@ class CpuLimitOptionsProvider:
         ]
 
 
-class MemoryRequestOptionsProvider:
-    """Provides memory request options for components."""
+MEMORY_STEPS: list[tuple[str, str]] = [
+    ("32Mi", "32 MB"),
+    ("64Mi", "64 MB"),
+    ("96Mi", "96 MB"),
+    ("128Mi", "128 MB"),
+    ("256Mi", "256 MB"),
+    ("512Mi", "512 MB"),
+    ("768Mi", "768 MB"),
+    ("1Gi", "1 GB"),
+]
+
+
+class MemoryOptionsProvider:
+    """Provides memory options for components (shared for request and limit).
+
+    If *current_value* is set and not in the standard steps, it is inserted
+    at the correct sorted position so the dropdown always contains the
+    value currently stored in the project file (e.g. tuner-assigned values).
+    """
+
+    def __init__(self, current_value: str | None = None) -> None:
+        self.current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available memory request options."""
-        return [
-            {"value": "256Mi", "label": "256 MB"},
-            {"value": "512Mi", "label": "512 MB"},
-        ]
+        options = [{"value": v, "label": lbl} for v, lbl in MEMORY_STEPS]
 
+        if self.current_value and not any(o["value"] == self.current_value for o in options):
+            from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 
-class MemoryLimitOptionsProvider:
-    """Provides memory limit options for components."""
+            try:
+                current_mi = parse_k8s_memory_to_mi(self.current_value)
+            except ValueError:
+                return options
 
-    def get_options(self) -> list[dict[str, Any]]:
-        """Get available memory limit options."""
-        return [
-            {"value": "512Mi", "label": "512 MB"},
-            {"value": "768Mi", "label": "768 MB"},
-            {"value": "1Gi", "label": "1 GB"},
-        ]
+            label = f"{int(current_mi)} MB" if current_mi == int(current_mi) else f"{current_mi:.1f} MB"
+            new_option = {"value": self.current_value, "label": label}
+
+            # Insert at sorted position
+            step_mis = [parse_k8s_memory_to_mi(v) for v, _ in MEMORY_STEPS]
+            insert_idx = len(options)
+            for i, step_mi in enumerate(step_mis):
+                if current_mi < step_mi:
+                    insert_idx = i
+                    break
+            options.insert(insert_idx, new_option)
+
+        return options
 
 
 class DomainModeOptionsProvider:
@@ -571,8 +597,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "UserRoleOptionsProvider": UserRoleOptionsProvider,
     "CpuRequestOptionsProvider": CpuRequestOptionsProvider,
     "CpuLimitOptionsProvider": CpuLimitOptionsProvider,
-    "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
-    "MemoryLimitOptionsProvider": MemoryLimitOptionsProvider,
+    "MemoryOptionsProvider": MemoryOptionsProvider,
     "DomainModeOptionsProvider": DomainModeOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,

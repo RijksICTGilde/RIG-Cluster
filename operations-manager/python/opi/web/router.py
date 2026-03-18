@@ -549,6 +549,70 @@ async def delete_component_web(request: Request, project_name: str, component_na
         return JSONResponse(content={"error": f"Fout bij verwijderen van component: {e!s}"}, status_code=500)
 
 
+@web_router.post("/projects/{project_name}/refresh", response_class=HTMLResponse)
+@requires_sso
+async def refresh_project_web(request: Request, project_name: str) -> HTMLResponse:
+    """Reprocess a project from Git via web interface.
+
+    Kicks off a background task that detects changes in the project file,
+    creates new deployments, removes deleted ones, and reconciles services.
+    Returns a task progress fragment with HTMX polling.
+    """
+    from opi.core.simple_background import refresh_project_background
+    from opi.core.task_manager import create_task, update_progress
+    from opi.services.project_service import get_project_service
+
+    templates = get_templates()
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    logger.info(f"Web project refresh request for '{project_name}' by user: {user_email}")
+
+    project_service = get_project_service()
+
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = project_service.get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen een project herverwerken. Uw rol: {user_role}",
+        )
+
+    project = project_service.get_project(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+
+    task_id = create_task(project_name)
+    update_progress(task_id, 0, "Project herverwerken gestart...")
+
+    task = asyncio.create_task(
+        refresh_project_background(task_id, project_name, f"projects/{project.filename}"),
+        name=f"refresh-{project_name}",
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    context = {
+        "task_id": task_id,
+        "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
+        "progress": 0,
+        "current_step": "Project herverwerken gestart...",
+        "tasks": [],
+        "status": "running",
+        "success_message": "Project succesvol herverwerkt!",
+        "on_complete": "location.reload()",
+    }
+
+    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    return HTMLResponse(content=rendered)
+
+
 @web_router.get("/test-architecture", response_class=HTMLResponse)
 @requires_sso
 async def test_architecture(request: Request):
@@ -3010,7 +3074,7 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
 async def tune_deployment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Start resource tuning as a background task and return progress fragment."""
     from opi.core.startup import ensure_projects_fresh
-    from opi.core.task_manager import complete_task, create_task, fail_task, update_progress
+    from opi.core.task_manager import create_task
     from opi.services.project_service import get_project_service
     from opi.services.resource_tuning_service import tune_deployment_resources
 
@@ -3025,18 +3089,34 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
         raise HTTPException(status_code=403, detail="Not authorized")
 
     task_id = create_task(project_name)
-    update_progress(task_id, 0, "Resource tuning gestart...")
+
+    from opi.core.task_manager import TaskProgressManager
+
+    progress = TaskProgressManager(task_id, project_name)
+    metrics_task = progress.add_task("Prometheus metrics ophalen")
 
     async def _run_tune() -> None:
         try:
-            update_progress(task_id, 25, "Prometheus metrics ophalen...")
             result = await tune_deployment_resources(project_name, deployment_name)
-            msg = f"{len(result.changes)} component(s) aangepast" if result.changes else "Geen aanpassingen nodig"
-            update_progress(task_id, 100, msg)
-            complete_task(task_id, {"changes": len(result.changes)})
+            progress.complete_task(metrics_task)
+
+            if result.changes:
+                for c in result.changes:
+                    change_task = progress.add_task(
+                        f"{c['component']} ({c['deployment']}): "
+                        f"{c['previous_limits_memory']} \u2192 {c['new_limits_memory']}"
+                    )
+                    progress.complete_task(change_task)
+                progress.update_current_step(f"{len(result.changes)} component(s) aangepast")
+            else:
+                no_change = progress.add_task("Geen aanpassingen nodig")
+                progress.complete_task(no_change)
+                progress.update_current_step("Resources zijn al optimaal")
+
+            progress.complete_project()
         except Exception as e:
             logger.error(f"Tune task failed for {project_name}/{deployment_name}: {e}")
-            fail_task(task_id, str(e))
+            progress.fail_project(str(e))
 
     task = asyncio.create_task(_run_tune(), name=f"tune-{project_name}-{deployment_name}")
     _background_tasks.add(task)

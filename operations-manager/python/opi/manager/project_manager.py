@@ -5,6 +5,7 @@ Processing means it can create, update, or delete any resources defined in a pro
 
 import asyncio
 import contextlib
+import copy
 import glob
 import logging
 import os
@@ -1217,6 +1218,7 @@ class ProjectManager:
         yaml.default_flow_style = False
         yaml.preserve_quotes = True
         yaml.width = 4096
+        yaml.representer.ignore_aliases = lambda *_: True
 
         with open(project_full_file_path, "w") as f:
             yaml.dump(await self.get_contents(), f)
@@ -1895,7 +1897,8 @@ class ProjectManager:
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
 
             # STEP 9: Refresh the infrastructure application to ensure it picks up latest changes
-            if not await argo_connector.refresh_application(infra_app_name):
+            infra_reconciled_at = await argo_connector.refresh_application(infra_app_name)
+            if not infra_reconciled_at:
                 raise RuntimeError(f"Failed to refresh ArgoCD infrastructure application '{infra_app_name}'")
 
             logger.info(f"Infrastructure application '{infra_app_name}' refreshed successfully")
@@ -1912,6 +1915,7 @@ class ProjectManager:
                 project_name=project_name,
                 cluster_name=cluster_name,
                 timeout=600,  # 10 minutes timeout
+                refreshed_after=infra_reconciled_at,
             )
 
             logger.info(f"Infrastructure is ready for project '{project_name}'")
@@ -2232,11 +2236,11 @@ class ProjectManager:
                         continue  # Skip apps that failed to be created
 
                     try:
-                        await argo_connector.refresh_application(app_name)
+                        reconciled_at = await argo_connector.refresh_application(app_name)
                         if progress_manager and argo_task:
                             progress_manager.update_task(argo_task, f"Waiting for {app_name} to sync")
                         await self._argo_manager.wait_for_application_synced(
-                            app_name=app_name, timeout=300, poll_interval=5
+                            app_name=app_name, timeout=300, poll_interval=5, refreshed_after=reconciled_at
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
                     except TimeoutError:
@@ -5371,7 +5375,11 @@ class ProjectManager:
                             "issuer",
                         ]
                         new_deployment.update(
-                            {key: value for key, value in source_deployment.items() if key not in clone_exclude_keys}
+                            {
+                                key: copy.deepcopy(value)
+                                for key, value in source_deployment.items()
+                                if key not in clone_exclude_keys
+                            }
                         )
 
                         # When the source's subdomain matches its deployment name, it means

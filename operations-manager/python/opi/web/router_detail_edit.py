@@ -8,6 +8,7 @@ to drive multi-step edit flows within the modal.
 from __future__ import annotations
 
 import logging
+import re
 from io import StringIO
 from typing import Any
 
@@ -339,7 +340,10 @@ def _render_modal_step(
     """Render the modal wizard step template and return processed HTML."""
     state = get_modal_wizard_state(request)
     if not state:
-        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+        raise HTTPException(
+            status_code=400,
+            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
+        )
 
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     active_sections = resolve_active_sections(flow, state.step_data)
@@ -368,7 +372,30 @@ def _render_modal_step(
     return rendered
 
 
-def _start_deployment(project_name: str, result_yaml: dict[str, Any]) -> tuple[str, BackgroundTask]:
+_DEPLOYMENT_FLOW_RE = re.compile(r"^modal-(?:edit|add)-(?:deployment|domain)-(\d+)$")
+
+
+def _extract_deployment_name_from_flow(flow_id: str, project_data: dict[str, Any]) -> str | None:
+    """Extract the targeted deployment name from a deployment-scoped flow_id.
+
+    Returns the deployment name if the flow targets a specific deployment,
+    or None for project-wide flows (components, services, etc.).
+    """
+    match = _DEPLOYMENT_FLOW_RE.match(flow_id)
+    if not match:
+        return None
+    index = int(match.group(1))
+    deployments = project_data.get("deployments", [])
+    if index < len(deployments):
+        name = deployments[index].get("name")
+        if name:
+            return name
+    return None
+
+
+def _start_deployment(
+    project_name: str, result_yaml: dict[str, Any], deployment_name: str | None = None
+) -> tuple[str, BackgroundTask]:
     """Create a background deployment task. Returns (task_id, background_task)."""
     from opi.core.task_manager import create_task
 
@@ -384,7 +411,9 @@ def _start_deployment(project_name: str, result_yaml: dict[str, Any]) -> tuple[s
 
     from opi.core.simple_background import process_project_yaml_background
 
-    bg_task = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
+    bg_task = BackgroundTask(
+        process_project_yaml_background, task_id, project_name, yaml_content, deployment_name=deployment_name
+    )
     return task_id, bg_task
 
 
@@ -498,8 +527,14 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # Pre-fill step data from existing project
     step_data = _split_data_across_sections(flow, project_data)
 
-    # Resolve active sections with pre-filled data
-    active_section_ids = resolve_active_section_ids(flow, step_data)
+    # Resolve active sections with pre-filled data.
+    # For single-section edit flows the section's visibility lambda may not
+    # have the full project context (e.g. services list).  The edit button
+    # already guards visibility, so treat all sections as active.
+    if len(flow.sections) == 1:
+        active_section_ids = [flow.sections[0].section_id]
+    else:
+        active_section_ids = resolve_active_section_ids(flow, step_data)
     if not active_section_ids:
         raise HTTPException(status_code=500, detail="Geen stappen gevonden")
 
@@ -528,6 +563,14 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         state.template_data["existing_component_names"] = [
             c.get("name") for c in existing_components if isinstance(c, dict) and c.get("name")
         ]
+
+    # Service config edit flows need the services list so devirtualize
+    # can merge virtual keys back into the real list structure.
+    # Without it, smart_get_value fails because it expects a list, not a dict.
+    if flow_id.startswith(
+        ("modal-edit-services", "modal-edit-keycloak", "modal-edit-postgresql", "modal-edit-auth-wall")
+    ):
+        state.template_data["services"] = project_data.get("services", [])
 
     # Component edit flows need project-level services and deployments
     if flow_id.startswith("modal-edit-component-"):
@@ -575,7 +618,10 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != flow_id:
-        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+        raise HTTPException(
+            status_code=400,
+            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
+        )
 
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     section = _get_section_from_flow(flow, section_id)
@@ -602,7 +648,11 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != flow_id:
-        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+        logger.warning("Modal wizard session lost for %s/%s (step=%s)", project_name, flow_id, section_id)
+        raise HTTPException(
+            status_code=400,
+            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
+        )
 
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     section = _get_section_from_flow(flow, section_id)
@@ -706,6 +756,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
                 submitted_yaml,
                 [section],
                 enforcer_context=enforcer_ctx,
+                field_errors=errors,
             )
 
         if errors or section_global_errors:
@@ -786,7 +837,10 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != flow_id:
-        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+        raise HTTPException(
+            status_code=400,
+            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
+        )
 
     return await _modal_do_submit(request, project_name, flow_id)
 
@@ -802,7 +856,10 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != flow_id:
-        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+        raise HTTPException(
+            status_code=400,
+            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
+        )
 
     return await _modal_do_submit(request, project_name, flow_id)
 
@@ -818,7 +875,10 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != "modal-backup":
-        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+        raise HTTPException(
+            status_code=400,
+            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
+        )
 
     selected = request.query_params.get("deployment_name", "")
     if state.template_data:
@@ -845,7 +905,10 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
 
     state = get_modal_wizard_state(request)
     if not state or state.flow_id != "modal-restore":
-        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+        raise HTTPException(
+            status_code=400,
+            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
+        )
 
     restore_mode = request.query_params.get("restore_mode", "existing")
     if state.template_data:
@@ -934,10 +997,17 @@ async def _modal_do_submit(
 
     state = get_modal_wizard_state(request)
     if not state:
-        raise HTTPException(status_code=400, detail="Geen modal wizard sessie gevonden")
+        raise HTTPException(
+            status_code=400,
+            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
+        )
 
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
-    active_sections = resolve_active_sections(flow, state.step_data)
+
+    # Single-section flows: the visibility lambda may not have full context
+    # (e.g. keycloak-config checks for keycloak in services, but step_data
+    # only has the virtual key).  The edit button already guards visibility.
+    active_sections = flow.sections if len(flow.sections) == 1 else resolve_active_sections(flow, state.step_data)
 
     # Determine post-save action
     action = _determine_flow_action(flow, active_sections)
@@ -1018,8 +1088,19 @@ async def _modal_do_submit(
     logger.info("Project %s updated via modal wizard (flow=%s)", project_name, flow_id)
 
     if action == "process_project":
-        task_id, bg_task = _start_deployment(project_name, existing_data)
-        logger.info("Starting background processing for %s (task=%s, flow=%s)", project_name, task_id, flow_id)
+        # Extract targeted deployment name from flow_id when editing a specific deployment
+        target_deployment_name = _extract_deployment_name_from_flow(flow_id, existing_data)
+        task_id, bg_task = _start_deployment(project_name, existing_data, deployment_name=target_deployment_name)
+        if target_deployment_name:
+            logger.info(
+                "Starting targeted deployment for %s/%s (task=%s, flow=%s)",
+                project_name,
+                target_deployment_name,
+                task_id,
+                flow_id,
+            )
+        else:
+            logger.info("Starting full project processing for %s (task=%s, flow=%s)", project_name, task_id, flow_id)
 
         rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
             {"task_id": task_id, "project_name": project_name}

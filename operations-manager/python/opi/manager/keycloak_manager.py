@@ -195,7 +195,7 @@ class KeycloakManager:
                 keycloak_secret = KeycloakSecret(
                     client_id=keycloak_credentials["client_id"],
                     client_secret=keycloak_credentials["client_secret"],
-                    public_client_id=keycloak_credentials["public_client_id"],
+                    public_client_id=keycloak_credentials.get("public_client_id", ""),
                     discovery_url=keycloak_credentials.get("discovery_url", ""),
                     base_url=keycloak_credentials["base_url"],
                     realm=keycloak_credentials["realm"],
@@ -967,6 +967,7 @@ class KeycloakManager:
             credentials = {
                 "client_id": client_info["client_id"],
                 "client_secret": client_info["client_secret"],
+                "public_client_id": client_info.get("public_client_id", ""),
                 "discovery_url": realm_discovery_url,
                 "base_url": keycloak_url,
                 "realm": realm_name,

@@ -586,3 +586,148 @@ class TestPopulateVirtMappings:
         state = WizardState(flow_id="test", current_step="x", active_sections=[])
         state.populate_virt_mappings(MODAL_EDIT_TEAM_FLOW.sections)
         assert state.virt_mappings == {}
+
+
+# ===========================================================================
+# Standalone service config edit flow tests
+#
+# These test the single-section edit flows (keycloak, postgresql, auth-wall)
+# that are opened from the project detail page. They previously had three
+# independent bugs:
+#   1. Display values missing (devirtualize produced dict, not list)
+#   2. post_save_action defaulted to "save_only" (no project refresh)
+#   3. Visibility lambda failed at save time (section not in active_sections)
+# ===========================================================================
+
+
+class TestStandaloneKeycloakEditFlow:
+    """Test the standalone keycloak config edit flow (modal-edit-keycloak-config)."""
+
+    @pytest.fixture
+    def keycloak_flow(self):
+        from opi.forms.visualizers.flows import MODAL_EDIT_KEYCLOAK_FLOW
+
+        return MODAL_EDIT_KEYCLOAK_FLOW
+
+    @pytest.fixture
+    def project_data(self) -> dict[str, Any]:
+        return {
+            "display-name": "Test Project",
+            "services": [
+                copy.deepcopy(KEYCLOAK_CONFIG),
+                "publish-on-web",
+            ],
+            "config": {"age-public-key": "age1xxx"},
+        }
+
+    def test_split_populates_virtual_key(self, keycloak_flow, project_data):
+        """_split_data_across_sections should populate _services-config for keycloak."""
+        step_data = _split_data_across_sections(keycloak_flow, project_data)
+        assert "keycloak-config" in step_data
+        assert "_services-config" in step_data["keycloak-config"]
+        assert "keycloak" in step_data["keycloak-config"]["_services-config"]
+
+    def test_merged_data_with_template_services_produces_list(self, keycloak_flow, project_data):
+        """get_merged_data must produce services as a list, not a dict.
+
+        When template_data includes the services list, devirtualize should
+        merge virtual config back into the list. Without the list in
+        template_data, devirtualize falls back to a dict which breaks
+        smart_get_value.
+        """
+        step_data = _split_data_across_sections(keycloak_flow, project_data)
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data=step_data,
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        # Simulate what router_detail_edit does: seed services in template_data
+        state.template_data = {"services": copy.deepcopy(project_data["services"])}
+
+        merged = state.get_merged_data()
+
+        assert "services" in merged
+        assert isinstance(merged["services"], list), (
+            f"services should be a list after devirtualize, got {type(merged['services'])}"
+        )
+
+    def test_merged_data_without_template_services_produces_dict(self, keycloak_flow, project_data):
+        """Without services in template_data, devirtualize produces a dict.
+
+        This documents the bug that existed before the fix: smart_get_value
+        expects a list and returns None for all fields.
+        """
+        step_data = _split_data_across_sections(keycloak_flow, project_data)
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data=step_data,
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        # No template_data with services — the old buggy path
+
+        merged = state.get_merged_data()
+
+        # Documents the problematic fallback behavior
+        if "services" in merged:
+            assert isinstance(merged["services"], dict), (
+                "Without template_data services, devirtualize should produce a dict (the bug)"
+            )
+
+    def test_smart_get_value_works_with_list(self, keycloak_flow, project_data):
+        """smart_get_value should find keycloak config when services is a list."""
+        from opi.forms.editables.service_path import smart_get_value
+
+        step_data = _split_data_across_sections(keycloak_flow, project_data)
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data=step_data,
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        state.template_data = {"services": copy.deepcopy(project_data["services"])}
+
+        merged = state.get_merged_data()
+
+        # This is what the bridge does to read display values
+        template_value = smart_get_value(merged, "services/keycloak/config/template")
+        assert template_value == "sso-support"
+
+        restrict_value = smart_get_value(merged, "services/keycloak/config/restrict-access/enabled")
+        assert restrict_value is True
+
+    def test_post_save_action_is_process_project(self, keycloak_flow):
+        """Keycloak config section should trigger process_project, not save_only."""
+        section = keycloak_flow.sections[0]
+        assert section.post_save_action == "process_project", (
+            f"Expected 'process_project', got '{section.post_save_action}'"
+        )
+
+    def test_determine_flow_action_returns_process_project(self, keycloak_flow):
+        """_determine_flow_action should return process_project for keycloak edit."""
+        from opi.web.router_detail_edit import _determine_flow_action
+
+        # When active_sections contains the keycloak section
+        action = _determine_flow_action(keycloak_flow, keycloak_flow.sections)
+        assert action == "process_project"
+
+
+class TestStandalonePostgresqlEditFlow:
+    """Test the standalone postgresql config edit flow."""
+
+    def test_post_save_action_is_process_project(self):
+        from opi.forms.visualizers.flows import MODAL_EDIT_POSTGRESQL_FLOW
+
+        section = MODAL_EDIT_POSTGRESQL_FLOW.sections[0]
+        assert section.post_save_action == "process_project"
+
+
+class TestStandaloneAuthWallEditFlow:
+    """Test the standalone auth-wall config edit flow."""
+
+    def test_post_save_action_is_process_project(self):
+        from opi.forms.visualizers.flows import MODAL_EDIT_AUTH_WALL_FLOW
+
+        section = MODAL_EDIT_AUTH_WALL_FLOW.sections[0]
+        assert section.post_save_action == "process_project"

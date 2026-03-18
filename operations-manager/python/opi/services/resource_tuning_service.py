@@ -411,16 +411,13 @@ async def tune_deployment_resources(
             )
 
             # Update base component definition so new deployments inherit
-            # a known-good starting point.
+            # a realistic starting point. The OOM watcher will bump up any
+            # deployment that actually needs more memory.
             base_resources = file_handler.extract_component_resources(project_data, component_ref)
-            base_request_mb = _k8s_memory_to_mb(base_resources["requests_memory"])
-            base_limit_mb = _k8s_memory_to_mb(base_resources["limits_memory"])
-            new_request_mb = _k8s_memory_to_mb(analysis.new_request)
-            new_limit_mb = _k8s_memory_to_mb(analysis.new_limit)
             base_updates: dict[str, str] = {}
-            if new_request_mb > base_request_mb:
+            if analysis.new_request != base_resources["requests_memory"]:
                 base_updates["requests_memory"] = analysis.new_request
-            if new_limit_mb > base_limit_mb or ("requests_memory" in base_updates and base_limit_mb < new_request_mb):
+            if analysis.new_limit != base_resources["limits_memory"]:
                 base_updates["limits_memory"] = analysis.new_limit
             if base_updates:
                 file_handler.set_component_resources(project_data, component_ref, base_updates)

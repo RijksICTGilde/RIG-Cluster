@@ -89,6 +89,32 @@ def _parse_resources_block_partial(raw: dict | None) -> dict[str, str]:
     return result
 
 
+def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> None:
+    """Write flat resource keys into a nested resources block.
+
+    Ensures the ``requests``/``limits`` structure exists, applies values,
+    and removes the legacy ``memory`` sub-dict (which used ``request``/``limit``
+    keys) to prevent dual-format entries.
+    """
+    if "resources" not in target:
+        target["resources"] = {}
+    res = target["resources"]
+    if "requests" not in res:
+        res["requests"] = {}
+    if "limits" not in res:
+        res["limits"] = {}
+    if "requests_memory" in resources:
+        res["requests"]["memory"] = resources["requests_memory"]
+    if "requests_cpu" in resources:
+        res["requests"]["cpu"] = resources["requests_cpu"]
+    if "limits_memory" in resources:
+        res["limits"]["memory"] = resources["limits_memory"]
+    if "limits_cpu" in resources:
+        res["limits"]["cpu"] = resources["limits_cpu"]
+    # Remove legacy format (memory/request, memory/limit)
+    res.pop("memory", None)
+
+
 class ProjectFileHandler:
     """Handler for project file operations including reading, parsing, and change detection."""
 
@@ -908,32 +934,13 @@ class ProjectFileHandler:
         Modifies project_data in place. The resources dict uses flat keys
         (requests_memory, requests_cpu, limits_memory, limits_cpu).
 
-        Args:
-            project_data: The parsed project data (modified in place)
-            component_name: Name of the component
-            resources: Flat dict with resource values
-
         Returns:
             True if the component was found and updated, False otherwise
         """
         components = project_data.get("components", [])
         for comp in components:
             if comp.get("name") == component_name:
-                if "resources" not in comp:
-                    comp["resources"] = {}
-                res = comp["resources"]
-                if "requests" not in res:
-                    res["requests"] = {}
-                if "limits" not in res:
-                    res["limits"] = {}
-                if "requests_memory" in resources:
-                    res["requests"]["memory"] = resources["requests_memory"]
-                if "requests_cpu" in resources:
-                    res["requests"]["cpu"] = resources["requests_cpu"]
-                if "limits_memory" in resources:
-                    res["limits"]["memory"] = resources["limits_memory"]
-                if "limits_cpu" in resources:
-                    res["limits"]["cpu"] = resources["limits_cpu"]
+                _apply_flat_resources(comp, resources)
                 logger.info(f"Updated resources for component '{component_name}': {resources}")
                 return True
         logger.warning(f"Component '{component_name}' not found for resource update")
@@ -952,12 +959,6 @@ class ProjectFileHandler:
         Modifies project_data in place. The resources dict uses flat keys
         (requests_memory, requests_cpu, limits_memory, limits_cpu).
 
-        Args:
-            project_data: The parsed project data (modified in place)
-            deployment_name: Name of the deployment
-            component_reference: Reference name of the component
-            resources: Flat dict with resource values
-
         Returns:
             True if the deployment component was found and updated, False otherwise
         """
@@ -969,21 +970,7 @@ class ProjectFileHandler:
             for comp in components:
                 if comp.get("reference") != component_reference:
                     continue
-                if "resources" not in comp:
-                    comp["resources"] = {}
-                res = comp["resources"]
-                if "requests" not in res:
-                    res["requests"] = {}
-                if "limits" not in res:
-                    res["limits"] = {}
-                if "requests_memory" in resources:
-                    res["requests"]["memory"] = resources["requests_memory"]
-                if "requests_cpu" in resources:
-                    res["requests"]["cpu"] = resources["requests_cpu"]
-                if "limits_memory" in resources:
-                    res["limits"]["memory"] = resources["limits_memory"]
-                if "limits_cpu" in resources:
-                    res["limits"]["cpu"] = resources["limits_cpu"]
+                _apply_flat_resources(comp, resources)
                 logger.info(
                     f"Updated resources for component '{component_reference}' "
                     f"in deployment '{deployment_name}': {resources}"
@@ -2766,6 +2753,7 @@ def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
     yaml.preserve_quotes = True
     yaml.default_flow_style = False
     yaml.indent(mapping=2, sequence=4, offset=2)
+    yaml.representer.ignore_aliases = lambda *_: True
 
     with open(file_path, "w") as f:
         yaml.dump(project_data, f)

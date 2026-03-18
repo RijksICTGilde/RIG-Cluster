@@ -43,8 +43,18 @@
                         {% if component.resources %}
                         <div class="spec-item">
                             <strong>Resources:</strong>
-                            {% if component.resources.cpu %}CPU: {{ component.resources.cpu }}{% endif %}
-                            {% if component.resources.memory %}{% if component.resources.cpu %} | {% endif %}Memory: {{ component.resources.memory }}{% endif %}
+                            {% set req = component.resources.get('requests', {}) or {} %}
+                            {% set lim = component.resources.get('limits', {}) or {} %}
+                            {% if req.get('memory') or lim.get('memory') %}
+                                Memory: {{ req.get('memory', '?') }} / {{ lim.get('memory', '?') }}
+                            {% elif component.resources.memory is string %}
+                                Memory: {{ component.resources.memory }}
+                            {% endif %}
+                            {% if req.get('cpu') or lim.get('cpu') %}
+                                | CPU: {{ req.get('cpu', '?') }} / {{ lim.get('cpu', '?') }}
+                            {% elif component.resources.cpu is string %}
+                                | CPU: {{ component.resources.cpu }}
+                            {% endif %}
                         </div>
                         {% endif %}
 

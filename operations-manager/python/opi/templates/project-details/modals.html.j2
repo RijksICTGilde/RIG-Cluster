@@ -15,16 +15,26 @@
     <div style="padding: var(--rvo-space-xl);">
         <c-layout-flow gap="lg">
             <c-heading type="h3" id="danger-confirm-title"></c-heading>
-            <p id="danger-confirm-message"></p>
-            <div id="danger-confirm-error" style="display: none; color: var(--rvo-color-rood-600);"></div>
-            <div id="danger-confirm-progress" style="display: none;">
-                <p class="rvo-text--subtle">Bezig met verwijderen...</p>
+            <div id="danger-confirm-body">
+                <p id="danger-confirm-message"></p>
+                <div id="danger-confirm-error" style="display: none; color: var(--rvo-color-rood-600);"></div>
+                <div id="danger-confirm-progress" style="display: none;">
+                    <p class="rvo-text--subtle" id="danger-confirm-progress-text">Bezig...</p>
+                </div>
+                <c-layout-flow gap="sm" row="true" id="danger-confirm-actions">
+                    <c-button kind="secondary" label="Annuleren" @click="hideDangerConfirmation()" />
+                    <span id="danger-confirm-btn-delete">
+                        <c-button kind="warning" label="Verwijderen" showIcon="before" icon="verwijderen"
+                                  @click="executeDangerAction()" />
+                    </span>
+                    <span id="danger-confirm-btn-refresh" style="display: none;">
+                        <c-button kind="primary" label="Herverwerken" showIcon="before" icon="refresh"
+                                  hx-post="/projects/{{ project.name }}/refresh"
+                                  hx-target="#danger-confirm-body"
+                                  hx-swap="innerHTML" />
+                    </span>
+                </c-layout-flow>
             </div>
-            <c-layout-flow gap="sm" row="true" id="danger-confirm-actions">
-                <c-button kind="secondary" label="Annuleren" @click="hideDangerConfirmation()" />
-                <c-button kind="warning" label="Verwijderen" id="danger-confirm-btn" showIcon="before" icon="verwijderen"
-                          @click="executeDangerAction()" />
-            </c-layout-flow>
         </c-layout-flow>
     </div>
 </div>

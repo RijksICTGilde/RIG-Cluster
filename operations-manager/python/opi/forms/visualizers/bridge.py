@@ -83,8 +83,11 @@ def editable_to_form_field(
         attributes = dict(attributes or {})
         attributes["kv_format"] = detected_fmt
 
-    # 4. Resolve options
-    options = _resolve_options(options_provider_name, provider_context)
+    # 4. Resolve options (pass current value so providers can include tuner-set values)
+    option_context = dict(provider_context or {})
+    if raw_value is not None:
+        option_context.setdefault("current_value", str(raw_value))
+    options = _resolve_options(options_provider_name, option_context)
 
     # 5. Build HTMX attrs dict
     htmx_attrs: dict[str, str] = {}
