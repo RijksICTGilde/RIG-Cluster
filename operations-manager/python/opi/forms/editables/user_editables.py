@@ -2,7 +2,6 @@
 
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.validators import EmailValidator, MinMaxLengthValidator
-from opi.forms.layout import Column, Fieldset, Row
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
@@ -42,15 +41,8 @@ USER_SECTION = FormSection(
     section_id="user-details",
     title="Gebruiker",
     editables=[USER_EMAIL_VISUALIZER, USER_FULL_NAME_VISUALIZER],
-    layout=Fieldset(
-        legend="Gebruiker",
-        children=[
-            Row(
-                children=[
-                    Column("email", width=6),
-                    Column("full_name", width=6),
-                ]
-            ),
-        ],
-    ),
+    layout=[
+        "email",
+        "full_name",
+    ],
 )

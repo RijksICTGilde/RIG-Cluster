@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from asyncpg import UniqueViolationError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+
+if TYPE_CHECKING:
+    from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.database_pools import get_database_pool
@@ -127,9 +131,9 @@ async def create_user_form(request: Request) -> HTMLResponse:
     )
 
 
-@user_admin_router.post("/create", response_class=HTMLResponse)
+@user_admin_router.post("/create", response_model=None)
 @requires_sso
-async def create_user_submit(request: Request) -> HTMLResponse | RedirectResponse:
+async def create_user_submit(request: Request) -> Response:
     """Process the create user form."""
     user = _require_admin(request)
     form_data = await request.form()
@@ -217,9 +221,9 @@ async def edit_user_form(request: Request, user_id: str) -> HTMLResponse:
     )
 
 
-@user_admin_router.post("/{user_id}/edit", response_class=HTMLResponse)
+@user_admin_router.post("/{user_id}/edit", response_model=None)
 @requires_sso
-async def edit_user_submit(request: Request, user_id: str) -> HTMLResponse | RedirectResponse:
+async def edit_user_submit(request: Request, user_id: str) -> Response:
     """Process the edit user form."""
     user = _require_admin(request)
     service = _get_service()
@@ -286,9 +290,9 @@ async def edit_user_submit(request: Request, user_id: str) -> HTMLResponse | Red
     )
 
 
-@user_admin_router.post("/{user_id}/delete", response_class=HTMLResponse)
+@user_admin_router.post("/{user_id}/delete", response_model=None)
 @requires_sso
-async def delete_user(request: Request, user_id: str) -> RedirectResponse:
+async def delete_user(request: Request, user_id: str) -> Response:
     """Delete a user."""
     _require_admin(request)
     service = _get_service()
