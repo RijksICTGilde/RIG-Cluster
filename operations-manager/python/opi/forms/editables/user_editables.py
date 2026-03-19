@@ -25,14 +25,12 @@ USER_EMAIL_VISUALIZER = EditableVisualizer(
     editable=USER_EMAIL_EDITABLE,
     widget=WidgetType.TEXT,
     label="E-mailadres",
-    placeholder="gebruiker@example.nl",
 )
 
 USER_FULL_NAME_VISUALIZER = EditableVisualizer(
     editable=USER_FULL_NAME_EDITABLE,
     widget=WidgetType.TEXT,
     label="Volledige naam",
-    placeholder="Jan de Vries",
 )
 
 # --- Section ---
