@@ -126,15 +126,30 @@ class AsyncTaskService:
                 task_type,
             )
             if existing is not None:
-                logger.info(
-                    "Dedup: returning existing %s task %s for %s/%s (status=%s)",
-                    task_type,
-                    existing["id"],
-                    project_name,
-                    deployment_name,
-                    existing["status"],
-                )
-                return _row_to_dict(existing)
+                # Compare payloads: if the new request has different parameters
+                # (e.g. different image tag), create a new task that queues behind
+                # the running one.  Only dedup when the payload is identical.
+                existing_payload = existing["payload"]
+                if isinstance(existing_payload, str):
+                    existing_payload = json.loads(existing_payload)
+                if existing_payload == payload:
+                    logger.info(
+                        "Dedup: returning existing %s task %s for %s/%s (status=%s, identical payload)",
+                        task_type,
+                        existing["id"],
+                        project_name,
+                        deployment_name,
+                        existing["status"],
+                    )
+                    return _row_to_dict(existing)
+                else:
+                    logger.info(
+                        "Dedup: existing %s task %s for %s/%s has different payload, creating new queued task",
+                        task_type,
+                        existing["id"],
+                        project_name,
+                        deployment_name,
+                    )
 
             row = await conn.fetchrow(
                 """
@@ -177,11 +192,22 @@ class AsyncTaskService:
         conn = await self._pool.acquire()
         try:
             async with conn.transaction():
+                # Claim the next pending task, but skip tasks where another
+                # task for the same project/deployment is already in-flight.
+                # This prevents concurrent processing of the same deployment
+                # which could cause race conditions in git/ArgoCD operations.
                 row = await conn.fetchrow(
                     """
-                    SELECT id FROM async_tasks
-                    WHERE status = 'pending' AND cluster = $1
-                    ORDER BY created_at ASC
+                    SELECT id FROM async_tasks t
+                    WHERE t.status = 'pending' AND t.cluster = $1
+                      AND NOT EXISTS (
+                          SELECT 1 FROM async_tasks running
+                          WHERE running.project_name = t.project_name
+                            AND running.deployment_name IS NOT DISTINCT FROM t.deployment_name
+                            AND running.status IN ('claimed', 'running')
+                            AND running.id != t.id
+                      )
+                    ORDER BY t.created_at ASC
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
                     """,

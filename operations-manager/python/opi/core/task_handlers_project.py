@@ -294,14 +294,19 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         deploy_task = progress.add_task("Deployment processing")
         progress.update_current_step(f"Processing deployment '{deployment_name}'")
 
+        # ArgoCD Application/AppProject resources only change when a new
+        # deployment is created.  Image updates don't touch ArgoCD resources.
+        is_new_deployment = result.get("created", False)
+
         processing_result = await project_manager.process_project_from_git(
             project_file_relative_path,
             task_progress_manager=progress,
             deployment_name=deployment_name,
             force_clone=force_clone,
+            argocd_resources_changed=is_new_deployment,
         )
 
-        action = "created" if result.get("created") else "updated"
+        action = "created" if is_new_deployment else "updated"
 
         # Collect URLs from deployment results
         urls: dict[str, dict[str, Any]] = {}

@@ -45,10 +45,11 @@ class TestCustomDomainSelectConverter:
         self.converter = CustomDomainSelectConverter()
 
     def test_view_supported_domain_passes_through(self):
-        # Supported domains should pass through unchanged
+        # Supported domains should pass through unchanged (uses current cluster)
         from opi.connectors.subdomain import get_supported_base_domains
+        from opi.core.config import settings
 
-        supported = get_supported_base_domains()
+        supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
         if supported:
             domain = next(iter(supported))
             assert self.converter.view(domain) == domain
@@ -189,8 +190,9 @@ class TestProcessorPopulateDeferred:
         processor = EditableFormProcessor()
 
         from opi.connectors.subdomain import get_supported_base_domains
+        from opi.core.config import settings
 
-        supported = get_supported_base_domains()
+        supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
         if not supported:
             pytest.skip("No supported domains configured")
 
@@ -256,12 +258,20 @@ class TestSequenceDeferral:
 
     def test_populate_deferred_in_sequence(self):
         """Populate works per-item in a sequence."""
+        from opi.connectors.subdomain import get_supported_base_domains
+        from opi.core.config import settings
+
+        supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
+        if not supported:
+            pytest.skip("No supported domains configured")
+        supported_domain = next(iter(supported))
+
         editables = _make_sequence_pair()
         processor = EditableFormProcessor()
         data = {
             "deployments": [
                 {"base-domain": "custom1.nl"},
-                {"base-domain": "rijksapp.nl"},
+                {"base-domain": supported_domain},
             ]
         }
 

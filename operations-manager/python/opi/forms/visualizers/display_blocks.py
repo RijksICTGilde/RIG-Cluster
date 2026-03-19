@@ -8,16 +8,15 @@ from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_for
 
 
 def _get_default_domain() -> str:
-    """Return the first supported domain for the current cluster."""
+    """Return the ingress postfix domain for the current cluster (the cluster default)."""
     from opi.core.cluster_config import CLUSTER_CONFIG
     from opi.core.config import settings
 
     cluster = settings.CLUSTER_MANAGER
     if cluster and cluster in CLUSTER_CONFIG:
-        raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
-        if raw:
-            entry = raw[0]
-            return entry["domain"] if isinstance(entry, dict) else entry
+        postfix = CLUSTER_CONFIG[cluster].get("ingress_postfix", "")
+        if postfix:
+            return postfix.lstrip(".")
     return "domein.nl"
 
 

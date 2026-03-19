@@ -2,6 +2,7 @@
 
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
@@ -936,6 +937,7 @@ class ArgoManager:
         timeout: int = 300,
         poll_interval: int = 5,
         refreshed_after: str | None = None,
+        on_progressing: Callable[[int], Awaitable[None]] | None = None,
     ) -> bool:
         """
         Wait for an ArgoCD application to be synced and healthy.
@@ -953,6 +955,10 @@ class ArgoManager:
                 ArgoCD has reconciled *after* this timestamp.  This prevents
                 false failures when the status still reflects a previous
                 reconciliation.
+            on_progressing: Optional async callback invoked each poll iteration
+                when health is ``Progressing`` and the status is fresh.
+                Receives the elapsed time in seconds.  If the callback raises,
+                the exception propagates to the caller.
 
         Returns:
             True if application is synced and healthy
@@ -1029,6 +1035,9 @@ class ArgoManager:
                     f"Application '{app_name}': sync={sync_status}, health={health_status}, "
                     f"fresh={status_is_fresh}, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
                 )
+
+                call_on_progressing = on_progressing is not None and status_is_fresh and health_status == "Progressing"
+
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 
@@ -1041,9 +1050,16 @@ class ArgoManager:
                 )
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
+                continue
             except Exception as e:
                 logger.warning(f"Error checking status of '{app_name}': {e}, retrying...")
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
+                continue
+
+            # Invoke on_progressing callback outside try/except so its
+            # exceptions propagate directly to the caller.
+            if call_on_progressing:
+                await on_progressing(elapsed_time)  # type: ignore[misc]
 
         raise TimeoutError(f"Timeout waiting for application '{app_name}' to be synced and healthy after {timeout}s")

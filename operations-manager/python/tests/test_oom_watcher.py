@@ -5,8 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.services.oom_watcher import (
+    OOMDetectedError,
     _check_oom_kills_via_kubectl,
     _run_oom_check,
+    create_oom_progressing_callback,
+    detect_oom_kills,
     schedule_oom_check,
 )
 
@@ -263,3 +266,143 @@ class TestScheduleOomCheck:
             assert task is not None
             await task
             mock_run.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# detect_oom_kills
+# ---------------------------------------------------------------------------
+
+
+class TestDetectOomKills:
+    """Tests for the multi-component OOM detection function."""
+
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_returns_oom_components(self, mock_check):
+        """Should return only the components that have OOM kills."""
+        mock_check.side_effect = [True, False, True]
+
+        result = await detect_oom_kills("rig-prd-ns", ["comp-a", "comp-b", "comp-c"])
+
+        assert result == ["comp-a", "comp-c"]
+        assert mock_check.call_count == 3
+
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_oom(self, mock_check):
+        """Should return empty list when no OOM kills detected."""
+        mock_check.return_value = False
+
+        result = await detect_oom_kills("rig-prd-ns", ["comp-a", "comp-b"])
+
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# create_oom_progressing_callback
+# ---------------------------------------------------------------------------
+
+
+class TestCreateOomProgressingCallback:
+    """Tests for the on_progressing callback factory."""
+
+    def setup_method(self):
+        """Reset inline OOM attempts between tests."""
+        from opi.services.oom_watcher import _inline_oom_attempts
+
+        _inline_oom_attempts.clear()
+
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_skips_before_grace_period(self, mock_check):
+        """Should not check for OOM before the grace period."""
+        callback = create_oom_progressing_callback(
+            "myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=30
+        )
+
+        await callback(10)
+        await callback(20)
+
+        mock_check.assert_not_called()
+
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_raises_on_oom_after_grace(self, mock_check):
+        """Should raise OOMDetectedError when OOM is detected after grace period."""
+        mock_check.return_value = True
+        callback = create_oom_progressing_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=5)
+
+        with pytest.raises(OOMDetectedError) as exc_info:
+            await callback(10)
+
+        assert "comp-a" in str(exc_info.value)
+        assert exc_info.value.components == ["comp-a"]
+        assert exc_info.value.namespace == "rig-prd-ns"
+
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_no_raise_when_no_oom(self, mock_check):
+        """Should not raise when no OOM is detected after grace period."""
+        mock_check.return_value = False
+        callback = create_oom_progressing_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=5)
+
+        # Should not raise
+        await callback(10)
+
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_checks_every_poll_after_grace(self, mock_check):
+        """Should check on every poll iteration after grace period."""
+        mock_check.return_value = False
+        callback = create_oom_progressing_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=5)
+
+        await callback(10)  # check
+        await callback(15)  # check
+        await callback(20)  # check
+
+        assert mock_check.call_count == 3
+
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_stops_after_max_elapsed(self, mock_check):
+        """Should stop checking after OOM_CHECK_MAX_ELAPSED_SECONDS."""
+        mock_check.return_value = False
+        callback = create_oom_progressing_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=5)
+
+        await callback(10)  # check
+        await callback(130)  # > 120s max, should skip
+
+        mock_check.assert_called_once()
+
+    def test_returns_none_when_max_attempts_reached(self):
+        """Should return None when max inline OOM attempts have been exhausted."""
+        from opi.services.oom_watcher import OOM_INLINE_MAX_ATTEMPTS, _inline_oom_attempts
+
+        _inline_oom_attempts["myproject/production"] = OOM_INLINE_MAX_ATTEMPTS
+
+        result = create_oom_progressing_callback("myproject", "production", "rig-prd-ns", ["comp-a"])
+        assert result is None
+
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_increments_attempt_on_oom(self, mock_check):
+        """Should increment the attempt counter when OOM is detected."""
+        from opi.services.oom_watcher import _inline_oom_attempts
+
+        mock_check.return_value = True
+        callback = create_oom_progressing_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
+
+        with pytest.raises(OOMDetectedError):
+            await callback(5)
+
+        assert _inline_oom_attempts["myproject/production"] == 1
+
+    def test_resets_counter_on_creation(self):
+        """Should reset attempt counter when a new callback is created (fresh deploy)."""
+        from opi.services.oom_watcher import _inline_oom_attempts
+
+        _inline_oom_attempts["myproject/production"] = 2
+
+        create_oom_progressing_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
+
+        assert "myproject/production" not in _inline_oom_attempts

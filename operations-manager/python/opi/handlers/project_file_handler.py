@@ -18,6 +18,7 @@ from opi.services import ServiceAdapter, ServiceType
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.utils.age import decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
+from opi.utils.yaml_util import save_yaml_to_path
 
 logger = logging.getLogger(__name__)
 
@@ -460,7 +461,6 @@ class ProjectFileHandler:
         matches = jsonpath_expr.find(data)
 
         if not matches:
-            logger.debug(f"No matches found for JSONPath: {path}")
             return default
 
         # If path contains [*], always return a list (even for single match)
@@ -2147,7 +2147,7 @@ class ProjectFileHandler:
             logger.info(f"Found {len(helm_charts)} helm chart reference(s) in deployment '{deployment_name}'")
             return helm_charts if isinstance(helm_charts, list) else [helm_charts]
 
-        logger.debug(f"No helm-charts found in deployment '{deployment_name}'")
+        # Intentionally no log for missing helm-charts — most deployments don't have them
         return []
 
     def extract_helm_chart_uses_services(self, project_data: dict[str, Any], chart_name: str) -> list[str]:
@@ -2319,7 +2319,7 @@ class ProjectFileHandler:
             logger.info(f"Found {len(helmfiles)} helmfile reference(s) in deployment '{deployment_name}'")
             return helmfiles if isinstance(helmfiles, list) else [helmfiles]
 
-        logger.debug(f"No helmfiles found in deployment '{deployment_name}'")
+        # Intentionally no log for missing helmfiles — most deployments don't have them
         return []
 
     def extract_helmfile_uses_services(self, project_data: dict[str, Any], helmfile_name: str) -> list[str]:
@@ -2749,15 +2749,7 @@ def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
         project_data: The project data dictionary to save
     """
     logger.info(f"Saving project file: {file_path}")
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    yaml.default_flow_style = False
-    yaml.indent(mapping=2, sequence=4, offset=2)
-    yaml.representer.ignore_aliases = lambda *_: True
-
-    with open(file_path, "w") as f:
-        yaml.dump(project_data, f)
-
+    save_yaml_to_path(file_path, project_data)
     logger.debug(f"Successfully saved project file: {file_path}")
 
 

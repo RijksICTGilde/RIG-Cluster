@@ -43,7 +43,6 @@ DOMAIN_SUBDOMAIN_EDITABLE = Editable(
 
 DOMAIN_BASE_DOMAIN_EDITABLE = Editable(
     yaml_path="deployments[*]/base-domain",
-    required=True,
     values_provider="ClusterBaseDomainOptionsProvider",
     validator=BaseDomainValidator(),
     converter=CustomDomainSelectConverter(),

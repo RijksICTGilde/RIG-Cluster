@@ -207,7 +207,7 @@ class TestComputeMemoryRecommendation:
 
     def test_oom_with_zero_observed_uses_current_limit(self):
         """When OOM kills happen on startup (no metrics), caller passes current limits
-        as observed values. The 1.5x OOM multiplier should produce limit = 128 * 1.5 = 192Mi."""
+        as observed values. The 2x OOM multiplier (< 256Mi) should produce limit = 128 * 2 = 256Mi."""
         result = compute_memory_recommendation(
             max_observed_mb=128,  # current limit used as baseline
             avg_observed_mb=64,  # current request used as baseline
@@ -220,8 +220,8 @@ class TestComputeMemoryRecommendation:
         )
         assert result is not None
         limit, request, reason = result
-        # OOM minimum = 128 * 1.5 = 192. observed+buffer = 128 * 1.25 + 25 = 185. OOM wins.
-        assert limit == "192Mi"
+        # OOM minimum = 128 * 2.0 = 256. observed+buffer = 128 * 1.25 + 25 = 185. OOM wins.
+        assert limit == "256Mi"
         assert "OOM kills detected" in reason
 
     def test_collapse_request_to_limit_when_close(self):
@@ -269,6 +269,7 @@ class TestComputeMemoryRecommendation:
             current_request_mb=1024,
             buffer_percent=25,
             threshold_percent=20,
+            max_memory_mi=2048,
         )
         assert result is not None
         limit, request, _ = result

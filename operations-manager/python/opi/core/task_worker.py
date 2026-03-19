@@ -60,9 +60,20 @@ class TaskWorker:
         )
 
     async def stop(self) -> None:
-        """Signal the worker to stop after completing any current task."""
+        """Signal the worker to stop and wait for active tasks to complete.
+
+        Sets _running to False so the main loop stops claiming new tasks,
+        then waits for any in-flight tasks to finish. The caller should
+        cancel the asyncio task returned by run() afterwards to clean up
+        the helper loops (stale recovery, cleanup).
+        """
         logger.info("Task worker stopping...")
         self._running = False
+
+        if self._active_tasks:
+            logger.info("Waiting for %d active task(s) to complete before shutdown...", len(self._active_tasks))
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            logger.info("All active tasks completed")
 
     async def _main_loop(self) -> None:
         """Poll for and execute tasks concurrently up to TASK_WORKER_CONCURRENCY."""
