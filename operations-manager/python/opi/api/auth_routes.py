@@ -144,6 +144,10 @@ async def auth_callback(request: Request) -> Response:
             "preferred_username": user_info.get("preferred_username"),
         }
 
+        # Store id_token for proper Keycloak logout
+        if token.get("id_token"):
+            request.session["id_token"] = token["id_token"]
+
         # Store the user in our user service
         user_service = get_user_service()
         user_service.store_user(request.session["user"])
@@ -189,6 +193,7 @@ async def logout(request: Request) -> Response:
     try:
         # Get current user info before clearing session
         user = request.session.get("user")
+        id_token = request.session.get("id_token")
         user_email = user.get("email", "unknown") if user else "anonymous"
 
         logger.info(f"Logging out user: {user_email}")
@@ -201,9 +206,22 @@ async def logout(request: Request) -> Response:
         # Clear the session
         request.session.clear()
 
-        # For now, just redirect to the home page
-        # In the future, we could implement full SSO logout with Keycloak
-        logger.info("User logged out successfully")
+        # Redirect to Keycloak's end-session endpoint for full SSO logout
+        oauth = request.app.state.oauth
+        if hasattr(oauth, "keycloak"):
+            metadata = await oauth.keycloak.load_server_metadata()
+            end_session_url = metadata.get("end_session_endpoint")
+            if end_session_url:
+                post_logout_uri = str(request.base_url)
+                params = {"post_logout_redirect_uri": post_logout_uri}
+                if id_token:
+                    params["id_token_hint"] = id_token
+                query = "&".join(f"{k}={quote_plus(v)}" for k, v in params.items())
+                logout_url = f"{end_session_url}?{query}"
+                logger.info("Redirecting to Keycloak end-session endpoint for full SSO logout")
+                return RedirectResponse(url=logout_url, status_code=302)
+
+        logger.info("User logged out successfully (local session only)")
         return RedirectResponse(url="/", status_code=302)
 
     except Exception as e:
