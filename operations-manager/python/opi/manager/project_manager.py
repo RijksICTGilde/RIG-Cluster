@@ -2212,7 +2212,7 @@ class ProjectManager:
                 logger.info("Skipping user-applications refresh (no ArgoCD resource changes)")
 
             project_name = await self.get_name()
-            deployments = await self.get_deployments(cluster_filter=True)
+            deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
             sync_failures: list[str] = []
 
             if deployments and project_name:
@@ -2280,24 +2280,50 @@ class ProjectManager:
                         logger.info(f"Application '{app_name}' is synced and healthy")
                     except OOMDetectedError as e:
                         logger.warning(
-                            "OOM detected during sync of '%s': %s — triggering auto-tune",
+                            "OOM detected during sync of '%s': %s — tuning and queuing refresh",
                             app_name,
                             e,
                         )
                         if progress_manager and argo_task:
                             progress_manager.update_task(
                                 argo_task,
-                                f"OOM detected for {app_name}, auto-tuning resources...",
+                                f"OOM detected for {app_name}, tuning resources...",
                             )
                         try:
-                            result = await tune_deployment_resources(project_name, dep_name)
+                            # Tune resources (commit only, no inline reprocess to avoid
+                            # race conditions with the current task's processing).
+                            result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
                             if result.changes:
                                 logger.info(
-                                    "OOM auto-tune applied %d change(s) for %s/%s, reprocessing triggered",
+                                    "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
                                     len(result.changes),
                                     project_name,
                                     dep_name,
                                 )
+                                # Queue a refresh task — the worker will pick it up
+                                # after this task completes (queue guard prevents
+                                # concurrent processing of the same deployment).
+                                from opi.core.async_task_service import get_task_service
+
+                                task_service = get_task_service()
+                                if task_service:
+                                    await task_service.create_task(
+                                        task_type="refresh_deployment",
+                                        project_name=project_name,
+                                        deployment_name=dep_name,
+                                        cluster=settings.CLUSTER_MANAGER,
+                                        payload={
+                                            "project_name": project_name,
+                                            "deployment_name": dep_name,
+                                            "force_clone": False,
+                                        },
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Task service not available, cannot queue refresh for %s/%s",
+                                        project_name,
+                                        dep_name,
+                                    )
                             else:
                                 logger.warning(
                                     "OOM auto-tune found no actionable changes for %s/%s",

@@ -386,6 +386,7 @@ def check_deployment_resources(
 async def tune_deployment_resources(
     project_name: str,
     deployment_name: str | None = None,
+    skip_reprocessing: bool = False,
 ) -> TuneResult:
     """
     Query Prometheus, compute recommendations, commit YAML, trigger reprocess.
@@ -393,6 +394,9 @@ async def tune_deployment_resources(
     Args:
         project_name: Name of the project
         deployment_name: Optional specific deployment to tune
+        skip_reprocessing: If True, only commit the YAML changes without
+            triggering reprocessing.  Use when the caller will queue a
+            separate task for reprocessing (e.g. OOM detection during deploy).
 
     Returns:
         TuneResult with changes, unchanged components, and whether refresh was triggered
@@ -498,16 +502,17 @@ async def tune_deployment_resources(
                 }
             )
 
-    # If changes were made, commit and reprocess
+    # If changes were made, commit and optionally reprocess
     deployment_refresh_triggered = False
     if changes:
         component_names = [c["component"] for c in changes]
         commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
 
         await commit_project_yaml(project_name, filename, project_data, commit_msg)
-        deployment_refresh_triggered = await trigger_reprocessing(
-            project_name, filename, deployment_name, argocd_resources_changed=False
-        )
+        if not skip_reprocessing:
+            deployment_refresh_triggered = await trigger_reprocessing(
+                project_name, filename, deployment_name, argocd_resources_changed=False
+            )
 
     return TuneResult(
         changes=changes,
