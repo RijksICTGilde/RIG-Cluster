@@ -106,7 +106,7 @@ class TestGetDisplayName:
     """Display name priority: name > given+family > preferred_username > email > 'Unknown User'."""
 
     def test_priority_chain(self, service):
-        # All fields present — name wins
+        # All fields present - name wins
         full = {
             "name": "Alice",
             "given_name": "Bob",
@@ -116,15 +116,15 @@ class TestGetDisplayName:
         }
         assert service._get_display_name(full) == "Alice"
 
-        # No name — given+family wins
+        # No name - given+family wins
         del full["name"]
         assert service._get_display_name(full) == "Bob Smith"
 
-        # No family name — preferred_username wins (given_name alone is not enough)
+        # No family name - preferred_username wins (given_name alone is not enough)
         del full["family_name"]
         assert service._get_display_name(full) == "alice123"
 
-        # No preferred_username — email wins
+        # No preferred_username - email wins
         del full["preferred_username"]
         assert service._get_display_name(full) == "alice@x.com"
 
@@ -135,7 +135,7 @@ class TestGetDisplayName:
 
 
 class TestOrganizationStats:
-    """get_organization_stats aggregates across users — tricky set→list conversion and counting."""
+    """get_organization_stats aggregates across users - tricky set→list conversion and counting."""
 
     def test_aggregation_across_multiple_orgs(self, service):
         service.store_user({"email": "a@b.com", "organization.name": "Acme", "organization.role": "admin"})
@@ -157,7 +157,7 @@ class TestOrganizationStats:
 
 
 class TestUpdateUserReenrich:
-    """update_user must re-enrich after merging — raw dict.update() overwrites derived fields."""
+    """update_user must re-enrich after merging - raw dict.update() overwrites derived fields."""
 
     def test_update_refreshes_role_flags(self, service):
         """After changing org role from admin to dev, is_admin should be False and is_developer True."""

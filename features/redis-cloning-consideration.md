@@ -50,7 +50,7 @@ Cloning is technically possible using Redis `SCAN` + `DUMP`/`RESTORE`:
 
 ## Arguments Against
 
-- Redis is designed as an ephemeral cache/broker — cloning cache data is an anti-pattern
+- Redis is designed as an ephemeral cache/broker - cloning cache data is an anti-pattern
 - Cloned cache data is likely stale or contains invalid cross-environment references
 - Applications should be resilient to empty Redis (cold start) by design
 - Adds operational complexity for a rarely-needed feature

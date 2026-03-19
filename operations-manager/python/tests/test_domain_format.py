@@ -415,7 +415,7 @@ class TestDomainEditablesShowWhen:
         from opi.forms.editables.fields.domains import DOMAIN_SUBDOMAIN_EDITABLE
         from opi.utils.naming import SUBDOMAIN_FORMAT_IDS
 
-        assert DOMAIN_SUBDOMAIN_EDITABLE.depends_on == "deployments[0]/domain-format"
+        assert DOMAIN_SUBDOMAIN_EDITABLE.depends_on == "deployments[*]/domain-format"
         assert DOMAIN_SUBDOMAIN_EDITABLE.show_when == {"value": SUBDOMAIN_FORMAT_IDS}
         # Verify expected formats are included
         assert "component-deployment-subdomain" in SUBDOMAIN_FORMAT_IDS
@@ -436,7 +436,7 @@ class TestDomainEditablesShowWhen:
         from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
         from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 
-        assert DOMAIN_ROOT_COMPONENT_EDITABLE.depends_on == "deployments[0]/domain-format"
+        assert DOMAIN_ROOT_COMPONENT_EDITABLE.depends_on == "deployments[*]/domain-format"
         assert DOMAIN_ROOT_COMPONENT_EDITABLE.show_when == {"value": ROOT_COMPONENT_FORMAT_IDS}
         # Only dot formats with {component} qualify
         assert "component.deployment.project" in ROOT_COMPONENT_FORMAT_IDS

@@ -44,7 +44,7 @@ class PrometheusConnector:
     def __init__(self) -> None:
         """Initialize the Prometheus connector.
 
-        Creates the HTTP client but does not test the connection — PrometheusConnect
+        Creates the HTTP client but does not test the connection - PrometheusConnect
         is a stateless HTTP client so there is no persistent connection to verify.
         Each query is an independent HTTP request that succeeds or raises on its own.
         """
@@ -66,14 +66,14 @@ class PrometheusConnector:
     def reconnect(self) -> bool:
         """Kept for backward compatibility with startup code. Always returns True.
 
-        There is no persistent connection — PrometheusConnect is a stateless HTTP
+        There is no persistent connection - PrometheusConnect is a stateless HTTP
         client. Queries will succeed or fail on their own.
         """
         PrometheusConnector.is_connected = True
         return True
 
     def _ensure_connected(self) -> None:
-        """Kept for backward compatibility. No-op — there is no connection to check."""
+        """Kept for backward compatibility. No-op - there is no connection to check."""
 
     def get_cpu_usage_by_namespace(self, namespace: str | None = None) -> list[dict[str, Any]]:
         """

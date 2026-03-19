@@ -101,6 +101,21 @@ class EditModalHelper:
         self.page.screenshot(path=str(path), full_page=True)
         return path
 
+    def toggle_service(self, service_name: str) -> None:
+        """Click a service card to toggle its selection state."""
+        card = self.page.locator(f"[data-service='{service_name}']")
+        card.click()
+
+    def is_service_selected(self, service_name: str) -> bool:
+        """Check whether a service card is currently selected."""
+        card = self.page.locator(f"[data-service='{service_name}']")
+        return "service-card--selected" in (card.get_attribute("class") or "")
+
+    def get_step_labels(self) -> list[str]:
+        """Return the visible step labels from the wizard step indicator."""
+        labels = self.page.locator("#modal-wizard-steps .wizard-steps__label")
+        return [labels.nth(i).text_content() or "" for i in range(labels.count())]
+
     def _click_and_wait(self, locator, timeout: float = 10000) -> None:
         """Click a button and wait for the HTMX swap to complete.
 

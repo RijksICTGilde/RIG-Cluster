@@ -12,11 +12,11 @@ class EncryptedDisplayConverter:
     """Displays encrypted fields as status indicators, not actual values."""
 
     def read(self, value: Any) -> str:
-        """For form inputs — not used since field is readonly."""
+        """For form inputs - not used since field is readonly."""
         return ""
 
     def write(self, value: Any) -> Any:
-        """Never writes — field is readonly. Preserves original."""
+        """Never writes - field is readonly. Preserves original."""
         return value
 
     def view(self, value: Any) -> str:
@@ -423,8 +423,8 @@ class CloneFromConverter:
             status = value.get("status", {})
             if status.get("completed"):
                 timestamp = status.get("timestamp", "")
-                return f"Gekloond van {reference} ({clone_type}) — Voltooid op {timestamp}"
-            return f"Gekloond van {reference} ({clone_type}) — Bezig..."
+                return f"Gekloond van {reference} ({clone_type}) - Voltooid op {timestamp}"
+            return f"Gekloond van {reference} ({clone_type}) - Bezig..."
         return str(value)
 
 
@@ -475,7 +475,7 @@ class CustomDomainSelectConverter:
         return self.view(value)
 
     def write(self, value: Any) -> Any:
-        return value  # passthrough — merge happens in post-processing
+        return value  # passthrough - merge happens in post-processing
 
     def view(self, value: Any) -> Any:
         if not value:
@@ -494,7 +494,7 @@ class AGEEncryptConverter:
     private key for decryption. Displays masked values in view mode.
 
     For fields encrypted with the **project** key (e.g. ``user-env-vars``),
-    use a generator instead — converters do not have access to project keys.
+    use a generator instead - converters do not have access to project keys.
     """
 
     def __init__(self, public_key: str | None = None) -> None:
@@ -542,7 +542,7 @@ class AGEEncryptConverter:
             return value_str
 
     def view(self, value: Any) -> str:
-        """Masked display — never show encrypted content in UI."""
+        """Masked display - never show encrypted content in UI."""
         if not value:
             return "Niet geconfigureerd"
         if isinstance(value, str) and "BEGIN AGE ENCRYPTED FILE" in value:

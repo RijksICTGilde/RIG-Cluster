@@ -144,7 +144,7 @@ def run_standalone() -> None:
 
     port = int(os.environ.get("TEST_SERVER_PORT", "8111"))
 
-    # Disable OIDC for standalone mode — no login needed
+    # Disable OIDC for standalone mode - no login needed
     os.environ.setdefault("OIDC_DISABLED", "true")
 
     print(f"""

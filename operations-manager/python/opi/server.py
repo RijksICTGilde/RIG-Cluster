@@ -280,11 +280,27 @@ def create_app() -> FastAPI:
     from opi.middleware.maintenance import MaintenanceMiddleware
     from opi.utils.csrf import CSRFMiddleware
 
+    # Log all unhandled exceptions through Python logging so they appear in
+    # kubectl logs.  Starlette's ServerErrorMiddleware only prints to stderr
+    # via traceback.print_exc() which may not reach the log stream.
+    @app.exception_handler(Exception)
+    async def _log_unhandled_exceptions(request, exc):  # type: ignore[no-untyped-def]
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        raise exc
+
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(MaintenanceMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
+
+    # Flow ID middleware - runs first (outermost) to tag all log lines for this request
+    from opi.core.flow_id import set_flow_id
+
+    @app.middleware("http")
+    async def flow_id_middleware(request, call_next):  # type: ignore[no-untyped-def]
+        set_flow_id("req")
+        return await call_next(request)
 
     # Initialize OAuth client (registration happens during startup after Keycloak setup)
     oauth = OAuth()

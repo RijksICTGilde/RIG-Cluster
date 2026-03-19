@@ -95,12 +95,12 @@ def ensure_service_in_list(
     If it doesn't exist, appends a new dict entry.
 
     Returns:
-        (index, service_dict) — the dict entry for the service.
+        (index, service_dict) - the dict entry for the service.
     """
     idx, entry = find_service_in_list(services, service_name)
 
     if idx == -1:
-        # Service not in list — add it
+        # Service not in list - add it
         new_entry: dict[str, Any] = {service_name: {}}
         services.append(new_entry)
         return len(services) - 1, new_entry
@@ -179,11 +179,11 @@ def smart_path_exists(data: dict[str, Any], yaml_path: str) -> bool:
     if idx == -1:
         return False
 
-    # "services/keycloak" — service just needs to be in the list
+    # "services/keycloak" - service just needs to be in the list
     if sub_path is None:
         return True
 
-    # Deeper path — need a dict entry with config
+    # Deeper path - need a dict entry with config
     if isinstance(entry, str):
         return False
     if not isinstance(entry, dict):
@@ -246,7 +246,7 @@ def smart_delete_value(data: dict[str, Any], yaml_path: str) -> None:
 
     For service config paths with a sub-path (e.g.
     ``services/keycloak/config/restrict-access/realm-role``), deletes
-    only the targeted config key — the service entry itself is kept.
+    only the targeted config key - the service entry itself is kept.
 
     For top-level service paths (no sub-path), removes the service
     entry from the list.

@@ -515,7 +515,7 @@ class TestCreateKustomizationFiles:
         assert "generators" not in doc or doc.get("generators") is None
 
     def test_sops_decrypt_files_preserve_order(self, generator, yaml_loader, tmp_path):
-        """SOPS decrypt file list must preserve insertion order — nondeterministic order causes ArgoCD churn."""
+        """SOPS decrypt file list must preserve insertion order - nondeterministic order causes ArgoCD churn."""
         output_dir = str(tmp_path / "output")
         os.makedirs(output_dir)
 

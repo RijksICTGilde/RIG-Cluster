@@ -11,7 +11,7 @@
  * navigates into the `services` array, finds/creates the dict entry
  * keyed by `temp-storage`, and descends into it.
  */
-console.log('[json-enc] v2 loaded — with {K} string promotion fix');
+console.log('[json-enc] v2 loaded - with {K} string promotion fix');
 htmx.defineExtension('json-enc', {
   onEvent: function (name, evt) {
     if (name === "htmx:configRequest") {
@@ -57,7 +57,7 @@ htmx.defineExtension('json-enc', {
       var char = key[i];
       if (char === '[') {
         if (!inBracket) {
-          // Empty brackets [] mean "array field" — strip them entirely
+          // Empty brackets [] mean "array field" - strip them entirely
           // so that services[] becomes just ["services"] and the multi-value
           // array from HTMX is preserved as the direct value.
           if (i + 1 < key.length && key[i + 1] === ']') {
@@ -81,7 +81,7 @@ htmx.defineExtension('json-enc', {
           currentSegment += char;
         }
       } else if (char === '{' && !inBracket) {
-        // {K} dict-key filter — push the key part and start collecting filter
+        // {K} dict-key filter - push the key part and start collecting filter
         if (currentSegment) {
           segments.push(currentSegment);
           currentSegment = '';
@@ -125,7 +125,7 @@ htmx.defineExtension('json-enc', {
         }
         return item[filterName];
       }
-      // Match plain string entry: "persistent-storage" — promote to dict
+      // Match plain string entry: "persistent-storage" - promote to dict
       if (typeof item === 'string' && item === filterName) {
         var promoted = {};
         promoted[filterName] = {};
@@ -133,7 +133,7 @@ htmx.defineExtension('json-enc', {
         return promoted[filterName];
       }
     }
-    // Not found — create a new entry
+    // Not found - create a new entry
     var newEntry = {};
     newEntry[filterName] = {};
     list.push(newEntry);

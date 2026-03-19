@@ -2,13 +2,13 @@
 
 ## What it is
 
-In ODCN production, we run in a tenant cluster where direct namespace listing against the Kubernetes API is not possible. Capsule Proxy solves this by acting as a transparent API proxy that filters responses based on tenant permissions. This allows Prometheus to use native `kubernetes_sd_configs` for dynamic pod discovery — without hardcoded namespace lists.
+In ODCN production, we run in a tenant cluster where direct namespace listing against the Kubernetes API is not possible. Capsule Proxy solves this by acting as a transparent API proxy that filters responses based on tenant permissions. This allows Prometheus to use native `kubernetes_sd_configs` for dynamic pod discovery - without hardcoded namespace lists.
 
 Capsule Proxy is already used by several other components for the same reason:
 
-- **ArgoCD CMP sidecar** — to discover and deploy resources across tenant namespaces
-- **Operations Manager** — to manage namespaces and resources
-- **External-DNS** — to watch Ingress resources across tenant namespaces
+- **ArgoCD CMP sidecar** - to discover and deploy resources across tenant namespaces
+- **Operations Manager** - to manage namespaces and resources
+- **External-DNS** - to watch Ingress resources across tenant namespaces
 
 ## How it works
 
@@ -21,9 +21,9 @@ Prometheus's `kubernetes_sd_configs` with `role: pod` opens a watch connection t
 
 This means:
 
-- **No hardcoded namespace lists** — Capsule Proxy handles scoping automatically
-- **Automatic discovery** — New namespaces added to the tenant are picked up in real-time via the Kubernetes watch API
-- **No restart needed** — Prometheus maintains a persistent watch connection and receives events as they happen
+- **No hardcoded namespace lists** - Capsule Proxy handles scoping automatically
+- **Automatic discovery** - New namespaces added to the tenant are picked up in real-time via the Kubernetes watch API
+- **No restart needed** - Prometheus maintains a persistent watch connection and receives events as they happen
 
 ## Configuration
 
@@ -68,9 +68,9 @@ The ODCN overlay includes a namespace-scoped Role and RoleBinding granting the `
 
 Node-level metrics are not available because tenant clusters don't expose node resources:
 
-- **cAdvisor** (container metrics via kubelet) — not available
-- **kubelet metrics** (PVC volume stats) — not available
-- **kube-state-metrics** — scaled to 0 replicas (no cluster-wide object access)
+- **cAdvisor** (container metrics via kubelet) - not available
+- **kubelet metrics** (PVC volume stats) - not available
+- **kube-state-metrics** - scaled to 0 replicas (no cluster-wide object access)
 
 ## Scrape targets
 

@@ -78,7 +78,7 @@
                     </c-alert>
                 </div>
 
-                {# Actions — project details link shown after completion #}
+                {# Actions - project details link shown after completion #}
                 <div id="actions-section">
                     <div id="default-actions">
                         <c-button label="Terug naar Dashboard" kind="primary" size="md"
@@ -581,7 +581,7 @@
         } catch (error) {
             console.error('Error polling task status:', error);
             if (error.message.includes('404')) {
-                // Task cleaned up after completion — treat as success
+                // Task cleaned up after completion - treat as success
                 clearInterval(pollTimer);
                 showSuccess();
             }

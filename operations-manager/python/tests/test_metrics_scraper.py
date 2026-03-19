@@ -291,7 +291,7 @@ class TestProcessorVirtualizeFields:
 
         After the first submission, the result becomes session state. When
         re-used as submitted data (backward navigation), the processor must
-        still find the metrics values — either from _services-config or from
+        still find the metrics values - either from _services-config or from
         the real services path.
         """
         processor = EditableFormProcessor()

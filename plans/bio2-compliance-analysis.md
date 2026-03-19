@@ -1,4 +1,4 @@
-# BIO2 Compliance Analysis — Operations Manager (OPI)
+# BIO2 Compliance Analysis - Operations Manager (OPI)
 
 ## 1. What is BIO2?
 
@@ -7,16 +7,16 @@ The **Baseline Informatiebeveiliging Overheid 2 (BIO2)** is the mandatory inform
 - **Part 1 (BIO2-Kader)**: Based on NEN-EN-ISO/IEC 27001:2023
 - **Part 2 (BIO-overheidsmaatregelen)**: Based on NEN-EN-ISO/IEC 27002:2022
 
-As of **5 March 2026**, BIO2 v1.3 is published in the Staatscourant and legally binding via the **Cyberbeveiligingswet (Cbw)** — the Dutch NIS2 implementation.
+As of **5 March 2026**, BIO2 v1.3 is published in the Staatscourant and legally binding via the **Cyberbeveiligingswet (Cbw)** - the Dutch NIS2 implementation.
 
 ### BIO2 Control Domains (ISO 27002:2022 structure)
 
 | Domain | Controls | Description |
 |--------|----------|-------------|
-| **A5 — Organizational** | 37 controls | Policies, roles, asset management, supplier relations, ISMS |
-| **A6 — People** | 8 controls | Screening, awareness, training, disciplinary process |
-| **A7 — Physical** | 14 controls | Secure areas, equipment, cabling, clear desk |
-| **A8 — Technological** | 34 controls | Access control, crypto, network security, secure development, logging |
+| **A5 - Organizational** | 37 controls | Policies, roles, asset management, supplier relations, ISMS |
+| **A6 - People** | 8 controls | Screening, awareness, training, disciplinary process |
+| **A7 - Physical** | 14 controls | Secure areas, equipment, cabling, clear desk |
+| **A8 - Technological** | 34 controls | Access control, crypto, network security, secure development, logging |
 
 ---
 
@@ -47,11 +47,11 @@ As of **5 March 2026**, BIO2 v1.3 is published in the Staatscourant and legally 
 | **A5.24 Incident Management** | No structured incident response process; errors logged but no escalation/notification | HIGH |
 | **A5.28 Evidence Collection** | No forensic logging or tamper-proof audit trail | MEDIUM |
 | **A5.01 Information Security Policy** | No documented security policy for OPI | HIGH |
-| **A5.10 Awareness/Training** | No security training tracking (BIO2 5.10.1, 5.10.4 — new mandatory measures) | MEDIUM |
+| **A5.10 Awareness/Training** | No security training tracking (BIO2 5.10.1, 5.10.4 - new mandatory measures) | MEDIUM |
 | **A8.07 Anti-Malware** | No malware scanning on uploads or container images | MEDIUM |
 | **A8.06 Rate Limiting** | No rate limiting on auth endpoints (brute force risk) | HIGH |
 | **A8.08 Vuln Management** | No automated dependency vulnerability scanning (e.g., `pip-audit`, Trivy) | HIGH |
-| **A5.14 Internet-Facing Registry** | No registry of internet-facing systems/APIs (BIO2 5.14.04 — new mandatory) | MEDIUM |
+| **A5.14 Internet-Facing Registry** | No registry of internet-facing systems/APIs (BIO2 5.14.04 - new mandatory) | MEDIUM |
 | **A8.15 Audit Logging** | Logging exists but no structured audit trail (who did what, when) | HIGH |
 | **A8.20 Network Security** | TLS disabled by default for ArgoCD, MinIO, S3 backups | HIGH |
 | **A8.25 Secure Dev Lifecycle** | No SAST/DAST scanning in CI/CD pipeline | MEDIUM |
@@ -61,20 +61,20 @@ As of **5 March 2026**, BIO2 v1.3 is published in the Staatscourant and legally 
 
 | Issue | Location | Fix |
 |-------|----------|-----|
-| Default passwords in config | `config.py` — ARGOCD_PASSWORD="admin", DB password="changeMe123!" | Remove defaults, require env vars |
+| Default passwords in config | `config.py` - ARGOCD_PASSWORD="admin", DB password="changeMe123!" | Remove defaults, require env vars |
 | API key comparison not constant-time | `endpoint_util.py:113` | Use `secrets.compare_digest()` |
 | SOPS key fallback to local file | `config.py:389-431` | Disable in production |
 | DEBUG=True by default | `config.py` | Default to False |
 | ARGOCD_VERIFY_SSL=False | `config.py:206` | Default to True |
 | TLS disabled for MinIO/S3 | `config.py` | Default to True |
 | USE_UNSAFE_API_KEY option | `api_keys.py:37-39` | Block in production |
-| ProxyHeaders trusts all hosts | `server.py:287` — `trusted_hosts=["*"]` | Restrict to known proxies |
+| ProxyHeaders trusts all hosts | `server.py:287` - `trusted_hosts=["*"]` | Restrict to known proxies |
 
 ---
 
 ## 3. Compliance Plan
 
-### Phase 1 — Critical Security Fixes (Code Changes)
+### Phase 1 - Critical Security Fixes (Code Changes)
 
 These are direct code fixes that address both BIO2 requirements and identified vulnerabilities.
 
@@ -104,7 +104,7 @@ These are direct code fixes that address both BIO2 requirements and identified v
 - **Change**: Configure `ProxyHeadersMiddleware` with specific trusted hosts instead of `["*"]`
 - **Effort**: Small
 
-### Phase 2 — Structured Audit Logging (A8.15, A5.28)
+### Phase 2 - Structured Audit Logging (A8.15, A5.28)
 
 BIO2 requires traceable audit trails. Current logging is operational, not audit-grade.
 
@@ -125,7 +125,7 @@ BIO2 requires traceable audit trails. Current logging is operational, not audit-
 - Separate from operational logs
 - **Effort**: Medium (infrastructure)
 
-### Phase 3 — Vulnerability Management (A8.08)
+### Phase 3 - Vulnerability Management (A8.08)
 
 #### 3.1 Dependency scanning
 - Add `pip-audit` or `safety` to CI/CD pipeline
@@ -141,11 +141,11 @@ BIO2 requires traceable audit trails. Current logging is operational, not audit-
 - Scan base images for known CVEs
 - **Effort**: Medium
 
-### Phase 4 — Network Security Hardening (A8.20, A8.21)
+### Phase 4 - Network Security Hardening (A8.20, A8.21)
 
 #### 4.1 Enforce TLS everywhere
 - Update production config overlays to require TLS for all internal communication
-- ArgoCD, MinIO, PostgreSQL, Keycloak — all TLS-enabled
+- ArgoCD, MinIO, PostgreSQL, Keycloak - all TLS-enabled
 - **Effort**: Medium (infrastructure)
 
 #### 4.2 NetworkPolicy audit
@@ -153,7 +153,7 @@ BIO2 requires traceable audit trails. Current logging is operational, not audit-
 - Ensure no `allow-all` policies in production
 - **Effort**: Small
 
-### Phase 5 — Documentation & Governance (A5.01, A5.35)
+### Phase 5 - Documentation & Governance (A5.01, A5.35)
 
 These are organizational/process requirements, not code changes.
 
@@ -183,26 +183,26 @@ These are organizational/process requirements, not code changes.
 
 | Priority | Phase | Items | Impact |
 |----------|-------|-------|--------|
-| **P0 — Now** | Phase 1 | Secure defaults, constant-time comparison, rate limiting | Closes active vulnerabilities |
-| **P1 — Short term** | Phase 2 | Structured audit logging | Core BIO2 requirement for traceability |
-| **P2 — Medium term** | Phase 3 | Vulnerability scanning in CI/CD | Required for A8.08 compliance |
-| **P3 — Medium term** | Phase 4 | TLS enforcement, NetworkPolicy audit | Production hardening |
-| **P4 — Ongoing** | Phase 5 | Security policy, ISMS, incident response docs | Governance requirements |
+| **P0 - Now** | Phase 1 | Secure defaults, constant-time comparison, rate limiting | Closes active vulnerabilities |
+| **P1 - Short term** | Phase 2 | Structured audit logging | Core BIO2 requirement for traceability |
+| **P2 - Medium term** | Phase 3 | Vulnerability scanning in CI/CD | Required for A8.08 compliance |
+| **P3 - Medium term** | Phase 4 | TLS enforcement, NetworkPolicy audit | Production hardening |
+| **P4 - Ongoing** | Phase 5 | Security policy, ISMS, incident response docs | Governance requirements |
 
 ---
 
-## 5. BIO2 Specific New Measures — Applicability
+## 5. BIO2 Specific New Measures - Applicability
 
 | New BIO2 Measure | Requirement | OPI Applicability |
 |-------------------|-------------|-------------------|
-| **5.09.01** | Maintain detailed asset inventory | OPI manages project assets — could auto-generate registry |
-| **5.10.1** | Leaders demonstrate cybersecurity training | Organizational — not OPI code |
-| **5.10.4** | Regular employee security training | Organizational — not OPI code |
+| **5.09.01** | Maintain detailed asset inventory | OPI manages project assets - could auto-generate registry |
+| **5.10.1** | Leaders demonstrate cybersecurity training | Organizational - not OPI code |
+| **5.10.4** | Regular employee security training | Organizational - not OPI code |
 | **5.14.04** | Register internet-facing systems, APIs | OPI could generate this from project configs |
-| **5.14.05** | Public websites reported via govt domain registry | OPI manages domains — could automate reporting |
-| **5.22.02** | Current vendor and contract register | Organizational — not OPI code |
-| **5.35.1** | Functioning ISMS per ISO 27001 | Organizational — OPI supports with controls |
-| **8.07.5** | Test users on click behavior annually | Organizational — not OPI code |
+| **5.14.05** | Public websites reported via govt domain registry | OPI manages domains - could automate reporting |
+| **5.22.02** | Current vendor and contract register | Organizational - not OPI code |
+| **5.35.1** | Functioning ISMS per ISO 27001 | Organizational - OPI supports with controls |
+| **8.07.5** | Test users on click behavior annually | Organizational - not OPI code |
 | **8.08.04** | Annual technical compliance checks | OPI could support via automated scanning |
 
 ---

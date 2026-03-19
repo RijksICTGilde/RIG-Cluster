@@ -28,7 +28,7 @@ from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
-from opi.utils.naming import sanitize_kubernetes_name
+from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
 from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name
 from pydantic import BaseModel, Field
 
@@ -395,15 +395,10 @@ class UpsertDeploymentRequest(BaseModel):
         None, description="Deployment name to clone data from (only on create, or if forceClone is true)"
     )
     forceClone: bool = Field(False, description="Force clone even if target resources exist (runtime parameter)")
-    domain_format: str | None = Field(
+    domain_format: DomainFormatId | None = Field(
         None,
-        max_length=64,
         description=(
             "URL format template ID that controls how hostnames are generated. "
-            "Dash variants: 'component-deployment-project', 'deployment-project', "
-            "'component-deployment-subdomain', 'deployment-subdomain', 'component-subdomain', 'subdomain'. "
-            "Dot variants (requires wildcard DNS): 'component.deployment.project', 'deployment.project', "
-            "'component.deployment.subdomain', 'deployment.subdomain', 'component.subdomain'. "
             "Formats containing 'subdomain' require the subdomain field to be set."
         ),
         example="component-deployment-subdomain",
@@ -752,15 +747,10 @@ class DeploymentDomainSettingsRequest(BaseModel):
         example="nice-url",
         max_length=32,
     )
-    domain_format: str | None = Field(
+    domain_format: DomainFormatId | None = Field(
         None,
-        max_length=64,
         description=(
             "URL format template ID that controls how hostnames are generated. "
-            "Dash variants: 'component-deployment-project', 'deployment-project', "
-            "'component-deployment-subdomain', 'deployment-subdomain', 'component-subdomain', 'subdomain'. "
-            "Dot variants (requires wildcard DNS): 'component.deployment.project', 'deployment.project', "
-            "'component.deployment.subdomain', 'deployment.subdomain', 'component.subdomain'. "
             "Formats containing 'subdomain' require the subdomain field to be set."
         ),
         example="component-deployment-subdomain",
@@ -784,7 +774,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
         None,
         description=(
             "Component reference to mark as root. Only applicable for dot-variant domain formats "
-            "(e.g., 'component.deployment.subdomain') — the root component receives traffic at the "
+            "(e.g., 'component.deployment.subdomain') - the root component receives traffic at the "
             "bare subdomain without a component prefix."
         ),
         example="frontend",
@@ -816,9 +806,7 @@ class DeploymentDomainSettingsResponse(BaseModel):
     deployment_name: str = Field(..., description="Name of the deployment")
     cluster: str = Field(..., description="Cluster where deployment runs")
     domain_mode: str | None = Field(None, description="Current URL mode")
-    domain_format: str | None = Field(
-        None, description="Current URL format template ID (e.g., 'component-deployment-project')"
-    )
+    domain_format: DomainFormatId | None = Field(None, description="Current URL format template ID")
     subdomain: str | None = Field(None, description="Current subdomain (if format uses subdomain)")
     base_domain: str | None = Field(None, description="Current base domain")
     root_component: str | None = Field(None, description="Component marked as root (dot-variant formats only)")
@@ -920,15 +908,10 @@ class SelfServiceProjectRequest(BaseModel):
         description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
         example="component-specific",
     )
-    domain_format: str | None = Field(
+    domain_format: DomainFormatId | None = Field(
         None,
-        max_length=64,
         description=(
             "URL format template ID that controls how hostnames are generated. "
-            "Dash variants: 'component-deployment-project', 'deployment-project', "
-            "'component-deployment-subdomain', 'deployment-subdomain', 'component-subdomain', 'subdomain'. "
-            "Dot variants (requires wildcard DNS): 'component.deployment.project', 'deployment.project', "
-            "'component.deployment.subdomain', 'deployment.subdomain', 'component.subdomain'. "
             "Formats containing 'subdomain' require the subdomain field to be set."
         ),
         example="component-deployment-project",
@@ -1521,7 +1504,7 @@ async def add_service(
     project level.  If ``components`` is provided, those components'
     ``services`` lists are updated as well.
 
-    The request always succeeds — if the service already exists it is
+    The request always succeeds - if the service already exists it is
     reported in ``services_skipped`` / ``warnings``.
 
     Headers:

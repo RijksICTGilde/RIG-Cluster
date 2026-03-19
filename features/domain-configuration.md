@@ -2,7 +2,7 @@
 
 ## Overview
 
-Domain configuration controls how project components are accessible via URLs. Configuration is **per-deployment** — each deployment (e.g., production, staging, feature branches) independently defines its URL strategy.
+Domain configuration controls how project components are accessible via URLs. Configuration is **per-deployment** - each deployment (e.g., production, staging, feature branches) independently defines its URL strategy.
 
 ## Domain Modes
 
@@ -206,7 +206,7 @@ components:
 
 Each path generates its own Kubernetes Ingress resource. The `rewrite` field is optional and strips the matched prefix before forwarding to the service.
 
-Paths can also be overridden per deployment — see [Deployment-Level Paths](#deployment-level-paths).
+Paths can also be overridden per deployment - see [Deployment-Level Paths](#deployment-level-paths).
 
 ### Deployment-Level Paths
 

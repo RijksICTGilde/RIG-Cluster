@@ -28,7 +28,7 @@ def service():
 
 
 class TestSingleton:
-    """Singleton pattern matters — double-init would wipe state."""
+    """Singleton pattern matters - double-init would wipe state."""
 
     def test_second_init_preserves_data(self):
         s1 = ProjectService()
@@ -44,7 +44,7 @@ class TestSingleton:
 
 
 class TestGetAllProjectsReturnsCopy:
-    """get_all_projects must return a copy — callers mutating the dict would corrupt state."""
+    """get_all_projects must return a copy - callers mutating the dict would corrupt state."""
 
     def test_mutation_does_not_affect_internal_state(self, service):
         service.register("a", "k1", "a.yaml")
@@ -125,7 +125,7 @@ class TestLoadProjectFromData:
 
 
 class TestCaseInsensitiveEmailMatching:
-    """Authorization checks must be case-insensitive — Keycloak emails can differ in casing."""
+    """Authorization checks must be case-insensitive - Keycloak emails can differ in casing."""
 
     def test_is_user_authorized_case_insensitive(self, service):
         users = [ProjectUser(email="Alice@Example.COM", role="admin")]

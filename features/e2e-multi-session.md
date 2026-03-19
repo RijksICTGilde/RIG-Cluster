@@ -62,7 +62,7 @@ E2E_BASE_URL=https://zad.sandbox.rijksapp.dev \
 ```bash
 send-message coordinator "E2E tests passed (5/5). Feature X validated."
 # or
-send-message coordinator "E2E tests failed: test_wizard_minimal_project — timeout on step 3. See logs." --priority high
+send-message coordinator "E2E tests failed: test_wizard_minimal_project - timeout on step 3. See logs." --priority high
 ```
 
 ## Testing Mutex

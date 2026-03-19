@@ -502,7 +502,8 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
             logger.warning("Project refresh failed: %s", project_name)
             progress.fail_task(process_task, error_msg)
             progress.fail_project(error_msg)
-            raise RuntimeError(error_msg)
+            original = project_manager.get_processing_exception()
+            raise RuntimeError(error_msg) from original
 
     except Exception as exc:
         if not isinstance(exc, ValueError | RuntimeError):

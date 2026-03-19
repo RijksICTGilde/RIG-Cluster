@@ -9,7 +9,7 @@ Deploy Forgejo as an in-cluster git server on the ODCN production cluster, authe
 ## Why
 
 - **Self-hosted git**: Reduce dependency on external GitHub for cluster configuration repositories
-- **SSO via Keycloak**: Developers log in with their existing SSO-Rijk credentials — no separate accounts
+- **SSO via Keycloak**: Developers log in with their existing SSO-Rijk credentials - no separate accounts
 - **Consistent with sandbox**: The sandboxed-local cluster already runs Forgejo; ODCN production would follow the same pattern
 - **GitOps backend**: ArgoCD and Operations Manager can push/pull from an in-cluster Forgejo instead of (or in addition to) GitHub
 

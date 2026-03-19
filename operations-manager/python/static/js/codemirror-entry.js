@@ -1,5 +1,5 @@
 /**
- * CodeMirror 6 entry point — bundled into an IIFE that sets window.CM.
+ * CodeMirror 6 entry point - bundled into an IIFE that sets window.CM.
  *
  * Build:
  *   npx esbuild --bundle --format=iife --global-name=CM --minify \

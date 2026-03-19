@@ -68,7 +68,7 @@ def get_value(data: dict[str, Any], yaml_path: str) -> Any:
     Supports wildcards ``[*]`` (returns list of all matches) and
     filter expressions ``{K}`` / ``{F=V}`` for mixed-list navigation.
 
-    Never raises for missing data — returns None instead.
+    Never raises for missing data - returns None instead.
     """
     if yaml_path == "":
         return data
@@ -130,7 +130,7 @@ def _filter_get(items: list[Any], filt: str) -> Any:
                 return item
         return None
 
-    # {K} — dict-key filter in mixed list
+    # {K} - dict-key filter in mixed list
     for item in items:
         if isinstance(item, dict) and filt in item:
             return item[filt]
@@ -148,7 +148,7 @@ def set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any
     Creates intermediate dicts, extends lists, and promotes/creates
     entries for filter expressions as needed.
 
-    Does NOT support ``[*]`` wildcards — use ``resolve_path()`` first.
+    Does NOT support ``[*]`` wildcards - use ``resolve_path()`` first.
 
     Returns the modified data dict (mutated in place).
     """
@@ -156,7 +156,7 @@ def set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[str, Any
         msg = "Cannot set value at empty path"
         raise ValueError(msg)
     if "[*]" in yaml_path:
-        msg = "Cannot use wildcard [*] in set_value — use resolve_path() first"
+        msg = "Cannot use wildcard [*] in set_value - use resolve_path() first"
         raise ValueError(msg)
 
     parts = yaml_path.split("/")
@@ -263,12 +263,12 @@ def _filter_set_terminal(lst: list[Any], filt: str, value: Any) -> None:
             if isinstance(item, dict) and str(item.get(field)) == match_val:
                 lst[i] = value
                 return
-        # Not found — append with the identifying field
+        # Not found - append with the identifying field
         if isinstance(value, dict):
             value.setdefault(field, match_val)
         lst.append(value)
     else:
-        # {K} — set the value at dict[K]
+        # {K} - set the value at dict[K]
         for i, item in enumerate(lst):
             if isinstance(item, str) and item == filt:
                 if value is None:
@@ -301,7 +301,7 @@ def _filter_ensure(lst: list[Any], filt: str) -> dict[str, Any]:
         lst.append(new_item)
         return new_item
 
-    # {K} — dict-key filter in mixed list
+    # {K} - dict-key filter in mixed list
     # First pass: prefer an existing dict entry (avoids duplicates when
     # the list contains both a plain string and a dict for the same key).
     for item in lst:
@@ -320,7 +320,7 @@ def _filter_ensure(lst: list[Any], filt: str) -> dict[str, Any]:
             lst[i] = promoted
             return promoted[filt]
 
-    # Not found — create
+    # Not found - create
     new_entry = {filt: {}}
     lst.append(new_entry)
     return new_entry[filt]

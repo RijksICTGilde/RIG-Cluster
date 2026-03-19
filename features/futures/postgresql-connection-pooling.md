@@ -2,7 +2,7 @@
 
 ## Status
 
-**Superseded** by [PgBouncer Connection Pooling](../pgbouncer-connection-pooling.md) — which provides a more specific implementation design using CloudNativePG's native PgBouncer pooler support.
+**Superseded** by [PgBouncer Connection Pooling](../pgbouncer-connection-pooling.md) - which provides a more specific implementation design using CloudNativePG's native PgBouncer pooler support.
 
 ## Overview
 

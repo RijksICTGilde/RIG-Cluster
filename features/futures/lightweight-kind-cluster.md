@@ -97,7 +97,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  # Core infrastructure only — no Keycloak, Redis, Chisel, Prometheus, Forgejo
+  # Core infrastructure only - no Keycloak, Redis, Chisel, Prometheus, Forgejo
   - ../../infrastructure/cert-manager/controller/base
   - ../../infrastructure/postgresql/operator/base
   - ../../infrastructure/postgresql/database/base
@@ -159,7 +159,7 @@ spec:
 
 ### Phase 3: Taskfile Tasks
 
-**File**: `Taskfile.yaml` (modify — add these tasks)
+**File**: `Taskfile.yaml` (modify - add these tasks)
 
 ```yaml
   setup-minimal-cluster:
@@ -262,7 +262,7 @@ spec:
 **File**: `operations-manager/python/.env.minimal` (new)
 
 ```env
-# Minimal cluster configuration — no Keycloak, no SSO
+# Minimal cluster configuration - no Keycloak, no SSO
 ENVIRONMENT=minimal
 CLUSTER_MANAGER=local
 
@@ -311,12 +311,12 @@ BOOTSTRAP_CLUSTER_FOLDER=minimal
 
 | File | Action |
 |------|--------|
-| `infrastructure/bootstrap/clusters/minimal/kustomization.yaml` | Create — minimal infrastructure kustomization |
-| `bootstrap/rig-system/kustomize/overlays/minimal/kustomization.yaml` | Create — minimal bootstrap |
-| `bootstrap/rig-system/kustomize/overlays/minimal/argocd-application-minimal-infrastructure.yaml` | Create — ArgoCD app for minimal infra |
-| `Taskfile.yaml` | Modify — add `setup-minimal-cluster`, `_deploy-minimal-infrastructure`, `_wait-for-minimal-infrastructure`, `destroy-cluster` tasks |
-| `operations-manager/python/.env.minimal` | Create — minimal environment config |
-| `.env-taskfile-minimal` | Create — taskfile config for minimal cluster |
+| `infrastructure/bootstrap/clusters/minimal/kustomization.yaml` | Create - minimal infrastructure kustomization |
+| `bootstrap/rig-system/kustomize/overlays/minimal/kustomization.yaml` | Create - minimal bootstrap |
+| `bootstrap/rig-system/kustomize/overlays/minimal/argocd-application-minimal-infrastructure.yaml` | Create - ArgoCD app for minimal infra |
+| `Taskfile.yaml` | Modify - add `setup-minimal-cluster`, `_deploy-minimal-infrastructure`, `_wait-for-minimal-infrastructure`, `destroy-cluster` tasks |
+| `operations-manager/python/.env.minimal` | Create - minimal environment config |
+| `.env-taskfile-minimal` | Create - taskfile config for minimal cluster |
 
 ---
 
@@ -381,4 +381,4 @@ BOOTSTRAP_CLUSTER_FOLDER=minimal
 ## Dependencies on Other Features
 
 - **Independent Local Development** (`features/future/independent-local-development.md`): The SSL/domain changes should apply to both minimal and full clusters
-- **SSO Optional** (`AUTH_MODE` setting): Required for minimal cluster to work without Keycloak — verify `AUTH_MODE=api-key-only` is fully implemented
+- **SSO Optional** (`AUTH_MODE` setting): Required for minimal cluster to work without Keycloak - verify `AUTH_MODE=api-key-only` is fully implemented

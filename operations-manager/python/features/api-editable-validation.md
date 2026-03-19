@@ -10,10 +10,10 @@ Reuses the editable validation system (`opi/forms/editables/`) for API endpoint 
 
 Operates on raw `Editable` objects without any UI dependency:
 
-- **`validate_field(editable, value)`** — runs required check + validator for a single field
-- **`validate_fields(field_map, editables)`** — validates a dict of `{field_name: value}` against matching editables
-- **`convert_fields(field_map, editables)`** — applies `converter.write()` to each value
-- **`enforce_rules(data, enforcers, context)`** — runs business rule enforcers
+- **`validate_field(editable, value)`** - runs required check + validator for a single field
+- **`validate_fields(field_map, editables)`** - validates a dict of `{field_name: value}` against matching editables
+- **`convert_fields(field_map, editables)`** - applies `converter.write()` to each value
+- **`enforce_rules(data, enforcers, context)`** - runs business rule enforcers
 
 ### API Validation Profiles (`opi/api/validation.py`)
 
@@ -46,10 +46,10 @@ The `validate_api_payload()` helper validates a Pydantic model dict and raises `
 
 Validation is applied in both v1 (`/api/`) and v2 (`/api/v2/`) routers:
 
-- `POST /projects/{name}/components` — add_component
-- `POST /projects/{name}/deployments/{dep}/components` — add_component_to_deployment
-- `POST /projects/{name}/:upsert-deployment` — upsert_deployment
-- `PUT /projects/{name}/deployments/{dep}/image` — update_image
+- `POST /projects/{name}/components` - add_component
+- `POST /projects/{name}/deployments/{dep}/components` - add_component_to_deployment
+- `POST /projects/{name}/:upsert-deployment` - upsert_deployment
+- `PUT /projects/{name}/deployments/{dep}/image` - update_image
 
 ## What it validates that Pydantic alone does not
 

@@ -29,10 +29,10 @@ What becomes easier or harder as a result of this decision?
 
 ## Statuses
 
-- **Proposed** — under discussion, not yet implemented
-- **Accepted** — agreed upon, implementation in progress or complete
-- **Superseded** — replaced by a newer ADR (link to it)
-- **Deprecated** — no longer relevant
+- **Proposed** - under discussion, not yet implemented
+- **Accepted** - agreed upon, implementation in progress or complete
+- **Superseded** - replaced by a newer ADR (link to it)
+- **Deprecated** - no longer relevant
 
 ## Index
 

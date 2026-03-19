@@ -3,13 +3,13 @@
 ## Problem
 
 Component and deployment names are currently used for:
-1. **Display** — shown in the UI
-2. **Identity** — referenced by other parts of the YAML (e.g., `deployments[*]/components[*]/reference`)
-3. **Manifest naming** — Kubernetes resource names, PVC names, secret names (e.g., `frontend-deployment.yaml`, `frontend-data-pvc`)
-4. **Kubernetes resource names** — the actual names of Deployments, Services, PVCs in the cluster
+1. **Display** - shown in the UI
+2. **Identity** - referenced by other parts of the YAML (e.g., `deployments[*]/components[*]/reference`)
+3. **Manifest naming** - Kubernetes resource names, PVC names, secret names (e.g., `frontend-deployment.yaml`, `frontend-data-pvc`)
+4. **Kubernetes resource names** - the actual names of Deployments, Services, PVCs in the cluster
 
 This coupling means renaming a component is destructive:
-- PVCs cannot be renamed in Kubernetes — a rename creates a new (empty) PVC and orphans the old one with its data
+- PVCs cannot be renamed in Kubernetes - a rename creates a new (empty) PVC and orphans the old one with its data
 - Manifest files using the old name remain on disk, causing duplicate resources
 - ArgoCD sees both old and new resources
 - All cross-references in the YAML must be updated atomically
@@ -65,7 +65,7 @@ deployments:
 | `{slug}-{short-hash}` | `frontend-a1b2` | Shorter, still readable | No type info |
 | `{short-uuid}` | `a1b2c3d4` | Short, guaranteed unique | Not human-readable |
 
-Recommendation: `{slug}-{short-hash}` where slug is derived from the initial name at creation time. The slug in the ID does NOT change when the display name changes — it's just a hint for humans reading raw YAML or kubectl output.
+Recommendation: `{slug}-{short-hash}` where slug is derived from the initial name at creation time. The slug in the ID does NOT change when the display name changes - it's just a hint for humans reading raw YAML or kubectl output.
 
 ## Impact Areas
 
@@ -105,11 +105,11 @@ Recommendation: `{slug}-{short-hash}` where slug is derived from the initial nam
 ## Benefits
 
 - Component and deployment names become freely editable
-- No manifest cleanup needed on rename — IDs don't change
+- No manifest cleanup needed on rename - IDs don't change
 - No PVC data loss on rename
 - No cross-reference update needed on rename
 - Kubernetes resources maintain stable identities
-- Simpler change detection — only display metadata changed, not infrastructure
+- Simpler change detection - only display metadata changed, not infrastructure
 
 ## Related
 

@@ -1,5 +1,5 @@
 {#
-  Modal Wizard Progress — initial frame that starts HTMX polling.
+  Modal Wizard Progress - initial frame that starts HTMX polling.
 
   Required context:
     - task_id: str
@@ -10,7 +10,8 @@
          hx-get="/projects/{{ project_name }}/modal-wizard/progress/{{ task_id }}"
          hx-trigger="load, every 2s"
          hx-target="#modal-progress-container"
-         hx-swap="outerHTML">
+         hx-swap="outerHTML"
+         hx-target-404="#modal-progress-container"
         <div class="edit-progress-bar-wrapper">
             <div class="edit-progress-bar" style="width: 0%"></div>
         </div>

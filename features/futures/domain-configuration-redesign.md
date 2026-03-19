@@ -129,7 +129,7 @@ deployments:
 
 The project name is often a generated unique identifier (like `amt-2m9`), which isn't user-friendly for URLs.
 
-**Solution**: The `subdomain` field already supports custom values. No change needed to the data model — just ensure the wizard UI makes this clear:
+**Solution**: The `subdomain` field already supports custom values. No change needed to the data model - just ensure the wizard UI makes this clear:
 
 ```yaml
 deployments:
@@ -459,7 +459,7 @@ def get_tls_config(self, deployment: dict) -> dict:
 - All existing project configurations continue to work unchanged
 - New features (groups, wildcard certs) are opt-in via explicit configuration
 - The wizard UI defaults to the existing component-specific mode
-- No breaking changes to the YAML schema — only additive fields
+- No breaking changes to the YAML schema - only additive fields
 
 ## Dependencies
 

@@ -1,13 +1,18 @@
 {#
-  Modal Wizard Review Fragment — confirmation screen before final submit.
+  Modal Wizard Review Fragment - confirmation screen before final submit.
 
   Required context:
     - steps: WizardSteps object
     - flow_id: FormFlow ID
     - project_name: str
-    - section_summaries: list of dicts with section_id, title, icon, summary_html
+    - section_summaries: list of dicts with section_id, title, icon, fields
     - action_label: str (button text)
     - warnings: list of warning strings (optional)
+
+  Each field in section.fields is a dict:
+    - {label, value, is_list: false}  — key-value pair
+    - {label, value, is_list: true}   — value is a list, render as <c-list>
+    - {html}                          — pre-rendered HTML (sequences, custom)
 #}
 
 {# Step indicator (only for multi-step flows) #}
@@ -18,25 +23,27 @@
 {% endif %}
 
 <div class="wizard-review" id="modal-wizard-step-inner">
-    <div class="wizard-step__header">
-        <c-heading type="h2">
-            <c-icon icon="vinkje" size="md" />
-            Controleer uw wijzigingen
-        </c-heading>
-        <p class="wizard-step__description">
-            Controleer de wijzigingen hieronder voordat u verdergaat.
-        </p>
-    </div>
-
-    {% if warnings %}
-    {% for warning in warnings %}
-    <c-alert kind="warning" heading="Let op">
-        {{ warning }}
-    </c-alert>
-    {% endfor %}
-    {% endif %}
-
     <c-layout-flow gap="lg">
+        <div class="wizard-step__header">
+            <c-heading type="h2">
+                <c-icon icon="vinkje" size="md" />
+                Controleer uw wijzigingen
+            </c-heading>
+            <p class="wizard-step__description">
+                Controleer de wijzigingen hieronder voordat u verdergaat.
+            </p>
+        </div>
+
+        {% if warnings %}
+        <c-layout-flow gap="sm">
+            {% for warning in warnings %}
+            <c-alert kind="warning" heading="Let op">
+                {{ warning }}
+            </c-alert>
+            {% endfor %}
+        </c-layout-flow>
+        {% endif %}
+
         {% for section in section_summaries %}
         <c-card outline="true" padding="md">
             <div class="wizard-review__section">
@@ -51,17 +58,39 @@
                               hx-target="#edit-section-inner" hx-swap="innerHTML" />
                 </div>
                 <div class="wizard-review__section-content">
-                    {{ section.summary_html | safe }}
+                    {% for field in section.fields %}
+                        {% if field.html is defined %}
+                            {{ field.html | safe }}
+                        {% elif field.is_list %}
+                            <dl>
+                                <dt>{{ field.label }}</dt>
+                                <dd>
+                                    <c-list>
+                                        {% for item in field.value %}
+                                        <c-li>{{ item }}</c-li>
+                                        {% endfor %}
+                                    </c-list>
+                                </dd>
+                            </dl>
+                        {% else %}
+                            <dl><dt>{{ field.label }}</dt><dd>{{ field.value }}</dd></dl>
+                        {% endif %}
+                    {% else %}
+                        <p><em>Geen gegevens ingevuld</em></p>
+                    {% endfor %}
                 </div>
             </div>
         </c-card>
         {% endfor %}
     </c-layout-flow>
 
-    <div class="wizard-step__actions">
+    <div class="wizard-step__actions rvo-layout-margin-vertical--xl">
         <c-button kind="tertiary" label="Annuleren" @click="closeEditModal()" />
 
         <div class="wizard-step__actions-right">
+            <c-button kind="secondary" label="Vorige" showIcon="before" icon="delta-naar-links"
+                      hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ steps.last }}"
+                      hx-target="#edit-section-inner" hx-swap="innerHTML" />
             <c-button kind="primary" label="{{ action_label }}"
                       showIcon="before" icon="publicatie"
                       hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/confirm"

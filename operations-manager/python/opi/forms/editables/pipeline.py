@@ -1,7 +1,7 @@
 """Data-only validation pipeline for Editable objects.
 
 Operates on raw Editable instances without any UI dependency.
-Designed for API endpoint validation — validates flat field maps
+Designed for API endpoint validation - validates flat field maps
 against editable validators, converters, and enforcers.
 """
 

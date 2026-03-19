@@ -480,7 +480,7 @@ class PVCManager:
                         ref_name,
                     )
                 else:
-                    # No marked_for_deletion_service available — delete the manifest immediately
+                    # No marked_for_deletion_service available - delete the manifest immediately
                     os.remove(marked_path)
                     result["operations"].append(
                         {

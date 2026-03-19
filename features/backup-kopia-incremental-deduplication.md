@@ -8,10 +8,10 @@ This document outlines the investigation into properly leveraging Kopia's increm
 
 The backup system currently spawns stateless pods that connect to a Kopia repository, create a full snapshot, and disconnect. While Kopia internally uses content-addressable storage with block-level deduplication, the stateless pod pattern limits these benefits:
 
-1. **No local cache persistence** — Each backup pod starts fresh. Kopia cannot efficiently compare against prior snapshots without its local index/cache, resulting in re-reading and re-hashing all data blocks every run.
-2. **Full upload overhead** — Without awareness of what blocks already exist in the repository, the backup pod may re-upload data that is already stored, or at minimum must re-hash all source data to determine what changed.
-3. **No incremental transfer** — True incremental backup requires knowledge of the previous snapshot's block index. Without a persistent cache, each run behaves like a first-time backup in terms of I/O and CPU cost.
-4. **Retention is the only feature leveraged** — The system effectively uses Kopia as a retention-managed file uploader with encryption, rather than as a deduplication engine.
+1. **No local cache persistence** - Each backup pod starts fresh. Kopia cannot efficiently compare against prior snapshots without its local index/cache, resulting in re-reading and re-hashing all data blocks every run.
+2. **Full upload overhead** - Without awareness of what blocks already exist in the repository, the backup pod may re-upload data that is already stored, or at minimum must re-hash all source data to determine what changed.
+3. **No incremental transfer** - True incremental backup requires knowledge of the previous snapshot's block index. Without a persistent cache, each run behaves like a first-time backup in terms of I/O and CPU cost.
+4. **Retention is the only feature leveraged** - The system effectively uses Kopia as a retention-managed file uploader with encryption, rather than as a deduplication engine.
 
 ### Impact
 
@@ -122,18 +122,18 @@ If incremental backup and deduplication are not needed, replace Kopia with direc
 
 ## Recommended Investigation Steps
 
-1. **Benchmark current behavior** — Measure actual backup duration, data transferred, and S3 storage growth over a week of daily backups for a representative PVC (e.g., 10 GB with ~5% daily change rate).
-2. **Test Option A with a single namespace** — Add a cache PVC to one backup pod template and compare duration/transfer for subsequent runs.
-3. **Measure the delta** — If Option A shows meaningful improvement (e.g., >50% reduction in duration/transfer for unchanged data), proceed with a broader rollout.
-4. **Decide on Option C** — If benchmarks show that backup volumes are small enough that full backups complete quickly and storage cost is negligible, simplifying away from Kopia may be the better path.
+1. **Benchmark current behavior** - Measure actual backup duration, data transferred, and S3 storage growth over a week of daily backups for a representative PVC (e.g., 10 GB with ~5% daily change rate).
+2. **Test Option A with a single namespace** - Add a cache PVC to one backup pod template and compare duration/transfer for subsequent runs.
+3. **Measure the delta** - If Option A shows meaningful improvement (e.g., >50% reduction in duration/transfer for unchanged data), proceed with a broader rollout.
+4. **Decide on Option C** - If benchmarks show that backup volumes are small enough that full backups complete quickly and storage cost is negligible, simplifying away from Kopia may be the better path.
 
 ## Corrections to Existing Documentation
 
 The current `features/backup-system.md` contains claims that should be revisited after this investigation concludes:
 
-- **"Incremental backups using Kopia's deduplication"** (line 9) — Currently not delivered due to stateless pods.
-- **Storage Efficiency table** (lines 920-930) — The table showing incremental upload sizes is aspirational, not reflective of current behavior.
-- **"Encrypted, deduplicated backups"** (line 663) — Encryption works; deduplication is under-utilized.
+- **"Incremental backups using Kopia's deduplication"** (line 9) - Currently not delivered due to stateless pods.
+- **Storage Efficiency table** (lines 920-930) - The table showing incremental upload sizes is aspirational, not reflective of current behavior.
+- **"Encrypted, deduplicated backups"** (line 663) - Encryption works; deduplication is under-utilized.
 
 These should be updated to reflect actual behavior, or updated once incremental backups are properly implemented.
 
@@ -145,5 +145,5 @@ These should be updated to reflect actual behavior, or updated once incremental 
 
 ## Related
 
-- [Backup System](backup-system.md) — Current backup system documentation
-- [Storage Metrics Monitoring](storage-metrics-monitoring.md) — Monitoring that can help establish baseline data sizes
+- [Backup System](backup-system.md) - Current backup system documentation
+- [Storage Metrics Monitoring](storage-metrics-monitoring.md) - Monitoring that can help establish baseline data sizes

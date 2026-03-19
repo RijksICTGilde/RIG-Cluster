@@ -306,7 +306,7 @@ class TestKeyValueValidator:
         assert len(errors) == 1
 
     def test_invalid_yaml_list_value(self):
-        """Lists are not valid env var values — only scalars allowed."""
+        """Lists are not valid env var values - only scalars allowed."""
         errors = KeyValueValidator().validate("ITEMS:\n  - one\n  - two")
         assert len(errors) == 1
 
@@ -337,7 +337,7 @@ class TestKeyValueConverterEncryption:
         assert result == FAKE_AGE_ENCRYPTED
 
     def test_write_string_without_yaml_data_returns_plain(self):
-        """Without yaml_data, encryption cannot happen — value is returned as-is."""
+        """Without yaml_data, encryption cannot happen - value is returned as-is."""
         conv = KeyValueConverter(fmt="env", write_as="string")
         result = conv.write("SECRET=value")
         assert result == "SECRET=value"
@@ -419,7 +419,7 @@ class TestUserEnvVarsEncryptGenerator:
             UserEnvVarsEncryptGenerator().generate(yaml_data)
 
         mock.assert_not_called()
-        # Value stays plain — this is a known limitation when no key exists
+        # Value stays plain - this is a known limitation when no key exists
         assert yaml_data["components"][0]["user-env-vars"] == "SECRET=value"
 
 

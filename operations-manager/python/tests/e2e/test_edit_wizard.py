@@ -41,7 +41,7 @@ class TestEditIdentity:
         """Fill display-name with too-short value (min 3 chars), submit, verify error."""
         modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
 
-        # MinMaxLengthValidator(3, 100) — "ab" is too short
+        # MinMaxLengthValidator(3, 100) - "ab" is too short
         modal.fill_field("display-name", "ab")
         modal.submit_step()
 
@@ -115,6 +115,98 @@ class TestEditServices:
         body = modal.get_body_text()
         # The project has keycloak and publish-on-web services
         assert "keycloak" in body.lower() or "Keycloak" in body
+
+    def test_existing_services_are_checked(self, modal: EditModalHelper) -> None:
+        """Verify that the project's existing services are pre-selected."""
+        modal.open_edit_modal("modal-edit-services", "Services beheren")
+
+        assert modal.is_service_selected("keycloak"), "keycloak should be pre-selected"
+        assert modal.is_service_selected("publish-on-web"), "publish-on-web should be pre-selected"
+        assert not modal.is_service_selected("authorization-wall"), "authorization-wall should not be selected"
+
+    def test_select_service_shows_config_step(self, modal: EditModalHelper) -> None:
+        """Select authorization-wall, verify its config step appears in the step indicator."""
+        modal.open_edit_modal("modal-edit-services", "Services beheren")
+
+        # authorization-wall depends on keycloak (already selected)
+        modal.toggle_service("authorization-wall")
+        assert modal.is_service_selected("authorization-wall")
+
+        # Submit step to advance — server recalculates active sections
+        modal.submit_step()
+
+        # After advancing past services, step labels should include auth-wall config
+        step_labels = modal.get_step_labels()
+        labels_lower = [label.lower() for label in step_labels]
+        assert any("authorization" in label for label in labels_lower), (
+            f"Expected authorization wall config step, got: {step_labels}"
+        )
+
+    def test_deselect_service_hides_config_step(self, modal: EditModalHelper) -> None:
+        """Deselect keycloak, verify its config step disappears."""
+        modal.open_edit_modal("modal-edit-services", "Services beheren")
+
+        # Keycloak is pre-selected — deselect it
+        assert modal.is_service_selected("keycloak")
+        modal.toggle_service("keycloak")
+        assert not modal.is_service_selected("keycloak")
+
+        # Submit to advance
+        modal.submit_step()
+
+        # Step labels should NOT include keycloak config
+        step_labels = modal.get_step_labels()
+        labels_lower = [label.lower() for label in step_labels]
+        assert not any("keycloak" in label for label in labels_lower), (
+            f"Keycloak config step should be hidden, got: {step_labels}"
+        )
+
+    def test_select_service_advance_through_config_to_review(self, modal: EditModalHelper) -> None:
+        """Select authorization-wall, walk through config steps, reach review."""
+        modal.open_edit_modal("modal-edit-services", "Services beheren")
+
+        # Add authorization-wall (keycloak already selected)
+        modal.toggle_service("authorization-wall")
+        modal.submit_step()
+
+        # We should now be on keycloak-config (keycloak was already selected)
+        step_labels = modal.get_step_labels()
+        labels_lower = [label.lower() for label in step_labels]
+        assert any("keycloak" in label for label in labels_lower)
+
+        # Advance through keycloak config (accept defaults)
+        modal.submit_step()
+
+        # Advance through authorization-wall config (accept defaults)
+        modal.submit_step()
+
+        # Should reach review
+        modal.wait_for_review()
+        body = modal.get_body_text()
+        assert len(body) > 0, "Review page should have content"
+
+    def test_service_selection_persists_after_back_navigation(self, modal: EditModalHelper) -> None:
+        """Select a service, advance, go back, verify selection persists."""
+        modal.open_edit_modal("modal-edit-services", "Services beheren")
+
+        # Add authorization-wall
+        modal.toggle_service("authorization-wall")
+        assert modal.is_service_selected("authorization-wall")
+
+        # Advance to keycloak config
+        modal.submit_step()
+
+        # Go back to services step using the Previous button
+        prev_btn = modal.page.locator(
+            "#modal-wizard-form button:has-text('Vorige'), #edit-section-actions button:has-text('Vorige')"
+        ).first
+        if prev_btn.count() > 0:
+            modal._click_and_wait(prev_btn)
+
+            # Verify authorization-wall is still selected
+            assert modal.is_service_selected("authorization-wall"), (
+                "Service selection should persist after back navigation"
+            )
 
     def test_screenshot(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Screenshot the services edit modal."""

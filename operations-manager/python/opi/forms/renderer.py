@@ -348,6 +348,16 @@ class FormRenderer:
                     form_field.attributes["locked_values"] = ",".join(yaml_data["_locked_services"])
                 fields_by_name[form_field.path] = form_field
 
+                # Add reverse-virtualized alias so layout references using
+                # the real YAML path find the virtual FormField (mirrors the
+                # alias logic in Sequence item rendering at lines 827-831).
+                if form_field.virtualize:
+                    from opi.forms.editables.editable import reverse_virtualize
+
+                    real_path = reverse_virtualize(form_field.path, form_field.virtualize)
+                    if real_path != form_field.path:
+                        fields_by_name[real_path] = form_field
+
         all_fields = list(fields_by_name.values())
         self._translate_fields(all_fields)
         if edit_mode:
@@ -460,7 +470,7 @@ class FormRenderer:
             ]
 
         # Extract base_domain from deployments (for DomainFormatOptionsProvider)
-        # Check all deployments — in the edit flow, the edited deployment may not be [0]
+        # Check all deployments - in the edit flow, the edited deployment may not be [0]
         if isinstance(deployments, list):
             for dep in deployments:
                 if isinstance(dep, dict):
@@ -486,7 +496,7 @@ class FormRenderer:
     ) -> dict[str, FormField]:
         """Flatten a group editable's children into individual form fields.
 
-        Groups are transparent containers — they don't render themselves,
+        Groups are transparent containers - they don't render themselves,
         they just let their children participate directly in the field list.
         Enforcer errors from the group are attached to the parent path.
         """

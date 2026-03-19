@@ -51,7 +51,7 @@ class TestFormatDutchDate:
         parts = test_value_z.split(".")
         decimal_part = parts[1]  # "335860214-05:00"
 
-        # The old code only checked for "+" — verify the fix handles "-"
+        # The old code only checked for "+" - verify the fix handles "-"
         tz_part = ""
         for tz_char in ("+", "-"):
             if tz_char in decimal_part:

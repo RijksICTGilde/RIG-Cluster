@@ -13,7 +13,7 @@ from opi.utils.project_utils import (
 
 
 class TestNormalizeContainerImage:
-    """OCI spec requires lowercase repository names — normalization must catch violations."""
+    """OCI spec requires lowercase repository names - normalization must catch violations."""
 
     def test_already_lowercase_is_noop(self):
         image, was_normalized = normalize_container_image("ghcr.io/org/repo:latest")

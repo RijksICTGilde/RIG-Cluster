@@ -1,4 +1,4 @@
-"""EditableVisualizer — UI binding that references an Editable."""
+"""EditableVisualizer - UI binding that references an Editable."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class EditableVisualizer:
-    """UI binding — how to visualize an Editable.
+    """UI binding - how to visualize an Editable.
 
     References an ``Editable`` for data logic (path, validators, converters)
     and owns all rendering concerns (widget type, label, description, HTMX).

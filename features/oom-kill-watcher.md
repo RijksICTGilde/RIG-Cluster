@@ -1,15 +1,15 @@
-# OOM Kill Watcher — Fire-and-Forget Auto-Tune
+# OOM Kill Watcher - Fire-and-Forget Auto-Tune
 
 ## What it is
 
-The OOM Kill Watcher is a fire-and-forget background mechanism that automatically detects and recovers from Out-of-Memory (OOM) kills after deployments. When a deploy or refresh completes, a delayed check runs in the background. If OOM kills are detected, the watcher automatically increases memory limits and triggers reprocessing — no manual intervention needed.
+The OOM Kill Watcher is a fire-and-forget background mechanism that automatically detects and recovers from Out-of-Memory (OOM) kills after deployments. When a deploy or refresh completes, a delayed check runs in the background. If OOM kills are detected, the watcher automatically increases memory limits and triggers reprocessing - no manual intervention needed.
 
 ## How it works
 
 ```
 Deploy/Refresh completes
         |
-        | asyncio.create_task() — fire and forget
+        | asyncio.create_task() - fire and forget
         v
    [sleep 2 min]
         |
@@ -30,7 +30,7 @@ Deploy/Refresh completes
 
 ### Key properties
 
-- The deploy/refresh task completes immediately — the OOM check is a detached background coroutine
+- The deploy/refresh task completes immediately - the OOM check is a detached background coroutine
 - OOM detection uses **kubectl** (pod container status `lastState.terminated.reason == "OOMKilled"`)
 - The fix: increase memory in YAML via the existing resource tuning service, then git commit and trigger refresh
 - Natural recursion: each refresh schedules its own check, capped at 3 attempts
@@ -58,9 +58,9 @@ OOM_WATCHER_MAX_ATTEMPTS=5    # More retries
 
 The OOM watcher is scheduled at the end of:
 
-1. **`handle_refresh_deployment`** — after a deployment refresh completes successfully
-2. **`handle_upsert_deployment`** — after a new/updated deployment is processed successfully
-3. **`handle_create_project`** — after project creation, for each deployment in the project
+1. **`handle_refresh_deployment`** - after a deployment refresh completes successfully
+2. **`handle_upsert_deployment`** - after a new/updated deployment is processed successfully
+3. **`handle_create_project`** - after project creation, for each deployment in the project
 
 ## Architecture
 
@@ -85,22 +85,22 @@ The `oom_watch_attempt` field in the task payload tracks which attempt number th
 
 - Check `OOM_WATCHER_ENABLED` is `True`
 - Look for log messages: `OOM watcher: scheduled check for ...`
-- The delay is 2 minutes by default — check after the delay period
+- The delay is 2 minutes by default - check after the delay period
 
 ### OOM detected but not fixed
 
 - Check logs for `OOM watcher: auto-tune applied N change(s)`
 - If max attempts reached, you'll see: `OOM watcher: max attempts (3) reached ... manual intervention required`
-- Verify the metrics backend (Prometheus) is available — the tune service needs it to compute recommendations
+- Verify the metrics backend (Prometheus) is available - the tune service needs it to compute recommendations
 
 ### kubectl connectivity
 
 - The watcher uses kubectl to query pod statuses
 - If kubectl is not connected, you'll see: `kubectl not connected, cannot check OOM kills`
-- The watcher degrades gracefully — it won't crash, just logs warnings
+- The watcher degrades gracefully - it won't crash, just logs warnings
 
 ## Dependencies
 
-- [Auto Resource Tuning](auto-resource-tuning.md) — the underlying tune logic
+- [Auto Resource Tuning](auto-resource-tuning.md) - the underlying tune logic
 - kubectl connectivity to the target cluster
 - Prometheus/metrics backend for computing memory recommendations

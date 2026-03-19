@@ -1,6 +1,6 @@
 # CLAUDE.md - Operations Manager (OPI)
 
-Guidance for working with the Operations Manager codebase — a FastAPI application that provides self-service Kubernetes environments through GitOps.
+Guidance for working with the Operations Manager codebase - a FastAPI application that provides self-service Kubernetes environments through GitOps.
 
 ## Working Directory
 
@@ -136,7 +136,7 @@ kubectl logs -n rig-prd-operations deployment/operations-manager -f
 # Local dev with docker-compose
 docker compose -f docker-compose.dev.yaml logs -f
 
-# Hot-reload dev with Skaffold — API at localhost:9595
+# Hot-reload dev with Skaffold - API at localhost:9595
 task sandbox:skaffold-dev
 ```
 
@@ -147,7 +147,7 @@ task sandbox:skaffold-dev
 | Sandbox | `rig-system` | `rig-{project}` |
 | Production | `rig-prd-operations` | `rig-prd-{project}` |
 
-Always specify the correct namespace when debugging. Do not assume `rig-system` — check the environment.
+Always specify the correct namespace when debugging. Do not assume `rig-system` - check the environment.
 
 ## Code Style
 

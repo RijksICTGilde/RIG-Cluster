@@ -203,7 +203,7 @@ class TestWizardState:
                 "keycloak-config": {"services": [{"keycloak": {"config": {"template": "sso-only"}}}]},
             },
         )
-        # Keycloak deselected — keycloak-config is no longer active
+        # Keycloak deselected - keycloak-config is no longer active
         new_active = ["identity", "services", "team"]
         state.stash_inactive_sections(new_active)
 
@@ -230,7 +230,7 @@ class TestWizardState:
                 "keycloak-config": {"services": [{"keycloak": {"config": {"template": "sso-only"}}}]},
             },
         )
-        # Keycloak re-selected — keycloak-config becomes active again
+        # Keycloak re-selected - keycloak-config becomes active again
         new_active = ["identity", "services", "keycloak-config", "team"]
         state.stash_inactive_sections(new_active)
 

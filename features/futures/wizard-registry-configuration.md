@@ -27,7 +27,7 @@ Add a `REGISTRIES_SECTION` as a dedicated wizard step for managing container reg
 
 ### Wizard Placement
 
-Between `COMPONENTS_SECTION` and `DOMAIN_SECTION` — close to where images are configured on components. Shown in both `CREATE_FLOW` and `EDIT_FLOW`.
+Between `COMPONENTS_SECTION` and `DOMAIN_SECTION` - close to where images are configured on components. Shown in both `CREATE_FLOW` and `EDIT_FLOW`.
 
 ---
 
@@ -112,7 +112,7 @@ REGISTRY_SECRET_NAME = Editable(
 
 **File**: `opi/forms/converters/registry_converter.py` (new)
 
-Handles the auth mode toggle — converts between the two credential formats:
+Handles the auth mode toggle - converts between the two credential formats:
 
 ```python
 from opi.forms.converters.base import Converter
@@ -138,7 +138,7 @@ class RegistryConverter(Converter):
         elif auth_mode == "secret":
             result["secretName"] = form_data["secretName"]
 
-        # Don't persist auth-mode itself — it's a UI-only field
+        # Don't persist auth-mode itself - it's a UI-only field
         return result
 
     def yaml_to_form(self, yaml_data: dict) -> dict:

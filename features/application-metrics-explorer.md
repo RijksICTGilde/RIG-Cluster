@@ -14,7 +14,7 @@ The metrics explorer uses a simple two-step flow:
 
 1. User selects a service from a dropdown
 2. Backend returns available metric names for that service via the Prometheus series API
-3. User selects a metric — Prometheus graph UI loads in an iframe
+3. User selects a metric - Prometheus graph UI loads in an iframe
 
 All metric discovery happens server-side via the `PrometheusConnector.discover_metric_names()` method, which queries the `/api/v1/series` endpoint (not PromQL instant queries). This is essential for services with long scrape intervals (2h) where PromQL instant queries would return empty due to the 5-minute staleness window.
 
@@ -63,7 +63,7 @@ Extracts unique `__name__` values from all returned series and returns a sorted 
 
 ## Configuration
 
-Uses the existing `PROMETHEUS_URL` setting — no additional configuration needed.
+Uses the existing `PROMETHEUS_URL` setting - no additional configuration needed.
 
 ## Key Files
 
@@ -88,5 +88,5 @@ Uses the existing `PROMETHEUS_URL` setting — no additional configuration neede
 
 ### Metrics count shows 0
 
-- The service may not be scraping correctly — check Prometheus targets page
+- The service may not be scraping correctly - check Prometheus targets page
 - For long-interval scrapes (2h), it may take up to 2 hours for initial data to appear

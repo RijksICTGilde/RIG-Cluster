@@ -14,8 +14,11 @@ from opi.forms.visualizers.wizard_sections import (
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
     SERVICE_CONFIG_SECTIONS,
+    SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
     TEAM_SECTION,
+    _service_entry_name,
+    _strip_removed_services_from_components,
 )
 
 
@@ -160,3 +163,86 @@ class TestFlowRegistry:
     def test_get_flow_raises_on_unknown(self):
         with pytest.raises(KeyError, match="Unknown flow"):
             get_flow("nonexistent")
+
+
+class TestServiceEntryName:
+    def test_string_entry(self):
+        assert _service_entry_name("keycloak") == "keycloak"
+
+    def test_dict_with_name(self):
+        assert _service_entry_name({"name": "keycloak"}) == "keycloak"
+
+    def test_single_key_dict(self):
+        assert _service_entry_name({"persistent-storage": {"config": []}}) == "persistent-storage"
+
+    def test_none_for_invalid(self):
+        assert _service_entry_name(42) is None
+
+    def test_none_for_multi_key_dict(self):
+        assert _service_entry_name({"a": 1, "b": 2}) is None
+
+
+class TestStripRemovedServicesFromComponents:
+    def test_removes_string_service_from_component(self):
+        data = {
+            "services": ["persistent-storage"],
+            "components": [
+                {"name": "app", "services": ["keycloak", "persistent-storage"]},
+            ],
+        }
+        _strip_removed_services_from_components(data, {})
+        assert data["components"][0]["services"] == ["persistent-storage"]
+
+    def test_removes_dict_service_from_component(self):
+        data = {
+            "services": ["keycloak"],
+            "components": [
+                {
+                    "name": "app",
+                    "services": [
+                        "keycloak",
+                        {"persistent-storage": {"config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]}},
+                    ],
+                },
+            ],
+        }
+        _strip_removed_services_from_components(data, {})
+        assert data["components"][0]["services"] == ["keycloak"]
+
+    def test_keeps_all_when_nothing_removed(self):
+        data = {
+            "services": ["keycloak", "persistent-storage"],
+            "components": [
+                {"name": "app", "services": ["keycloak", "persistent-storage"]},
+            ],
+        }
+        _strip_removed_services_from_components(data, {})
+        assert data["components"][0]["services"] == ["keycloak", "persistent-storage"]
+
+    def test_handles_no_components(self):
+        data = {"services": ["keycloak"]}
+        _strip_removed_services_from_components(data, {})
+        assert "components" not in data
+
+    def test_handles_component_without_services(self):
+        data = {
+            "services": [],
+            "components": [{"name": "app"}],
+        }
+        _strip_removed_services_from_components(data, {})
+        assert "services" not in data["components"][0]
+
+    def test_cleans_multiple_components(self):
+        data = {
+            "services": ["persistent-storage"],
+            "components": [
+                {"name": "frontend", "services": ["keycloak", "persistent-storage"]},
+                {"name": "backend", "services": ["keycloak", "namespace-postgresql-database"]},
+            ],
+        }
+        _strip_removed_services_from_components(data, {})
+        assert data["components"][0]["services"] == ["persistent-storage"]
+        assert data["components"][1]["services"] == []
+
+    def test_services_edit_section_has_post_merge(self):
+        assert SERVICES_EDIT_SECTION.post_merge is _strip_removed_services_from_components

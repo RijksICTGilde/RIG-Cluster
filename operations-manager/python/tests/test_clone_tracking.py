@@ -6,13 +6,17 @@ Verifies the full clone lifecycle:
 3. set_clone_status marks clone-from as completed
 4. Re-processing reads status and skips completed once-mode clones
 5. Generation info is read back correctly for subsequent operations
+6. YAML serialization never produces anchors/aliases (&id001/*id001)
 """
 
+import copy
+from io import StringIO
 from unittest.mock import MagicMock
 
 import pytest
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.handlers.project_file_handler import ProjectFileHandler, save_project_file
 from opi.manager.revision_manager import RevisionManager
+from ruamel.yaml import YAML
 
 # ============================================================================
 # Fixtures
@@ -948,3 +952,140 @@ class TestServicesInfoForBackups:
 
         assert handler.get_deployment_service_generation(project_data, "staging", "postgresql-database") == 3
         assert handler.get_deployment_service_generation(project_data, "staging", "minio-storage") == 2
+
+
+# ============================================================================
+# YAML Anchor/Alias Prevention
+# ============================================================================
+
+
+class TestYamlNoAnchors:
+    """Verify that YAML serialization never produces anchors (&id001/*id001).
+
+    ruamel.yaml emits anchors when two values in the data structure are the
+    same Python object (same id()). This caused a production bug where cloned
+    deployments shared the source deployment's services list by reference,
+    leading to revision history leaking across deployments.
+    """
+
+    def test_save_project_file_no_anchors(self, tmp_path: "Any") -> None:
+        """save_project_file must never write YAML anchors/aliases."""
+        shared_services = [
+            {"reference": "postgresql-database", "config": {"generation": 1}},
+        ]
+        project_data = {
+            "name": "test-project",
+            "deployments": [
+                {"name": "production", "services": shared_services},
+                {"name": "staging", "services": shared_services},  # same object
+            ],
+        }
+
+        file_path = str(tmp_path / "project.yaml")
+        save_project_file(file_path, project_data)
+
+        with open(file_path) as f:
+            content = f.read()
+
+        assert "&id" not in content, f"YAML anchors found in output:\n{content}"
+        assert "*id" not in content, f"YAML aliases found in output:\n{content}"
+
+    def test_save_project_file_preserves_data_for_both_deployments(self, tmp_path: "Any") -> None:
+        """Both deployments must have full services data after save (no aliases)."""
+        shared_services = [
+            {"reference": "postgresql-database", "config": {"generation": 1}},
+        ]
+        project_data = {
+            "name": "test-project",
+            "deployments": [
+                {"name": "production", "services": shared_services},
+                {"name": "staging", "services": shared_services},
+            ],
+        }
+
+        file_path = str(tmp_path / "project.yaml")
+        save_project_file(file_path, project_data)
+
+        # Re-read and verify both deployments have independent services
+        yaml = YAML()
+        with open(file_path) as f:
+            reloaded = yaml.load(f)
+
+        for deployment in reloaded["deployments"]:
+            assert len(deployment["services"]) == 1
+            assert deployment["services"][0]["reference"] == "postgresql-database"
+            assert deployment["services"][0]["config"]["generation"] == 1
+
+    def test_deepcopy_prevents_shared_references(self) -> None:
+        """copy.deepcopy on clone properties prevents shared Python objects.
+
+        This replicates the fix in project_manager.clone_deployment where
+        source deployment values are deep-copied to the new deployment.
+        """
+        source_deployment = {
+            "name": "production",
+            "cluster": "local",
+            "namespace": "test-project",
+            "services": [
+                {
+                    "reference": "postgresql-database",
+                    "config": {
+                        "generation": 0,
+                        "revisions": [
+                            {
+                                "generation": 0,
+                                "resource": "test_project_production",
+                                "status": "active",
+                            }
+                        ],
+                    },
+                },
+            ],
+            "configuration": "encrypted-blob",
+        }
+
+        # Simulate the fixed clone logic (with deepcopy)
+        clone_exclude_keys = ["name", "components", "subdomain", "base-domain", "domain-mode", "issuer"]
+        new_deployment = {"name": "staging", "components": []}
+        new_deployment.update(
+            {key: copy.deepcopy(value) for key, value in source_deployment.items() if key not in clone_exclude_keys}
+        )
+
+        # Verify services are independent objects
+        assert new_deployment["services"] is not source_deployment["services"]
+        assert new_deployment["services"][0] is not source_deployment["services"][0]
+        assert new_deployment["services"][0]["config"] is not source_deployment["services"][0]["config"]
+
+        # Mutating one must not affect the other
+        new_deployment["services"][0]["config"]["generation"] = 99
+        assert source_deployment["services"][0]["config"]["generation"] == 0
+
+    def test_shared_references_without_deepcopy_produce_anchors(self) -> None:
+        """Without deepcopy, shared references cause YAML anchors (the original bug)."""
+        source_services = [{"reference": "postgresql-database", "config": {"generation": 0}}]
+
+        project_data = {
+            "deployments": [
+                {"name": "production", "services": source_services},
+                {"name": "staging", "services": source_services},  # shared ref = bug
+            ],
+        }
+
+        # Default ruamel.yaml WOULD produce anchors
+        yaml_default = YAML()
+        output_default = StringIO()
+        yaml_default.dump(project_data, output_default)
+        default_content = output_default.getvalue()
+
+        # Confirm the bug exists with default settings
+        assert "&id" in default_content or "*id" in default_content, "Expected YAML anchors from shared references"
+
+        # Our configured dumper must NOT produce anchors
+        yaml_safe = YAML()
+        yaml_safe.representer.ignore_aliases = lambda *_: True
+        output_safe = StringIO()
+        yaml_safe.dump(project_data, output_safe)
+        safe_content = output_safe.getvalue()
+
+        assert "&id" not in safe_content
+        assert "*id" not in safe_content

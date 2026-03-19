@@ -1,4 +1,4 @@
-"""Generated editables — computed at submit time, not rendered in forms.
+"""Generated editables - computed at submit time, not rendered in forms.
 
 These editables use generators to produce values from the merged YAML
 data during final submission. Order matters: the list below defines

@@ -67,8 +67,8 @@ class ServiceDefinition:
     """Service requirements using path syntax.
 
     Each entry is a yaml_path that must exist in the form data:
-    - ``services/keycloak`` — the keycloak service must be selected
-    - ``services/keycloak/config/restrict-access`` — this config
+    - ``services/keycloak`` - the keycloak service must be selected
+    - ``services/keycloak/config/restrict-access`` - this config
       path must be present
 
     Used for both UI behavior (auto-select, lock) and submit-time
@@ -77,11 +77,11 @@ class ServiceDefinition:
     cleanup_strategy: str = "none"
     """How server-side resources are cleaned up when the service is removed.
 
-    - ``"none"``      — no server-side resources to clean up (e.g. storage PVCs,
+    - ``"none"``      - no server-side resources to clean up (e.g. storage PVCs,
                          ingress config).  This is the default.
-    - ``"immediate"``  — ephemeral / easily recreatable resources are deleted
+    - ``"immediate"``  - ephemeral / easily recreatable resources are deleted
                          right away (e.g. Redis ACL users, Keycloak clients).
-    - ``"deferred"``   — persistent data resources are marked for deferred
+    - ``"deferred"``   - persistent data resources are marked for deferred
                          deletion so they can be recovered (e.g. databases,
                          MinIO buckets).
     """
@@ -164,6 +164,12 @@ class KeycloakVariables(Enum):
         description="OAuth2/OIDC client geheim voor authenticatie",
         source="secret",
         secret_key="client_secret",
+    )
+    PUBLIC_CLIENT_ID = VariableDefinition(
+        name="OIDC_PUBLIC_CLIENT_ID",
+        description="Public OAuth2/OIDC client identificatie voor browser-based authenticatie (keycloak-js)",
+        source="secret",
+        secret_key="public_client_id",
     )
     DISCOVERY_URL = VariableDefinition(
         name="OIDC_DISCOVERY_URL",
@@ -549,7 +555,7 @@ class ServiceAdapter:
     def get_backupable_labels(cls) -> list[dict[str, str]]:
         """Get unique backup labels with display metadata from backupable services.
 
-        Returns a list of dicts with keys: label, name, color — one per unique
+        Returns a list of dicts with keys: label, name, color - one per unique
         backup_label.  Order is stable (follows SERVICE_DEFINITIONS insertion order).
         """
         seen: set[str] = set()
@@ -806,7 +812,7 @@ class ServiceAdapter:
         """
         Add one or more services (and their dependencies) to a project's configuration.
 
-        Pure data-manipulation logic — no I/O or git operations.
+        Pure data-manipulation logic - no I/O or git operations.
 
         Args:
             project_data: The mutable project configuration dict.

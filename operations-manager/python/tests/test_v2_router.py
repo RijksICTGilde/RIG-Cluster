@@ -204,7 +204,7 @@ class TestV2UpsertDeployment:
 # ---------------------------------------------------------------------------
 
 
-# NOTE: TestV2CreateProject removed — create_project_v2 endpoint was removed
+# NOTE: TestV2CreateProject removed - create_project_v2 endpoint was removed
 # (project creation is handled exclusively through the web UI wizard).
 
 

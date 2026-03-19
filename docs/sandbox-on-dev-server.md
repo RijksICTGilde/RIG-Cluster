@@ -9,7 +9,7 @@ Guide for setting up the Kind sandbox cluster on the shared Linux dev server whe
 Install all of these on the host (not inside Docker):
 
 ```bash
-# Docker — must be installed and running
+# Docker - must be installed and running
 docker info
 
 # Kubernetes tools
@@ -65,7 +65,7 @@ cd /path/to/RIG-Cluster
 task sandbox:setup
 ```
 
-This is interactive — it will prompt for:
+This is interactive - it will prompt for:
 - The developer AGE key (for TLS cert decryption)
 - Whether to configure production Keycloak SSO (optional, say no for testing)
 

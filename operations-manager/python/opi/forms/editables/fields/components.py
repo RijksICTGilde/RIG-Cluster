@@ -14,6 +14,7 @@ from opi.forms.editables.validators import (
     ComponentNameValidator,
     ContainerImageValidator,
     KeyValueValidator,
+    MemoryRangeValidator,
     PathValidator,
 )
 
@@ -56,30 +57,30 @@ COMPONENT_PORTS_OUTBOUND_EDITABLE = Editable(
 )
 
 COMPONENT_RESOURCES_CPU_REQUEST_EDITABLE = Editable(
-    yaml_path="components[*]/resources/cpu/request",
+    yaml_path="components[*]/resources/requests/cpu",
     values_provider="CpuRequestOptionsProvider",
     validator=AllowedValuesValidator(["50m", "100m", "250m", "500m"]),
     default="50m",
 )
 
 COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE = Editable(
-    yaml_path="components[*]/resources/cpu/limit",
+    yaml_path="components[*]/resources/limits/cpu",
     values_provider="CpuLimitOptionsProvider",
     validator=AllowedValuesValidator(["500m", "1"]),
     default="1",
 )
 
 COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE = Editable(
-    yaml_path="components[*]/resources/memory/request",
-    values_provider="MemoryRequestOptionsProvider",
-    validator=AllowedValuesValidator(["256Mi", "512Mi"]),
+    yaml_path="components[*]/resources/requests/memory",
+    values_provider="MemoryOptionsProvider",
+    validator=MemoryRangeValidator(min_mi=32, max_mi=1024),
     default="256Mi",
 )
 
 COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE = Editable(
-    yaml_path="components[*]/resources/memory/limit",
-    values_provider="MemoryLimitOptionsProvider",
-    validator=AllowedValuesValidator(["512Mi", "768Mi", "1Gi"]),
+    yaml_path="components[*]/resources/limits/memory",
+    values_provider="MemoryOptionsProvider",
+    validator=MemoryRangeValidator(min_mi=32, max_mi=1024),
     default="512Mi",
 )
 

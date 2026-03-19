@@ -1,4 +1,4 @@
-{# Deployment Actions Section — quick actions per deployment #}
+{# Deployment Actions Section - quick actions per deployment #}
 {% if user_role in ["admin", "owner"] and project.deployments %}
     {% for deployment in project.deployments %}
     <div class="deployment-section" id="deployment-actions-{{ deployment.name }}"
@@ -13,7 +13,7 @@
                     size="sm"
                     showIcon="before"
                     icon="bewerken"
-                    @click="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Images bewerken — {{ deployment.name }}')" />
+                    @click="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Images bewerken - {{ deployment.name }}')" />
             </c-layout-row>
         </c-layout-flow>
     </c-card>

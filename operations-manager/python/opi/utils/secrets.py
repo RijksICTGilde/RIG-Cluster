@@ -257,6 +257,7 @@ class KeycloakSecret(BaseSecret):
 
     client_id: str
     client_secret: str
+    public_client_id: str
     discovery_url: str
     base_url: str
     realm: str

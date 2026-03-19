@@ -5,9 +5,9 @@ Lightweight test server and Playwright flow tests for the wizard UI.
 ## Overview
 
 The E2E UI test infrastructure provides:
-1. **Test server** — starts the real FastAPI app with mocked externals and fixture data
-2. **Playwright flow tests** — automated wizard scenarios with screenshot capture
-3. **Standalone mode** — run the server interactively for UI development
+1. **Test server** - starts the real FastAPI app with mocked externals and fixture data
+2. **Playwright flow tests** - automated wizard scenarios with screenshot capture
+3. **Standalone mode** - run the server interactively for UI development
 
 No sandbox cluster, database, Git, Keycloak, or Kubernetes required.
 
@@ -59,26 +59,26 @@ The test server module provides `create_test_app()` which returns a context mana
 ### Fixture Projects (`tests/e2e/fixtures/projects/`)
 
 YAML files in this directory are loaded into ProjectService at startup:
-- `test-project.yaml` — minimal project with one component
-- `test-project-with-services.yaml` — project with Keycloak + PostgreSQL services
+- `test-project.yaml` - minimal project with one component
+- `test-project-with-services.yaml` - project with Keycloak + PostgreSQL services
 
 ### Conftest (`tests/e2e/conftest.py`)
 
 Provides pytest fixtures:
-- `app_server` — session-scoped, starts the test server on a free port
-- `authenticated_context` — browser context with pre-signed session cookie
-- `auth_page` — page from the authenticated context
-- `screenshot_dir` — directory for saving screenshots (configurable via `E2E_SCREENSHOT_DIR`)
+- `app_server` - session-scoped, starts the test server on a free port
+- `authenticated_context` - browser context with pre-signed session cookie
+- `auth_page` - page from the authenticated context
+- `screenshot_dir` - directory for saving screenshots (configurable via `E2E_SCREENSHOT_DIR`)
 
 ### WizardHelper (`tests/e2e/helpers/wizard.py`)
 
 Page object for wizard interaction:
-- `fill_identity()`, `fill_team()`, `fill_component()` — step-specific form filling
-- `fill_services()` — select service cards
-- `fill_deployment()`, `fill_domain()` — additional step support
-- `click_next()`, `click_previous()`, `click_review()`, `submit_wizard()` — navigation
-- `screenshot()` — full-page screenshot capture
-- `get_visible_step_titles()` — introspect the step indicator
+- `fill_identity()`, `fill_team()`, `fill_component()` - step-specific form filling
+- `fill_services()` - select service cards
+- `fill_deployment()`, `fill_domain()` - additional step support
+- `click_next()`, `click_previous()`, `click_review()`, `submit_wizard()` - navigation
+- `screenshot()` - full-page screenshot capture
+- `get_visible_step_titles()` - introspect the step indicator
 
 ## Test Scenarios
 

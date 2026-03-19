@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
+from opi.core.flow_id import set_flow_id
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -107,7 +108,8 @@ class TaskWorker:
         project_name = task.get("project_name", "")
         deployment_name = task.get("deployment_name")
 
-        logger.info("Executing task %s (type=%s, project=%s)", task_id, task_type, project_name)
+        fid = set_flow_id(f"task-{task_id[:8]}")
+        logger.info("Executing task %s (type=%s, project=%s, flow=%s)", task_id, task_type, project_name, fid)
 
         # Check for conflicting tasks (same project + task_type already running)
         conflicting = await self._task_service.find_conflicting_task(

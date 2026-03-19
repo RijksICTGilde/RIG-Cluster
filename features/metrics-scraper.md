@@ -4,7 +4,7 @@
 
 The **Metrics Scraper** service enables Prometheus to automatically discover and scrape metrics endpoints from your application components. When enabled, it adds Prometheus scraping annotations to your pod, allowing the Prometheus instance in your cluster to monitor your application's metrics.
 
-This is an **opt-in service** — metrics scraping is only enabled for components that explicitly enable this service. Components without this service will not be scraped by Prometheus.
+This is an **opt-in service** - metrics scraping is only enabled for components that explicitly enable this service. Components without this service will not be scraped by Prometheus.
 
 ## How to Use
 
@@ -176,12 +176,12 @@ components:
     reference: my-component
     services:
       - publish-on-web
-      # metrics-scraper removed — no longer scraped
+      # metrics-scraper removed - no longer scraped
 ```
 
 ## Dependencies
 
-The metrics-scraper service has no dependencies on other services — it works independently.
+The metrics-scraper service has no dependencies on other services - it works independently.
 
 ## See Also
 

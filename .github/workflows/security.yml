@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC — catch newly disclosed CVEs
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC - catch newly disclosed CVEs
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
         run: uv run pip-audit --strict --desc --skip-editable -s osv
 
   container-scan:
-    name: Container scan — ${{ matrix.image.name }}
+    name: Container scan - ${{ matrix.image.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -112,7 +112,7 @@ class ComponentFormModel(BaseModel):
             label="component.memory_limit",
             description="component.memory_limit.description",
             widget="select",
-            options_provider="MemoryLimitOptionsProvider",
+            options_provider="MemoryOptionsProvider",
         ),
     ] = Field(default=None)
 

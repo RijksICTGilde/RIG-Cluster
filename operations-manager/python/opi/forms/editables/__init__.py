@@ -1,4 +1,4 @@
-"""Editable-driven dynamic forms — declarative YAML path -> widget mapping."""
+"""Editable-driven dynamic forms - declarative YAML path -> widget mapping."""
 
 from __future__ import annotations
 

@@ -21,7 +21,7 @@ The wizard creates tasks via `task_manager.create_task()` (in-memory) and tracks
 
 1. **`TaskProgressManager`**: Refactor to write all state changes (`add_task`, `complete_task`, `fail_task`, `update_current_step`, etc.) to the database via `AsyncTaskService` instead of in-memory dicts.
 
-2. **`simple_background.py`**: The `process_project_yaml_background` and `process_project_background` functions use `TaskProgressManager` — these should work without changes once the manager writes to the DB.
+2. **`simple_background.py`**: The `process_project_yaml_background` and `process_project_background` functions use `TaskProgressManager` - these should work without changes once the manager writes to the DB.
 
 3. **Wizard task creation**: Replace `from opi.core.task_manager import create_task` calls in `router_wizard.py`, `router.py`, and `router_detail_edit.py` with `AsyncTaskService.create_task()`.
 
@@ -41,9 +41,9 @@ The wizard creates tasks via `task_manager.create_task()` (in-memory) and tracks
 
 ## Files Involved
 
-- `opi/core/task_manager.py` — `TaskProgressManager`, `_projects`, `_project_managers`
-- `opi/core/async_task_service.py` — Database-backed service
-- `opi/core/simple_background.py` — Background task processing
-- `opi/web/router.py` — Progress page + polling endpoint
-- `opi/web/router_wizard.py` — Wizard submission
-- `opi/web/router_detail_edit.py` — Detail edit + modal wizard progress
+- `opi/core/task_manager.py` - `TaskProgressManager`, `_projects`, `_project_managers`
+- `opi/core/async_task_service.py` - Database-backed service
+- `opi/core/simple_background.py` - Background task processing
+- `opi/web/router.py` - Progress page + polling endpoint
+- `opi/web/router_wizard.py` - Wizard submission
+- `opi/web/router_detail_edit.py` - Detail edit + modal wizard progress

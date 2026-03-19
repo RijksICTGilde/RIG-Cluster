@@ -28,12 +28,12 @@
         {% set has_image = deployment.components | selectattr('image', 'defined') | selectattr('image') | list | length > 0 if deployment.components else false %}
 
         {% if not has_image %}
-        {# No components have images — deployment has no resources #}
+        {# No components have images - deployment has no resources #}
         <c-card padding="md" backgroundColor="grijs-100" outline="true">
             <c-layout-row gap="sm" verticalSpacing="center">
                 <c-icon icon="info" size="md" color="grijs-600" />
                 <c-layout-flow gap="xs">
-                    <span class="rvo-text--sm">Geen actieve deployment — geen container image geconfigureerd.</span>
+                    <span class="rvo-text--sm">Geen actieve deployment - geen container image geconfigureerd.</span>
                     <span class="rvo-text--sm rvo-text--subtle">Configureer een container image voor een component om deze deployment te activeren.</span>
                 </c-layout-flow>
             </c-layout-row>
@@ -91,6 +91,15 @@
             {% endif %}
         </div>
 
+        {# Memory Overprovision Check (lazy-loaded) #}
+        {% if prometheus_available | default(false) %}
+        <div id="memory-check-{{ _id_prefix }}"
+             hx-get="/projects/details/{{ project.name }}/memory-check/{{ deployment.name }}?id_prefix={{ _id_prefix }}"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+        </div>
+        {% endif %}
+
         {# Last Sync Time #}
         {% if status.get('last_sync') %}
         <c-layout-row gap="xs" verticalSpacing="center">
@@ -141,10 +150,8 @@
                         <strong style="font-size: 0.875rem;">{{ error.resource }}</strong>
                     </c-layout-row>
                     <p style="font-size: 0.8rem; color: var(--rvo-color-grijs-700); margin: 4px 0 0 24px; word-break: break-word;">{{ error.message }}</p>
-                    {% if error.get('timestamp') %}
-                    <p style="font-size: 0.75rem; color: var(--rvo-color-grijs-500); margin: 2px 0 0 24px;">
-                        {{ error.timestamp[:19]|replace('T', ' ') }} UTC
-                    </p>
+                    {% if error.get('age') %}
+                    <c-p class="rvo-text--xs rvo-text--subtle">{{ error.age }}</c-p>
                     {% endif %}
                 </div>
                 {% endfor %}

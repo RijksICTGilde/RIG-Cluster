@@ -2,15 +2,16 @@
 
 **Status**: Pending
 **Date**: 2026-03-08
-**Priority**: High — blocks post-deploy health monitoring and OOM auto-tuning
+**Priority**: High - blocks post-deploy health monitoring and OOM auto-tuning
 
 ## Problem
 
 The operations manager (OPI) needs to monitor deployment status in user namespaces after deploying or refreshing applications. This is used for:
 
-1. **OOM kill detection** — After deploy, OPI checks if pods were OOM-killed and auto-tunes memory limits
-2. **Deployment status monitoring** — The dashboard and task system report deployment readiness (replicas ready/available/updated)
-3. **Resource status API** — The `/api/resources/{project}` endpoint reports deployment health
+1. **OOM kill detection** - After deploy, OPI checks if pods were OOM-killed and auto-tunes memory limits
+2. **Deployment status monitoring** - The dashboard and task system report deployment readiness (replicas ready/available/updated)
+3. **Resource status API** - The `/api/resources/{project}` endpoint reports deployment health
+
 
 Currently failing with:
 
@@ -62,10 +63,10 @@ The sandbox environments (local, sandboxed-local) use a ClusterRole+ClusterRoleB
 - `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/cluster-role.yaml`
 - `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/cluster-binding.yaml`
 
-The ODCN production overlay (`overlays/odcn-production/`) does **not** include these files — RBAC for production is managed externally by the ODCN team.
+The ODCN production overlay (`overlays/odcn-production/`) does **not** include these files - RBAC for production is managed externally by the ODCN team.
 
 ## Sandbox Fix
 
 Already applied in this repository:
-- `overlays/local/cluster-role.yaml` — added `apps/deployments` get+list, `events` get+list+watch
-- `overlays/sandboxed-local/cluster-role.yaml` — added `apps/deployments` get+list, `events` get+list+watch
+- `overlays/local/cluster-role.yaml` - added `apps/deployments` get+list, `events` get+list+watch
+- `overlays/sandboxed-local/cluster-role.yaml` - added `apps/deployments` get+list, `events` get+list+watch

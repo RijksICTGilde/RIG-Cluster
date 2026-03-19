@@ -1326,7 +1326,7 @@
                 link.setAttribute('aria-selected', 'false');
             });
         }
-        // Activate the clicked tab link — find by tab name when restoring from hash
+        // Activate the clicked tab link - find by tab name when restoring from hash
         if (event && event.target) {
             var link = event.target.closest('.rvo-tabs__item-link') || event.target;
             link.classList.add('rvo-tabs__item-link--active');
@@ -1910,7 +1910,7 @@
     })();
 
     /* ---------------------------------------------------------------
-     * Edit Section Modal — server-driven wizard via HTMX
+     * Edit Section Modal - server-driven wizard via HTMX
      * --------------------------------------------------------------- */
     let isEditSubmitting = false;
 
@@ -2010,7 +2010,7 @@
     });
 
     /* -------------------------------------------------------------------
-     * Danger Zone — delete confirmation
+     * Danger Zone - delete confirmation
      * ------------------------------------------------------------------- */
     var dangerActionType = '';
     var dangerActionTarget = '';
@@ -2019,7 +2019,7 @@
         dangerActionType = actionType;
         dangerActionTarget = target;
 
-        var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen' };
+        var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen', refresh: 'Project herverwerken' };
         var title = titles[actionType] || 'Verwijderen';
         document.getElementById('danger-confirm-title').textContent = title;
         document.getElementById('danger-confirm-message').textContent = message;
@@ -2027,12 +2027,19 @@
         document.getElementById('danger-confirm-progress').style.display = 'none';
         document.getElementById('danger-confirm-actions').style.display = '';
 
+        var isRefresh = actionType === 'refresh';
+        document.getElementById('danger-confirm-btn-delete').style.display = isRefresh ? 'none' : '';
+        document.getElementById('danger-confirm-btn-refresh').style.display = isRefresh ? '' : 'none';
+        document.getElementById('danger-confirm-progress-text').textContent = isRefresh ? 'Bezig met herverwerken...' : 'Bezig met verwijderen...';
+
         document.getElementById('danger-confirm-backdrop').classList.add('is-open');
         document.getElementById('danger-confirm-modal').classList.add('is-open');
         document.body.style.overflow = 'hidden';
     }
 
     function hideDangerConfirmation() {
+        // Clear body to stop any htmx polling
+        document.getElementById('danger-confirm-body').innerHTML = '';
         document.getElementById('danger-confirm-backdrop').classList.remove('is-open');
         document.getElementById('danger-confirm-modal').classList.remove('is-open');
         document.body.style.overflow = '';
@@ -2064,6 +2071,7 @@
                 headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 credentials: 'same-origin'
             });
+
             var result = await response.json();
 
             if (response.ok && result.success) {

@@ -114,7 +114,7 @@ kubectl get applications -n rig-system
 
 Open https://argo.sandbox.rijksapp.dev in your browser (admin / admin1234) to see ArgoCD syncing infrastructure.
 
-To access the Operations Manager, open https://zad.sandbox.rijksapp.dev. You will be redirected to the local Keycloak login page — log in with `admin` / `admin1234`. If you configured SSO during setup, use the local credentials (not the SSO button) unless your email has been added to the `ALLOWED_EMAILS` list in the Operations Manager ConfigMap.
+To access the Operations Manager, open https://zad.sandbox.rijksapp.dev. You will be redirected to the local Keycloak login page - log in with `admin` / `admin1234`. If you configured SSO during setup, use the local credentials (not the SSO button) unless your email has been added to the `ALLOWED_EMAILS` list in the Operations Manager ConfigMap.
 
 ## Daily Development Workflow
 

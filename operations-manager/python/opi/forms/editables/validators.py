@@ -207,6 +207,31 @@ class AllowedValuesValidator:
         return []
 
 
+class MemoryRangeValidator:
+    """Validates that a K8s memory string falls within a min/max range.
+
+    Parses values like ``256Mi``, ``1Gi``, ``384Mi`` and checks that the
+    value in MiB is between *min_mi* and *max_mi* (inclusive).
+    """
+
+    def __init__(self, min_mi: int = 32, max_mi: int = 1024) -> None:
+        self.min_mi = min_mi
+        self.max_mi = max_mi
+
+    def validate(self, value: Any) -> list[str]:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return []
+        from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+
+        try:
+            mi = parse_k8s_memory_to_mi(str(value))
+        except ValueError:
+            return [f"Ongeldige geheugenwaarde: {value}"]
+        if mi < self.min_mi or mi > self.max_mi:
+            return [f"Geheugen moet tussen {self.min_mi}Mi en {self.max_mi}Mi liggen (was: {value})"]
+        return []
+
+
 class SubdomainValidator:
     """Validates subdomain format using the canonical validation from subdomain connector."""
 

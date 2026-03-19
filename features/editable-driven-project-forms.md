@@ -43,7 +43,7 @@ EditableVisualizer
   -> ROOSWidgetAdapter renders HTML
 ```
 
-The bridge resolves values from YAML, applies converter.view(), resolves options from providers, handles defaults, locked_by_service, readonly logic, and HTMX attributes. It produces a `FormField` — a flat bag of resolved values that the widget adapter can render.
+The bridge resolves values from YAML, applies converter.view(), resolves options from providers, handles defaults, locked_by_service, readonly logic, and HTMX attributes. It produces a `FormField` - a flat bag of resolved values that the widget adapter can render.
 
 ### Submission Pipeline
 
@@ -66,15 +66,15 @@ JSON/form data
 | `editables/processor.py` | Form submission handling (parse, validate, apply to YAML) |
 | `visualizers/visualizer.py` | `EditableVisualizer` dataclass |
 | `visualizers/fields/*.py` | All `EditableVisualizer` constants (UI definitions) |
-| `visualizers/bridge.py` | `editable_to_form_field()` — converts EditableVisualizer to FormField |
-| `visualizers/sections.py` | `FormSection` — groups editables into wizard steps |
-| `visualizers/flows.py` | `FormFlow` — defines wizard flows with ordered sections |
+| `visualizers/bridge.py` | `editable_to_form_field()` - converts EditableVisualizer to FormField |
+| `visualizers/sections.py` | `FormSection` - groups editables into wizard steps |
+| `visualizers/flows.py` | `FormFlow` - defines wizard flows with ordered sections |
 | `visualizers/wizard_sections.py` | All section/flow definitions |
-| `visualizers/project_registry.py` | `get_all_project_editables()` — flat list for edit form |
+| `visualizers/project_registry.py` | `get_all_project_editables()` - flat list for edit form |
 | `visualizers/providers.py` | Dynamic options providers (clusters, services, roles, etc.) |
 | `forms/field.py` | `FormField` dataclass (intermediate render type) |
-| `forms/renderer.py` | `FormRenderer` — orchestrates layout + widget rendering |
-| `forms/widgets/roos.py` | `ROOSWidgetAdapter` — renders FormField to ROOS HTML |
+| `forms/renderer.py` | `FormRenderer` - orchestrates layout + widget rendering |
+| `forms/widgets/roos.py` | `ROOSWidgetAdapter` - renders FormField to ROOS HTML |
 | `editables/path.py` | Path resolution with `{K}` dict-key and `{F=V}` field-match filters |
 | `editables/enforcers.py` | Section-level enforcers (admin required, unique names, component services) |
 | `web/router_wizard.py` | Wizard routes (create flow) |
@@ -109,8 +109,8 @@ No template changes needed.
 
 ### Key Concepts
 
-- **`default="__all__"`**: Sentinel value for checkbox_group fields — tells the widget to select all options when the YAML value is absent.
-- **`depends_on` + `show_when`**: Conditional visibility — fields hidden when their dependency isn't met. Hidden fields are cleared from YAML on save.
+- **`default="__all__"`**: Sentinel value for checkbox_group fields - tells the widget to select all options when the YAML value is absent.
+- **`depends_on` + `show_when`**: Conditional visibility - fields hidden when their dependency isn't met. Hidden fields are cleared from YAML on save.
 - **`locked_by_service`**: Forces a checkbox on + readonly when the named service is active.
 - **`values_provider`**: String name of an `OptionsProvider` class that provides dynamic select/checkbox options.
 - **`EnsureListConverter`**: Generic converter for fields whose YAML value is always a list. Handles HTMX's single-string delivery for checkbox groups.
@@ -128,14 +128,14 @@ EditableVisualizer -> bridge -> FormField -> WidgetAdapter -> HTML
 `FormField` (`forms/field.py`) is a legacy type from the original Pydantic-model-based form system. The bridge (`visualizers/bridge.py`) converts `EditableVisualizer` into `FormField` by resolving values, options, and display logic. The widget adapter (`ROOSWidgetAdapter`) then renders `FormField` to HTML.
 
 This means:
-- Value resolution, options resolution, converter application, and display logic live in the bridge — **not** on the visualizer
+- Value resolution, options resolution, converter application, and display logic live in the bridge - **not** on the visualizer
 - `FormField` duplicates many fields that already exist on `EditableVisualizer` (label, description, readonly, widget_type, etc.)
 - The widget adapter depends on `FormField` instead of the canonical type
 - Adding a new field to `EditableVisualizer` requires updating `FormField` and the bridge too
 
 ### The Solution: ResolvedEditableVisualizer
 
-Replace `FormField` and the bridge with a `ResolvedEditableVisualizer` — an `EditableVisualizer` enriched with resolved runtime data (value, options, errors, concrete path). The widget adapter would render `ResolvedEditableVisualizer` directly.
+Replace `FormField` and the bridge with a `ResolvedEditableVisualizer` - an `EditableVisualizer` enriched with resolved runtime data (value, options, errors, concrete path). The widget adapter would render `ResolvedEditableVisualizer` directly.
 
 ```
 # Current (3 types, 2 conversions):
@@ -151,7 +151,7 @@ This would:
 - Let the widget adapter work with the canonical type
 - Reduce the number of places to update when adding fields
 
-This refactor is not urgent — the current system works — but should be done when the widget adapter or bridge needs significant changes.
+This refactor is not urgent - the current system works - but should be done when the widget adapter or bridge needs significant changes.
 
 ## Detail Page Inline Editing
 
@@ -159,7 +159,7 @@ The editable system also powers inline editing from the project detail page. Eac
 
 ### Edit Sections
 
-`wizard_sections.py` defines `EDIT_SECTIONS` — a registry of sections available for detail-page editing. These are either dedicated edit sections (with specific `post_save_action` settings) or reused wizard sections:
+`wizard_sections.py` defines `EDIT_SECTIONS` - a registry of sections available for detail-page editing. These are either dedicated edit sections (with specific `post_save_action` settings) or reused wizard sections:
 
 | Section ID | Purpose | Post-save action |
 |-----------|---------|-----------------|

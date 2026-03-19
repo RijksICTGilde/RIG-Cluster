@@ -4,7 +4,7 @@ Page object for the project creation wizard.
 Encapsulates wizard navigation, form filling, and submission. Works against
 both local app server and sandbox cluster URLs.
 
-The wizard is HTMX-driven — step transitions happen via POST/GET without full
+The wizard is HTMX-driven - step transitions happen via POST/GET without full
 page reloads. We use Playwright's wait_for_load_state and network idle
 detection to handle HTMX responses.
 """
@@ -64,7 +64,7 @@ class WizardHelper:
             display_name = _unique_project_name()
         self.project_name = display_name
 
-        # Fill display name — look for input by name attribute (yaml_path)
+        # Fill display name - look for input by name attribute (yaml_path)
         name_input = self.page.locator("[name='display-name']")
         if name_input.count() > 0:
             name_input.fill(display_name)
@@ -97,7 +97,7 @@ class WizardHelper:
             if email_input.count() > 0:
                 email_input.fill(email)
 
-        # Role is typically a hidden input with a default value — no interaction needed.
+        # Role is typically a hidden input with a default value - no interaction needed.
         # Only attempt to set it if it's a visible select element.
         role_select = self.page.locator("select[name='users[0]/role']")
         if role_select.count() > 0 and role_select.is_visible():
@@ -245,7 +245,7 @@ class WizardHelper:
 
         networkidle fires when the XHR finishes, but HTMX still needs to
         swap the response HTML into the DOM.  We capture the form's hx-post
-        before the click and wait until it changes — that proves the new
+        before the click and wait until it changes - that proves the new
         step content has been swapped in.
         """
         self.page.wait_for_load_state("networkidle", timeout=timeout)

@@ -2,7 +2,7 @@
 Tests for the image upload router.
 
 Tests authentication, streaming upload, size limits, cleanup on error,
-and proper error responses — all with mocked skopeo connector.
+and proper error responses - all with mocked skopeo connector.
 """
 
 import io

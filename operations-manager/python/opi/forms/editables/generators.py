@@ -78,6 +78,40 @@ class EncryptedAPIKeyGenerator:
         return encrypted
 
 
+class IssuerGenerator:
+    """Compute the TLS issuer based on the deployment's base-domain.
+
+    Looks up the domain in the cluster's supported_domains configuration.
+    Returns the per-domain issuer (e.g. ``"letsencrypt"``) or ``None``
+    when no issuer is needed (the cluster's default handles TLS).
+
+    The deployment index determines which deployment to read the
+    base-domain from. It is set during editable materialization
+    (``[*]`` -> ``[N]``).
+    """
+
+    def __init__(self, deployment_index: int = 0) -> None:
+        self.deployment_index = deployment_index
+
+    def generate(self, yaml_data: dict[str, Any]) -> Any:
+        from opi.core.cluster_config import get_domain_issuer
+        from opi.core.config import settings
+
+        deployments = yaml_data.get("deployments", [])
+        if len(deployments) <= self.deployment_index:
+            return None
+        dep = deployments[self.deployment_index]
+        if not isinstance(dep, dict):
+            return None
+
+        base_domain = dep.get("base-domain")
+        if not base_domain:
+            return None
+
+        cluster = settings.CLUSTER_MANAGER
+        return get_domain_issuer(cluster, base_domain)
+
+
 class UserEnvVarsEncryptGenerator:
     """Encrypt user-env-vars on each component with the project's AGE public key.
 
@@ -85,7 +119,7 @@ class UserEnvVarsEncryptGenerator:
     string value. Skips values that are already AGE-encrypted.
 
     Must run after ``AGEKeyPairGenerator`` so the project public key exists.
-    Uses a ``_generated`` path — the return value is discarded during cleanup.
+    Uses a ``_generated`` path - the return value is discarded during cleanup.
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:

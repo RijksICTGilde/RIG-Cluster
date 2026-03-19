@@ -8,6 +8,7 @@ including deployments, services, PVCs, and other manifest resources.
 import re
 from datetime import UTC
 from enum import Enum
+from typing import Literal, get_args
 
 
 class HostnameFormat(Enum):
@@ -61,6 +62,27 @@ DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
     "deployment.subdomain": "{deployment}.{subdomain}.{domain}",
     "component.subdomain": "{component}.{subdomain}.{domain}",
 }
+
+# Type alias derived from the template keys so OpenAPI exposes an enum.
+# The Literal must be written explicitly (Python cannot construct Literal from
+# runtime values), but a runtime assertion below guarantees the two stay in sync.
+DomainFormatId = Literal[
+    "component-deployment-project",
+    "deployment-project",
+    "component-deployment-subdomain",
+    "deployment-subdomain",
+    "component-subdomain",
+    "subdomain",
+    "component.deployment.project",
+    "deployment.project",
+    "component.deployment.subdomain",
+    "deployment.subdomain",
+    "component.subdomain",
+]
+
+assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101
+    "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
+)
 
 # Computed sets derived from templates for use by editables and enforcers.
 SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "{subdomain}" in t]

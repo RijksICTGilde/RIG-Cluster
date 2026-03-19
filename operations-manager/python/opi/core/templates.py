@@ -145,7 +145,7 @@ templates.env.filters["dutch_date"] = format_dutch_date
 # preprocess only runs at template compile time, so runtime strings need this filter.
 _component_ext = templates.env.extensions.get("jinja_roos_components.extension.ComponentExtension")
 if not isinstance(_component_ext, ComponentExtension):
-    raise TypeError("ComponentExtension not registered — setup_components must run first")
+    raise TypeError("ComponentExtension not registered - setup_components must run first")
 
 
 def _process_components(html: str) -> markupsafe.Markup:

@@ -17,11 +17,11 @@ This caused two problems:
 
 OPI now waits for ArgoCD sync completion as the final step of project processing:
 
-1. **Refresh `user-applications`** — triggers ArgoCD to detect new Application manifests
-2. **Wait for each application to be created** — polls until ArgoCD has created the Application resources (120s timeout)
-3. **Refresh each application** — triggers ArgoCD to sync manifests from Git
-4. **Wait for each application to be synced and healthy** — polls until `sync=Synced` AND `health=Healthy` (300s timeout)
-5. **Report per-application failures** — if one app fails, the others still proceed; all failures are collected and reported
+1. **Refresh `user-applications`** - triggers ArgoCD to detect new Application manifests
+2. **Wait for each application to be created** - polls until ArgoCD has created the Application resources (120s timeout)
+3. **Refresh each application** - triggers ArgoCD to sync manifests from Git
+4. **Wait for each application to be synced and healthy** - polls until `sync=Synced` AND `health=Healthy` (300s timeout)
+5. **Report per-application failures** - if one app fails, the others still proceed; all failures are collected and reported
 
 Progress is tracked via the task progress system, so the user sees which application is being synced.
 
@@ -40,14 +40,14 @@ If we encounter edge cases where this assumption breaks (e.g., ArgoCD caching is
 
 The wait logic detects terminal failures to avoid waiting the full timeout:
 
-- **Sync failures**: `operationState.phase` in `Failed` or `Error` — raises immediately
-- **Health degraded**: `health.status == Degraded` — raises immediately
-- **Permission denied**: treated as transient (AppProject may not be synced yet) — retries until timeout
+- **Sync failures**: `operationState.phase` in `Failed` or `Error` - raises immediately
+- **Health degraded**: `health.status == Degraded` - raises immediately
+- **Permission denied**: treated as transient (AppProject may not be synced yet) - retries until timeout
 
 ## Consequences
 
 **Easier:**
-- Users get accurate completion status — when the task says "done", pods are running
+- Users get accurate completion status - when the task says "done", pods are running
 - Sync failures are surfaced immediately instead of being discovered later
 - The task progress UI shows which application is being waited on
 

@@ -46,11 +46,11 @@ Each service manager owns its cleanup logic via `handle_service_removal()`, whic
 
 ### PVC Deferred Deletion (GitOps-based)
 
-PVCs require special handling because they are managed by ArgoCD through manifest files in git. Unlike databases and buckets (which are external resources deleted via connectors), PVCs are deleted by removing their manifest — ArgoCD then prunes the Kubernetes resource.
+PVCs require special handling because they are managed by ArgoCD through manifest files in git. Unlike databases and buckets (which are external resources deleted via connectors), PVCs are deleted by removing their manifest - ArgoCD then prunes the Kubernetes resource.
 
 **Mark phase** (`PVCManager.handle_service_removal`):
 1. The PVC manifest file is **renamed** with a `.marked-for-deletion.yaml` suffix (e.g., `webapp-data-pvc.yaml` → `webapp-data-pvc.marked-for-deletion.yaml`)
-2. The renamed file stays in the kustomize directory — ArgoCD keeps syncing it, so the PVC stays alive
+2. The renamed file stays in the kustomize directory - ArgoCD keeps syncing it, so the PVC stays alive
 3. Normal manifest generation won't touch the renamed file (it uses different filenames)
 4. A record is inserted into `marked_for_deletion` with the exact filename and deployment path in metadata
 
@@ -59,7 +59,7 @@ PVCs require special handling because they are managed by ArgoCD through manifes
 2. Checks out the deployment git repo
 3. Deletes the `.marked-for-deletion.yaml` file
 4. Regenerates `kustomization.yaml` (so the file is no longer listed as a resource)
-5. Commits and pushes — ArgoCD syncs and prunes the PVC
+5. Commits and pushes - ArgoCD syncs and prunes the PVC
 
 ### Reconciliation
 

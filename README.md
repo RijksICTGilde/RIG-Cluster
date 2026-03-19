@@ -2,13 +2,13 @@
 
 RIG-Cluster is a Kubernetes platform for RIG projects in ODC-Noord, supporting POC, Pilot, and Production environments.
 
-At its core is **ZAD** (Zelfservice Applicatie Deployment) — a self-service portal where developers define what their project needs in a single declarative file. ZAD provisions the infrastructure (PostgreSQL, Keycloak, MinIO, Redis), generates credentials, creates Kubernetes deployments, and configures everything end-to-end. It integrates into CI/CD through a GitHub Action and exposes an API for controlling deployments, updating images, creating backups, spinning up feature branch environments, and cleaning up.
+At its core is **ZAD** (Zelfservice Applicatie Deployment) - a self-service portal where developers define what their project needs in a single declarative file. ZAD provisions the infrastructure (PostgreSQL, Keycloak, MinIO, Redis), generates credentials, creates Kubernetes deployments, and configures everything end-to-end. It integrates into CI/CD through a GitHub Action and exposes an API for controlling deployments, updating images, creating backups, spinning up feature branch environments, and cleaning up.
 
 ## Getting Started
 
 The recommended way to get started is the **sandboxed-local** setup, which runs a fully self-contained cluster on your machine. See:
 
-- **[Getting Started Guide](docs/getting-started.md)** — step-by-step setup instructions
+- **[Getting Started Guide](docs/getting-started.md)** - step-by-step setup instructions
 
 Quick start:
 
@@ -26,9 +26,9 @@ You will need the developer AGE private key to decrypt the TLS certificates. Ask
 
 The platform uses a GitOps approach with ArgoCD. The Operations Manager (ZAD) drives three Git repositories:
 
-1. **zad-projects** — declarative project definitions (one file per project: services, configuration, user accounts, SSO setup)
-2. **zad-argo-user-applications** — ArgoCD Application manifests, generated from project definitions
-3. **zad-deployments** — Kubernetes manifests (secrets, configmaps, deployments) generated for each project
+1. **zad-projects** - declarative project definitions (one file per project: services, configuration, user accounts, SSO setup)
+2. **zad-argo-user-applications** - ArgoCD Application manifests, generated from project definitions
+3. **zad-deployments** - Kubernetes manifests (secrets, configmaps, deployments) generated for each project
 
 Project definitions go in, ArgoCD applications and deployment manifests come out, and ArgoCD deploys them to the cluster.
 
@@ -53,20 +53,20 @@ Project definitions go in, ArgoCD applications and deployment manifests come out
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) — local setup guide
-- [Local Kind Cluster Setup](docs/local-kind-cluster-setup.md) — alternative local setup with external Git
-- [Keycloak Configuration](docs/keycloak.md) — Keycloak administration
-- [Keycloak YAML Configuration](docs/keycloak-yaml-configuration.md) — declarative Keycloak setup
+- [Getting Started](docs/getting-started.md) - local setup guide
+- [Local Kind Cluster Setup](docs/local-kind-cluster-setup.md) - alternative local setup with external Git
+- [Keycloak Configuration](docs/keycloak.md) - Keycloak administration
+- [Keycloak YAML Configuration](docs/keycloak-yaml-configuration.md) - declarative Keycloak setup
 
 ### Feature Documentation
 
 Feature-specific documentation is in the [`features/`](features/) directory. Key features:
 
-- [Sandboxed Local Development](features/sandboxed-local-development.md) — sandbox architecture and configuration
-- [Sandbox SSO Setup](features/sandbox-sso-setup.md) — connecting to production Keycloak for SSO
-- [Backup System](features/backup-system.md) — PVC backup and restore
-- [Bootstrap API Actions](features/bootstrap-api-actions.md) — API operations
-- [Namespace PostgreSQL Database](features/namespace-postgresql-database.md) — per-project database provisioning
+- [Sandboxed Local Development](features/sandboxed-local-development.md) - sandbox architecture and configuration
+- [Sandbox SSO Setup](features/sandbox-sso-setup.md) - connecting to production Keycloak for SSO
+- [Backup System](features/backup-system.md) - PVC backup and restore
+- [Bootstrap API Actions](features/bootstrap-api-actions.md) - API operations
+- [Namespace PostgreSQL Database](features/namespace-postgresql-database.md) - per-project database provisioning
 
 ## Tools
 

@@ -11,7 +11,7 @@ Our branch introduced **schema-version 2** service references, where services ca
 1. **`ServiceAdapter.add_services_to_project()`** in `opi/services/services.py` (line ~654):
    - Currently appends plain strings to `project_data["services"]`
    - Should produce v2 service references (dicts with config for storage services, plain strings for others)
-   - Storage config logic exists in our `project_utils.py` fallback component builder — extract and reuse
+   - Storage config logic exists in our `project_utils.py` fallback component builder - extract and reuse
 
 2. **`POST /api/projects/{name}/services`** endpoint in `opi/api/router.py` (line ~1278):
    - Calls `project_manager.add_service()` which delegates to `add_services_to_project()`
@@ -31,7 +31,7 @@ Our branch introduced **schema-version 2** service references, where services ca
 
 ## Files involved
 
-- `operations-manager/python/opi/services/services.py` — `add_services_to_project()`, `ServiceValidationError`
-- `operations-manager/python/opi/api/router.py` — `AddServiceRequest`, `add_service` endpoint
-- `operations-manager/python/opi/manager/project_manager.py` — `add_service()` wrapper
-- `operations-manager/python/opi/utils/project_utils.py` — reference implementation of v2 service building
+- `operations-manager/python/opi/services/services.py` - `add_services_to_project()`, `ServiceValidationError`
+- `operations-manager/python/opi/api/router.py` - `AddServiceRequest`, `add_service` endpoint
+- `operations-manager/python/opi/manager/project_manager.py` - `add_service()` wrapper
+- `operations-manager/python/opi/utils/project_utils.py` - reference implementation of v2 service building

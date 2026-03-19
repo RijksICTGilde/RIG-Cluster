@@ -3,6 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 
+class FieldError(ValueError):
+    """Validation error tied to a specific field path.
+
+    When raised from an enforcer, the error message is attached to
+    the given field path in the form errors dict instead of appearing
+    as a global/section-level banner.
+    """
+
+    def __init__(self, field_path: str, message: str) -> None:
+        self.field_path = field_path
+        super().__init__(message)
+
+
 class AdminRequiredEnforcer:
     """Ensures at least one user has role='admin'."""
 
@@ -75,30 +88,57 @@ def extract_service_names(services: list[Any]) -> list[str]:
     return result
 
 
+def _validate_memory_request_limit(comp_index: int, request_val: str, limit_val: str) -> None:
+    """Raise FieldError on the limit field if memory request exceeds the limit."""
+    from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+
+    try:
+        request_mi = parse_k8s_memory_to_mi(str(request_val))
+        limit_mi = parse_k8s_memory_to_mi(str(limit_val))
+    except ValueError:
+        return  # Invalid values are caught by field-level validators
+
+    if request_mi > limit_mi:
+        raise FieldError(
+            f"components[{comp_index}]/resources/limits/memory",
+            f"Geheugen limiet ({limit_val}) mag niet lager zijn dan de request ({request_val})",
+        )
+
+
 class ComponentServicesEnforcer:
-    """Section-level enforcer: validates component services against project services."""
+    """Section-level enforcer: validates component services and memory request/limit."""
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         services = extract_service_names(value.get("services", []))
-        if not services:
-            return value
 
         components = value.get("components", [])
-        for comp in components:
+        for i, comp in enumerate(components):
             if not isinstance(comp, dict):
                 continue
-            comp_services = comp.get("services", [])
-            if not isinstance(comp_services, list):
-                continue
-            uses = extract_service_names(comp_services)
-            invalid = [s for s in uses if s not in services]
-            if invalid:
-                comp_name = comp.get("name", "onbekend")
-                invalid_str = ", ".join(invalid)
-                raise ValueError(
-                    f"Component '{comp_name}' gebruikt ongeldige services: {invalid_str}. "
-                    f"Beschikbare services: {', '.join(services)}"
-                )
+
+            # Validate services
+            if services:
+                comp_services = comp.get("services", [])
+                if isinstance(comp_services, list):
+                    uses = extract_service_names(comp_services)
+                    invalid = [s for s in uses if s not in services]
+                    if invalid:
+                        comp_name = comp.get("name", "onbekend")
+                        invalid_str = ", ".join(invalid)
+                        raise ValueError(
+                            f"Component '{comp_name}' gebruikt ongeldige services: {invalid_str}. "
+                            f"Beschikbare services: {', '.join(services)}"
+                        )
+
+            # Validate memory request <= limit
+            resources = comp.get("resources", {})
+            if isinstance(resources, dict):
+                requests = resources.get("requests", {}) or {}
+                limits = resources.get("limits", {}) or {}
+                request_val = requests.get("memory") if isinstance(requests, dict) else None
+                limit_val = limits.get("memory") if isinstance(limits, dict) else None
+                if request_val and limit_val:
+                    _validate_memory_request_limit(i, request_val, limit_val)
 
         return value
 
