@@ -2303,9 +2303,11 @@ class ProjectManager:
                                 # Queue a refresh task — the worker will pick it up
                                 # after this task completes (queue guard prevents
                                 # concurrent processing of the same deployment).
-                                from opi.core.async_task_service import get_task_service
-
-                                task_service = get_task_service()
+                                task_service = (
+                                    progress_manager._task_service
+                                    if progress_manager and hasattr(progress_manager, "_task_service")
+                                    else None
+                                )
                                 if task_service:
                                     await task_service.create_task(
                                         task_type="refresh_deployment",
