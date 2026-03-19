@@ -20,6 +20,7 @@ from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
 from opi.services.project_service import get_project_service
 from opi.services.user_admin_service import UserAdminService
+from opi.services.user_service import get_user_service
 from opi.utils.csrf import ensure_csrf_token
 from opi.web.menu import get_menu_items
 
@@ -100,7 +101,7 @@ async def list_users(request: Request) -> HTMLResponse:
         "admin/users.html.j2",
         {
             "request": request,
-            "menu_items": get_menu_items(user, is_admin=True),
+            "menu_items": get_menu_items(user),
             "users": users,
             "csrf_token": csrf_token,
             "success_message": success_message,
@@ -122,7 +123,7 @@ async def create_user_form(request: Request) -> HTMLResponse:
         "admin/user-form.html.j2",
         {
             "request": request,
-            "menu_items": get_menu_items(user, is_admin=True),
+            "menu_items": get_menu_items(user),
             "page_heading": "Gebruiker toevoegen",
             "form_action": "/admin/users/create",
             "form_html": form_html,
@@ -156,7 +157,7 @@ async def create_user_submit(request: Request) -> Response:
             "admin/user-form.html.j2",
             {
                 "request": request,
-                "menu_items": get_menu_items(user, is_admin=True),
+                "menu_items": get_menu_items(user),
                 "page_heading": "Gebruiker toevoegen",
                 "form_action": "/admin/users/create",
                 "form_html": form_html,
@@ -165,9 +166,10 @@ async def create_user_submit(request: Request) -> Response:
         )
 
     service = _get_service()
+    new_email = result.get("email", "").strip()
     try:
         await service.create_user(
-            email=result.get("email", "").strip(),
+            email=new_email,
             full_name=result.get("full_name", "").strip(),
         )
     except UniqueViolationError:
@@ -179,13 +181,16 @@ async def create_user_submit(request: Request) -> Response:
             "admin/user-form.html.j2",
             {
                 "request": request,
-                "menu_items": get_menu_items(user, is_admin=True),
+                "menu_items": get_menu_items(user),
                 "page_heading": "Gebruiker toevoegen",
                 "form_action": "/admin/users/create",
                 "form_html": form_html,
                 "csrf_token": csrf_token,
             },
         )
+
+    # Sync: add new email to the in-memory allowlist
+    get_user_service().add_allowed_email(new_email)
 
     return RedirectResponse(
         url="/admin/users?success=Gebruiker+aangemaakt",
@@ -212,7 +217,7 @@ async def edit_user_form(request: Request, user_id: str) -> HTMLResponse:
         "admin/user-form.html.j2",
         {
             "request": request,
-            "menu_items": get_menu_items(user, is_admin=True),
+            "menu_items": get_menu_items(user),
             "page_heading": "Gebruiker bewerken",
             "form_action": f"/admin/users/{user_id}/edit",
             "form_html": form_html,
@@ -250,7 +255,7 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
             "admin/user-form.html.j2",
             {
                 "request": request,
-                "menu_items": get_menu_items(user, is_admin=True),
+                "menu_items": get_menu_items(user),
                 "page_heading": "Gebruiker bewerken",
                 "form_action": f"/admin/users/{user_id}/edit",
                 "form_html": form_html,
@@ -258,10 +263,12 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
             },
         )
 
+    old_email = existing.get("email", "")
+    new_email = result.get("email", "").strip()
     try:
         updated = await service.update_user(
             user_id=user_id,
-            email=result.get("email", "").strip(),
+            email=new_email,
             full_name=result.get("full_name", "").strip(),
         )
     except UniqueViolationError:
@@ -273,7 +280,7 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
             "admin/user-form.html.j2",
             {
                 "request": request,
-                "menu_items": get_menu_items(user, is_admin=True),
+                "menu_items": get_menu_items(user),
                 "page_heading": "Gebruiker bewerken",
                 "form_action": f"/admin/users/{user_id}/edit",
                 "form_html": form_html,
@@ -283,6 +290,12 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
 
     if not updated:
         raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
+
+    # Sync: if email changed, update the allowlist
+    user_service = get_user_service()
+    if old_email.lower() != new_email.lower():
+        user_service.remove_allowed_email(old_email)
+    user_service.add_allowed_email(new_email)
 
     return RedirectResponse(
         url="/admin/users?success=Gebruiker+bijgewerkt",
@@ -296,9 +309,18 @@ async def delete_user(request: Request, user_id: str) -> Response:
     """Delete a user."""
     _require_admin(request)
     service = _get_service()
+
+    # Get email before deleting so we can remove from allowlist
+    existing = await service.get_user(user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
+
     deleted = await service.delete_user(user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
+
+    # Sync: remove email from the allowlist
+    get_user_service().remove_allowed_email(existing["email"])
 
     return RedirectResponse(
         url="/admin/users?success=Gebruiker+verwijderd",
