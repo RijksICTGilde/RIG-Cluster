@@ -8,12 +8,13 @@ that are used across different web routes.
 from typing import Any
 
 
-def get_menu_items(user: dict[str, Any] | None = None) -> list[dict[str, str]]:
+def get_menu_items(user: dict[str, Any] | None = None, is_admin: bool = False) -> list[dict[str, str]]:
     """
     Get the menu items for the navigation bar.
 
     Args:
         user: User information dictionary from session (optional)
+        is_admin: Whether the user has admin privileges
 
     Returns:
         List of menu item dictionaries with label, link, icon, and optional align
@@ -37,6 +38,9 @@ def get_menu_items(user: dict[str, Any] | None = None) -> list[dict[str, str]]:
         {"label": "Architecture", "link": "/architecture", "icon": "info"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
     ]
+
+    if is_admin:
+        menu_items.append({"label": "Gebruikersbeheer", "link": "/admin/users", "icon": "user"})
 
     # Add user-specific menu items
     if user:

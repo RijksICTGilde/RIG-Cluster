@@ -26,6 +26,7 @@ from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
 from .router_detail_edit import detail_edit_router
 from .router_self_service import check_subdomain_availability_web
+from .router_user_admin import user_admin_router
 from .router_wizard import wizard_router
 from .services_router import services_router
 
@@ -40,6 +41,7 @@ web_router.include_router(services_router)
 web_router.include_router(metrics_explorer_router)
 web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
+web_router.include_router(user_admin_router)
 
 
 @web_router.get("/")
