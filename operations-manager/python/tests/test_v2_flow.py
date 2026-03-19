@@ -75,7 +75,7 @@ def v2_client(
 
 
 # ---------------------------------------------------------------------------
-# Upsert Deployment — payload flow
+# Upsert Deployment - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -150,7 +150,7 @@ class TestUpsertDeploymentFlow:
 
 
 # ---------------------------------------------------------------------------
-# Refresh Project — payload flow
+# Refresh Project - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -187,7 +187,7 @@ class TestRefreshProjectFlow:
 
 
 # ---------------------------------------------------------------------------
-# Delete Deployment — payload flow
+# Delete Deployment - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -215,7 +215,7 @@ class TestDeleteDeploymentFlow:
 
 
 # ---------------------------------------------------------------------------
-# Update Image — payload flow
+# Update Image - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -271,7 +271,7 @@ class TestUpdateImageFlow:
 
 
 # ---------------------------------------------------------------------------
-# Clone Database — payload flow
+# Clone Database - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -328,7 +328,7 @@ class TestCloneDatabaseFlow:
 
 
 # ---------------------------------------------------------------------------
-# Clone Bucket — payload flow
+# Clone Bucket - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -383,7 +383,7 @@ class TestCloneBucketFlow:
 
 
 # ---------------------------------------------------------------------------
-# Refresh Deployment — payload flow
+# Refresh Deployment - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -418,7 +418,7 @@ class TestRefreshDeploymentFlow:
 
 
 # ---------------------------------------------------------------------------
-# Add Component — payload flow
+# Add Component - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -499,7 +499,7 @@ class TestAddComponentFlow:
 
 
 # ---------------------------------------------------------------------------
-# Add Component to Deployment — payload flow
+# Add Component to Deployment - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -537,7 +537,7 @@ class TestAddComponentToDeploymentFlow:
 
 
 # ---------------------------------------------------------------------------
-# Add Service — payload flow
+# Add Service - payload flow
 # ---------------------------------------------------------------------------
 
 
@@ -586,7 +586,7 @@ class TestAddServiceFlow:
 
 
 # ---------------------------------------------------------------------------
-# Federation routing — task_service vs federation_service
+# Federation routing - task_service vs federation_service
 # ---------------------------------------------------------------------------
 
 
@@ -687,7 +687,7 @@ class TestFederationRouting:
 
 
 class TestNoBlockingBehavior:
-    """V2 endpoints must return immediately — no wait_for_task_completion."""
+    """V2 endpoints must return immediately - no wait_for_task_completion."""
 
     def test_upsert_does_not_wait(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
         """Ensure task_service.get_task is never called by the endpoint itself."""

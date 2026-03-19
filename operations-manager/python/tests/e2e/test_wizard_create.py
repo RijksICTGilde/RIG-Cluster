@@ -19,7 +19,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 
 @pytest.fixture
 def cleanup(sandbox_page: Page, sandbox_url: str) -> ProjectCleanup:
-    """Project cleanup fixture — cleans up after test completes."""
+    """Project cleanup fixture - cleans up after test completes."""
     tracker = ProjectCleanup()
     yield tracker
     tracker.cleanup_via_ui(sandbox_page, sandbox_url)
@@ -69,21 +69,21 @@ def test_wizard_minimal_project(
     )
     wizard.click_next()
 
-    # Step 2: Services — skip (no services selected), just advance
+    # Step 2: Services - skip (no services selected), just advance
     wizard.click_next()
 
-    # Step 3: Team — fill with sandbox admin user
+    # Step 3: Team - fill with sandbox admin user
     wizard.fill_team(email="admin@sandbox.rijksapp.dev")
     wizard.click_next()
 
-    # Step 4: Components — fill minimal component
+    # Step 4: Components - fill minimal component
     wizard.fill_component(name="web", image="nginx:latest")
     wizard.click_next()
 
-    # Step 5: Domains — advance (use defaults or skip)
+    # Step 5: Domains - advance (use defaults or skip)
     wizard.click_next()
 
-    # Review page — verify we can see the project name
+    # Review page - verify we can see the project name
     sandbox_page.wait_for_load_state("networkidle")
     page_text = sandbox_page.text_content("body") or ""
     assert project_name in page_text, f"Project name '{project_name}' not found on review page"
@@ -118,7 +118,7 @@ def test_wizard_project_appears_in_list(
     )
     wizard.click_next()
 
-    # Services — skip
+    # Services - skip
     wizard.click_next()
 
     # Team
@@ -129,7 +129,7 @@ def test_wizard_project_appears_in_list(
     wizard.fill_component(name="app", image="nginx:latest")
     wizard.click_next()
 
-    # Domains — advance
+    # Domains - advance
     wizard.click_next()
 
     cleanup.register(project_name)

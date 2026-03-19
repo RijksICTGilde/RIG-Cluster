@@ -24,7 +24,7 @@
                         {% if user_role in ["admin", "owner"] %}
                         <c-layout-flow row="true" gap="xs">
                             <c-button kind="secondary" size="sm" label="Bewerken" showIcon="before" icon="bewerken"
-                                @click="openEditModal('modal-edit-component-{{ loop.index0 }}', 'Component bewerken — {{ component.name }}')" />
+                                @click="openEditModal('modal-edit-component-{{ loop.index0 }}', 'Component bewerken - {{ component.name }}')" />
                             <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
                                 @click="showDangerConfirmation('component', '{{ component.name }}', 'Weet u zeker dat u component &quot;{{ component.name }}&quot; wilt verwijderen?')" />
                         </c-layout-flow>
@@ -43,8 +43,18 @@
                         {% if component.resources %}
                         <div class="spec-item">
                             <strong>Resources:</strong>
-                            {% if component.resources.cpu %}CPU: {{ component.resources.cpu }}{% endif %}
-                            {% if component.resources.memory %}{% if component.resources.cpu %} | {% endif %}Memory: {{ component.resources.memory }}{% endif %}
+                            {% set req = component.resources.get('requests', {}) or {} %}
+                            {% set lim = component.resources.get('limits', {}) or {} %}
+                            {% if req.get('memory') or lim.get('memory') %}
+                                Memory: {{ req.get('memory', '?') }} / {{ lim.get('memory', '?') }}
+                            {% elif component.resources.memory is string %}
+                                Memory: {{ component.resources.memory }}
+                            {% endif %}
+                            {% if req.get('cpu') or lim.get('cpu') %}
+                                | CPU: {{ req.get('cpu', '?') }} / {{ lim.get('cpu', '?') }}
+                            {% elif component.resources.cpu is string %}
+                                | CPU: {{ component.resources.cpu }}
+                            {% endif %}
                         </div>
                         {% endif %}
 

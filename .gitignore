@@ -9,6 +9,7 @@ __pycache__/
 !/security/readme.md
 !/security/tls/
 /security/tls/**/*.pem
+/operations-manager/python/scripts/.env.*
 /operations-manager/python/log*
 /operations-manager/python/.env.local
 /operations-manager/python/.env.secrets
@@ -43,3 +44,4 @@ secrets-overview-*.yaml
 
 # E2E test screenshots (generated artifacts)
 /operations-manager/python/tests/e2e/screenshots/
+/operations-manager/docs/

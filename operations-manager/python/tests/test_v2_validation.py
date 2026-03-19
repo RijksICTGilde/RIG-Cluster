@@ -75,7 +75,7 @@ def v2_client(
 
 
 # ---------------------------------------------------------------------------
-# Invalid project name (400) — all endpoints that validate project_name
+# Invalid project name (400) - all endpoints that validate project_name
 # ---------------------------------------------------------------------------
 
 INVALID_PROJECT_NAMES = [
@@ -145,7 +145,7 @@ class TestInvalidProjectName:
 
 
 # ---------------------------------------------------------------------------
-# Upsert deployment — deployment name validation (400)
+# Upsert deployment - deployment name validation (400)
 # ---------------------------------------------------------------------------
 
 DEPLOYMENT_NAMES_REJECTED_BY_SANITIZE = [
@@ -228,7 +228,7 @@ class TestUpsertDeploymentValidation:
 
 
 # ---------------------------------------------------------------------------
-# Update image — image URL validation (422)
+# Update image - image URL validation (422)
 # ---------------------------------------------------------------------------
 
 
@@ -272,7 +272,7 @@ class TestUpdateImageValidation:
 
 
 # ---------------------------------------------------------------------------
-# Add component — field validation (400 for name format, 422 for fields)
+# Add component - field validation (400 for name format, 422 for fields)
 # ---------------------------------------------------------------------------
 
 INVALID_COMPONENT_NAMES = [
@@ -301,7 +301,7 @@ class TestAddComponentValidation:
             headers=HEADERS,
             json=body,
         )
-        # 400 from sanitize check, 422 from validator — both acceptable
+        # 400 from sanitize check, 422 from validator - both acceptable
         assert response.status_code in (400, 422)
 
     @pytest.mark.parametrize(
@@ -363,8 +363,8 @@ class TestAddComponentValidation:
     @pytest.mark.parametrize(
         "memory_limit",
         [
-            pytest.param("256Mi", id="not-allowed-256Mi"),
-            pytest.param("2Gi", id="not-allowed-2Gi"),
+            pytest.param("16Mi", id="below-min-16Mi"),
+            pytest.param("2Gi", id="above-max-2Gi"),
             pytest.param("bogus", id="bogus-value"),
         ],
     )
@@ -398,7 +398,7 @@ class TestAddComponentValidation:
 
 
 # ---------------------------------------------------------------------------
-# Add component to deployment — field validation
+# Add component to deployment - field validation
 # ---------------------------------------------------------------------------
 
 
@@ -448,7 +448,7 @@ class TestAddComponentToDeploymentValidation:
 
 
 # ---------------------------------------------------------------------------
-# Clone database — Pydantic model validation (422)
+# Clone database - Pydantic model validation (422)
 # ---------------------------------------------------------------------------
 
 
@@ -479,7 +479,7 @@ class TestCloneDatabaseValidation:
 
 
 # ---------------------------------------------------------------------------
-# Clone bucket — Pydantic model validation (422)
+# Clone bucket - Pydantic model validation (422)
 # ---------------------------------------------------------------------------
 
 
@@ -509,7 +509,7 @@ class TestCloneBucketValidation:
 
 
 # ---------------------------------------------------------------------------
-# Add service — Pydantic model validation (422)
+# Add service - Pydantic model validation (422)
 # ---------------------------------------------------------------------------
 
 

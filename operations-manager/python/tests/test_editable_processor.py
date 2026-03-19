@@ -316,6 +316,106 @@ class TestCheckboxGroupCoercion:
         assert result["components"][0]["services"] == []
 
 
+class TestCheckboxVirtualize:
+    """Ensure checkboxes with virtualize read from virtual paths.
+
+    Regression test: keycloak restrict-access checkbox has
+    virtualize=("services", "_services-config") so the form submits
+    under the virtual path. Without applying virtualize, the processor
+    reads from the real path (which has no data) and the checkbox
+    value is lost on rerender.
+    """
+
+    async def test_checkbox_reads_from_virtual_path(self):
+        processor = EditableFormProcessor()
+        checkbox_vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="config/auth/enabled",
+                virtualize=("config", "_form-config"),
+            ),
+            widget=WidgetType.CHECKBOX,
+            label="Ingeschakeld",
+        )
+        # Form submits under virtual path (_form-config instead of config)
+        submitted = {"_form-config": {"auth": {"enabled": True}}}
+        yaml_data = {"config": {"auth": {"enabled": False}}}
+        result, errors = await processor.process_json_submission(submitted, [checkbox_vis], yaml_data)
+        assert errors == {}
+        assert result["config"]["auth"]["enabled"] is True
+
+    async def test_checkbox_falls_back_to_real_path(self):
+        """When submitted data has no virtual key, fall back to real path."""
+        processor = EditableFormProcessor()
+        checkbox_vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="config/auth/enabled",
+                virtualize=("config", "_form-config"),
+            ),
+            widget=WidgetType.CHECKBOX,
+            label="Ingeschakeld",
+        )
+        # Data already merged into real path (no virtual key present)
+        submitted = {"config": {"auth": {"enabled": True}}}
+        yaml_data = {"config": {"auth": {"enabled": False}}}
+        result, errors = await processor.process_json_submission(submitted, [checkbox_vis], yaml_data)
+        assert errors == {}
+        assert result["config"]["auth"]["enabled"] is True
+
+    async def test_checkbox_without_virtualize_unchanged(self):
+        """Checkbox without virtualize reads from its yaml_path as before."""
+        processor = EditableFormProcessor()
+        checkbox_vis = EditableVisualizer(
+            editable=Editable(yaml_path="config/enabled"),
+            widget=WidgetType.CHECKBOX,
+            label="Ingeschakeld",
+        )
+        submitted = {"config": {"enabled": True}}
+        yaml_data = {"config": {"enabled": False}}
+        result, errors = await processor.process_json_submission(submitted, [checkbox_vis], yaml_data)
+        assert errors == {}
+        assert result["config"]["enabled"] is True
+
+    async def test_checkbox_group_reads_from_virtual_path(self):
+        """CHECKBOX_GROUP with virtualize should also use virtual path."""
+        processor = EditableFormProcessor()
+        cbg_vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="config/features",
+                virtualize=("config", "_form-config"),
+            ),
+            widget=WidgetType.CHECKBOX_GROUP,
+            label="Features",
+        )
+        submitted = {"_form-config": {"features": ["sso", "mfa"]}}
+        yaml_data = {"config": {"features": []}}
+        result, errors = await processor.process_json_submission(submitted, [cbg_vis], yaml_data)
+        assert errors == {}
+        assert result["config"]["features"] == ["sso", "mfa"]
+
+    async def test_checkbox_virtualize_in_group(self):
+        """Checkbox with virtualize inside a GROUP widget."""
+        processor = EditableFormProcessor()
+        checkbox_vis = EditableVisualizer(
+            editable=Editable(
+                yaml_path="config/auth/enabled",
+                virtualize=("config", "_form-config"),
+            ),
+            widget=WidgetType.CHECKBOX,
+            label="Ingeschakeld",
+        )
+        group_vis = EditableVisualizer(
+            editable=Editable(yaml_path="config/auth"),
+            widget=WidgetType.GROUP,
+            label="Auth",
+            children=[checkbox_vis],
+        )
+        submitted = {"_form-config": {"auth": {"enabled": True}}}
+        yaml_data = {"config": {"auth": {"enabled": False}}}
+        result, errors = await processor.process_json_submission(submitted, [group_vis], yaml_data)
+        assert errors == {}
+        assert result["config"]["auth"]["enabled"] is True
+
+
 class TestHiddenDependsOnSkipped:
     """Nested sequence children with unmet depends_on must be skipped.
 

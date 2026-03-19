@@ -292,7 +292,7 @@ All changes are modifications to existing files.
 
 - Existing resource tuning endpoint (implemented)
 - `kube-state-metrics` deployed in cluster (for `kube_pod_container_info` and OOM kill metrics)
-- Auto-resource-tuning feature (optional — sidecar tuning works independently via manual `/tune` endpoint)
+- Auto-resource-tuning feature (optional - sidecar tuning works independently via manual `/tune` endpoint)
 
 ## Verification
 
@@ -304,7 +304,7 @@ All changes are modifications to existing files.
 
 ## Related
 
-- `opi/api/resource_router.py` — existing tune endpoint
-- `opi/connectors/prometheus.py` — metrics connector
-- `manifests/sidecar-authorization-wall.yaml.jinja` — oauth2-proxy sidecar template
-- `features/auto-resource-tuning.md` — auto-scaling feature (extends to sidecars in Phase 5)
+- `opi/api/resource_router.py` - existing tune endpoint
+- `opi/connectors/prometheus.py` - metrics connector
+- `manifests/sidecar-authorization-wall.yaml.jinja` - oauth2-proxy sidecar template
+- `features/auto-resource-tuning.md` - auto-scaling feature (extends to sidecars in Phase 5)

@@ -1,6 +1,6 @@
 /* Wizard CSS - extracted from wizard_page.html.j2 and roos.py */
 
-/* Helper text spacing — stack description + help_text vertically */
+/* Helper text spacing - stack description + help_text vertically */
 .rvo-form-field__helper-group {
     display: flex;
     flex-direction: column;

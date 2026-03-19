@@ -31,7 +31,7 @@ from opi.forms.editables.validators import ContainerImageValidator, SlugValidato
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Validation profiles — map API field names to Editable instances
+# Validation profiles - map API field names to Editable instances
 # ---------------------------------------------------------------------------
 
 ADD_COMPONENT_VALIDATORS: dict[str, Editable] = {

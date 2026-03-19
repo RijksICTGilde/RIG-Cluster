@@ -1,4 +1,4 @@
-{# Deployments Section — one card per deployment, no outer wrapper #}
+{# Deployments Section - one card per deployment, no outer wrapper #}
 {% if project.deployments %}
     {% for deployment in project.deployments %}
     <div class="deployment-section" id="deployment-{{ deployment.name }}"
@@ -12,9 +12,9 @@
                 <div class="deployment-actions">
                     {% if user_role in ['admin', 'owner'] %}
                     <c-button kind="secondary" size="sm" label="Bewerken" showIcon="before" icon="bewerken"
-                        @click="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Deployment bewerken — {{ deployment.name }}')" />
+                        @click="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Deployment bewerken - {{ deployment.name }}')" />
                     <c-button kind="secondary" size="sm" label="Webadres" showIcon="before" icon="wereldbol"
-                        @click="openEditModal('modal-edit-domain-{{ loop.index0 }}', 'Webadres bewerken — {{ deployment.name }}')" />
+                        @click="openEditModal('modal-edit-domain-{{ loop.index0 }}', 'Webadres bewerken - {{ deployment.name }}')" />
                     <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
                         @click="showDangerConfirmation('deployment', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt verwijderen? Dit verwijdert alle bijbehorende Kubernetes resources en ArgoCD configuratie.')" />
                     {% endif %}
@@ -34,7 +34,7 @@
                             {% if component.image %}
                             <div class="component-image">{{ component.image }}</div>
                             {% else %}
-                            <div class="component-image rvo-text--subtle rvo-text--sm">Geen container image geconfigureerd — dit component wordt niet gedeployd</div>
+                            <div class="component-image rvo-text--subtle rvo-text--sm">Geen container image geconfigureerd - dit component wordt niet gedeployd</div>
                             {% endif %}
                         </div>
                     </div>

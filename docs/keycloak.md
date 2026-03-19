@@ -12,7 +12,7 @@ Bootstrap is automatic via `opi/bootstrap/keycloak_setup.py` on startup: creates
 
 - **Alias**: `sso-rijk`, Type: OIDC
 - **Discovery URL**: From `KEYCLOAK_MASTER_OIDC_DISCOVERY_URL` env var
-- **Auth flow**: External IDP Redirector — auto-redirects to SSO-Rijk (no username/password prompt)
+- **Auth flow**: External IDP Redirector - auto-redirects to SSO-Rijk (no username/password prompt)
 - Platform realm uses this flow as default browser flow; project realms use standard "browser" flow
 
 ## Identity Provider Mappers
@@ -114,9 +114,9 @@ KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=<discovery-url>
 
 ## Key Files
 
-- `opi/bootstrap/keycloak_setup.py` — automatic configuration on startup
-- `opi/connectors/keycloak.py` — API client
-- `opi/manager/keycloak_manager.py` — project client management
+- `opi/bootstrap/keycloak_setup.py` - automatic configuration on startup
+- `opi/connectors/keycloak.py` - API client
+- `opi/manager/keycloak_manager.py` - project client management
 
 ## Troubleshooting
 

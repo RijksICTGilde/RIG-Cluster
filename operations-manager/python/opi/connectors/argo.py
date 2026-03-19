@@ -380,7 +380,7 @@ class ArgoConnector:
             logger.error(f"Error listing applications: {e}")
             return []
 
-    async def login_and_sync(self, app_name: str | None = None) -> bool:
+    async def login_and_sync(self, app_name: str | None = None) -> str | None:
         """
         Convenience method to login and refresh an application in one call.
 
@@ -388,12 +388,12 @@ class ArgoConnector:
             app_name: Name of the application to refresh. If None, uses default_app_name
 
         Returns:
-            True if login and refresh both successful, False otherwise
+            The ``reconciledAt`` timestamp on success, ``None`` on failure.
         """
         # This method is now redundant since refresh_application handles authentication automatically
         return await self.refresh_application(app_name)
 
-    async def refresh_application(self, app_name: str | None = None, hard_refresh: bool = False) -> bool:
+    async def refresh_application(self, app_name: str | None = None, hard_refresh: bool = False) -> str | None:
         """
         Refresh an ArgoCD application.
 
@@ -404,7 +404,10 @@ class ArgoConnector:
                          Default is False (soft refresh) for better performance.
 
         Returns:
-            True if refresh was triggered successfully, False otherwise
+            The ``reconciledAt`` timestamp from the response on success, or
+            ``None`` on failure.  Callers can pass this value to
+            ``wait_for_application_synced`` so it knows when the status is
+            fresh.
         """
         app_name = app_name or self.default_app_name
         refresh_type = "hard" if hard_refresh else "normal"
@@ -421,16 +424,18 @@ class ArgoConnector:
 
             if status_code == 200:
                 logger.info(f"Successfully triggered {refresh_type} refresh for application: {app_name}")
-                return True
+                reconciled_at = json.loads(response_text).get("status", {}).get("reconciledAt")
+                logger.debug(f"Application '{app_name}' reconciledAt after refresh: {reconciled_at}")
+                return reconciled_at
             else:
                 logger.error(f"{refresh_type.title()} refresh failed with status {status_code}: {response_text}")
-                return False
+                return None
 
         except Exception as e:
             logger.error(f"Error during application {refresh_type} refresh: {e}")
-            return False
+            return None
 
-    async def hard_refresh_application(self, app_name: str | None = None) -> bool:
+    async def hard_refresh_application(self, app_name: str | None = None) -> str | None:
         """
         Convenience method to perform a hard refresh (clears cache, forces re-render).
 
@@ -441,7 +446,7 @@ class ArgoConnector:
             app_name: Name of the application to refresh. If None, uses default_app_name
 
         Returns:
-            True if hard refresh was triggered successfully, False otherwise
+            The ``reconciledAt`` timestamp on success, ``None`` on failure.
         """
         return await self.refresh_application(app_name, hard_refresh=True)
 

@@ -140,7 +140,7 @@
 
     /**
      * Initialize CodeMirror editors for all .kv-editor containers within
-     * the given root element. Safe to call repeatedly — already-initialized
+     * the given root element. Safe to call repeatedly - already-initialized
      * editors are skipped.
      */
     function initKvEditors(container) {
@@ -151,7 +151,7 @@
             if (!_instances.hasOwnProperty(id)) continue;
             var existing = document.getElementById(id);
             if (!existing || !existing.dataset.cmInitialized) {
-                // DOM gone or replaced — destroy the old CM view
+                // DOM gone or replaced - destroy the old CM view
                 _instances[id].view.destroy();
                 delete _instances[id];
             }

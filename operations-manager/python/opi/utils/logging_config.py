@@ -3,6 +3,21 @@ import logging.handlers
 from pathlib import Path
 from typing import ClassVar
 
+from opi.core.flow_id import get_flow_id
+
+# Replace the default LogRecord factory so that every record — regardless of
+# which logger, handler, or third-party library creates it — carries flow_id.
+_original_factory = logging.getLogRecordFactory()
+
+
+def _flow_id_record_factory(*args: object, **kwargs: object) -> logging.LogRecord:
+    record = _original_factory(*args, **kwargs)
+    record.flow_id = get_flow_id()  # type: ignore[attr-defined]
+    return record
+
+
+logging.setLogRecordFactory(_flow_id_record_factory)
+
 
 class HealthEndpointFilter(logging.Filter):
     """Filter to exclude health and infrastructure endpoint requests from uvicorn access logs."""
@@ -23,7 +38,7 @@ def setup_logging(log_to_file: bool = False, log_file_path: str = "log.txt") -> 
         log_file_path: Path to log file when file logging is enabled
     """
     # Create logger configuration
-    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - [%(flow_id)s] %(message)s"
 
     # Clear any existing handlers
     root_logger = logging.getLogger()

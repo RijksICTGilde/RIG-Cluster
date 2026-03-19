@@ -8,12 +8,13 @@ import asyncio
 import base64
 import logging
 import os
+from datetime import UTC
 from typing import Any
 
+from jinja2 import Template
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
-from jinja2 import Template  # noqa: E402
 
 
 class KubectlConnectionError(Exception):
@@ -825,22 +826,33 @@ class KubectlConnector:
             logger.error(f"Error starting log stream for {deployment_name}: {e}")
             return None
 
-    async def get_namespace_events(self, namespace: str, limit: int = 50) -> list[dict[str, str]]:
+    async def get_namespace_events(
+        self,
+        namespace: str,
+        limit: int = 50,
+        event_type: str | None = "Warning",
+        max_age_hours: float = 2,
+    ) -> list[dict[str, str]]:
         """
         Get recent events from a namespace.
 
         Args:
             namespace: Namespace to get events from
             limit: Maximum number of events to retrieve (default: 50)
+            event_type: Filter by event type (default: "Warning"), None for all
+            max_age_hours: Only return events younger than this (default: 2)
 
         Returns:
             List of event dictionaries with keys: type, reason, object, message, time
         """
+        from datetime import datetime
+
         logger.debug(f"Getting events for namespace {namespace}")
 
         try:
-            # Get events in JSON format for easier parsing
             args = ["get", "events", "-n", namespace, "--sort-by=.metadata.creationTimestamp", "-o", "json"]
+            if event_type:
+                args.extend(["--field-selector", f"type={event_type}"])
             stdout, stderr, code = await self._run_kubectl_command(args)
 
             if code != 0:
@@ -850,16 +862,28 @@ class KubectlConnector:
             import json
 
             events_data = json.loads(stdout)
-            events = [
-                {
-                    "type": event.get("type", ""),
-                    "reason": event.get("reason", ""),
-                    "object": event.get("involvedObject", {}).get("name", ""),
-                    "message": event.get("message", ""),
-                    "time": event.get("metadata", {}).get("creationTimestamp", ""),
-                }
-                for event in list(reversed(events_data.get("items", [])))[:limit]
-            ]
+            now = datetime.now(UTC)
+            events: list[dict[str, str]] = []
+            for event in reversed(events_data.get("items", [])):
+                timestamp = event.get("metadata", {}).get("creationTimestamp", "")
+                if timestamp and max_age_hours > 0:
+                    try:
+                        event_dt = datetime.fromisoformat(timestamp)
+                        if (now - event_dt).total_seconds() / 3600 > max_age_hours:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                events.append(
+                    {
+                        "type": event.get("type", ""),
+                        "reason": event.get("reason", ""),
+                        "object": event.get("involvedObject", {}).get("name", ""),
+                        "message": event.get("message", ""),
+                        "time": timestamp,
+                    }
+                )
+                if len(events) >= limit:
+                    break
 
             return events
 

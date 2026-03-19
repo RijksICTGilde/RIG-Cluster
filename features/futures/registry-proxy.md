@@ -34,13 +34,13 @@ De `imagePullSecret.name` kan expliciet opgegeven of weggelaten worden. Bij wegl
 
 ## ServiceAccount
 
-Niet strikt nodig — het imagePullSecret kan direct op de Pod spec gezet worden via `imagePullSecrets`. Voor afnemers die dit willen automatiseren kan de operator optioneel een ServiceAccount aanmaken of patchen met het imagePullSecret. De naam kan dezelfde conventie volgen.
+Niet strikt nodig - het imagePullSecret kan direct op de Pod spec gezet worden via `imagePullSecrets`. Voor afnemers die dit willen automatiseren kan de operator optioneel een ServiceAccount aanmaken of patchen met het imagePullSecret. De naam kan dezelfde conventie volgen.
 
 ## Operator gedrag
 
-- **Create** — maakt proxy cache in RCR + imagePullSecret in namespace
-- **Update** — watcht `upstreamImagePullSecret`, synct wijzigingen naar RCR
-- **Delete** — reference counting: verwijdert proxy cache uit RCR alleen als geen andere RegistryProxy objecten dezelfde upstream gebruiken
+- **Create** - maakt proxy cache in RCR + imagePullSecret in namespace
+- **Update** - watcht `upstreamImagePullSecret`, synct wijzigingen naar RCR
+- **Delete** - reference counting: verwijdert proxy cache uit RCR alleen als geen andere RegistryProxy objecten dezelfde upstream gebruiken
 
 ## ZAD flow
 

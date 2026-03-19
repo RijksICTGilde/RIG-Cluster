@@ -3,7 +3,7 @@
 When a clone creates a resource using the base name (no version suffix),
 generation must be recorded as 0. Recording 1 causes the next upsert to
 derive a versioned name (e.g. bucket-v1 or db_v1) that doesn't match
-the actual resource — breaking the deployment.
+the actual resource - breaking the deployment.
 
 Covers:
 - MinIO internal clone (deployment-to-deployment)
@@ -138,7 +138,7 @@ class TestMinioCloneGenerationTracking:
         """First MinIO clone (generation=None) must record generation 0, not 1.
 
         If recorded as 1, the next upsert generates bucket name 'proj-deploy-v1'
-        instead of the actual 'proj-deploy' — the app gets AccessDenied.
+        instead of the actual 'proj-deploy' - the app gets AccessDenied.
         """
         minio_manager = MinioManager(mock_project_manager)
         project_data = project_data_with_minio_clone
@@ -180,7 +180,7 @@ class TestMinioCloneGenerationTracking:
         )
 
         # Generation 0 = base name (no -v suffix)
-        # Generation 1 = versioned name (-v1) — WRONG for initial clone
+        # Generation 1 = versioned name (-v1) - WRONG for initial clone
         assert recorded_gen == 0, (
             f"Expected generation 0 (base name) after fresh MinIO clone, got {recorded_gen}. "
             f"Next upsert would derive bucket '{generate_bucket_name('test-project', 'staging', recorded_gen)}' "
@@ -256,7 +256,7 @@ class TestDatabaseCloneGenerationTracking:
         """First database clone (generation=None) must record generation 0, not 1.
 
         If recorded as 1, the next upsert generates database name 'proj_deploy_v1'
-        instead of the actual 'proj_deploy' — the app connects to an empty database.
+        instead of the actual 'proj_deploy' - the app connects to an empty database.
         """
         mock_postgres = MagicMock()
         mock_postgres.create_database = AsyncMock(return_value={"status": "created"})

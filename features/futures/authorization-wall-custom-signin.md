@@ -33,12 +33,12 @@ The current template uses basic Rijksoverheid CSS. This feature spec focuses on 
 
 Available Go template variables in `sign_in.html`:
 
-- `.SignInMessage` — banner text from `--banner` flag
-- `.ProxyPrefix` — OAuth2 proxy prefix path
-- `.ProviderName` — provider name (e.g. "OpenID Connect")
-- `.Redirect` — redirect URL after login
-- `.Logo` — logo URL (via `--custom-sign-in-logo`)
-- `.Footer` — footer text (via `--footer`)
+- `.SignInMessage` - banner text from `--banner` flag
+- `.ProxyPrefix` - OAuth2 proxy prefix path
+- `.ProviderName` - provider name (e.g. "OpenID Connect")
+- `.Redirect` - redirect URL after login
+- `.Logo` - logo URL (via `--custom-sign-in-logo`)
+- `.Footer` - footer text (via `--footer`)
 
 ---
 
@@ -275,7 +275,7 @@ If CDN access is not available in a restricted network:
 
 If the custom template fails to load (ConfigMap mount failure):
 - oauth2-proxy falls back to its built-in default template
-- Users can still authenticate — just with the generic Bulma-styled page
+- Users can still authenticate - just with the generic Bulma-styled page
 - No functional impact, only visual
 
 ---

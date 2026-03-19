@@ -6,8 +6,8 @@ End-to-end browser tests using Playwright that exercise the real Operations Mana
 
 Two test layers:
 
-1. **Local tests** — run against a local FastAPI instance with mocked startup (fast, no infrastructure needed)
-2. **Sandbox tests** — run against a live sandbox cluster via the full ingress path (Caddy → Kind nginx-ingress → OPI pod)
+1. **Local tests** - run against a local FastAPI instance with mocked startup (fast, no infrastructure needed)
+2. **Sandbox tests** - run against a live sandbox cluster via the full ingress path (Caddy → Kind nginx-ingress → OPI pod)
 
 ## How It Works
 

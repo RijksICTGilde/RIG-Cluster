@@ -233,7 +233,7 @@ class TestExtractServiceNamesFromComponent:
 
 
 # ---------------------------------------------------------------------------
-# _filter_set_terminal tests (path system — prevents empty service dicts)
+# _filter_set_terminal tests (path system - prevents empty service dicts)
 # ---------------------------------------------------------------------------
 
 

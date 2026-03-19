@@ -24,7 +24,7 @@ async def _monitor_argocd_and_deployment(
 
     The ``user-applications`` App-of-Apps creates individual ArgoCD
     Application resources for each project deployment (e.g.
-    ``myproject-staging``).  Those project apps are what we care about —
+    ``myproject-staging``).  Those project apps are what we care about -
     the parent ``user-applications`` syncs on its own schedule and may
     stay ``OutOfSync`` long after the project apps are ready.
     """
@@ -268,7 +268,9 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
             _projects[task_id].completed_at = datetime.now(tz=UTC)
 
 
-async def process_project_yaml_background(task_id: str, project_name: str, yaml_content: str) -> None:
+async def process_project_yaml_background(
+    task_id: str, project_name: str, yaml_content: str, deployment_name: str | None = None
+) -> None:
     """Background task that creates a project from pre-built YAML content.
 
     Unlike ``process_project_background`` which takes a
@@ -294,7 +296,7 @@ async def process_project_yaml_background(task_id: str, project_name: str, yaml_
             return
         task_progress_manager.complete_task(validate_task)
 
-        # Step 2: YAML already generated — skip generation step
+        # Step 2: YAML already generated - skip generation step
         yaml_task = task_progress_manager.add_task("YAML configuratie controleren")
         logger.debug(f"Task {task_id}: Using pre-built YAML content ({len(yaml_content)} chars)")
         task_progress_manager.complete_task(yaml_task)
@@ -324,12 +326,15 @@ async def process_project_yaml_background(task_id: str, project_name: str, yaml_
             return
 
         # Step 4: Project deployment
-        deploy_task = task_progress_manager.add_task("Project deployment")
+        if deployment_name:
+            deploy_task = task_progress_manager.add_task(f"Deployment '{deployment_name}' verwerken")
+        else:
+            deploy_task = task_progress_manager.add_task("Project deployment")
         try:
             project_manager = ProjectManager(git_connector_for_project_files=git_connector_for_project_files)
             try:
                 processing_result = await project_manager.process_project_from_git(
-                    project_file_path, task_progress_manager
+                    project_file_path, task_progress_manager, deployment_name=deployment_name
                 )
                 logger.info(f"Task {task_id}: Project processing completed, result: {processing_result}")
             finally:
@@ -345,7 +350,7 @@ async def process_project_yaml_background(task_id: str, project_name: str, yaml_
                     f"Background task {task_id} completed successfully: {project_name} (took {elapsed_time:.2f}s)"
                 )
             else:
-                error_msg = "Project processing failed"
+                error_msg = "Deployment processing failed"
                 task_progress_manager.fail_task(deploy_task, error_msg)
                 task_progress_manager.fail_project(error_msg)
 
@@ -363,6 +368,52 @@ async def process_project_yaml_background(task_id: str, project_name: str, yaml_
         logger.error(f"Background task {task_id} failed: {error_msg}")
         logger.debug(f"Background task {task_id} full traceback:\n{error_traceback}")
 
+        if task_id in _projects:
+            _projects[task_id].status = TaskStatus.FAILED
+            _projects[task_id].completed_at = datetime.now(tz=UTC)
+
+
+async def refresh_project_background(task_id: str, project_name: str, project_file_path: str) -> None:
+    """Background task that reprocesses a project from Git.
+
+    Runs the full change detection pipeline: detects added/removed deployments,
+    reconciles services, and regenerates manifests.
+    """
+    try:
+        logger.info(f"Background task {task_id} starting: refresh project {project_name}")
+        start_time = time.time()
+
+        task_progress_manager = TaskProgressManager(task_id, project_name)
+
+        deploy_task = task_progress_manager.add_task("Project herverwerken vanuit Git")
+        try:
+            project_manager = ProjectManager()
+            try:
+                processing_result = await project_manager.process_project_from_git(
+                    project_file_path, task_progress_manager
+                )
+            finally:
+                await project_manager.close()
+
+            if processing_result:
+                task_progress_manager.complete_task(deploy_task)
+                task_progress_manager.update_current_step(f"Project {project_name} succesvol herverwerkt")
+                task_progress_manager.complete_project()
+
+                elapsed_time = time.time() - start_time
+                logger.info(f"Background task {task_id} completed: refresh {project_name} (took {elapsed_time:.2f}s)")
+            else:
+                error_msg = project_manager.get_processing_error() or "Project herverwerken mislukt"
+                task_progress_manager.fail_task(deploy_task, error_msg)
+                task_progress_manager.fail_project(error_msg)
+
+        except Exception as e:
+            error_msg = f"Project herverwerken mislukt: {e}"
+            task_progress_manager.fail_task(deploy_task, error_msg)
+            task_progress_manager.fail_project(error_msg)
+
+    except Exception as e:
+        logger.error(f"Background task {task_id} failed: refresh {project_name}: {e!s}")
         if task_id in _projects:
             _projects[task_id].status = TaskStatus.FAILED
             _projects[task_id].completed_at = datetime.now(tz=UTC)

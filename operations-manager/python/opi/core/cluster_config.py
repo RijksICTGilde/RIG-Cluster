@@ -84,7 +84,7 @@ CLUSTER_CONFIG = {
         "nice_url": {
             "supported_domains": [
                 {"domain": "sandbox.rijksapp.dev", "supports_dots": False},
-                {"domain": "robbertuittenbroek.nl", "supports_dots": True},
+                {"domain": "robbertuittenbroek.nl", "supports_dots": True, "issuer": "letsencrypt"},
             ],
         },
     },
@@ -118,10 +118,10 @@ CLUSTER_CONFIG = {
         },
         "nice_url": {
             "supported_domains": [
-                {"domain": "rijks.app", "supports_dots": True},
-                {"domain": "rijksapps.nl", "supports_dots": True},
-                {"domain": "rijksapp.nl", "supports_dots": True},
-                {"domain": "rijksapp.dev", "supports_dots": True},
+                {"domain": "rijks.app", "supports_dots": True, "issuer": "letsencrypt"},
+                {"domain": "rijksapps.nl", "supports_dots": True, "issuer": "letsencrypt"},
+                {"domain": "rijksapp.nl", "supports_dots": True, "issuer": "letsencrypt"},
+                {"domain": "rijksapp.dev", "supports_dots": True, "issuer": "letsencrypt"},
             ],
         },
     },
@@ -747,6 +747,32 @@ def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
     """
     supported_domains = get_nice_url_supported_domains(cluster_name)
     return base_domain in supported_domains
+
+
+def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
+    """
+    Get the issuer for a specific domain on a cluster.
+
+    Looks up the domain in the cluster's supported_domains list.
+    Returns the per-domain issuer if configured, otherwise falls back
+    to the cluster's default cluster_issuer.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The domain to check (e.g., "rijksapp.nl")
+
+    Returns:
+        Issuer string (e.g., "letsencrypt") or None if no issuer is needed.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is not None:
+        for entry in nice_url_config.get("supported_domains", []):
+            if isinstance(entry, dict) and entry.get("domain") == domain:
+                return entry.get("issuer")
+    return None
 
 
 def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:

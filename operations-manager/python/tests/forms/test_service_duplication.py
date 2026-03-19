@@ -115,7 +115,7 @@ class TestFinalProjectYaml:
         assert _count_service_entries(services, "temp-storage") == 1, f"temp-storage duplicated! services = {services}"
 
     async def test_plain_strings_no_duplication(self):
-        """Services as plain strings — storage config processing should not add dicts."""
+        """Services as plain strings - storage config processing should not add dicts."""
         yaml_data = _make_merged_data_with_plain_strings()
         result = await self._run_pipeline(yaml_data)
 
@@ -166,7 +166,7 @@ class TestFinalProjectYaml:
         # JSON pipeline (step submission)
         step_result, errors = await processor.process_json_submission(submitted_json, editables, initial_yaml)
 
-        # Phase 2: Simulate get_merged_data() — extract section keys
+        # Phase 2: Simulate get_merged_data() - extract section keys
         section_keys = {e.editable.yaml_path.split("/")[0].split("[")[0] for e in editables}
         section_data = {k: v for k, v in step_result.items() if k in section_keys}
 
@@ -200,7 +200,7 @@ class TestFinalProjectYaml:
         assert ts_count <= 2, f"temp-storage appears {ts_count} times in YAML:\n{yaml_str}"
 
     async def test_full_create_flow_all_sections(self):
-        """Test with ALL active sections from the CREATE_FLOW — the exact _do_submit setup."""
+        """Test with ALL active sections from the CREATE_FLOW - the exact _do_submit setup."""
         from opi.forms.visualizers.flows import CREATE_FLOW
 
         # Simulate all active sections (services selected, keycloak not)

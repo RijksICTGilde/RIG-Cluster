@@ -609,7 +609,7 @@ class DatabaseManager:
                 #   indicating a previous clone failed before recording its generation
                 new_generation = (generation or 0) + 1
 
-                # Find an available generation — previous failed attempts may have left
+                # Find an available generation - previous failed attempts may have left
                 # orphaned versioned databases that were not cleaned up
                 max_attempts = 5
                 for _attempt in range(max_attempts):

@@ -139,7 +139,7 @@ async def upsert_deployment_v2(
     return _accepted_response(task, "upsert_deployment")
 
 
-# NOTE: create_project_v2 removed — there is no project (and therefore no API
+# NOTE: create_project_v2 removed - there is no project (and therefore no API
 # token) to authenticate against before the project exists.  Project creation
 # is handled exclusively through the web UI wizard.
 

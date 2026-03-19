@@ -10,7 +10,7 @@ This mirrors the full wizard's step-by-step experience where selecting a service
 
 ### Architecture
 
-The modal wizard is entirely **server-driven** — step state, navigation, and rendering all happen on the backend. The frontend receives complete HTML fragments via HTMX and swaps them into the modal.
+The modal wizard is entirely **server-driven** - step state, navigation, and rendering all happen on the backend. The frontend receives complete HTML fragments via HTMX and swaps them into the modal.
 
 State is persisted in a file-based session store (not browser cookies) to avoid the ~4 KB cookie size limit and survive page reloads.
 
@@ -46,12 +46,12 @@ The chaining mechanism uses `resolve_active_section_ids()` from `opi/forms/wizar
 
 1. After each step submission, all step data is merged
 2. Each `FormSection`'s `visible` callable is evaluated against merged data
-3. Active sections list is updated — new service configs appear, removed ones disappear
+3. Active sections list is updated - new service configs appear, removed ones disappear
 4. Data for hidden sections is stashed (preserved if re-activated later)
 
 ### Service Protection
 
-Services that existed before the wizard started are "locked" — the user cannot remove them. If a submission tries to remove locked services, the form re-renders with an error and the original services restored. This prevents breaking existing deployments.
+Services that existed before the wizard started are "locked" - the user cannot remove them. If a submission tries to remove locked services, the form re-renders with an error and the original services restored. This prevents breaking existing deployments.
 
 ### Final Submission
 
@@ -72,10 +72,10 @@ When the last active step is submitted:
 
 State is managed via `opi/forms/wizard/session.py`:
 
-- `init_modal_wizard_state()` — Create new state, save to file store
-- `get_modal_wizard_state()` — Load from file store
-- `save_modal_wizard_state()` — Persist changes
-- `clear_modal_wizard_state()` — Remove state and cookie
+- `init_modal_wizard_state()` - Create new state, save to file store
+- `get_modal_wizard_state()` - Load from file store
+- `save_modal_wizard_state()` - Persist changes
+- `clear_modal_wizard_state()` - Remove state and cookie
 
 State is stored as JSON files under `{TEMP_DIR}/wizard-sessions/{token}.json`.
 
@@ -84,7 +84,7 @@ State is stored as JSON files under `{TEMP_DIR}/wizard-sessions/{token}.json`.
 | File | Role |
 |------|------|
 | `opi/web/router_detail_edit.py` | Modal wizard routes and submission logic |
-| `opi/forms/wizard/resolver.py` | `resolve_active_section_ids()` — conditional section resolution |
+| `opi/forms/wizard/resolver.py` | `resolve_active_section_ids()` - conditional section resolution |
 | `opi/forms/wizard/session.py` | Modal wizard session state (file-based store) |
 | `opi/forms/wizard/state.py` | `WizardState` dataclass with step tracking and data merging |
 | `opi/forms/visualizers/wizard_sections.py` | `FormSection` definitions, `SERVICE_CONFIG_SECTIONS` mapping |
@@ -95,4 +95,4 @@ State is stored as JSON files under `{TEMP_DIR}/wizard-sessions/{token}.json`.
 
 ## Configuration
 
-When adding new configurable services, add them to the `SERVICE_CONFIG_SECTIONS` mapping in `wizard_sections.py`. The modal wizard automatically picks up the section when the service is selected — no frontend changes needed.
+When adding new configurable services, add them to the `SERVICE_CONFIG_SECTIONS` mapping in `wizard_sections.py`. The modal wizard automatically picks up the section when the service is selected - no frontend changes needed.

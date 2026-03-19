@@ -83,8 +83,11 @@ def editable_to_form_field(
         attributes = dict(attributes or {})
         attributes["kv_format"] = detected_fmt
 
-    # 4. Resolve options
-    options = _resolve_options(options_provider_name, provider_context)
+    # 4. Resolve options (pass current value so providers can include tuner-set values)
+    option_context = dict(provider_context or {})
+    if raw_value is not None:
+        option_context.setdefault("current_value", str(raw_value))
+    options = _resolve_options(options_provider_name, option_context)
 
     # 5. Build HTMX attrs dict
     htmx_attrs: dict[str, str] = {}
@@ -138,10 +141,10 @@ def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool
     in which case truthiness of *dep_value* decides).
 
     Supported operators:
-    - ``{"contains": "value"}`` — dep_value is a list containing "value"
-    - ``{"contains_any": [...]}`` — dep_value is a list containing any value
-    - ``{"field": "value"}`` — dep_value equals "value"
-    - ``{"field": ["v1", "v2"]}`` — dep_value is in the list
+    - ``{"contains": "value"}`` - dep_value is a list containing "value"
+    - ``{"contains_any": [...]}`` - dep_value is a list containing any value
+    - ``{"field": "value"}`` - dep_value equals "value"
+    - ``{"field": ["v1", "v2"]}`` - dep_value is in the list
     """
     if show_when is None:
         return bool(dep_value)

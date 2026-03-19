@@ -48,7 +48,7 @@ def _sample_services():
 
 
 # ===================================================================
-# get_value — {K} dict-key filter
+# get_value - {K} dict-key filter
 # ===================================================================
 
 
@@ -93,7 +93,7 @@ class TestGetValueDictKeyFilter:
 
 
 # ===================================================================
-# get_value — {F=V} field-match filter
+# get_value - {F=V} field-match filter
 # ===================================================================
 
 
@@ -140,7 +140,7 @@ class TestGetValueFieldMatchFilter:
 
 
 # ===================================================================
-# set_value — {K} dict-key filter
+# set_value - {K} dict-key filter
 # ===================================================================
 
 
@@ -184,7 +184,7 @@ class TestSetValueDictKeyFilter:
 
 
 # ===================================================================
-# set_value — {F=V} field-match filter
+# set_value - {F=V} field-match filter
 # ===================================================================
 
 
@@ -225,7 +225,7 @@ class TestSetValueFieldMatchFilter:
 
 class TestChainedFilters:
     def test_dict_key_then_field_match(self):
-        """services{persistent-storage}/config{name=data}/size — full chain."""
+        """services{persistent-storage}/config{name=data}/size - full chain."""
         data = _sample_component()
         path = "components[0]/services{persistent-storage}/config{name=data}/size"
         assert get_value(data, path) == "250Mi"
@@ -233,7 +233,7 @@ class TestChainedFilters:
         assert get_value(data, path) == "1Gi"
 
     def test_wildcard_with_dict_key_filter(self):
-        """components[*] + services{K} — wildcard before filter."""
+        """components[*] + services{K} - wildcard before filter."""
         data = _sample_component()
         result = get_value(data, "components[*]/services{persistent-storage}/config[0]/name")
         assert result == ["data"]

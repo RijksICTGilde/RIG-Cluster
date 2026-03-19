@@ -54,7 +54,7 @@ class EditableCondition(Protocol):
 class EditableGenerator(Protocol):
     """Generates computed values at submit time.
 
-    Editables with a generator are not rendered in forms — their values
+    Editables with a generator are not rendered in forms - their values
     are computed from the merged YAML data during final submission.
     """
 
@@ -64,7 +64,7 @@ class EditableGenerator(Protocol):
 
 
 class WidgetType(StrEnum):
-    """Enumeration of available widget types — no magic strings."""
+    """Enumeration of available widget types - no magic strings."""
 
     TEXT = "text"
     TEXTAREA = "textarea"
@@ -87,7 +87,7 @@ class WidgetType(StrEnum):
 
 @dataclass
 class Editable:
-    """Reusable field logic — pure data, no UI concerns.
+    """Reusable field logic - pure data, no UI concerns.
 
     Defines *what* the data is: where it lives in YAML, how to validate,
     convert, enforce, and generate values. Extractable to a standalone
@@ -157,7 +157,7 @@ def apply_virtualize(path: str, virtualize: tuple[str, str] | None) -> str:
 
 
 def reverse_virtualize(path: str, virtualize: tuple[str, str] | None) -> str:
-    """Inverse of :func:`apply_virtualize` — virtual name back to real."""
+    """Inverse of :func:`apply_virtualize` - virtual name back to real."""
     if not virtualize:
         return path
     real, virtual = virtualize

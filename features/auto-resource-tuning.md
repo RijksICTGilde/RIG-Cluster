@@ -43,8 +43,8 @@ Project YAML (git commit) --> ArgoCD (deploy)
 
 The analyzer computes memory limits and requests separately:
 
-- **Limit** = `max_observed * (1 + buffer%)` — protects against peak usage
-- **Request** = `avg_observed * (1 + buffer%)` — reflects typical usage for scheduling
+- **Limit** = `max_observed * (1 + buffer%)` - protects against peak usage
+- **Request** = `avg_observed * (1 + buffer%)` - reflects typical usage for scheduling
 - Apps using >= 100Mi get an additional flat 25Mi headroom on top of the percentage buffer
 
 Both values are subject to:
@@ -54,7 +54,7 @@ Both values are subject to:
 
 ### Limit/Request Collapse
 
-When the recommended limit and request are within **10% of each other**, they are collapsed to the same value. A tiny gap between limit and request adds no scheduling benefit — it just creates noise in the YAML.
+When the recommended limit and request are within **10% of each other**, they are collapsed to the same value. A tiny gap between limit and request adds no scheduling benefit - it just creates noise in the YAML.
 
 Example: if the algorithm computes limit=100Mi and request=95Mi (5% gap), both are set to 100Mi.
 
@@ -64,23 +64,23 @@ OOM-killed containers produce misleading usage data (the pod was killed before r
 
 - The limit is set to at least **1.5x the current limit**, regardless of observed usage
 - If the pod was OOM-killed on startup with zero Prometheus metrics, the current YAML values are used as a baseline for the 1.5x calculation
-- OOM kills bypass the change threshold — any OOM kill triggers an update
+- OOM kills bypass the change threshold - any OOM kill triggers an update
 
 ### Base Component Propagation
 
-Resource tuning writes to **deployment-level overrides** (e.g., production gets its own limits). However, when a new deployment is created, it inherits the **base component definition's** defaults — which may be too low.
+Resource tuning writes to **deployment-level overrides** (e.g., production gets its own limits). However, when a new deployment is created, it inherits the **base component definition's** defaults - which may be too low.
 
 After updating a deployment's resources, the tuning system also updates the base component's memory request, with two guards:
 
-1. **Only increase, never decrease** — if the base is already higher (set manually for a reason), it stays
-2. **Only when the ratio is <= 2x** — if the new request is more than double the current base, it's likely a deployment-specific need (e.g., production vs test) and shouldn't inflate the shared default
+1. **Only increase, never decrease** - if the base is already higher (set manually for a reason), it stays
+2. **Only when the ratio is <= 2x** - if the new request is more than double the current base, it's likely a deployment-specific need (e.g., production vs test) and shouldn't inflate the shared default
 
 Example:
 - Base component has `requests.memory: 64Mi`
 - Production tuning recommends `requests.memory: 100Mi` (ratio 1.56x) → base updated to 100Mi
 - Production tuning recommends `requests.memory: 175Mi` (ratio 2.73x) → base left at 64Mi
 
-Only `requests.memory` is propagated — limits are deployment-specific by nature (production and staging may have very different limits).
+Only `requests.memory` is propagated - limits are deployment-specific by nature (production and staging may have very different limits).
 
 ## API
 
@@ -90,7 +90,7 @@ Only `requests.memory` is propagated — limits are deployment-specific by natur
 POST /api/resources/{project_name}/tune?deployment={deployment_name}
 ```
 
-- `deployment` is optional — omit to tune all deployments in the project
+- `deployment` is optional - omit to tune all deployments in the project
 - Requires API token authentication
 
 Response:
@@ -148,7 +148,7 @@ Cluster-specific minimum memory is configured via `get_min_memory_limit_mi()` (d
 
 ### Tenant Cluster
 
-The production environment (ODCN) is a tenant cluster — no cluster-admin permissions. This rules out VPA (requires CRDs + cluster-scoped controllers). The metrics-driven GitOps approach works entirely within namespace-scoped permissions.
+The production environment (ODCN) is a tenant cluster - no cluster-admin permissions. This rules out VPA (requires CRDs + cluster-scoped controllers). The metrics-driven GitOps approach works entirely within namespace-scoped permissions.
 
 ### GitOps Compatibility
 
@@ -172,5 +172,5 @@ The current on-demand endpoint can be extended with a background scheduler that 
 
 ## Related
 
-- `features/futures/sidecar-resource-tuning.md` — extends tuning to sidecar containers
-- `features/futures/configurable-deployment-resources.md` — prerequisite for resource values in YAML
+- `features/futures/sidecar-resource-tuning.md` - extends tuning to sidecar containers
+- `features/futures/configurable-deployment-resources.md` - prerequisite for resource values in YAML

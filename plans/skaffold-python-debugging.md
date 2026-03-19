@@ -36,4 +36,4 @@ portForward:
 ## Notes
 - `skaffold debug` automatically disables liveness/readiness probes so Kubernetes won't restart the pod while paused on a breakpoint
 - `--auto-sync` can be added alongside debug for file syncing
-- No code changes needed in the application — Skaffold handles debugpy injection
+- No code changes needed in the application - Skaffold handles debugpy injection

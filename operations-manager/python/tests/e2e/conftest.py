@@ -25,7 +25,7 @@ from itsdangerous import TimestampSigner
 from playwright.sync_api import BrowserContext, Page
 from tests.e2e.testserver import SECRET_KEY, create_test_app
 
-# Sandbox config — override via environment variables
+# Sandbox config - override via environment variables
 E2E_BASE_URL = os.environ.get("E2E_BASE_URL", "")
 E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", "default-secret-key-for-development-change-in-production")
 
@@ -140,7 +140,7 @@ def screenshot_dir() -> Path:
 def sandbox_url() -> str:
     """Base URL for sandbox cluster. Requires E2E_BASE_URL env var."""
     if not E2E_BASE_URL:
-        pytest.skip("E2E_BASE_URL not set — sandbox tests require a running cluster")
+        pytest.skip("E2E_BASE_URL not set - sandbox tests require a running cluster")
     return E2E_BASE_URL
 
 

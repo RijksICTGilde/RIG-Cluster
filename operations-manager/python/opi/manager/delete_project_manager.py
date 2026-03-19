@@ -1327,7 +1327,7 @@ class DeleteProjectManager:
             # Step 6: Delete service resources (calls service managers)
             logger.info(f"Deleting service resources for {project_name}/{deployment_name}")
 
-            # Delete Keycloak resources (always immediate — ephemeral)
+            # Delete Keycloak resources (always immediate - ephemeral)
             keycloak_results = await self.project_manager._keycloak_manager.delete_resources_for_deployment(
                 project_data, deployment
             )
@@ -1359,7 +1359,7 @@ class DeleteProjectManager:
                     )
                 except (KeyError, ValueError):
                     logger.warning(
-                        "Database pool not available — cannot use deferred deletion, falling back to immediate deletion"
+                        "Database pool not available - cannot use deferred deletion, falling back to immediate deletion"
                     )
 
             # Delete/mark database resources
@@ -1418,9 +1418,53 @@ class DeleteProjectManager:
                 deletion_results["errors"].extend(minio_results["errors"])
 
             # Step 7: Delete deployment folders from git repositories
-            logger.info(f"Deleting deployment manifests for {project_name}/{deployment_name}")
+            # IMPORTANT: Only delete manifests if ArgoCD app is confirmed deleted.
+            # If the app still exists, its resources-finalizer needs the source path
+            # to determine which K8s resources to clean up. Deleting the manifests
+            # while the finalizer is still running causes a permanent deadlock.
+            if not argocd_app_deleted:
+                logger.warning(
+                    f"Skipping deployment manifest deletion for {project_name}/{deployment_name} - "
+                    f"ArgoCD application not confirmed deleted. Marking for deferred cleanup."
+                )
+                try:
+                    from opi.core.database_pools import get_database_pool
+                    from opi.services.marked_for_deletion_service import MarkedForDeletionService as MFDService
 
-            if repository_name and cluster:
+                    pool = get_database_pool("main")
+                    deferred_service = MFDService(pool)
+                    resource_name = f"{cluster}/{project_name}/{deployment_name}"
+                    await deferred_service.mark_resource(
+                        resource_type="deployment_manifests",
+                        resource_name=resource_name,
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        cluster=cluster,
+                        metadata={
+                            "repository_name": repository_name,
+                            "argocd_app_name": app_name,
+                        },
+                    )
+                    deletion_results["operations"].append(
+                        {
+                            "type": "deployment_folder_deletion",
+                            "status": "deferred",
+                            "reason": "ArgoCD application not confirmed deleted - marked for retry",
+                        }
+                    )
+                except Exception as mark_err:
+                    logger.warning(
+                        f"Could not mark manifests for deferred deletion: {mark_err}. "
+                        "Manifests will remain in git until manually cleaned up."
+                    )
+                    deletion_results["operations"].append(
+                        {
+                            "type": "deployment_folder_deletion",
+                            "status": "skipped",
+                            "reason": "ArgoCD app not deleted and could not mark for retry",
+                        }
+                    )
+            elif repository_name and cluster:
                 try:
                     repositories = project_data.get("repositories", [])
                     repo_config = None
@@ -1979,7 +2023,57 @@ class DeleteProjectManager:
                 )
 
         # 4. Delete deployment manifests from git
-        if repository_name and cluster:
+        # IMPORTANT: Only delete manifests if ArgoCD app is confirmed deleted.
+        # If the app still exists, its resources-finalizer needs the source path
+        # to determine which K8s resources to clean up. Deleting the manifests
+        # while the finalizer is still running causes a permanent deadlock.
+        if not argocd_app_deleted:
+            logger.warning(
+                "Skipping deployment manifest deletion for %s/%s - "
+                "ArgoCD application not confirmed deleted. Marking for deferred cleanup.",
+                project_name,
+                deployment_name,
+            )
+            try:
+                from opi.core.database_pools import get_database_pool
+                from opi.services.marked_for_deletion_service import MarkedForDeletionService as MFDService
+
+                pool = get_database_pool("main")
+                deferred_service = MFDService(pool)
+                resource_name = f"{cluster}/{project_name}/{deployment_name}"
+                app_name_for_mark = generate_argocd_application_name(project_name, deployment_name)
+                await deferred_service.mark_resource(
+                    resource_type="deployment_manifests",
+                    resource_name=resource_name,
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    cluster=cluster,
+                    metadata={
+                        "repository_name": repository_name,
+                        "argocd_app_name": app_name_for_mark,
+                    },
+                )
+                deletion_results["operations"].append(
+                    {
+                        "type": "deployment_folder_deletion",
+                        "status": "deferred",
+                        "reason": "ArgoCD application not confirmed deleted - marked for retry",
+                    }
+                )
+            except Exception as mark_err:
+                logger.warning(
+                    "Could not mark manifests for deferred deletion: %s. "
+                    "Manifests will remain in git until manually cleaned up.",
+                    mark_err,
+                )
+                deletion_results["operations"].append(
+                    {
+                        "type": "deployment_folder_deletion",
+                        "status": "skipped",
+                        "reason": "ArgoCD app not deleted and could not mark for retry",
+                    }
+                )
+        elif repository_name and cluster:
             try:
                 repositories = project_data.get("repositories", [])
                 # Also check previous project data repositories

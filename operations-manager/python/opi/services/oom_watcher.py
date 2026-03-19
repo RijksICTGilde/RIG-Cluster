@@ -1,5 +1,5 @@
 """
-OOM Kill Watcher — fire-and-forget post-deploy memory auto-tuning.
+OOM Kill Watcher - fire-and-forget post-deploy memory auto-tuning.
 
 After a deploy or refresh completes, a delayed background check queries
 kubectl for OOM-killed containers.  If detected, the tune service bumps
