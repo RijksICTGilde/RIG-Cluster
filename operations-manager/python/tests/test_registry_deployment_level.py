@@ -190,7 +190,7 @@ def test_registry_with_secret_name_takes_precedence():
     secret_name_ref = registry_config.get("secretName")
     assert secret_name_ref is not None, "secretName should be present"
 
-    # secretName takes precedence — no RegistrySecret should be created
+    # secretName takes precedence - no RegistrySecret should be created
     secret_name = secret_name_ref
     assert secret_name == "existing-pull-secret"
 

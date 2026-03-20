@@ -773,7 +773,12 @@ class ArgoManager:
         raise TimeoutError(error_msg)
 
     async def wait_for_infrastructure_ready(
-        self, project_name: str, cluster_name: str, timeout: int = 300, poll_interval: int = 10
+        self,
+        project_name: str,
+        cluster_name: str,
+        timeout: int = 300,
+        poll_interval: int = 10,
+        refreshed_after: str | None = None,
     ) -> bool:
         """
         Wait for infrastructure ArgoCD application to be synced and healthy.
@@ -786,6 +791,9 @@ class ArgoManager:
             cluster_name: Target cluster name
             timeout: Maximum time to wait in seconds (default: 300 = 5 minutes)
             poll_interval: Seconds between status checks (default: 10)
+            refreshed_after: ISO-8601 ``reconciledAt`` timestamp returned by
+                ``refresh_application``.  When set, terminal states are ignored
+                until ``reconciledAt`` moves past this value.
 
         Returns:
             True if infrastructure is healthy, False if timeout or error
@@ -798,7 +806,8 @@ class ArgoManager:
 
         app_name = f"{project_name}-infrastructure"
         logger.info(
-            f"Waiting for infrastructure application '{app_name}' to be ready (timeout: {timeout}s, poll: {poll_interval}s)"
+            f"Waiting for infrastructure application '{app_name}' to be ready "
+            f"(timeout: {timeout}s, poll: {poll_interval}s, refreshed_after={refreshed_after})"
         )
 
         # Create ArgoConnector instance
@@ -840,38 +849,50 @@ class ArgoManager:
                     logger.info(f"Infrastructure application '{app_name}' is ready!")
                     return True
 
-                # Check for sync operation failures (unrecoverable errors)
-                operation_state = status_data.get("status", {}).get("operationState", {})
-                operation_phase = operation_state.get("phase")
-                operation_message = operation_state.get("message", "")
+                # Determine whether the status reflects our refresh.
+                status_is_fresh = True
+                if refreshed_after:
+                    reconciled_at = status_data.get("status", {}).get("reconciledAt", "")
+                    if reconciled_at <= refreshed_after:
+                        status_is_fresh = False
+                        logger.debug(
+                            f"Infrastructure '{app_name}': status is stale "
+                            f"(reconciledAt={reconciled_at} <= refreshed_after={refreshed_after})"
+                        )
 
-                if operation_phase in ("Failed", "Error"):
-                    error_msg = f"Infrastructure application '{app_name}' sync failed: {operation_phase}"
-                    logger.error(error_msg)
-                    if operation_message:
-                        logger.error(f"  Sync error: {operation_message}")
-                    # Log sync result details if available
-                    sync_result = operation_state.get("syncResult", {})
-                    if sync_result:
-                        resources = sync_result.get("resources", [])
-                        for resource in resources:
-                            if resource.get("status") == "SyncFailed":
-                                kind = resource.get("kind")
-                                name = resource.get("name")
-                                msg = resource.get("message")
-                                logger.error(f"  Resource failed: {kind}/{name} - {msg}")
-                    raise RuntimeError(error_msg)
+                if status_is_fresh:
+                    # Check for sync operation failures (unrecoverable errors)
+                    operation_state = status_data.get("status", {}).get("operationState", {})
+                    operation_phase = operation_state.get("phase")
+                    operation_message = operation_state.get("message", "")
 
-                # Check for failure states - only Degraded is a true failure
-                # "Missing" means resources are still being created, which is expected during initial deployment
-                if health_status == "Degraded":
-                    error_msg = f"Infrastructure application '{app_name}' is in failed state: {health_status}"
-                    logger.error(error_msg)
-                    # Get more details from status
-                    conditions = status_data.get("status", {}).get("conditions", [])
-                    for condition in conditions:
-                        logger.error(f"  Condition: {condition.get('type')} - {condition.get('message')}")
-                    raise RuntimeError(error_msg)
+                    if operation_phase in ("Failed", "Error"):
+                        error_msg = f"Infrastructure application '{app_name}' sync failed: {operation_phase}"
+                        logger.error(error_msg)
+                        if operation_message:
+                            logger.error(f"  Sync error: {operation_message}")
+                        # Log sync result details if available
+                        sync_result = operation_state.get("syncResult", {})
+                        if sync_result:
+                            resources = sync_result.get("resources", [])
+                            for resource in resources:
+                                if resource.get("status") == "SyncFailed":
+                                    kind = resource.get("kind")
+                                    name = resource.get("name")
+                                    msg = resource.get("message")
+                                    logger.error(f"  Resource failed: {kind}/{name} - {msg}")
+                        raise RuntimeError(error_msg)
+
+                    # Check for failure states - only Degraded is a true failure
+                    # "Missing" means resources are still being created, which is expected during initial deployment
+                    if health_status == "Degraded":
+                        error_msg = f"Infrastructure application '{app_name}' is in failed state: {health_status}"
+                        logger.error(error_msg)
+                        # Get more details from status
+                        conditions = status_data.get("status", {}).get("conditions", [])
+                        for condition in conditions:
+                            logger.error(f"  Condition: {condition.get('type')} - {condition.get('message')}")
+                        raise RuntimeError(error_msg)
 
                 # Not ready yet, wait and retry
                 # Log different messages based on health status for clarity
@@ -885,7 +906,8 @@ class ArgoManager:
                     )
                 else:
                     logger.debug(
-                        f"Infrastructure not ready yet (health={health_status}), waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
+                        f"Infrastructure not ready yet (health={health_status}, fresh={status_is_fresh}), "
+                        f"waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
                     )
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
@@ -907,3 +929,121 @@ class ArgoManager:
         argocd_url = f"{protocol}://{settings.ARGOCD_HOST}{port_suffix}"
         logger.error(f"ArgoCD dashboard: {argocd_url}/applications/{app_name}")
         raise TimeoutError(error_msg)
+
+    async def wait_for_application_synced(
+        self,
+        app_name: str,
+        timeout: int = 300,
+        poll_interval: int = 5,
+        refreshed_after: str | None = None,
+    ) -> bool:
+        """
+        Wait for an ArgoCD application to be synced and healthy.
+
+        Polls the ArgoCD API until the application reaches Synced+Healthy state,
+        or until a terminal failure is detected.
+
+        Args:
+            app_name: Name of the application to wait for
+            timeout: Maximum time to wait in seconds (default: 300 = 5 minutes)
+            poll_interval: Seconds between status checks (default: 5)
+            refreshed_after: ISO-8601 ``reconciledAt`` timestamp returned by
+                ``refresh_application``.  When set, the poll loop will not
+                treat ``Degraded`` or ``Failed``/``Error`` as terminal until
+                ArgoCD has reconciled *after* this timestamp.  This prevents
+                false failures when the status still reflects a previous
+                reconciliation.
+
+        Returns:
+            True if application is synced and healthy
+
+        Raises:
+            TimeoutError: If application doesn't become ready within timeout
+            RuntimeError: If application enters a terminal failure state
+        """
+        from opi.connectors.argo import create_argo_connector
+
+        logger.info(
+            f"Waiting for ArgoCD application '{app_name}' to be synced and healthy "
+            f"(timeout: {timeout}s, poll: {poll_interval}s, refreshed_after={refreshed_after})"
+        )
+
+        argo_connector = create_argo_connector()
+        if not await argo_connector.login():
+            raise RuntimeError("Failed to login to ArgoCD")
+
+        import asyncio
+
+        elapsed_time = 0
+        while elapsed_time < timeout:
+            try:
+                status_data = await argo_connector.get_application_status(app_name)
+
+                if not status_data:
+                    logger.debug(f"Could not get status for '{app_name}', retrying...")
+                    await asyncio.sleep(poll_interval)
+                    elapsed_time += poll_interval
+                    continue
+
+                sync_status = status_data.get("status", {}).get("sync", {}).get("status")
+                health_status = status_data.get("status", {}).get("health", {}).get("status")
+
+                if sync_status == "Synced" and health_status == "Healthy":
+                    logger.info(f"Application '{app_name}' is synced and healthy")
+                    return True
+
+                # Determine whether the status reflects our refresh.
+                # If reconciledAt is still <= refreshed_after, ArgoCD
+                # hasn't processed our changes yet - don't treat errors
+                # as terminal.
+                status_is_fresh = True
+                if refreshed_after:
+                    reconciled_at = status_data.get("status", {}).get("reconciledAt", "")
+                    if reconciled_at <= refreshed_after:
+                        status_is_fresh = False
+                        logger.debug(
+                            f"Application '{app_name}': status is stale "
+                            f"(reconciledAt={reconciled_at} <= refreshed_after={refreshed_after}), "
+                            f"not evaluating terminal states yet"
+                        )
+
+                if status_is_fresh:
+                    # Check for terminal sync failures
+                    operation_state = status_data.get("status", {}).get("operationState", {})
+                    operation_phase = operation_state.get("phase")
+                    if operation_phase in ("Failed", "Error"):
+                        operation_message = operation_state.get("message", "")
+                        error_msg = f"Application '{app_name}' sync failed: {operation_phase}"
+                        if operation_message:
+                            error_msg += f" - {operation_message}"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
+
+                    # Check for terminal health failure
+                    if health_status == "Degraded":
+                        error_msg = f"Application '{app_name}' is degraded"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
+
+                logger.debug(
+                    f"Application '{app_name}': sync={sync_status}, health={health_status}, "
+                    f"fresh={status_is_fresh}, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
+                )
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+
+            except (RuntimeError, TimeoutError):
+                raise
+            except PermissionError:
+                # Application may not be accessible yet (AppProject not synced)
+                logger.debug(
+                    f"Permission denied for '{app_name}', waiting for AppProject sync... (elapsed: {elapsed_time}s)"
+                )
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+            except Exception as e:
+                logger.warning(f"Error checking status of '{app_name}': {e}, retrying...")
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+
+        raise TimeoutError(f"Timeout waiting for application '{app_name}' to be synced and healthy after {timeout}s")

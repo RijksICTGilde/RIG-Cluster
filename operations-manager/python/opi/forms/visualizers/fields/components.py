@@ -15,16 +15,21 @@ from opi.forms.editables.fields.components import (
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE,
     COMPONENT_REWRITE_PATH_EDITABLE,
-    COMPONENT_STORAGE_SEQUENCE_EDITABLE,
+    COMPONENT_SERVICES_EDITABLE,
     COMPONENT_USER_ENV_VARS_EDITABLE,
-    COMPONENT_USES_SERVICES_EDITABLE,
     COMPONENTS_SEQUENCE_EDITABLE,
     INBOUND_PORT_EDITABLE,
+    METRICS_PATH_EDITABLE,
+    METRICS_PORT_EDITABLE,
     OUTBOUND_PORT_EDITABLE,
-    STORAGE_MOUNT_PATH_EDITABLE,
-    STORAGE_NAME_EDITABLE,
-    STORAGE_SIZE_EDITABLE,
-    STORAGE_TYPE_EDITABLE,
+    PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
+    PERSISTENT_STORAGE_NAME_EDITABLE,
+    PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
+    PERSISTENT_STORAGE_SIZE_EDITABLE,
+    TEMP_STORAGE_MOUNT_PATH_EDITABLE,
+    TEMP_STORAGE_NAME_EDITABLE,
+    TEMP_STORAGE_SEQUENCE_EDITABLE,
+    TEMP_STORAGE_SIZE_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
@@ -34,6 +39,7 @@ COMPONENT_NAME = EditableVisualizer(
     label="Componentnaam",
     description="Alleen kleine letters en cijfers, maximaal 12 tekens.",
     help_text="Voorbeeld: frontend, api, worker.",
+    readonly_on_edit=True,
 )
 
 COMPONENT_IMAGE = EditableVisualizer(
@@ -42,10 +48,11 @@ COMPONENT_IMAGE = EditableVisualizer(
     label="Container image",
     description="Docker image van uw applicatie. Moet een rootless image zijn.",
     help_text=(
-        "Bijvoorbeeld: nginx:latest, python:3.13-slim. "
+        "Bijvoorbeeld: ghcr.io/minbzk/base-images/hello-world:latest."
         "Kan leeg gelaten worden; er wordt dan geen deployment aangemaakt voor dit component."
     ),
     help_template="container-image.html.j2",
+    attributes={"data-paste-clean": "container-image"},
 )
 
 INBOUND_PORT = EditableVisualizer(
@@ -108,12 +115,13 @@ COMPONENT_RESOURCES_MEMORY_LIMIT = EditableVisualizer(
     help_text="Het maximale geheugen. Bij overschrijding wordt het component herstart (OOMKilled).",
 )
 
-COMPONENT_USES_SERVICES = EditableVisualizer(
-    editable=COMPONENT_USES_SERVICES_EDITABLE,
+COMPONENT_SERVICES = EditableVisualizer(
+    editable=COMPONENT_SERVICES_EDITABLE,
     widget=WidgetType.CHECKBOX_GROUP,
     label="Gebruikte services",
     description="Selecteer welke services dit component gebruikt. Standaard zijn alle services geselecteerd.",
     help_text="Hiermee worden de juiste omgevingsvariabelen en netwerktoegang geconfigureerd.",
+    attributes={"data-rerender": "true"},
 )
 
 COMPONENT_PATH = EditableVisualizer(
@@ -161,42 +169,76 @@ COMPONENT_USER_ENV_VARS = EditableVisualizer(
     attributes={"kv_format": "env"},
 )
 
-STORAGE_NAME = EditableVisualizer(
-    editable=STORAGE_NAME_EDITABLE,
+PERSISTENT_STORAGE_NAME = EditableVisualizer(
+    editable=PERSISTENT_STORAGE_NAME_EDITABLE,
     widget=WidgetType.TEXT,
     label="Naam",
     help_text="Unieke naam voor dit opslagvolume binnen het component.",
 )
 
-STORAGE_TYPE = EditableVisualizer(
-    editable=STORAGE_TYPE_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Type",
-    help_text=(
-        "Persistent: data blijft behouden bij herstarts. Ephemeral: tijdelijke opslag, gaat verloren bij herstarts."
-    ),
-)
-
-STORAGE_SIZE = EditableVisualizer(
-    editable=STORAGE_SIZE_EDITABLE,
+PERSISTENT_STORAGE_SIZE = EditableVisualizer(
+    editable=PERSISTENT_STORAGE_SIZE_EDITABLE,
     widget=WidgetType.SELECT,
     label="Grootte",
     help_text="De maximale grootte van het opslagvolume.",
 )
 
-STORAGE_MOUNT_PATH = EditableVisualizer(
-    editable=STORAGE_MOUNT_PATH_EDITABLE,
+PERSISTENT_STORAGE_MOUNT_PATH = EditableVisualizer(
+    editable=PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
     widget=WidgetType.TEXT,
     label="Mount pad",
     help_text="Het pad in de container waar het volume wordt gemount (bijv. /data, /var/lib/app).",
 )
 
-COMPONENT_STORAGE_SEQUENCE = EditableVisualizer(
-    editable=COMPONENT_STORAGE_SEQUENCE_EDITABLE,
+PERSISTENT_STORAGE_SEQUENCE = EditableVisualizer(
+    editable=PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
     widget=WidgetType.SEQUENCE,
-    label="Opslagvolumes",
-    help_text="Persistente of tijdelijke opslagvolumes die in de container worden gemount",
-    children=[STORAGE_NAME, STORAGE_TYPE, STORAGE_SIZE, STORAGE_MOUNT_PATH],
+    label="Persistente opslag",
+    help_text="Persistente opslagvolumes die in de container worden gemount",
+    children=[PERSISTENT_STORAGE_NAME, PERSISTENT_STORAGE_SIZE, PERSISTENT_STORAGE_MOUNT_PATH],
+)
+
+TEMP_STORAGE_NAME = EditableVisualizer(
+    editable=TEMP_STORAGE_NAME_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Naam",
+    help_text="Unieke naam voor dit tijdelijke opslagvolume binnen het component.",
+)
+
+TEMP_STORAGE_SIZE = EditableVisualizer(
+    editable=TEMP_STORAGE_SIZE_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Grootte",
+    help_text="De maximale grootte van het tijdelijke opslagvolume.",
+)
+
+TEMP_STORAGE_MOUNT_PATH = EditableVisualizer(
+    editable=TEMP_STORAGE_MOUNT_PATH_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Mount pad",
+    help_text="Het pad in de container waar het tijdelijke volume wordt gemount (bijv. /tmp/cache).",
+)
+
+TEMP_STORAGE_SEQUENCE = EditableVisualizer(
+    editable=TEMP_STORAGE_SEQUENCE_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Tijdelijke opslag",
+    help_text="Tijdelijke opslagvolumes die in de container worden gemount (worden gewist bij herstart)",
+    children=[TEMP_STORAGE_NAME, TEMP_STORAGE_SIZE, TEMP_STORAGE_MOUNT_PATH],
+)
+
+METRICS_PORT = EditableVisualizer(
+    editable=METRICS_PORT_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Metrics poort",
+    description="De poort waarop Prometheus metrics worden geserveerd.",
+)
+
+METRICS_PATH = EditableVisualizer(
+    editable=METRICS_PATH_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Metrics pad",
+    description="Het pad waarop de Prometheus metrics beschikbaar zijn.",
 )
 
 COMPONENTS_SEQUENCE = EditableVisualizer(
@@ -212,11 +254,14 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         COMPONENT_RESOURCES_MEMORY_LIMIT,
         COMPONENT_PORTS_INBOUND,
         COMPONENT_PORTS_OUTBOUND,
-        COMPONENT_USES_SERVICES,
+        COMPONENT_SERVICES,
         COMPONENT_PATH,
         COMPONENT_REWRITE_PATH,
         COMPONENT_ALIASES,
         COMPONENT_USER_ENV_VARS,
-        COMPONENT_STORAGE_SEQUENCE,
+        PERSISTENT_STORAGE_SEQUENCE,
+        TEMP_STORAGE_SEQUENCE,
+        METRICS_PORT,
+        METRICS_PATH,
     ],
 )

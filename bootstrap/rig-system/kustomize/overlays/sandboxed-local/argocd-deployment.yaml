@@ -7,6 +7,11 @@ metadata:
     policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
 spec:
   extraConfig:
+    resource.customizations.health.cert-manager.io_Issuer: |
+      hs = {}
+      hs.status = "Healthy"
+      hs.message = "Fake CRD - no controller"
+      return hs
     timeout.reconciliation: "6m"
     timeout.hard.reconciliation: "0s"
     server.repo.server.timeout.seconds: "180"

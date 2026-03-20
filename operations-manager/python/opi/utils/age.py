@@ -306,7 +306,7 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
         Decrypted or processed password
     """
     if not password:
-        return password
+        return password or ""
 
     encoding_type, content = parse_password_with_prefix(password)
 
@@ -415,7 +415,7 @@ def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
     """
 
     if not password:
-        raise ValueError("Missing password")
+        return password or ""
 
     encoding_type, content = parse_password_with_prefix(password)
 

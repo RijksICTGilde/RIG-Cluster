@@ -43,7 +43,7 @@ EditableVisualizer
   -> ROOSWidgetAdapter renders HTML
 ```
 
-The bridge resolves values from YAML, applies converter.view(), resolves options from providers, handles defaults, locked_by_service, readonly logic, and HTMX attributes. It produces a `FormField` — a flat bag of resolved values that the widget adapter can render.
+The bridge resolves values from YAML, applies converter.view(), resolves options from providers, handles defaults, locked_by_service, readonly logic, and HTMX attributes. It produces a `FormField` - a flat bag of resolved values that the widget adapter can render.
 
 ### Submission Pipeline
 
@@ -66,16 +66,19 @@ JSON/form data
 | `editables/processor.py` | Form submission handling (parse, validate, apply to YAML) |
 | `visualizers/visualizer.py` | `EditableVisualizer` dataclass |
 | `visualizers/fields/*.py` | All `EditableVisualizer` constants (UI definitions) |
-| `visualizers/bridge.py` | `editable_to_form_field()` — converts EditableVisualizer to FormField |
-| `visualizers/sections.py` | `FormSection` — groups editables into wizard steps |
-| `visualizers/flows.py` | `FormFlow` — defines wizard flows with ordered sections |
+| `visualizers/bridge.py` | `editable_to_form_field()` - converts EditableVisualizer to FormField |
+| `visualizers/sections.py` | `FormSection` - groups editables into wizard steps |
+| `visualizers/flows.py` | `FormFlow` - defines wizard flows with ordered sections |
 | `visualizers/wizard_sections.py` | All section/flow definitions |
-| `visualizers/project_registry.py` | `get_all_project_editables()` — flat list for edit form |
+| `visualizers/project_registry.py` | `get_all_project_editables()` - flat list for edit form |
 | `visualizers/providers.py` | Dynamic options providers (clusters, services, roles, etc.) |
 | `forms/field.py` | `FormField` dataclass (intermediate render type) |
-| `forms/renderer.py` | `FormRenderer` — orchestrates layout + widget rendering |
-| `forms/widgets/roos.py` | `ROOSWidgetAdapter` — renders FormField to ROOS HTML |
+| `forms/renderer.py` | `FormRenderer` - orchestrates layout + widget rendering |
+| `forms/widgets/roos.py` | `ROOSWidgetAdapter` - renders FormField to ROOS HTML |
+| `editables/path.py` | Path resolution with `{K}` dict-key and `{F=V}` field-match filters |
+| `editables/enforcers.py` | Section-level enforcers (admin required, unique names, component services) |
 | `web/router_wizard.py` | Wizard routes (create flow) |
+| `web/router_detail_edit.py` | Detail page inline edit routes |
 | `web/router_project_form.py` | Edit form routes |
 
 ## How to Use It
@@ -106,8 +109,8 @@ No template changes needed.
 
 ### Key Concepts
 
-- **`default="__all__"`**: Sentinel value for checkbox_group fields — tells the widget to select all options when the YAML value is absent.
-- **`depends_on` + `show_when`**: Conditional visibility — fields hidden when their dependency isn't met. Hidden fields are cleared from YAML on save.
+- **`default="__all__"`**: Sentinel value for checkbox_group fields - tells the widget to select all options when the YAML value is absent.
+- **`depends_on` + `show_when`**: Conditional visibility - fields hidden when their dependency isn't met. Hidden fields are cleared from YAML on save.
 - **`locked_by_service`**: Forces a checkbox on + readonly when the named service is active.
 - **`values_provider`**: String name of an `OptionsProvider` class that provides dynamic select/checkbox options.
 - **`EnsureListConverter`**: Generic converter for fields whose YAML value is always a list. Handles HTMX's single-string delivery for checkbox groups.
@@ -125,14 +128,14 @@ EditableVisualizer -> bridge -> FormField -> WidgetAdapter -> HTML
 `FormField` (`forms/field.py`) is a legacy type from the original Pydantic-model-based form system. The bridge (`visualizers/bridge.py`) converts `EditableVisualizer` into `FormField` by resolving values, options, and display logic. The widget adapter (`ROOSWidgetAdapter`) then renders `FormField` to HTML.
 
 This means:
-- Value resolution, options resolution, converter application, and display logic live in the bridge — **not** on the visualizer
+- Value resolution, options resolution, converter application, and display logic live in the bridge - **not** on the visualizer
 - `FormField` duplicates many fields that already exist on `EditableVisualizer` (label, description, readonly, widget_type, etc.)
 - The widget adapter depends on `FormField` instead of the canonical type
 - Adding a new field to `EditableVisualizer` requires updating `FormField` and the bridge too
 
 ### The Solution: ResolvedEditableVisualizer
 
-Replace `FormField` and the bridge with a `ResolvedEditableVisualizer` — an `EditableVisualizer` enriched with resolved runtime data (value, options, errors, concrete path). The widget adapter would render `ResolvedEditableVisualizer` directly.
+Replace `FormField` and the bridge with a `ResolvedEditableVisualizer` - an `EditableVisualizer` enriched with resolved runtime data (value, options, errors, concrete path). The widget adapter would render `ResolvedEditableVisualizer` directly.
 
 ```
 # Current (3 types, 2 conversions):
@@ -148,7 +151,65 @@ This would:
 - Let the widget adapter work with the canonical type
 - Reduce the number of places to update when adding fields
 
-This refactor is not urgent — the current system works — but should be done when the widget adapter or bridge needs significant changes.
+This refactor is not urgent - the current system works - but should be done when the widget adapter or bridge needs significant changes.
+
+## Detail Page Inline Editing
+
+The editable system also powers inline editing from the project detail page. Each section can be opened in an edit modal without navigating to the full wizard.
+
+### Edit Sections
+
+`wizard_sections.py` defines `EDIT_SECTIONS` - a registry of sections available for detail-page editing. These are either dedicated edit sections (with specific `post_save_action` settings) or reused wizard sections:
+
+| Section ID | Purpose | Post-save action |
+|-----------|---------|-----------------|
+| `identity-edit` | Display name + description | `save_only` |
+| `team-edit` | Team members (reuses wizard section) | `save_only` |
+| `components-edit` | Components (reuses wizard layout) | `process_project` |
+| `services-edit` | Services | `process_project` |
+| `keycloak-config` | Keycloak settings (reused) | `save_only` |
+| `postgresql-config` | Database settings (reused) | `save_only` |
+| `auth-wall-config` | Auth wall settings (reused) | `save_only` |
+
+### How It Works
+
+1. Detail page renders edit buttons for each section
+2. Clicking opens a modal with the section's editables rendered as form fields
+3. On submit, `router_detail_edit.py` processes the form data through the same `EditableFormProcessor` pipeline
+4. Based on `post_save_action`: either saves YAML only (`save_only`) or also triggers a full project processing cycle (`process_project`)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `web/router_detail_edit.py` | Edit modal routes (render, submit, sequence actions) |
+| `visualizers/wizard_sections.py` | `EDIT_SECTIONS` registry |
+
+## Path Filter Syntax
+
+The path resolution system supports filter expressions for navigating mixed string/dict lists (common in the v2 YAML format). See [Unified Service References](./unified-service-references.md) for full documentation.
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `key` | Dict key lookup | `name` |
+| `key[N]` | List index | `components[0]` |
+| `key[*]` | Wildcard (all items) | `components[*]` |
+| `key{K}` | Dict-key filter in mixed list | `services{keycloak}` |
+| `key{F=V}` | Field-match filter in list | `config{name=data}` |
+
+This is used by storage editables to navigate directly into service entries:
+```python
+PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/name",
+)
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `editables/path.py` | `get_value()`, `set_value()`, `resolve_path()` with filter support |
+| `tests/test_path_filters.py` | 33 tests for `{K}` and `{F=V}` filter syntax |
 
 ## Testing
 
@@ -160,6 +221,12 @@ uv run pytest tests/test_editables_*.py tests/test_editable_*.py -v
 
 # Wizard tests
 uv run pytest tests/forms/test_wizard_*.py -v
+
+# Detail edit tests
+uv run pytest tests/forms/test_detail_edit.py -v
+
+# Path filter tests
+uv run pytest tests/test_path_filters.py -v
 
 # ROOS component validation (ensures all sections produce valid HTML)
 uv run pytest tests/forms/test_roos_component_validation.py -v

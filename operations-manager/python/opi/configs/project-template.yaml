@@ -1,4 +1,4 @@
-# Project template — base skeleton for new projects.
+# Project template - base skeleton for new projects.
 #
 # Fields managed by editables (display-name, description, clusters,
 # services, users, components, deployments) are NOT included here;
@@ -6,6 +6,8 @@
 #
 # ${SETTING_NAME} placeholders are resolved from opi.core.config.settings
 # at load time.
+
+schema-version: 2
 
 repositories:
   - name: main-repo

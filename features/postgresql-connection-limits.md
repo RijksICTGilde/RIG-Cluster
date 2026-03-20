@@ -63,8 +63,8 @@ smartShutdownTimeout: 30
 stopDelay: 60
 ```
 
-- `smartShutdownTimeout: 30` — PostgreSQL waits 30 seconds for clients to disconnect, then escalates to fast shutdown (force-terminates sessions)
-- `stopDelay: 60` — Kubernetes force-kills the pod after 60 seconds total
+- `smartShutdownTimeout: 30` - PostgreSQL waits 30 seconds for clients to disconnect, then escalates to fast shutdown (force-terminates sessions)
+- `stopDelay: 60` - Kubernetes force-kills the pod after 60 seconds total
 
 Previously these were 180s and 1800s respectively, causing a 30-minute hang when PostgreSQL needed to restart.
 
@@ -75,8 +75,8 @@ min_size=0
 max_inactive_connection_lifetime=300.0
 ```
 
-- `min_size=0` — no pre-allocated connections. Connections are created on demand. After a PostgreSQL restart, there are zero stale connections to recover.
-- `max_inactive_connection_lifetime=300` — idle connections are automatically closed after 5 minutes, preventing stale connections from accumulating.
+- `min_size=0` - no pre-allocated connections. Connections are created on demand. After a PostgreSQL restart, there are zero stale connections to recover.
+- `max_inactive_connection_lifetime=300` - idle connections are automatically closed after 5 minutes, preventing stale connections from accumulating.
 
 Previously `min_size=2` meant the pool always held 2 open connections. When PostgreSQL restarted, these became stale and the pool could not recover without an application restart.
 
@@ -98,8 +98,8 @@ Previously `min_size=2` meant the pool always held 2 open connections. When Post
 
 ## Related
 
-- `features/pgbouncer-connection-pooling.md` — future PgBouncer integration for proper connection pooling
-- `infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml` — CNPG cluster configuration
-- `operations-manager/python/opi/connectors/postgres.py` — user creation with CONNECTION LIMIT
-- `operations-manager/python/opi/core/database_pool.py` — pool configuration
-- `operations-manager/python/opi/core/database_pools.py` — pool initialization
+- `features/pgbouncer-connection-pooling.md` - future PgBouncer integration for proper connection pooling
+- `infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml` - CNPG cluster configuration
+- `operations-manager/python/opi/connectors/postgres.py` - user creation with CONNECTION LIMIT
+- `operations-manager/python/opi/core/database_pool.py` - pool configuration
+- `operations-manager/python/opi/core/database_pools.py` - pool initialization

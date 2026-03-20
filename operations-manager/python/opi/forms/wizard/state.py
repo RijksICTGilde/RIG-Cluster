@@ -114,7 +114,11 @@ class WizardState:
     """None for create wizard, set for edit wizard."""
 
     template_data: dict[str, Any] = field(default_factory=dict)
-    """Static project template data (repositories, etc.) — lowest priority layer."""
+    """Static project template data (repositories, etc.) - lowest priority layer."""
+
+    locked_services: list[str] = field(default_factory=list)
+    """Services that existed in the project before the wizard started.
+    These cannot be removed and are rendered as locked in the service cards."""
 
     stashed_data: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Step data parked when a conditional section becomes inactive.
@@ -124,20 +128,102 @@ class WizardState:
     config is not lost.
     """
 
+    virt_mappings: dict[str, str] = field(default_factory=dict)
+    """Virtual-to-real key mappings for virtualized editables.
+
+    Populated from editable ``virtualize`` metadata during flow init.
+    Maps virtual key (e.g. ``_services-config``) to real key (e.g.
+    ``services``).  Used by ``get_merged_data`` to fold virtual data
+    back into the real structure.
+    """
+
     def get_merged_data(self) -> dict[str, Any]:
         """Merge template and step data into a single dict.
 
         Merge order (later overrides earlier):
-        1. template_data (static skeleton — repositories, base config)
+        1. template_data (static skeleton - repositories, base config)
         2. step_data per active section (user-entered form values)
+        3. devirtualize: fold virtual keys back into real keys
+
+        For list values (e.g. ``deployments``), items are merged by index
+        so that sections sharing a top-level key combine their fields
+        instead of overwriting each other.
         """
+        import copy
+
         merged: dict[str, Any] = {}
         if self.template_data:
-            merged.update(self.template_data)
+            merged.update(copy.deepcopy(self.template_data))
         for section_id in self.active_sections:
-            if section_id in self.step_data:
-                merged.update(self.step_data[section_id])
+            if section_id not in self.step_data:
+                continue
+            for key, value in self.step_data[section_id].items():
+                if key in merged and isinstance(merged[key], list) and isinstance(value, list):
+                    # Selection lists (all-scalar, e.g. services) replace entirely.
+                    # Structural lists (contain dicts, e.g. deployments) merge by index
+                    # so that sections sharing a key combine their fields.
+                    if all(not isinstance(item, dict) for item in value):
+                        merged[key] = copy.deepcopy(value)
+                    else:
+                        target = merged[key]
+                        for i, src_item in enumerate(value):
+                            if i < len(target):
+                                if isinstance(target[i], dict) and isinstance(src_item, dict):
+                                    target[i].update(copy.deepcopy(src_item))
+                                else:
+                                    target[i] = copy.deepcopy(src_item)
+                            else:
+                                target.append(copy.deepcopy(src_item))
+                elif key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                    # Merge dicts (e.g. virtual keys from multiple config sections)
+                    merged[key].update(copy.deepcopy(value))
+                else:
+                    merged[key] = copy.deepcopy(value)
+
+        # Devirtualize: fold virtual keys back into real keys so that
+        # smart_get_value can find config at real yaml_paths.
+        for virt_key, real_key in self.virt_mappings.items():
+            virt_data = merged.pop(virt_key, None)
+            if virt_data is None:
+                continue
+            real_data = merged.get(real_key)
+            if isinstance(virt_data, list) and isinstance(real_data, list):
+                # Build lookup from virtual list entries
+                config_by_name: dict[str, dict[str, Any]] = {}
+                for entry in virt_data:
+                    if isinstance(entry, dict):
+                        for name in entry:
+                            config_by_name[name] = entry
+                # Replace plain string entries with config dicts
+                for i, entry in enumerate(real_data):
+                    if isinstance(entry, str) and entry in config_by_name:
+                        real_data[i] = config_by_name[entry]
+            elif isinstance(virt_data, dict) and isinstance(real_data, list):
+                # Virtual data is a dict (name -> config), real data is a
+                # mixed list.  Replace matching plain-string entries with
+                # their config dict equivalents.
+                for i, entry in enumerate(real_data):
+                    if isinstance(entry, str) and entry in virt_data:
+                        real_data[i] = {entry: virt_data[entry]}
+            elif isinstance(virt_data, dict):
+                if isinstance(real_data, dict):
+                    real_data.update(virt_data)
+                else:
+                    merged[real_key] = virt_data
+
         return merged
+
+    def populate_virt_mappings(self, sections: list[Any]) -> None:
+        """Extract virtualize mappings from flow sections.
+
+        Scans all editables in the given sections and records any
+        ``virtualize`` tuples as virtual-to-real key mappings.
+        """
+        for section in sections:
+            for vis in getattr(section, "editables", []):
+                virt = getattr(vis.editable, "virtualize", None)
+                if virt:
+                    self.virt_mappings[virt[1]] = virt[0]
 
     def get_steps(
         self,
@@ -177,6 +263,8 @@ class WizardState:
             "project_name": self.project_name,
             "template_data": self.template_data,
             "stashed_data": self.stashed_data,
+            "locked_services": self.locked_services,
+            "virt_mappings": self.virt_mappings,
         }
 
     def stash_inactive_sections(self, active_section_ids: list[str]) -> None:
@@ -212,4 +300,6 @@ class WizardState:
             project_name=data.get("project_name"),
             template_data=data.get("template_data", {}),
             stashed_data=data.get("stashed_data", {}),
+            locked_services=data.get("locked_services", []),
+            virt_mappings=data.get("virt_mappings", {}),
         )

@@ -4,9 +4,17 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.validation import (
+    ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
+    ADD_COMPONENT_VALIDATORS,
+    CREATE_PROJECT_DOMAIN_VALIDATORS,
+    UPDATE_IMAGE_VALIDATORS,
+    UPSERT_DEPLOYMENT_VALIDATORS,
+    validate_api_payload,
+)
 from opi.connectors.git import GitConnector
 from opi.connectors.subdomain import (
     BaseDomainValidationError,
@@ -17,9 +25,10 @@ from opi.connectors.subdomain import (
     validate_subdomain,
 )
 from opi.core.config import settings
+from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
-from opi.utils.naming import sanitize_kubernetes_name
+from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
 from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name
 from pydantic import BaseModel, Field
 
@@ -390,6 +399,29 @@ class UpsertDeploymentRequest(BaseModel):
         None, description="Deployment name to clone data from (only on create, or if forceClone is true)"
     )
     forceClone: bool = Field(False, description="Force clone even if target resources exist (runtime parameter)")
+    domain_format: DomainFormatId | None = Field(
+        None,
+        description=(
+            "URL format template ID that controls how hostnames are generated. "
+            "Formats containing 'subdomain' require the subdomain field to be set."
+        ),
+        example="component-deployment-subdomain",
+    )
+    subdomain: str | None = Field(
+        None,
+        description=(
+            "Subdomain for URL generation. Required when domain_format contains 'subdomain'. "
+            "Must be a valid DNS label: lowercase letters, digits, and hyphens, starting with a letter."
+        ),
+        example="myapp",
+        max_length=63,
+    )
+    base_domain: str | None = Field(
+        None,
+        description="Base domain for URL generation (e.g., 'rijksapp.nl'). Must be a cluster-supported domain.",
+        example="rijksapp.nl",
+        max_length=255,
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -401,6 +433,9 @@ class UpsertDeploymentRequest(BaseModel):
                 ],
                 "cloneFrom": "staging",
                 "forceClone": False,
+                "domain_format": "component-deployment-subdomain",
+                "subdomain": "myapp",
+                "base_domain": "rijksapp.nl",
             }
         }
     }
@@ -716,23 +751,38 @@ class DeploymentDomainSettingsRequest(BaseModel):
         example="nice-url",
         max_length=32,
     )
+    domain_format: DomainFormatId | None = Field(
+        None,
+        description=(
+            "URL format template ID that controls how hostnames are generated. "
+            "Formats containing 'subdomain' require the subdomain field to be set."
+        ),
+        example="component-deployment-subdomain",
+    )
     subdomain: str | None = Field(
         None,
-        description="Subdomain for nice-url or custom mode",
+        description=(
+            "Subdomain for URL generation. Required when domain_format contains 'subdomain'. "
+            "Must be a valid DNS label: lowercase letters, digits, and hyphens, starting with a letter."
+        ),
         example="myapp",
-        max_length=63,  # DNS subdomain limit
+        max_length=63,
     )
     base_domain: str | None = Field(
         None,
-        description="Base domain for nice-url mode (e.g., 'rijks.app')",
+        description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
         example="rijks.app",
-        max_length=255,  # DNS domain limit
+        max_length=255,
     )
     root_component: str | None = Field(
         None,
-        description="Component reference to mark as root (receives / path)",
+        description=(
+            "Component reference to mark as root. Only applicable for dot-variant domain formats "
+            "(e.g., 'component.deployment.subdomain') - the root component receives traffic at the "
+            "bare subdomain without a component prefix."
+        ),
         example="frontend",
-        max_length=63,  # Kubernetes name limit
+        max_length=63,
     )
 
     model_config = {
@@ -740,12 +790,14 @@ class DeploymentDomainSettingsRequest(BaseModel):
             "examples": [
                 {
                     "domain_mode": "nice-url",
+                    "domain_format": "component.deployment.subdomain",
                     "subdomain": "myapp",
                     "base_domain": "rijks.app",
                     "root_component": "frontend",
                 },
                 {
                     "domain_mode": "component-specific",
+                    "domain_format": "component-deployment-project",
                 },
             ]
         }
@@ -758,9 +810,10 @@ class DeploymentDomainSettingsResponse(BaseModel):
     deployment_name: str = Field(..., description="Name of the deployment")
     cluster: str = Field(..., description="Cluster where deployment runs")
     domain_mode: str | None = Field(None, description="Current URL mode")
-    subdomain: str | None = Field(None, description="Current subdomain (if nice-url or custom)")
-    base_domain: str | None = Field(None, description="Current base domain (if nice-url)")
-    root_component: str | None = Field(None, description="Component marked as root")
+    domain_format: DomainFormatId | None = Field(None, description="Current URL format template ID")
+    subdomain: str | None = Field(None, description="Current subdomain (if format uses subdomain)")
+    base_domain: str | None = Field(None, description="Current base domain")
+    root_component: str | None = Field(None, description="Component marked as root (dot-variant formats only)")
     components: list[dict] = Field(default_factory=list, description="List of components in deployment")
     supported_base_domains: list[dict] = Field(
         default_factory=list, description="Supported base domains for this cluster"
@@ -818,7 +871,7 @@ class AddComponentRequest(BaseModel):
     port: int | None = Field(None, ge=1, le=65535, description="Inbound port (omit for background workers)")
     path: str = Field("/", max_length=256, description="Ingress path (only relevant with publish-on-web service)")
     services: list[str] | None = Field(
-        None, description="Component uses-services list (e.g. ['postgresql-database']). NOT inherited from project."
+        None, description="Component services list (e.g. ['postgresql-database']). NOT inherited from project."
     )
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'")
@@ -851,7 +904,7 @@ class AddServiceRequest(BaseModel):
     service: str = Field(..., max_length=63, description="Service name (e.g. 'postgresql-database')")
     components: list[str] | None = Field(
         None,
-        description="Optional list of component names whose uses-services should also be updated. "
+        description="Optional list of component names whose services list should also be updated. "
         "If omitted/empty, the service is only added at the project level.",
     )
 
@@ -866,20 +919,49 @@ class SelfServiceProjectRequest(BaseModel):
 
     # Web Address Configuration
     domain_mode: str = Field(
-        "component-specific", max_length=32
-    )  # "component-specific", "deployment-name", "custom", or "nice-url"
+        "component-specific",
+        max_length=32,
+        description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
+        example="component-specific",
+    )
+    domain_format: DomainFormatId | None = Field(
+        None,
+        description=(
+            "URL format template ID that controls how hostnames are generated. "
+            "Formats containing 'subdomain' require the subdomain field to be set."
+        ),
+        example="component-deployment-project",
+    )
     subdomain: str | None = Field(
-        None, max_length=63
-    )  # For nice-url mode: globally unique subdomain. For custom mode: custom subdomain
+        None,
+        max_length=63,
+        description=(
+            "Subdomain for URL generation. Required when domain_format contains 'subdomain' "
+            "(e.g., 'component-deployment-subdomain'). Must be a valid DNS label: lowercase letters, "
+            "digits, and hyphens, starting with a letter."
+        ),
+        example="myapp",
+    )
 
     # External Domain Configuration (for public domains with Let's Encrypt)
-    base_domain: str | None = Field(None, max_length=255)  # Apex domain (e.g., "rijks.app")
+    base_domain: str | None = Field(
+        None,
+        max_length=255,
+        description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
+        example="rijks.app",
+    )
     issuer: str | None = Field(
-        None, max_length=64
-    )  # Certificate issuer: "letsencrypt", "letsencrypt-staging", or custom issuer name
+        None,
+        max_length=64,
+        description="TLS certificate issuer: 'letsencrypt', 'letsencrypt-staging', or a custom issuer name",
+        example="letsencrypt",
+    )
     contact_email: str | None = Field(
-        None, max_length=254
-    )  # Contact email for Let's Encrypt (overrides cluster default)
+        None,
+        max_length=254,
+        description="Contact email for Let's Encrypt certificate notifications (overrides cluster default)",
+        example="team@example.com",
+    )
 
     # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
@@ -894,7 +976,7 @@ class SelfServiceProjectRequest(BaseModel):
 
 api_router: APIRouter = APIRouter(
     prefix="/api",
-    tags=["projects"],
+    tags=["v1 (deprecated)"],
     responses={404: {"description": "Not found"}},
     default_response_class=JSONResponse,
 )
@@ -909,7 +991,10 @@ api_router: APIRouter = APIRouter(
 )
 @validate_api_token
 async def upsert_deployment(
-    request: Request, project_name: str, deployment_data: UpsertDeploymentRequest = Body(...)
+    request: Request,
+    project_name: str,
+    deployment_data: UpsertDeploymentRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Create or update a deployment in an existing project.
@@ -936,25 +1021,64 @@ async def upsert_deployment(
       }'
     ```
     """
+    logger.info(f"Upserting deployment '{deployment_data.deploymentName}' to project: {project_name}")
+
+    # Validate project name format
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    # Validate deployment name using naming utilities
+    sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
+    if sanitized_name != deployment_data.deploymentName.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
+
+    # Validate fields using editable validators
+    await validate_api_payload(
+        deployment_data.model_dump(),
+        UPSERT_DEPLOYMENT_VALIDATORS,
+    )
+
+    # Validate component images
+    for comp in deployment_data.components:
+        await validate_api_payload(
+            {"newImageUrl": comp.image},
+            UPDATE_IMAGE_VALIDATORS,
+        )
+
+    # Async path (default) - deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="upsert_deployment",
+            project_name=project_name,
+            deployment_name=deployment_data.deploymentName,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_data.deploymentName,
+                "components": [c.model_dump() for c in deployment_data.components],
+                "cloneFrom": deployment_data.cloneFrom,
+                "forceClone": deployment_data.forceClone,
+                "domain_format": deployment_data.domain_format,
+                "subdomain": deployment_data.subdomain,
+                "base_domain": deployment_data.base_domain,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "upsert_deployment"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
-        logger.info(f"Upserting deployment '{deployment_data.deploymentName}' to project: {project_name}")
-
-        # Validate project name format
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
-
-        # Validate deployment name using naming utilities
-        sanitized_name = sanitize_kubernetes_name(deployment_data.deploymentName)
-        if sanitized_name != deployment_data.deploymentName.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid deployment name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-            )
-
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
@@ -964,6 +1088,9 @@ async def upsert_deployment(
             components=deployment_data.components,
             clone_from=deployment_data.cloneFrom,
             force_clone=deployment_data.forceClone,
+            domain_format=deployment_data.domain_format,
+            subdomain=deployment_data.subdomain,
+            base_domain=deployment_data.base_domain,
         )
 
         if result["success"]:
@@ -1001,7 +1128,14 @@ async def upsert_deployment(
                     "created": result.get("created", False),
                 },
                 "urls": urls,
-                "processing": {"status": "completed" if processing_result else "failed"},
+                "processing": {
+                    "status": "completed" if processing_result else "failed",
+                    **(
+                        {"error": project_manager.get_processing_error()}
+                        if not processing_result and project_manager.get_processing_error()
+                        else {}
+                    ),
+                },
             }
             if result.get("warnings"):
                 content["warnings"] = result["warnings"]
@@ -1042,13 +1176,16 @@ async def upsert_deployment(
 )
 @validate_api_token
 async def add_component(
-    request: Request, project_name: str, component_data: AddComponentRequest = Body(...)
+    request: Request,
+    project_name: str,
+    component_data: AddComponentRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Add a new component definition to an existing project.
 
     The component is added to the project's components array and referenced in
-    the specified deployments. Each component declares its own uses-services list,
+    the specified deployments. Each component declares its own services list,
     which determines what secrets/env vars it receives.
 
     Headers:
@@ -1068,27 +1205,63 @@ async def add_component(
       }'
     ```
     """
-    project_manager = None
-    try:
-        logger.info(
-            f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}"
+    logger.info(
+        f"Adding component '{sanitize_for_log(component_data.name)}' to project: {sanitize_for_log(project_name)}"
+    )
+
+    # Validate project name format
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-        # Validate project name format
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
+    # Validate component name
+    sanitized_name = sanitize_kubernetes_name(component_data.name)
+    if sanitized_name != component_data.name.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
 
-        # Validate component name
-        sanitized_name = sanitize_kubernetes_name(component_data.name)
-        if sanitized_name != component_data.name.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-            )
+    # Validate fields using editable validators
+    await validate_api_payload(
+        component_data.model_dump(),
+        ADD_COMPONENT_VALIDATORS,
+    )
 
+    # Async path (default) - use /api/v2/projects/{project_name}/components for pure async
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="add_component",
+            project_name=project_name,
+            payload={
+                "project_name": project_name,
+                "name": component_data.name,
+                "type": component_data.type,
+                "image": component_data.image,
+                "deployment_names": component_data.deployment_names,
+                "port": component_data.port,
+                "path": component_data.path,
+                "services": component_data.services,
+                "cpu_limit": component_data.cpu_limit,
+                "memory_limit": component_data.memory_limit,
+                "env_vars": component_data.env_vars,
+                "aliases": component_data.aliases,
+                "root": component_data.root,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "add_component"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
+    project_manager = None
+    try:
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
@@ -1132,7 +1305,14 @@ async def add_component(
                 "component": result["component"],
                 "deployments_updated": result.get("deployments_updated", []),
                 "urls": urls,
-                "processing": {"status": "completed" if processing_success else "failed"},
+                "processing": {
+                    "status": "completed" if processing_success else "failed",
+                    **(
+                        {"error": project_manager.get_processing_error()}
+                        if not processing_success and project_manager.get_processing_error()
+                        else {}
+                    ),
+                },
             }
             if result.get("warnings"):
                 content["warnings"] = result["warnings"]
@@ -1175,6 +1355,7 @@ async def add_component_to_deployment(
     project_name: str,
     deployment_name: str,
     component_data: AddComponentToDeploymentRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Add an existing component to a deployment that doesn't yet include it.
@@ -1196,29 +1377,57 @@ async def add_component_to_deployment(
       }'
     ```
     """
-    project_manager = None
-    try:
-        logger.info(
-            f"Adding component '{sanitize_for_log(component_data.component_name)}' "
-            f"to deployment '{sanitize_for_log(deployment_name)}' "
-            f"in project: {sanitize_for_log(project_name)}"
+    logger.info(
+        f"Adding component '{sanitize_for_log(component_data.component_name)}' "
+        f"to deployment '{sanitize_for_log(deployment_name)}' "
+        f"in project: {sanitize_for_log(project_name)}"
+    )
+
+    # Validate project name format
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-        # Validate project name format
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
+    # Validate component name
+    sanitized_name = sanitize_kubernetes_name(component_data.component_name)
+    if sanitized_name != component_data.component_name.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
+        )
 
-        # Validate component name
-        sanitized_name = sanitize_kubernetes_name(component_data.component_name)
-        if sanitized_name != component_data.component_name.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid component name. Use lowercase letters, numbers, and hyphens only. Suggested: {sanitized_name}",
-            )
+    # Validate fields using editable validators
+    await validate_api_payload(
+        component_data.model_dump(),
+        ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
+    )
 
+    # Async path (default) - use /api/v2/ for pure async
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="add_component_to_deployment",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "component_name": component_data.component_name,
+                "image": component_data.image,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "add_component_to_deployment"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
+    project_manager = None
+    try:
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
@@ -1251,7 +1460,14 @@ async def add_component_to_deployment(
                 "deployment": deployment_name,
                 "component_reference": result["component_reference"],
                 "urls": urls,
-                "processing": {"status": "completed" if processing_success else "failed"},
+                "processing": {
+                    "status": "completed" if processing_success else "failed",
+                    **(
+                        {"error": project_manager.get_processing_error()}
+                        if not processing_success and project_manager.get_processing_error()
+                        else {}
+                    ),
+                },
             }
             if result.get("warnings"):
                 content["warnings"] = result["warnings"]
@@ -1291,15 +1507,20 @@ async def add_component_to_deployment(
     },
 )
 @validate_api_token
-async def add_service(request: Request, project_name: str, service_data: AddServiceRequest = Body(...)) -> JSONResponse:
+async def add_service(
+    request: Request,
+    project_name: str,
+    service_data: AddServiceRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
+) -> JSONResponse:
     """
     Add a service to an existing project.
 
     The service (and any auto-resolved dependencies) is added at the
     project level.  If ``components`` is provided, those components'
-    ``uses-services`` lists are updated as well.
+    ``services`` lists are updated as well.
 
-    The request always succeeds — if the service already exists it is
+    The request always succeeds - if the service already exists it is
     reported in ``services_skipped`` / ``warnings``.
 
     Headers:
@@ -1316,19 +1537,39 @@ async def add_service(request: Request, project_name: str, service_data: AddServ
       }'
     ```
     """
-    project_manager = None
-    try:
-        logger.info(
-            f"Adding service '{sanitize_for_log(service_data.service)}' to project: {sanitize_for_log(project_name)}"
+    logger.info(
+        f"Adding service '{sanitize_for_log(service_data.service)}' to project: {sanitize_for_log(project_name)}"
+    )
+
+    # Validate project name format
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
-        # Validate project name format
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
+    # Async path (default) - use /api/v2/ for pure async
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="add_service",
+            project_name=project_name,
+            payload={
+                "project_name": project_name,
+                "service": service_data.service,
+                "components": service_data.components,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "add_service"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
 
+    # Sync path (backward compatibility)
+    project_manager = None
+    try:
         # Create project manager instance
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
@@ -1389,7 +1630,11 @@ async def add_service(request: Request, project_name: str, service_data: AddServ
 @api_router.put("/projects/{project_name}/deployments/{deployment_name}/image")
 @validate_api_token
 async def update_deployment_image(
-    request: Request, project_name: str, deployment_name: str, image_data: UpdateImageRequest = Body(...)
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    image_data: UpdateImageRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Update the container image for a specific component in a deployment.
@@ -1442,6 +1687,43 @@ async def update_deployment_image(
       }'
     ```
     """
+    # Validate fields using editable validators
+    await validate_api_payload(
+        image_data.model_dump(),
+        UPDATE_IMAGE_VALIDATORS,
+    )
+
+    # Async path (default)
+    if not sync:
+        # Serialize service actions for payload
+        service_actions = None
+        if image_data.services:
+            service_actions = {
+                service_type: service_ref.model_dump() for service_type, service_ref in image_data.services.items()
+            }
+
+        task = await create_async_task(
+            request=request,
+            task_type="update_image",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "component_name": image_data.componentName,
+                "image": image_data.newImageUrl,
+                "service_actions": service_actions,
+                "registry": image_data.registry,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "update_image"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
         logger.info(f"Updating image for component '{image_data.componentName}' in {project_name}/{deployment_name}")
@@ -1591,13 +1873,14 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
         else:
             logger.warning(f"Project refresh failed: {project_name}")
 
+            processing_error = project_manager.get_processing_error()
             content = {
                 "status": "failed",
                 "message": f"Project '{project_name}' refresh failed",
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
-                    "message": "Failed to process project resources",
+                    "message": processing_error or "Failed to process project resources",
                     "result": processing_result,
                 },
             }
@@ -1618,7 +1901,11 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
 )
 @validate_api_token
 async def refresh_deployment(
-    request: Request, project_name: str, deployment_name: str, force_clone: bool = False
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    force_clone: bool = False,
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Refresh a single deployment by reprocessing it from the project YAML file.
@@ -1628,21 +1915,43 @@ async def refresh_deployment(
 
     Query Parameters:
         force_clone: Force clone even if target resources exist (default: False)
+        sync: Run synchronously (blocking) (default: False)
 
     Example:
     curl -X GET "http://localhost:9595/api/projects/example-name/deployments/staging/:refresh" \\
       -H "X-API-Key: d68d6aebd694d636e5eb4784a952b9c3"
     """
+    logger.info(f"Deployment refresh request for: {project_name}/{deployment_name} (force_clone={force_clone})")
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    # Async path (default) - deprecated, use /api/v2/projects/{project_name}/deployments/{deployment_name}/:refresh
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="refresh_deployment",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "force_clone": force_clone,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "refresh_deployment"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
-        logger.info(f"Deployment refresh request for: {project_name}/{deployment_name} (force_clone={force_clone})")
-
-        if not validate_project_name(project_name):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
-            )
-
         project_service = get_project_service()
         project = project_service.get_project(project_name)
 
@@ -1682,13 +1991,14 @@ async def refresh_deployment(
         else:
             logger.warning(f"Deployment refresh failed: {project_name}/{deployment_name}")
 
+            processing_error = project_manager.get_processing_error()
             content = {
                 "status": "failed",
                 "message": f"Deployment '{deployment_name}' in project '{project_name}' refresh failed",
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
-                    "message": f"Failed to process deployment '{deployment_name}'",
+                    "message": processing_error or f"Failed to process deployment '{deployment_name}'",
                     "result": processing_result,
                 },
             }
@@ -1797,7 +2107,12 @@ async def delete_project(
 
 @api_router.delete("/projects/{project_name}/{deployment_name}")
 @validate_api_token
-async def delete_project_deployment(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+async def delete_project_deployment(
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
+) -> JSONResponse:
     """
     Delete a specific deployment within a project.
 
@@ -1823,6 +2138,26 @@ async def delete_project_deployment(request: Request, project_name: str, deploym
     Returns:
         JSON response with detailed deletion results
     """
+    # Async path (default) - deprecated, use /api/v2/projects/{project_name}/{deployment_name}
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="delete_deployment",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "delete_deployment"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
         logger.info(f"Deployment deletion request for: {project_name}/{deployment_name} (project_id: {project_name})")
@@ -1869,7 +2204,11 @@ async def delete_project_deployment(request: Request, project_name: str, deploym
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external")
 @validate_api_token
 async def clone_database_from_external(
-    request: Request, project_name: str, deployment_name: str, clone_data: CloneDatabaseFromExternalRequest = Body(...)
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    clone_data: CloneDatabaseFromExternalRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Clone a database from an external source (e.g., another cluster via port-forward) into a deployment.
@@ -1912,6 +2251,27 @@ async def clone_database_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
+    # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-database
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="clone_database",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                **clone_data.model_dump(),
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "clone_database"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
         # TODO: we need a method to create a project manager from a given project_name
@@ -2007,7 +2367,11 @@ async def clone_database_from_external(
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external")
 @validate_api_token
 async def clone_bucket_from_external(
-    request: Request, project_name: str, deployment_name: str, clone_data: CloneBucketFromExternalRequest = Body(...)
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    clone_data: CloneBucketFromExternalRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Clone a MinIO bucket from an external source (e.g., another cluster via port-forward) into a deployment.
@@ -2050,6 +2414,27 @@ async def clone_bucket_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
+    # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-bucket
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="clone_bucket",
+            project_name=project_name,
+            deployment_name=deployment_name,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                **clone_data.model_dump(),
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "clone_bucket"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (backward compatibility)
     project_manager = None
     try:
         # Create project manager for the target project
@@ -2272,6 +2657,18 @@ async def create_self_service_project(
                 detail="Project name must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
             )
 
+        # Validate domain fields using editable validators
+        if project_data.domain_format:
+            await validate_api_payload(
+                {
+                    "domain_format": project_data.domain_format,
+                    "subdomain": project_data.subdomain,
+                    "base_domain": project_data.base_domain,
+                    "deployment_name": project_data.deployment_name,
+                },
+                CREATE_PROJECT_DOMAIN_VALIDATORS,
+            )
+
         # Validate nice-url mode requirements
         if project_data.domain_mode == "nice-url":
             # Check if cluster supports nice-url mode at all
@@ -2415,13 +2812,14 @@ async def create_self_service_project(
                 f"Self-service project creation partially completed: {project_data.project_name} (took {elapsed_time:.2f} seconds)"
             )
 
+            processing_error = project_manager.get_processing_error()
             content = {
                 "status": "partial_success",
                 "message": f"Self-service project '{project_data.project_name}' created but processing failed",
                 "project": {"name": project_data.project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
-                    "message": "Failed to process project resources",
+                    "message": processing_error or "Failed to process project resources",
                     "elapsed_time": f"{elapsed_time:.2f} seconds",
                 },
             }
@@ -2738,7 +3136,14 @@ async def add_registry_by_secret(
                     "message": f"Registry '{registry_data.name}' {'added' if result['created'] else 'updated'} successfully",
                     "registry": result["registry"],
                     "created": result["created"],
-                    "processing": {"status": "completed" if processing_result else "failed"},
+                    "processing": {
+                        "status": "completed" if processing_result else "failed",
+                        **(
+                            {"error": project_manager.get_processing_error()}
+                            if not processing_result and project_manager.get_processing_error()
+                            else {}
+                        ),
+                    },
                 },
                 status_code=status_code,
             )
@@ -2829,7 +3234,14 @@ async def add_registry_by_credentials(
                     "message": f"Registry '{registry_data.name}' {'added' if result['created'] else 'updated'} successfully",
                     "registry": result["registry"],
                     "created": result["created"],
-                    "processing": {"status": "completed" if processing_result else "failed"},
+                    "processing": {
+                        "status": "completed" if processing_result else "failed",
+                        **(
+                            {"error": project_manager.get_processing_error()}
+                            if not processing_result and project_manager.get_processing_error()
+                            else {}
+                        ),
+                    },
                 },
                 status_code=status_code,
             )

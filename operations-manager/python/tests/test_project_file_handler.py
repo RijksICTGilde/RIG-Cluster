@@ -37,11 +37,23 @@ class TestParseDeepDiffPath:
         result = handler._parse_deepdiff_path("root['settings']['rootDir']")
         assert result == "settings.rootDir", f"Key 'rootDir' was corrupted: got '{result}'"
 
-    def test_numeric_index_path(self):
+    def test_numeric_index_converts_to_dot(self):
+        """Bare numeric indices like [1] should convert to .1 for startswith('deployments.') to work."""
+        handler = ProjectFileHandler()
+        result = handler._parse_deepdiff_path("root['deployments'][1]")
+        assert result == "deployments.1", f"Expected 'deployments.1', got '{result}'"
+
+    def test_nested_numeric_indices(self):
+        """Multiple numeric indices should all convert to dot notation."""
+        handler = ProjectFileHandler()
+        result = handler._parse_deepdiff_path("root['deployments'][0]['components'][1]")
+        assert result == "deployments.0.components.1", f"Expected 'deployments.0.components.1', got '{result}'"
+
+    def test_mixed_path_numeric_and_key(self):
+        """Mix of numeric indices and string keys should all convert properly."""
         handler = ProjectFileHandler()
         result = handler._parse_deepdiff_path("root['deployments'][0]['name']")
-        assert "deployments" in result
-        assert "name" in result
+        assert result == "deployments.0.name", f"Expected 'deployments.0.name', got '{result}'"
 
 
 class TestSetDeploymentServiceGeneration:

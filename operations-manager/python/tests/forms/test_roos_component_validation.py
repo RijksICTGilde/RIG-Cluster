@@ -3,7 +3,7 @@
 These tests render each wizard section with sample data and pass the
 resulting HTML through the ROOS component preprocessor.  If any
 ``c-*`` tag uses an invalid attribute, the preprocessor raises a
-``RuntimeError`` — catching these errors at test time rather than at
+``RuntimeError`` - catching these errors at test time rather than at
 runtime.
 """
 
@@ -43,7 +43,7 @@ def _validate_roos_html(html: str, label: str = "test") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sample data per section — enough to exercise all widgets.
+# Sample data per section - enough to exercise all widgets.
 # ---------------------------------------------------------------------------
 
 _IDENTITY_DATA = {
@@ -74,7 +74,7 @@ _COMPONENTS_DATA = {
                 "cpu": {"request": "50m", "limit": "1"},
                 "memory": {"request": "256Mi", "limit": "1Gi"},
             },
-            "uses-services": ["publish-on-web"],
+            "services": ["publish-on-web"],
             "aliases": {"APP_NAME": "frontend"},
         },
     ],

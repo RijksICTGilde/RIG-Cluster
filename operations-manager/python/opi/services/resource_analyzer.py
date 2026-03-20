@@ -1,7 +1,7 @@
 """
 Resource analyzer for computing memory recommendations based on observed usage.
 
-Pure logic module with no I/O — all data is passed in as arguments.
+Pure logic module with no I/O - all data is passed in as arguments.
 """
 
 import logging
@@ -26,9 +26,8 @@ class ResourceRecommendation:
     reason: str
 
 
-def _k8s_memory_to_mb(value: str) -> float:
-    """
-    Convert a Kubernetes memory string to megabytes.
+def parse_k8s_memory_to_mi(value: str) -> float:
+    """Convert a Kubernetes memory string to MiB (mebibytes).
 
     Supports: Mi, Gi, M, G, Ki, and plain bytes.
 
@@ -36,7 +35,10 @@ def _k8s_memory_to_mb(value: str) -> float:
         value: Kubernetes memory string (e.g., "512Mi", "1Gi", "536870912")
 
     Returns:
-        Value in megabytes
+        Value in MiB
+
+    Raises:
+        ValueError: If the value cannot be parsed or uses an unknown unit.
     """
     value = value.strip()
     match = re.match(r"^(\d+(?:\.\d+)?)\s*([A-Za-z]*)$", value)
@@ -59,6 +61,15 @@ def _k8s_memory_to_mb(value: str) -> float:
         raise ValueError(f"Unknown memory unit: {unit}")
 
     return num * multipliers[unit]
+
+
+def _k8s_memory_to_mb(value: str) -> float:
+    """Convert a Kubernetes memory string to megabytes.
+
+    Alias for :func:`parse_k8s_memory_to_mi` (MiB and MB are used
+    interchangeably in this codebase since all values are binary).
+    """
+    return parse_k8s_memory_to_mi(value)
 
 
 def _mb_to_k8s_memory(mb: float) -> str:
@@ -132,6 +143,12 @@ def compute_memory_recommendation(
 
     # Request should never exceed limit
     recommended_request_mb = min(recommended_request_mb, recommended_limit_mb)
+
+    # Collapse request to limit when the gap is < 10% - a tiny difference adds no value
+    if recommended_limit_mb > 0:
+        gap_ratio = (recommended_limit_mb - recommended_request_mb) / recommended_limit_mb
+        if gap_ratio < 0.10:
+            recommended_request_mb = recommended_limit_mb
 
     # Check if the change is significant enough
     if not has_oom_kills:

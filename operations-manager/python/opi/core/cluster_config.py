@@ -32,7 +32,7 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
         },
-        "min_memory_limit_mi": 12,
+        "min_memory_limit_mi": 25,
         "uses_capsule": False,
         "ca_certificate": {
             "enabled": True,
@@ -48,7 +48,10 @@ CLUSTER_CONFIG = {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
         "nice_url": {
-            "supported_domains": ["kind", "local"],  # Domains that support nice URL pattern
+            "supported_domains": [
+                {"domain": "kind", "supports_dots": True},
+                {"domain": "local", "supports_dots": True},
+            ],
         },
     },
     "sandboxed-local": {
@@ -73,13 +76,16 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,
         },
-        "min_memory_limit_mi": 12,
+        "min_memory_limit_mi": 25,
         "uses_capsule": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
         "nice_url": {
-            "supported_domains": ["sandbox.rijksapp.dev", "rijksapp.nl", "rijksapp.dev"],
+            "supported_domains": [
+                {"domain": "sandbox.rijksapp.dev", "supports_dots": False},
+                {"domain": "robbertuittenbroek.nl", "supports_dots": True, "issuer": "letsencrypt"},
+            ],
         },
     },
     "odcn-production": {
@@ -105,18 +111,18 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,  # Only generate HTTPS redirect URIs in production
         },
-        "min_memory_limit_mi": 12,
+        "min_memory_limit_mi": 25,
         "uses_capsule": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
         "nice_url": {
             "supported_domains": [
-                "rijks.app",
-                "rijksapps.nl",
-                "rijksapp.nl",
-                "rijksapp.dev",
-            ],  # Domains that support nice URL pattern
+                {"domain": "rijks.app", "supports_dots": True, "issuer": "letsencrypt"},
+                {"domain": "rijksapps.nl", "supports_dots": True, "issuer": "letsencrypt"},
+                {"domain": "rijksapp.nl", "supports_dots": True, "issuer": "letsencrypt"},
+                {"domain": "rijksapp.dev", "supports_dots": True, "issuer": "letsencrypt"},
+            ],
         },
     },
 }
@@ -565,7 +571,7 @@ def get_min_memory_limit_mi(cluster_name: str) -> int:
         Minimum memory limit in Mi
     """
     cluster_config = get_cluster_config(cluster_name)
-    return cluster_config.get("min_memory_limit_mi", 12)
+    return cluster_config.get("min_memory_limit_mi", 25)
 
 
 def uses_capsule(cluster_name: str) -> bool:
@@ -705,6 +711,9 @@ def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
     """
     Get the list of domains that support nice URLs for a specific cluster.
 
+    Extracts domain strings from the structured supported_domains list
+    for backward compatibility.
+
     Args:
         cluster_name: Name of the cluster
 
@@ -718,7 +727,8 @@ def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
     nice_url_config = get_nice_url_config(cluster_name)
     if nice_url_config is None:
         return []
-    return nice_url_config.get("supported_domains", [])
+    raw = nice_url_config.get("supported_domains", [])
+    return [entry["domain"] if isinstance(entry, dict) else entry for entry in raw]
 
 
 def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
@@ -737,3 +747,52 @@ def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
     """
     supported_domains = get_nice_url_supported_domains(cluster_name)
     return base_domain in supported_domains
+
+
+def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
+    """
+    Get the issuer for a specific domain on a cluster.
+
+    Looks up the domain in the cluster's supported_domains list.
+    Returns the per-domain issuer if configured, otherwise falls back
+    to the cluster's default cluster_issuer.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The domain to check (e.g., "rijksapp.nl")
+
+    Returns:
+        Issuer string (e.g., "letsencrypt") or None if no issuer is needed.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is not None:
+        for entry in nice_url_config.get("supported_domains", []):
+            if isinstance(entry, dict) and entry.get("domain") == domain:
+                return entry.get("issuer")
+    return None
+
+
+def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
+    """
+    Check if a specific domain supports dot-separated hostnames on a cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The domain to check (e.g., "rijks.app")
+
+    Returns:
+        True if the domain supports dot-separated hostnames, False otherwise.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return False
+    for entry in nice_url_config.get("supported_domains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry.get("supports_dots", False)
+    return False

@@ -1,0 +1,29 @@
+{#
+  Memory overprovision warning fragment (HTMX lazy-loaded).
+  Expects:
+    - memory_warnings: list of MemoryCheckResult objects
+    - project_name: project name
+    - deployment_name: deployment name
+    - container_id: unique ID for the parent container
+#}
+{% if memory_warnings %}
+<c-card padding="md" background="color" backgroundColor="oranje-150" outline="true">
+    <c-layout-flow gap="sm">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <c-heading type="h5" textContent="Geheugen kan worden verminderd" />
+            <c-icon icon="vraagteken" size="xl" color="hemelblauw"
+                    style="cursor: pointer;"
+                    @click="openServiceHelp('resources.html.j2')" />
+        </div>
+        <c-ul>
+            {% for w in memory_warnings %}
+            <c-li>{{ w.component }}: {{ w.current_limit }} &#8594; {{ w.recommended_limit }} ({{ w.saving_mb | int }}Mi besparing)</c-li>
+            {% endfor %}
+        </c-ul>
+        <c-button kind="secondary" size="sm" label="Tune resources"
+                  hx-post="/projects/{{ project_name }}/tune/{{ deployment_name }}"
+                  hx-target="#{{ container_id }}"
+                  hx-swap="innerHTML" />
+    </c-layout-flow>
+</c-card>
+{% endif %}

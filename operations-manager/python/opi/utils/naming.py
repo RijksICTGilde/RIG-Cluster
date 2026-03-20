@@ -8,6 +8,7 @@ including deployments, services, PVCs, and other manifest resources.
 import re
 from datetime import UTC
 from enum import Enum
+from typing import Literal, get_args
 
 
 class HostnameFormat(Enum):
@@ -34,6 +35,120 @@ class HostnameFormat(Enum):
         if domain_mode == "nice-url":
             return cls.DOTS
         return cls.DASHES
+
+
+# ---------------------------------------------------------------------------
+# Domain-format templates
+# ---------------------------------------------------------------------------
+# Each format ID maps to a pair of templates: (dash_template, dot_template).
+# The dash variant joins prefix parts with hyphens; the dot variant uses dots.
+# Which variant is used depends on cluster nice_url support.
+#
+# Available variables: {component}, {deployment}, {project}, {subdomain}, {domain}
+#   {domain} = base_domain from YAML if set, else ingress_postfix from cluster config
+
+DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
+    # Dash variants (always available)
+    "component-deployment-project": "{component}-{deployment}-{project}.{domain}",
+    "deployment-project": "{deployment}-{project}.{domain}",
+    "component-deployment-subdomain": "{component}-{deployment}-{subdomain}.{domain}",
+    "deployment-subdomain": "{deployment}-{subdomain}.{domain}",
+    "component-subdomain": "{component}-{subdomain}.{domain}",
+    "subdomain": "{subdomain}.{domain}",
+    # Dot variants (only when domain supports dot-separated hostnames)
+    "component.deployment.project": "{component}.{deployment}.{project}.{domain}",
+    "deployment.project": "{deployment}.{project}.{domain}",
+    "component.deployment.subdomain": "{component}.{deployment}.{subdomain}.{domain}",
+    "deployment.subdomain": "{deployment}.{subdomain}.{domain}",
+    "component.subdomain": "{component}.{subdomain}.{domain}",
+}
+
+# Type alias derived from the template keys so OpenAPI exposes an enum.
+# The Literal must be written explicitly (Python cannot construct Literal from
+# runtime values), but a runtime assertion below guarantees the two stay in sync.
+DomainFormatId = Literal[
+    "component-deployment-project",
+    "deployment-project",
+    "component-deployment-subdomain",
+    "deployment-subdomain",
+    "component-subdomain",
+    "subdomain",
+    "component.deployment.project",
+    "deployment.project",
+    "component.deployment.subdomain",
+    "deployment.subdomain",
+    "component.subdomain",
+]
+
+assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101
+    "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
+)
+
+# Computed sets derived from templates for use by editables and enforcers.
+SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "{subdomain}" in t]
+ROOT_COMPONENT_FORMAT_IDS: list[str] = [
+    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." in f and "{component}" in t
+]
+
+# Maps each domain-mode to its implicit default format (backward compat).
+# Only used for documentation/display; when domain-format is absent the
+# existing code path is used unchanged.
+DOMAIN_MODE_DEFAULT_FORMAT: dict[str, str] = {
+    "nice-url": "component-deployment-subdomain",
+    "component-specific": "component-deployment-project",
+    "deployment-name": "deployment-project",
+    "custom": "deployment-subdomain",
+}
+
+
+def resolve_domain_tail(
+    base_domain: str | None,
+    ingress_postfix: str,
+) -> str:
+    """Resolve the domain tail for template interpolation.
+
+    Returns base_domain when set, otherwise ingress_postfix with leading dot stripped.
+    """
+    if base_domain:
+        return base_domain
+    return ingress_postfix.lstrip(".")
+
+
+def generate_hostname_from_format(
+    domain_format: str,
+    component_name: str,
+    deployment_name: str,
+    project_name: str,
+    subdomain: str | None,
+    domain: str,
+) -> str:
+    """Resolve a hostname from a domain-format template.
+
+    Args:
+        domain_format: Template ID from DOMAIN_FORMAT_TEMPLATES
+        component_name: Component name
+        deployment_name: Deployment name
+        project_name: Project name
+        subdomain: Optional subdomain
+        domain: Domain tail (resolved via resolve_domain_tail)
+
+    Returns:
+        Generated hostname string
+
+    Raises:
+        ValueError: If domain_format is not a known template ID.
+    """
+    template = DOMAIN_FORMAT_TEMPLATES.get(domain_format)
+    if template is None:
+        raise ValueError(f"Unknown domain-format: {domain_format}")
+
+    return template.format(
+        component=_sanitize_for_lowercase(component_name),
+        deployment=_sanitize_for_lowercase(deployment_name),
+        project=_sanitize_for_lowercase(project_name),
+        subdomain=_sanitize_for_lowercase(subdomain or ""),
+        domain=domain,
+    )
 
 
 def generate_unique_name(deployment_name: str, component_name: str) -> str:
@@ -1512,12 +1627,17 @@ def get_component_ingress_map(
     subdomain: str | None = None,
     base_domain: str | None = None,
     hostname_format: HostnameFormat = HostnameFormat.DASHES,
+    domain_format: str | None = None,
 ) -> dict[str, str]:
     """
     Get the ingress map for a single component.
 
     Centralizes the hostname/ingress generation logic used by both keycloak_manager
     and project_manager to avoid duplication.
+
+    When ``domain_format`` is set (e.g. ``"deployment-subdomain"``), the hostname
+    is resolved from the matching template in ``DOMAIN_FORMAT_TEMPLATES``.
+    When ``domain_format`` is ``None``, the legacy dispatch logic is used unchanged.
 
     Args:
         component_name: Name of the component
@@ -1527,6 +1647,7 @@ def get_component_ingress_map(
         subdomain: Optional subdomain override
         base_domain: Optional custom base domain (e.g., "rijks.app")
         hostname_format: Format for hostname (DASHES or DOTS)
+        domain_format: Optional domain-format template ID from project YAML
 
     Returns:
         Dict mapping ingress name to hostname
@@ -1552,8 +1673,31 @@ def get_component_ingress_map(
         ...     "frontend", "prod", "myapp", ".kind"
         ... )
         {'prod-frontend': 'frontend-prod-myapp.kind'}
+
+        # Explicit domain-format with dots
+        >>> get_component_ingress_map(
+        ...     "frontend", "poc", "myapp", ".kind",
+        ...     subdomain="moza", base_domain="rijksapp.dev",
+        ...     domain_format="deployment.subdomain"
+        ... )
+        {'poc-frontend': 'poc.moza.rijksapp.dev'}
     """
     base_name = generate_unique_name(deployment_name, component_name)
+
+    # When domain_format is explicitly set, use the template-based generation
+    if domain_format and domain_format in DOMAIN_FORMAT_TEMPLATES:
+        domain = resolve_domain_tail(base_domain, ingress_postfix)
+        hostname = generate_hostname_from_format(
+            domain_format=domain_format,
+            component_name=component_name,
+            deployment_name=deployment_name,
+            project_name=project_name,
+            subdomain=subdomain,
+            domain=domain,
+        )
+        return {base_name: hostname}
+
+    # --- Legacy dispatch (domain_format not set) ---
 
     # Nice URL format (DOTS): component.subdomain.base_domain
     if hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
@@ -1577,6 +1721,7 @@ def get_deployment_hostnames(
     subdomain: str | None = None,
     base_domain: str | None = None,
     hostname_format: HostnameFormat = HostnameFormat.DASHES,
+    domain_format: str | None = None,
 ) -> list[str]:
     """
     Get all hostnames for components in a deployment.
@@ -1591,6 +1736,7 @@ def get_deployment_hostnames(
         subdomain: Optional subdomain override
         base_domain: Optional custom base domain (e.g., "rijks.app")
         hostname_format: Format for hostname (DASHES or DOTS)
+        domain_format: Optional domain-format template ID from project YAML
 
     Returns:
         List of unique hostnames for the deployment
@@ -1606,13 +1752,16 @@ def get_deployment_hostnames(
             subdomain,
             base_domain,
             hostname_format=hostname_format,
+            domain_format=domain_format,
         )
         hostname = next(iter(ingress_map.values()))
         if hostname not in hostnames:
             hostnames.append(hostname)
 
-    # For DOTS format (nice URLs), add the root hostname
-    if hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
+    # For DOTS format (nice URLs) without explicit domain_format, add root hostname
+    # When domain_format is set, the template already defines the hostname shape;
+    # root hostname is only relevant for legacy nice-url with component prefix.
+    if not domain_format and hostname_format == HostnameFormat.DOTS and subdomain and base_domain:
         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)

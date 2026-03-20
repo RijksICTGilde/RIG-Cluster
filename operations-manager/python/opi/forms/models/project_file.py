@@ -90,7 +90,7 @@ class ResourcesModel(BaseModel):
             label="component.memory_limit",
             description="component.memory_limit.description",
             widget="select",
-            options_provider="MemoryLimitOptionsProvider",
+            options_provider="MemoryOptionsProvider",
         ),
     ] = Field(default="256Mi")
 
@@ -146,15 +146,15 @@ class ComponentModel(BaseModel):
         ),
     ] = Field(default_factory=ResourcesModel)
 
-    uses_services: Annotated[
+    services: Annotated[
         list[str],
         FormMeta(
-            label="component.uses_services",
-            description="component.uses_services.description",
+            label="component.services",
+            description="component.services.description",
             widget="checkbox-group",
             options_provider="ServiceOptionsProvider",
         ),
-    ] = Field(default_factory=list, alias="uses-services")
+    ] = Field(default_factory=list)
 
     uses_components: Annotated[
         list[str],
@@ -288,6 +288,16 @@ class DeploymentModel(BaseModel):
             widget="textarea",
         ),
     ] = Field(default=None)
+
+    data_retention_period: Annotated[
+        str | None,
+        FormMeta(
+            label="deployment.data_retention_period",
+            description="deployment.data_retention_period.description",
+            widget="text",
+            placeholder="0h",
+        ),
+    ] = Field(default=None, alias="data-retention-period")
 
 
 class RepositoryModel(BaseModel):
@@ -613,7 +623,7 @@ def get_project_file_form_layout() -> Fieldset:
                                         Column("resources.memory", width=6),
                                     ]
                                 ),
-                                "uses_services",
+                                "services",
                                 "aliases",
                             ],
                         ),

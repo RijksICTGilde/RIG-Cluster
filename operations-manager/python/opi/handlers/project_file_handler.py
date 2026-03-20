@@ -15,6 +15,7 @@ from ruamel.yaml import YAML
 
 from opi.connectors.git import GitConnector
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.utils.age import decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
 
@@ -86,6 +87,32 @@ def _parse_resources_block_partial(raw: dict | None) -> dict[str, str]:
         result["limits_cpu"] = str(limits["cpu"])
 
     return result
+
+
+def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> None:
+    """Write flat resource keys into a nested resources block.
+
+    Ensures the ``requests``/``limits`` structure exists, applies values,
+    and removes the legacy ``memory`` sub-dict (which used ``request``/``limit``
+    keys) to prevent dual-format entries.
+    """
+    if "resources" not in target:
+        target["resources"] = {}
+    res = target["resources"]
+    if "requests" not in res:
+        res["requests"] = {}
+    if "limits" not in res:
+        res["limits"] = {}
+    if "requests_memory" in resources:
+        res["requests"]["memory"] = resources["requests_memory"]
+    if "requests_cpu" in resources:
+        res["requests"]["cpu"] = resources["requests_cpu"]
+    if "limits_memory" in resources:
+        res["limits"]["memory"] = resources["limits_memory"]
+    if "limits_cpu" in resources:
+        res["limits"]["cpu"] = resources["limits_cpu"]
+    # Remove legacy format (memory/request, memory/limit)
+    res.pop("memory", None)
 
 
 class ProjectFileHandler:
@@ -299,11 +326,12 @@ class ProjectFileHandler:
         changes = {"added": {}, "changed": {}, "deleted": {}}
 
         # Handle added items (dictionary_item_added, iterable_item_added)
+        # dictionary_item_added is a SetOrdered of path strings (no values);
+        # iterable_item_added is a dict of path -> value.
         if "dictionary_item_added" in diff:
-            for path, value in diff["dictionary_item_added"].items():
-                # Parse path like "root['deployments']['web-app']"
+            for path in diff["dictionary_item_added"]:
                 clean_path = self._parse_deepdiff_path(path)
-                changes["added"][clean_path] = value
+                changes["added"][clean_path] = self._resolve_deepdiff_value(current_yaml, path)
                 logger.debug(f"Added: {clean_path}")
 
         if "iterable_item_added" in diff:
@@ -313,10 +341,11 @@ class ProjectFileHandler:
                 logger.debug(f"Added (iterable): {clean_path}")
 
         # Handle removed items (dictionary_item_removed, iterable_item_removed)
+        # dictionary_item_removed is a SetOrdered (no values).
         if "dictionary_item_removed" in diff:
-            for path, value in diff["dictionary_item_removed"].items():
+            for path in diff["dictionary_item_removed"]:
                 clean_path = self._parse_deepdiff_path(path)
-                changes["deleted"][clean_path] = value
+                changes["deleted"][clean_path] = None
                 logger.debug(f"Deleted: {clean_path}")
 
         if "iterable_item_removed" in diff:
@@ -351,10 +380,32 @@ class ProjectFileHandler:
         clean_path = path.removeprefix("root")
         # Convert ['key'] to .key, handling nested brackets
         clean_path = re.sub(r"\['([^']+)']", r".\1", clean_path)
+        # Convert bare numeric indices [0] to .0
+        clean_path = re.sub(r"\[(\d+)]", r".\1", clean_path)
         # Remove leading dot
         clean_path = clean_path.lstrip(".")
 
         return clean_path
+
+    @staticmethod
+    def _resolve_deepdiff_value(data: dict[str, Any], deepdiff_path: str) -> Any:
+        """Resolve a DeepDiff path like ``root['key1']['key2']`` to the value in *data*."""
+        # Strip "root" prefix and extract bracket segments
+        segments = re.findall(r"\['([^']+)'\]|\[(\d+)\]", deepdiff_path)
+        current: Any = data
+        for str_key, int_key in segments:
+            if str_key:
+                if isinstance(current, dict):
+                    current = current.get(str_key)
+                else:
+                    return None
+            elif int_key:
+                idx = int(int_key)
+                if isinstance(current, list) and idx < len(current):
+                    current = current[idx]
+                else:
+                    return None
+        return current
 
     async def analyze_project_changes(
         self, git_connector: GitConnector, full_file_path: str, relative_file_path: str
@@ -572,143 +623,148 @@ class ProjectFileHandler:
         logger.debug(f"No path found for component '{component_name}', using default '/'")
         return [{"match": "/", "rewrite": None}]
 
+    def extract_deployment_component_paths(
+        self,
+        project_data: dict[str, Any],
+        deployment_data: dict[str, Any],
+        component_reference: str,
+    ) -> list[dict[str, str | None]]:
+        """
+        Extract publication paths for a component in a deployment context.
+
+        Checks deployment-level paths first (deployments[].components[].paths),
+        then falls back to component-level path (components[].path).
+
+        Args:
+            project_data: The parsed project data
+            deployment_data: The specific deployment dict
+            component_reference: Name of the component to find paths for
+
+        Returns:
+            List of path configs: [{"match": "/api", "rewrite": None}, ...]
+        """
+        # Check deployment-level paths first
+        components = deployment_data.get("components", [])
+        for comp in components:
+            if comp.get("reference") == component_reference:
+                paths = comp.get("paths")
+                if paths is not None:
+                    result = []
+                    for p in paths:
+                        if isinstance(p, dict):
+                            result.append({"match": p.get("match", "/"), "rewrite": p.get("rewrite")})
+                        else:
+                            result.append({"match": str(p), "rewrite": None})
+                    if result:
+                        logger.info(
+                            f"Found {len(result)} deployment-level path(s) for component '{component_reference}'"
+                        )
+                        return result
+                break
+
+        # Fall back to component-level paths
+        return self.extract_component_paths(project_data, component_reference)
+
     def extract_component_storage(self, project_data: dict[str, Any], component_name: str) -> list[dict[str, Any]]:
         """
         Extract storage configuration from a component definition by name.
+
+        Reads from the v2 format where storage lives under service entries
+        in the component's ``services`` list (e.g. ``persistent-storage``
+        and ``temp-storage`` dict entries with ``config`` lists).
 
         Args:
             project_data: The parsed project data
             component_name: Name of the component to find storage for
 
         Returns:
-            List of storage configurations or empty list if no storage found
+            List of storage configurations or empty list if no storage found.
+            Each dict has keys: name, size, mount-path, type.
         """
-        # Use JSONPath with extended parser to find the component by name and extract its storage config
-        path = f"$.components[?(@.name='{component_name}')].storage"
-        storage_config = self.extract_value_by_path(project_data, path, [])
+        component = self._find_component(project_data, component_name)
+        if not component:
+            logger.debug(f"Component '{component_name}' not found")
+            return []
 
-        if storage_config:
-            logger.info(f"Found {len(storage_config)} storage config(s) for component '{component_name}'")
-            return storage_config
+        storage_configs = extract_storage_from_component_services(component)
+        if storage_configs:
+            logger.info(f"Found {len(storage_configs)} storage config(s) for component '{component_name}'")
         else:
             logger.debug(f"No storage configuration found for component '{component_name}'")
-            return []
+        return storage_configs
+
+    def _find_component(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
+        """Find a component dict by name in project data."""
+        for comp in project_data.get("components", []):
+            if isinstance(comp, dict) and comp.get("name") == component_name:
+                return comp
+        return None
+
+    def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
+        """Decrypt and clean up individual env var values.
+
+        Each value is run through the smart decrypt (handling plain, age-encrypted,
+        or empty values) and then stripped of surrounding quotes.
+        """
+        cleaned: dict[str, str] = {}
+        for key, value in env_vars.items():
+            value_str = str(value) if value is not None else ""
+            normalized_value = self._normalize_age_content(value_str)
+            value_str = decrypt_password_smart_sync(normalized_value, private_key)
+
+            # Strip surrounding quotes (single or double) if they wrap the whole value
+            if value_str == '""' or value_str == "''":
+                cleaned[key] = ""
+            elif len(value_str) >= 2 and (
+                (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2)
+                or (value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2)
+            ):
+                cleaned[key] = value_str[1:-1]
+            else:
+                cleaned[key] = value_str
+        return cleaned
+
+    async def _extract_user_env_vars(self, project_data: dict[str, Any], jsonpath: str, label: str) -> dict[str, str]:
+        """Extract, decrypt, and clean user env vars from a JSONPath location.
+
+        Args:
+            project_data: The parsed project data
+            jsonpath: JSONPath expression pointing to the user-env-vars field
+            label: Human-readable label for log messages
+
+        Returns:
+            Dictionary of user environment variables or empty dict if none found
+        """
+        private_key = await get_decoded_project_private_key(project_data)
+
+        raw = self.extract_value_by_path(project_data, jsonpath, {}, private_key)
+        env_vars = validate_and_parse_env_vars(raw)
+
+        if not env_vars:
+            logger.debug(f"No user environment variables found for {label}")
+            return {}
+
+        logger.info(f"Found {len(env_vars)} user environment variable(s) for {label}")
+        return self._decrypt_and_clean_env_vars(env_vars, private_key)
 
     async def extract_component_user_env_vars(
         self, project_data: dict[str, Any], component_name: str
     ) -> dict[str, str]:
-        """
-        Extract user environment variables from a component definition by name.
-
-        Args:
-            project_data: The parsed project data
-            component_name: Name of the component to find user env vars for
-
-        Returns:
-            Dictionary of user environment variables or empty dict if none found
-        """
-
-        private_key = await get_decoded_project_private_key(project_data)
-
-        # Use JSONPath with extended parser to find the component by name and extract its user-env-vars
-        # TODO: user-env-vars is optional, so we need to check if this path exists before we continu
+        """Extract user environment variables from a component definition by name."""
         path = f"$.components[?(@.name='{component_name}')].user-env-vars"
-        user_env_vars_str = self.extract_value_by_path(project_data, path, {}, private_key)
-        user_env_vars = validate_and_parse_env_vars(user_env_vars_str)
-
-        if user_env_vars:
-            logger.info(f"Found {len(user_env_vars)} user environment variable(s) for component '{component_name}'")
-            # Clean up and decrypt user environment variables
-            cleaned_env_vars = {}
-
-            for key, value in user_env_vars.items():
-                # Convert to string and clean up quotes
-                value_str = str(value) if value is not None else ""
-                # Normalize and decrypt the value
-                normalized_value = self._normalize_age_content(value_str)
-                value_str = decrypt_password_smart_sync(normalized_value, private_key)
-
-                # Handle regular values with quote cleaning
-                if value_str == '""' or value_str == "''":
-                    # Convert quoted empty strings to actual empty strings
-                    cleaned_env_vars[key] = ""
-                elif len(value_str) >= 2:
-                    # Remove surrounding quotes if present (but preserve internal quotes)
-                    if (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2) or (
-                        value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2
-                    ):
-                        cleaned_env_vars[key] = value_str[1:-1]
-                    else:
-                        cleaned_env_vars[key] = value_str
-                else:
-                    cleaned_env_vars[key] = value_str
-
-            return cleaned_env_vars
-        else:
-            logger.debug(f"No user environment variables found for component '{component_name}'")
-            return {}
+        return await self._extract_user_env_vars(project_data, path, f"component '{component_name}'")
 
     async def extract_deployment_component_user_env_vars(
         self, project_data: dict[str, Any], deployment_name: str, component_reference: str
     ) -> dict[str, str]:
-        """
-        Extract user environment variables from a deployment component by deployment and component reference.
-
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-            component_reference: Reference name of the component in the deployment
-
-        Returns:
-            Dictionary of user environment variables or empty dict if none found
-        """
-        private_key = await get_decoded_project_private_key(project_data)
-
-        # Use JSONPath to find the deployment component and extract its user-env-vars
+        """Extract user environment variables from a deployment component."""
         path = (
             f"$.deployments[?(@.name=='{deployment_name}')]"
             f".components[?(@.reference=='{component_reference}')].user-env-vars"
         )
-        user_env_vars_str = self.extract_value_by_path(project_data, path, {}, private_key)
-        user_env_vars = validate_and_parse_env_vars(user_env_vars_str)
-
-        if user_env_vars:
-            logger.info(
-                f"Found {len(user_env_vars)} deployment-level user environment variable(s) "
-                f"for component '{component_reference}' in deployment '{deployment_name}'"
-            )
-            # Clean up and decrypt user environment variables
-            cleaned_env_vars = {}
-
-            for key, value in user_env_vars.items():
-                # Convert to string and clean up quotes
-                value_str = str(value) if value is not None else ""
-                # Normalize and decrypt the value
-                normalized_value = self._normalize_age_content(value_str)
-                value_str = decrypt_password_smart_sync(normalized_value, private_key)
-
-                # Handle regular values with quote cleaning
-                if value_str == '""' or value_str == "''":
-                    # Convert quoted empty strings to actual empty strings
-                    cleaned_env_vars[key] = ""
-                elif len(value_str) >= 2:
-                    # Remove surrounding quotes if present (but preserve internal quotes)
-                    if (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2) or (
-                        value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2
-                    ):
-                        cleaned_env_vars[key] = value_str[1:-1]
-                    else:
-                        cleaned_env_vars[key] = value_str
-                else:
-                    cleaned_env_vars[key] = value_str
-
-            return cleaned_env_vars
-        else:
-            logger.debug(
-                f"No deployment-level user environment variables found for component '{component_reference}' "
-                f"in deployment '{deployment_name}'"
-            )
-            return {}
+        return await self._extract_user_env_vars(
+            project_data, path, f"component '{component_reference}' in deployment '{deployment_name}'"
+        )
 
     def get_persistent_storage(self, storage_configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
@@ -747,57 +803,19 @@ class ProjectFileHandler:
             component_name: Name of the component to find
 
         Returns:
-            True if publish-on-web service is in the component's uses-services array, False otherwise
+            True if publish-on-web service is in the component's services list, False otherwise
         """
-        # Check uses-services array for publish-on-web service
-        uses_services_path = f"$.components[?(@.name='{component_name}')].uses-services"
-        uses_services = self.extract_value_by_path(project_data, uses_services_path, [])
-        component_services = ServiceAdapter.parse_services_from_strings(uses_services or [])
+        component = self._find_component(project_data, component_name)
+        if not component:
+            logger.debug(f"Component '{component_name}' not found for publish-on-web check")
+            return False
+
+        service_names = extract_service_names_from_component(component)
+        component_services = ServiceAdapter.parse_services_from_strings(service_names)
         has_publish_service = ServiceType.PUBLISH_ON_WEB in component_services
 
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
-
-    def extract_component_metrics(
-        self, project_data: dict[str, Any], component_name: str
-    ) -> dict[str, int | str | None]:
-        """
-        Extract metrics configuration from a component definition by name.
-
-        The metrics configuration is used for Prometheus scraping annotations.
-
-        Args:
-            project_data: The parsed project data
-            component_name: Name of the component to find metrics for
-
-        Returns:
-            Dictionary with metrics configuration:
-            - port: Metrics port (or None if not specified)
-            - path: Metrics path (or None if not specified)
-
-        Example project.yaml:
-            components:
-              - name: my-app
-                metrics:
-                  port: 9090
-                  path: /metrics
-        """
-        # Extract metrics port
-        port_path = f"$.components[?(@.name='{component_name}')].metrics.port"
-        metrics_port = self.extract_value_by_path(project_data, port_path, None)
-
-        # Extract metrics path
-        path_path = f"$.components[?(@.name='{component_name}')].metrics.path"
-        metrics_path = self.extract_value_by_path(project_data, path_path, None)
-
-        if metrics_port or metrics_path:
-            logger.info(
-                f"Found metrics config for component '{component_name}': port={metrics_port}, path={metrics_path}"
-            )
-        else:
-            logger.debug(f"No metrics configuration found for component '{component_name}'")
-
-        return {"port": metrics_port, "path": metrics_path}
 
     # ========================================================================
     # Resource Configuration Methods
@@ -851,7 +869,7 @@ class ProjectFileHandler:
                 raw_resources = comp.get("resources")
                 if raw_resources is None:
                     return None
-                # Parse without defaults — return only what's explicitly set
+                # Parse without defaults - return only what's explicitly set
                 return _parse_resources_block_partial(raw_resources)
         return None
 
@@ -916,35 +934,251 @@ class ProjectFileHandler:
         Modifies project_data in place. The resources dict uses flat keys
         (requests_memory, requests_cpu, limits_memory, limits_cpu).
 
-        Args:
-            project_data: The parsed project data (modified in place)
-            component_name: Name of the component
-            resources: Flat dict with resource values
-
         Returns:
             True if the component was found and updated, False otherwise
         """
         components = project_data.get("components", [])
         for comp in components:
             if comp.get("name") == component_name:
-                if "resources" not in comp:
-                    comp["resources"] = {}
-                res = comp["resources"]
-                if "requests" not in res:
-                    res["requests"] = {}
-                if "limits" not in res:
-                    res["limits"] = {}
-                if "requests_memory" in resources:
-                    res["requests"]["memory"] = resources["requests_memory"]
-                if "requests_cpu" in resources:
-                    res["requests"]["cpu"] = resources["requests_cpu"]
-                if "limits_memory" in resources:
-                    res["limits"]["memory"] = resources["limits_memory"]
-                if "limits_cpu" in resources:
-                    res["limits"]["cpu"] = resources["limits_cpu"]
+                _apply_flat_resources(comp, resources)
                 logger.info(f"Updated resources for component '{component_name}': {resources}")
                 return True
         logger.warning(f"Component '{component_name}' not found for resource update")
+        return False
+
+    def set_deployment_component_resources(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+        resources: dict[str, str],
+    ) -> bool:
+        """
+        Set resource configuration on a component within a specific deployment.
+
+        Modifies project_data in place. The resources dict uses flat keys
+        (requests_memory, requests_cpu, limits_memory, limits_cpu).
+
+        Returns:
+            True if the deployment component was found and updated, False otherwise
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                _apply_flat_resources(comp, resources)
+                logger.info(
+                    f"Updated resources for component '{component_reference}' "
+                    f"in deployment '{deployment_name}': {resources}"
+                )
+                return True
+        logger.warning(
+            f"Component '{component_reference}' not found in deployment '{deployment_name}' for resource update"
+        )
+        return False
+
+    def append_component_resource_history(
+        self,
+        project_data: dict[str, Any],
+        component_name: str,
+        entry: dict[str, Any],
+        max_entries: int = 5,
+    ) -> bool:
+        """
+        Append a resource history entry to a component definition.
+
+        Inserts at the front (newest first) and prunes to max_entries.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            component_name: Name of the component
+            entry: History entry dict with timestamp, limits, source, reason
+            max_entries: Maximum history entries to keep
+
+        Returns:
+            True if the component was found and updated
+        """
+        components = project_data.get("components", [])
+        for comp in components:
+            if comp.get("name") == component_name:
+                if "resources" not in comp:
+                    comp["resources"] = {}
+                history = comp["resources"].get("history", [])
+                history.insert(0, entry)
+                comp["resources"]["history"] = history[:max_entries]
+                return True
+        return False
+
+    def append_deployment_component_resource_history(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+        entry: dict[str, Any],
+        max_entries: int = 5,
+    ) -> bool:
+        """
+        Append a resource history entry to a deployment-level component override.
+
+        Inserts at the front (newest first) and prunes to max_entries.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+            entry: History entry dict with timestamp, limits, source, reason
+            max_entries: Maximum history entries to keep
+
+        Returns:
+            True if the deployment component was found and updated
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                if "resources" not in comp:
+                    comp["resources"] = {}
+                history = comp["resources"].get("history", [])
+                history.insert(0, entry)
+                comp["resources"]["history"] = history[:max_entries]
+                return True
+        return False
+
+    def get_resource_history_floor(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+    ) -> float | None:
+        """
+        Get the OOM watcher memory floor from resource history.
+
+        Checks both deployment-component and component-definition history.
+        Returns the highest OOM watcher limit found in the most recent
+        oom-watcher entry at either level.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+
+        Returns:
+            Floor value in MB, or None if no OOM watcher entries exist
+        """
+        floor_mb: float | None = None
+
+        # Check deployment-component history
+        for dep in project_data.get("deployments", []):
+            if dep.get("name") != deployment_name:
+                continue
+            for comp in dep.get("components", []):
+                if comp.get("reference") != component_reference:
+                    continue
+                for entry in comp.get("resources", {}).get("history", []):
+                    if entry.get("source") == "oom-watcher":
+                        value = entry.get("limits", {}).get("memory")
+                        if value:
+                            mb = _k8s_memory_to_mb(value)
+                            floor_mb = max(floor_mb or 0, mb)
+                        break  # only check most recent oom-watcher entry
+
+        # Check component-definition history
+        for comp in project_data.get("components", []):
+            if comp.get("name") != component_reference:
+                continue
+            for entry in comp.get("resources", {}).get("history", []):
+                if entry.get("source") == "oom-watcher":
+                    value = entry.get("limits", {}).get("memory")
+                    if value:
+                        mb = _k8s_memory_to_mb(value)
+                        floor_mb = max(floor_mb or 0, mb)
+                    break
+
+        return floor_mb
+
+    def extract_deployment_component_disabled(
+        self, project_data: dict[str, Any], deployment_name: str, component_reference: str
+    ) -> tuple[bool, str]:
+        """
+        Extract disabled state from a component within a specific deployment.
+
+        Falls back to component-definition-level disabled state if no deployment-level
+        override exists.
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+
+        Returns:
+            Tuple of (disabled, reason)
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                if "disabled" in comp:
+                    return bool(comp.get("disabled", False)), str(comp.get("disabled-reason", ""))
+
+        # Fall back to component-definition-level disabled state
+        return self.extract_component_disabled(project_data, component_reference)
+
+    def set_deployment_component_disabled(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+        component_reference: str,
+        disabled: bool,
+        reason: str,
+    ) -> bool:
+        """
+        Set the disabled state on a component within a specific deployment.
+
+        Modifies project_data in place.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+            disabled: Whether to disable the component
+            reason: Reason for disabling
+
+        Returns:
+            True if the deployment component was found and updated, False otherwise
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            components = deployment.get("components", [])
+            for comp in components:
+                if comp.get("reference") != component_reference:
+                    continue
+                comp["disabled"] = disabled
+                if disabled:
+                    comp["disabled-reason"] = reason
+                elif "disabled-reason" in comp:
+                    del comp["disabled-reason"]
+                logger.info(
+                    f"Set component '{component_reference}' in deployment '{deployment_name}' "
+                    f"disabled={disabled}" + (f" reason='{reason}'" if disabled else "")
+                )
+                return True
+        logger.warning(
+            f"Component '{component_reference}' not found in deployment '{deployment_name}' for disabled state update"
+        )
         return False
 
     # ========================================================================
@@ -1461,10 +1695,14 @@ class ProjectFileHandler:
         backup_config = self.extract_backup_config(project_data)
         project_backup_enabled = backup_config.get("enabled", False)
 
-        # Then check per-storage override
-        # Path: $.components[?(@.name=='component_name')].storage[?(@.name=='storage_name')].backup
-        path = f"$.components[?(@.name=='{component_name}')].storage[?(@.name=='{storage_name}')].backup"
-        storage_backup = self.extract_value_by_path(project_data, path, None)
+        # Then check per-storage override - look in component services for storage config
+        storage_backup = None
+        component = self._find_component(project_data, component_name)
+        if component:
+            for item in extract_storage_from_component_services(component):
+                if item.get("name") == storage_name and "backup" in item:
+                    storage_backup = item["backup"]
+                    break
 
         # Per-storage setting overrides project setting if specified
         if storage_backup is not None:
@@ -1914,7 +2152,7 @@ class ProjectFileHandler:
 
     def extract_helm_chart_uses_services(self, project_data: dict[str, Any], chart_name: str) -> list[str]:
         """
-        Extract uses-services from a helm-chart definition.
+        Extract services from a helm-chart definition.
 
         Args:
             project_data: The parsed project data
@@ -1923,14 +2161,16 @@ class ProjectFileHandler:
         Returns:
             List of service names the helm chart uses
         """
-        path = f"$.helm-charts[?(@.name=='{chart_name}')].uses-services"
-        services = self.extract_value_by_path(project_data, path, [])
+        for chart in project_data.get("helm-charts", []):
+            if isinstance(chart, dict) and chart.get("name") == chart_name:
+                services = chart.get("services", [])
+                if services:
+                    service_names = ServiceAdapter.extract_service_names_from_project_services(services)
+                    logger.info(f"Helm chart '{chart_name}' uses services: {service_names}")
+                    return service_names
+                break
 
-        if services:
-            logger.info(f"Helm chart '{chart_name}' uses services: {services}")
-            return services if isinstance(services, list) else [services]
-
-        logger.debug(f"No uses-services found for helm chart '{chart_name}'")
+        logger.debug(f"No services found for helm chart '{chart_name}'")
         return []
 
     # ========================================================================
@@ -2084,7 +2324,7 @@ class ProjectFileHandler:
 
     def extract_helmfile_uses_services(self, project_data: dict[str, Any], helmfile_name: str) -> list[str]:
         """
-        Extract uses-services from a helmfile definition.
+        Extract services from a helmfile definition.
 
         Args:
             project_data: The parsed project data
@@ -2093,14 +2333,16 @@ class ProjectFileHandler:
         Returns:
             List of service names the helmfile uses
         """
-        path = f"$.helmfile[?(@.name=='{helmfile_name}')].uses-services"
-        services = self.extract_value_by_path(project_data, path, [])
+        for hf in project_data.get("helmfile", []):
+            if isinstance(hf, dict) and hf.get("name") == helmfile_name:
+                services = hf.get("services", [])
+                if services:
+                    service_names = ServiceAdapter.extract_service_names_from_project_services(services)
+                    logger.info(f"Helmfile '{helmfile_name}' uses services: {service_names}")
+                    return service_names
+                break
 
-        if services:
-            logger.info(f"Helmfile '{helmfile_name}' uses services: {services}")
-            return services if isinstance(services, list) else [services]
-
-        logger.debug(f"No uses-services found for helmfile '{helmfile_name}'")
+        logger.debug(f"No services found for helmfile '{helmfile_name}'")
         return []
 
     def deployment_uses_service(
@@ -2113,8 +2355,8 @@ class ProjectFileHandler:
         Check if a deployment uses any of the specified services.
 
         This checks both:
-        1. Components referenced by the deployment and their uses-services
-        2. Helm-charts referenced by the deployment and their uses-services
+        1. Components referenced by the deployment and their services
+        2. Helm-charts referenced by the deployment and their services
 
         Args:
             project_data: The parsed project data
@@ -2129,54 +2371,29 @@ class ProjectFileHandler:
         for component_ref in component_refs:
             ref_name = component_ref.get("reference") if isinstance(component_ref, dict) else component_ref
             if ref_name:
-                path = f"$.components[?(@.name=='{ref_name}')].uses-services"
-                services = self.extract_value_by_path(project_data, path, [])
-                if services:
-                    service_list = services if isinstance(services, list) else [services]
-                    for service in service_list:
-                        service_name = (
-                            service
-                            if isinstance(service, str)
-                            else next(iter(service.keys()))
-                            if isinstance(service, dict)
-                            else str(service)
-                        )
-                        if service_name in service_types:
-                            return True
+                component = self._find_component(project_data, ref_name)
+                if component:
+                    service_names = extract_service_names_from_component(component)
+                    if any(s in service_types for s in service_names):
+                        return True
 
         # Check helm-charts
         helm_chart_refs = self.extract_deployment_helm_charts(project_data, deployment_name)
         for helm_chart_ref in helm_chart_refs:
             ref_name = helm_chart_ref.get("reference") if isinstance(helm_chart_ref, dict) else helm_chart_ref
             if ref_name:
-                services = self.extract_helm_chart_uses_services(project_data, ref_name)
-                for service in services:
-                    service_name = (
-                        service
-                        if isinstance(service, str)
-                        else next(iter(service.keys()))
-                        if isinstance(service, dict)
-                        else str(service)
-                    )
-                    if service_name in service_types:
-                        return True
+                service_names = self.extract_helm_chart_uses_services(project_data, ref_name)
+                if any(s in service_types for s in service_names):
+                    return True
 
         # Check helmfiles
         helmfile_refs = self.extract_deployment_helmfiles(project_data, deployment_name)
         for helmfile_ref in helmfile_refs:
             ref_name = helmfile_ref.get("reference") if isinstance(helmfile_ref, dict) else helmfile_ref
             if ref_name:
-                services = self.extract_helmfile_uses_services(project_data, ref_name)
-                for service in services:
-                    service_name = (
-                        service
-                        if isinstance(service, str)
-                        else next(iter(service.keys()))
-                        if isinstance(service, dict)
-                        else str(service)
-                    )
-                    if service_name in service_types:
-                        return True
+                service_names = self.extract_helmfile_uses_services(project_data, ref_name)
+                if any(s in service_types for s in service_names):
+                    return True
 
         return False
 
@@ -2207,12 +2424,11 @@ class ProjectFileHandler:
             if not ref_name:
                 continue
 
-            path = f"$.components[?(@.name=='{ref_name}')].uses-services"
-            services = self.extract_value_by_path(project_data, path, [])
-            if not services:
+            component = self._find_component(project_data, ref_name)
+            if not component:
                 continue
 
-            service_list = services if isinstance(services, list) else [services]
+            service_list = component.get("services", [])
             for service in service_list:
                 if isinstance(service, str):
                     service_name = service
@@ -2422,6 +2638,105 @@ class ProjectFileHandler:
         return defaults.get(language, defaults["nl"])
 
 
+def extract_storage_from_component_services(component: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract storage configurations from a v2 component's services list.
+
+    In v2 format, storage is defined under service dict entries like::
+
+        services:
+        - persistent-storage:
+            config:
+            - name: data
+              size: 250Mi
+              mount-path: /data
+
+    This function finds ``persistent-storage`` and ``temp-storage`` entries,
+    extracts their config items, and adds back the ``type`` field for
+    downstream compatibility (PVC manager, backup, etc.).
+
+    Args:
+        component: A component dict from project data
+
+    Returns:
+        List of storage config dicts with keys: name, size, mount-path, type
+    """
+    from opi.services.schema_migration import _STORAGE_SERVICE_TO_TYPE
+
+    storage_configs: list[dict[str, Any]] = []
+    services = component.get("services", [])
+
+    for entry in services:
+        if not isinstance(entry, dict):
+            continue
+        for service_name, service_data in entry.items():
+            if service_name not in _STORAGE_SERVICE_TO_TYPE:
+                continue
+            storage_type = _STORAGE_SERVICE_TO_TYPE[service_name]
+            config_items = service_data.get("config", []) if isinstance(service_data, dict) else []
+            for item in config_items:
+                if isinstance(item, dict):
+                    config = dict(item)
+                    config["type"] = storage_type
+                    storage_configs.append(config)
+
+    return storage_configs
+
+
+def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
+    """
+    Extract service names from a component's services list.
+
+    Supports both v2 format (``services`` key with mixed string/dict entries)
+    and v1 format (``uses-services`` key with plain string entries).
+    When both keys exist, results are merged and deduplicated.
+
+    Dict entries with ``None`` or empty values (e.g. ``{"persistent-storage": null}``)
+    are skipped - these are unconfigured placeholders left by the form system.
+
+    Args:
+        component: A component dict from project data
+
+    Returns:
+        List of service name strings
+    """
+    v2_services = _filter_empty_service_entries(component.get("services", []))
+    v1_services = component.get("uses-services", [])
+
+    names = ServiceAdapter.extract_service_names_from_project_services(v2_services)
+
+    if v1_services:
+        existing = set(names)
+        for svc in v1_services:
+            if isinstance(svc, str) and svc not in existing:
+                names.append(svc)
+                existing.add(svc)
+
+    return names
+
+
+def _filter_empty_service_entries(services: list[str | dict]) -> list[str | dict]:
+    """Filter out dict service entries with None or empty values.
+
+    The form system can leave behind entries like ``{"persistent-storage": None}``
+    when a service was selected but not configured. These should not be treated
+    as active services.
+
+    String entries are always kept. Dict entries are kept only when their
+    value is not None and not an empty dict/list.
+    """
+    result: list[str | dict] = []
+    for entry in services:
+        if isinstance(entry, str):
+            result.append(entry)
+        elif isinstance(entry, dict):
+            for value in entry.values():
+                if value is not None and value != {} and value != []:
+                    result.append(entry)
+                break  # single-key dicts
+    return result
+
+
 def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
     """
     Save project data to a YAML file.
@@ -2438,6 +2753,7 @@ def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
     yaml.preserve_quotes = True
     yaml.default_flow_style = False
     yaml.indent(mapping=2, sequence=4, offset=2)
+    yaml.representer.ignore_aliases = lambda *_: True
 
     with open(file_path, "w") as f:
         yaml.dump(project_data, f)

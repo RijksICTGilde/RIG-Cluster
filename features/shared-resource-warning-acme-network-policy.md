@@ -73,7 +73,7 @@ Generate namespace-scoped resources (Issuer, ACME NetworkPolicy) once per namesp
 - Assign the shared resources to the first deployment's ArgoCD Application
 
 **Pros:** Minimal code change, eliminates the warning entirely
-**Cons:** Creates an implicit dependency — deleting the "first" deployment removes shared resources
+**Cons:** Creates an implicit dependency - deleting the "first" deployment removes shared resources
 
 ### Option B: Deployment-Scoped Resource Names
 
@@ -110,6 +110,6 @@ Use ArgoCD's `argocd.argoproj.io/managed-by` annotation or resource exclusion to
 
 ## Recommendation
 
-**Option A** is the pragmatic choice — it's the smallest change that fully resolves the warning. The generation code already has precedent for deduplication (see `created_issuers` set in the component deployment path at ~line 4490).
+**Option A** is the pragmatic choice - it's the smallest change that fully resolves the warning. The generation code already has precedent for deduplication (see `created_issuers` set in the component deployment path at ~line 4490).
 
 For a longer-term architecture improvement, **Option C** would provide the cleanest separation, but the effort is significantly higher and the current impact is low.

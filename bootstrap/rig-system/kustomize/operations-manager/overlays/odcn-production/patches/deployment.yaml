@@ -18,6 +18,11 @@ spec:
         env:
         - name: KUBERNETES_SERVICE_HOST
           value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl
+        - name: PROMETHEUS_METRICS_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: prometheus-metrics-auth
+              key: token
         volumeMounts:
         - name: config-volume
           mountPath: /etc/config
