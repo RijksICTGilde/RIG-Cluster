@@ -489,6 +489,20 @@ class RootComponentOptionsProvider(ComponentReferenceOptionsProvider):
         super().__init__(component_names=component_names, include_empty=True)
 
 
+class BareDomainComponentOptionsProvider(ComponentReferenceOptionsProvider):
+    """ComponentReferenceOptionsProvider for bare domain component selection.
+
+    Shows component names with an empty 'not on bare domain' option.
+    """
+
+    def __init__(self, component_names: list[str] | None = None) -> None:
+        super().__init__(
+            component_names=component_names,
+            include_empty=True,
+            empty_label="Niet bereikbaar op kaal domein",
+        )
+
+
 class DeploymentCloneFromOptionsProvider:
     """Provides existing deployment names as clone-from options.
 
@@ -613,6 +627,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
     "DeploymentCloneFromOptionsProvider": DeploymentCloneFromOptionsProvider,
     "RootComponentOptionsProvider": RootComponentOptionsProvider,
+    "BareDomainComponentOptionsProvider": BareDomainComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
     "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
     "DeploymentSelectOptionsProvider": DeploymentSelectOptionsProvider,

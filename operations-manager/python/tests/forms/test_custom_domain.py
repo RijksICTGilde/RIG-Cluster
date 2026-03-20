@@ -457,3 +457,143 @@ class TestIssuerGenerator:
         assert "issuer" not in yaml_data["deployments"][0]
         # Deployment 1 should have issuer
         assert yaml_data["deployments"][1].get("issuer") == "letsencrypt"
+
+
+# ---------------------------------------------------------------------------
+# Bare domain component editable and provider
+# ---------------------------------------------------------------------------
+
+
+class TestBareDomainComponentEditable:
+    def test_editable_yaml_path(self):
+        from opi.forms.editables.fields.domains import DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE
+
+        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.yaml_path == "deployments[*]/expose-component-on-bare-domain"
+
+    def test_editable_depends_on_base_domain(self):
+        from opi.forms.editables.fields.domains import DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE
+
+        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.depends_on == "deployments[*]/base-domain"
+
+    def test_editable_show_when_custom(self):
+        from opi.forms.editables.fields.domains import DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE
+
+        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.show_when == {"value": ["__custom__"]}
+
+    def test_editable_in_domain_config_children(self):
+        from opi.forms.editables.fields.domains import (
+            DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE,
+            DOMAIN_CONFIG_EDITABLE,
+        )
+
+        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE in DOMAIN_CONFIG_EDITABLE.children
+
+    def test_editable_remove_when_none(self):
+        from opi.forms.editables.fields.domains import DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE
+
+        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.remove_when_none is True
+
+
+class TestBareDomainComponentProvider:
+    def test_provider_has_empty_option(self):
+        from opi.forms.visualizers.providers import BareDomainComponentOptionsProvider
+
+        provider = BareDomainComponentOptionsProvider(component_names=["frontend", "api"])
+        options = provider.get_options()
+        values = [o["value"] for o in options]
+        assert "" in values  # Empty option for "not on bare domain"
+
+    def test_provider_lists_components(self):
+        from opi.forms.visualizers.providers import BareDomainComponentOptionsProvider
+
+        provider = BareDomainComponentOptionsProvider(component_names=["frontend", "api"])
+        options = provider.get_options()
+        values = [o["value"] for o in options]
+        assert "frontend" in values
+        assert "api" in values
+
+    def test_provider_empty_label(self):
+        from opi.forms.visualizers.providers import BareDomainComponentOptionsProvider
+
+        provider = BareDomainComponentOptionsProvider(component_names=[])
+        options = provider.get_options()
+        assert options[0]["label"] == "Niet bereikbaar op kaal domein"
+
+    def test_provider_registered_in_registry(self):
+        from opi.forms.visualizers.providers import PROVIDER_REGISTRY
+
+        assert "BareDomainComponentOptionsProvider" in PROVIDER_REGISTRY
+
+
+# ---------------------------------------------------------------------------
+# URL preview with bare domain
+# ---------------------------------------------------------------------------
+
+
+class TestUrlPreviewBareDomain:
+    def test_bare_domain_shown_when_component_selected(self):
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [{"name": "frontend"}],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "subdomain": "www",
+                    "base-domain": "__custom__",
+                    "base-domain:custom": "voorbeeld.nl",
+                    "expose-component-on-bare-domain": "frontend",
+                }
+            ],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        urls = result["urls"]
+        bare_urls = [u for u in urls if "kaal domein" in u["component"]]
+        assert len(bare_urls) == 1
+        assert bare_urls[0]["url"] == "voorbeeld.nl"
+        assert "frontend" in bare_urls[0]["component"]
+
+    def test_bare_domain_hidden_when_no_component_selected(self):
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [{"name": "frontend"}],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "subdomain": "www",
+                    "base-domain": "__custom__",
+                    "base-domain:custom": "voorbeeld.nl",
+                }
+            ],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        urls = result["urls"]
+        bare_urls = [u for u in urls if "kaal domein" in u["component"]]
+        assert len(bare_urls) == 0
+
+    def test_bare_domain_hidden_when_empty_string(self):
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [{"name": "frontend"}],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "subdomain": "www",
+                    "base-domain": "__custom__",
+                    "base-domain:custom": "voorbeeld.nl",
+                    "expose-component-on-bare-domain": "",
+                }
+            ],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        urls = result["urls"]
+        bare_urls = [u for u in urls if "kaal domein" in u["component"]]
+        assert len(bare_urls) == 0

@@ -103,4 +103,9 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
         )
         urls.append({"component": f"{root_component} (root)", "url": short_url})
 
+    # Bare domain URL when a component is selected for expose-on-bare-domain
+    bare_domain_component = dep.get("expose-component-on-bare-domain")
+    if bare_domain_component and domain:
+        urls.append({"component": f"{bare_domain_component} (kaal domein)", "url": domain})
+
     return {"urls": urls, "has_urls": bool(urls)}

@@ -72,6 +72,7 @@ from opi.utils.naming import (
     DOMAIN_FORMAT_TEMPLATES,
     HostnameFormat,
     generate_argocd_application_name,
+    generate_bare_domain_hostname,
     generate_external_hostname,
     generate_helm_values_filename,
     generate_ingress_name_from_path,
@@ -3947,18 +3948,41 @@ class ProjectManager:
             subdomain_registered = is_new_registration  # Mark for rollback only if new
             logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
 
+        # Register or clean up bare domain in subdomain registry
+        expose_on_bare_domain = deployment.get("expose-component-on-bare-domain")
+        bare_domain_registered = False
+        if expose_on_bare_domain and base_domain:
+            if subdomain_connector is None:
+                subdomain_connector = SubdomainConnector()
+            await subdomain_connector.register_bare_domain(
+                base_domain=base_domain,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=cluster,
+            )
+            bare_domain_registered = True
+            logger.info(f"Bare domain '{base_domain}' registered for project '{project_name}'")
+        elif base_domain and not expose_on_bare_domain:
+            # Bare domain deselected — clean up any existing registration
+            if subdomain_connector is None:
+                subdomain_connector = SubdomainConnector()
+            deleted = await subdomain_connector.delete_bare_domain(base_domain)
+            if deleted:
+                logger.info(f"Bare domain '{base_domain}' deregistered for project '{project_name}'")
+
         # Store rollback info for use in exception handler
         # These variables are used by _rollback_subdomain_on_failure if needed
+        should_rollback = subdomain_registered or bare_domain_registered
         self._pending_subdomain_rollback = (
             {
-                "should_rollback": subdomain_registered,
+                "should_rollback": should_rollback,
                 "connector": subdomain_connector,
                 "project_name": project_name,
                 "deployment_name": deployment_name,
                 "subdomain": subdomain,
                 "base_domain": base_domain,
             }
-            if subdomain_registered
+            if should_rollback
             else None
         )
 
@@ -4173,9 +4197,11 @@ class ProjectManager:
             issuer_config = deployment.get("issuer")
             domain_mode = deployment.get("domain-mode")
             domain_format = deployment.get("domain-format")
+            expose_on_bare_domain = deployment.get("expose-component-on-bare-domain", False)
             logger.info(
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
-                f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}"
+                f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}, "
+                f"expose-component-on-bare-domain: {expose_on_bare_domain}"
             )
 
             # Get ingress map using centralized function
@@ -4680,6 +4706,58 @@ class ProjectManager:
                         root_web_address = generate_public_url(root_hostname, use_https)
                         self._deployment_results[deployment_name].urls["root"] = root_web_address
                         logger.info(f"Tracked root URL: {root_web_address}")
+
+                    # Create bare domain ingress for expose-component-on-bare-domain mode.
+                    # expose_on_bare_domain holds the component name that should serve the bare domain.
+                    if expose_on_bare_domain and base_domain and component_name == expose_on_bare_domain:
+                        bare_hostname = generate_bare_domain_hostname(base_domain)
+                        bare_ingress_name = f"{deployment_name}-bare-domain"
+                        bare_manifest_name = generate_manifest_name(component_name, "ingress-bare-domain")
+
+                        bare_ingress_variables = variables.copy()
+
+                        # Determine issuer for bare domain ingress (same logic as component ingress)
+                        bare_issuer_name = None
+                        bare_cluster_issuer = None
+
+                        if base_domain and issuer_config:
+                            if issuer_config in ("letsencrypt", "letsencrypt-staging"):
+                                bare_issuer_name = generate_issuer_name(base_domain, issuer_config)
+                            else:
+                                bare_issuer_name = issuer_config
+                        else:
+                            bare_cluster_issuer = get_ingress_cluster_issuer(cluster)
+
+                        bare_ingress_variables.update(
+                            {
+                                "name": bare_ingress_name,
+                                "service_name": unique_name,  # Points to same service as component
+                                "hostname": bare_hostname,
+                                "path": "/",
+                                "issuer_name": bare_issuer_name,
+                                "cluster_issuer": bare_cluster_issuer,
+                                "tls_secret_name": generate_tls_secret_name(bare_ingress_name),
+                            }
+                        )
+
+                        # Create the bare domain ingress manifest
+                        bare_manifest_file_path = self._manifest_generator.create_manifest_file(
+                            template_path=manifest_path,
+                            values=bare_ingress_variables,
+                            output_dir=full_output_dir,
+                            output_filename=bare_manifest_name,
+                            use_sops=False,
+                        )
+                        created_files.append(f"{bare_manifest_name}.yaml")
+                        logger.info(
+                            f"Successfully created bare domain ingress manifest for {bare_hostname}: {bare_manifest_file_path}"
+                        )
+
+                        # Track bare domain URL in deployment results
+                        bare_web_address = generate_public_url(bare_hostname, use_https)
+                        self._deployment_results[deployment_name].urls["bare-domain"] = bare_web_address
+                        logger.info(f"Tracked bare domain URL: {bare_web_address}")
+
                 else:
                     # Standard single manifest creation
                     unique_manifest_name = generate_manifest_name(component_name, manifest_name)

@@ -228,6 +228,17 @@ class DomainConfigEnforcer:
         if subdomain and actual_domain and "{subdomain}" in template:
             await self._check_subdomain_availability(subdomain, actual_domain, context)
 
+        # Validate bare domain component: only valid with custom domains
+        bare_domain_component = dep.get("expose-component-on-bare-domain")
+        if bare_domain_component and actual_domain:
+            from opi.connectors.subdomain import get_supported_base_domains
+            from opi.core.config import settings
+
+            supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
+            if actual_domain.lower() in supported:
+                raise ValueError("Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen")
+            await self._check_bare_domain_availability(actual_domain, context)
+
         return value
 
     @staticmethod
@@ -255,6 +266,31 @@ class DomainConfigEnforcer:
             return  # Owned by this project
 
         raise ValueError(f"Het subdomein '{subdomain}.{base_domain}' is niet beschikbaar")
+
+    @staticmethod
+    async def _check_bare_domain_availability(
+        base_domain: str,
+        context: dict[str, Any],
+    ) -> None:
+        """Check if the bare domain is available for registration.
+
+        Skips the check when the current project already owns the registration
+        (edit mode).
+        """
+        from opi.connectors.subdomain import BARE_DOMAIN_SUBDOMAIN, SubdomainConnector
+
+        connector = SubdomainConnector()
+        registration = await connector.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain.lower())
+
+        if registration is None:
+            return  # Available
+
+        # On edit: allow if same project owns it
+        project_name = context.get("project_name")
+        if project_name and registration.get("project_name") == project_name:
+            return  # Owned by this project
+
+        raise ValueError(f"Het kale domein '{base_domain}' is niet beschikbaar")
 
 
 class ServiceDependencyEnforcer:
