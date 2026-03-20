@@ -108,7 +108,7 @@
             {% if deployment.ingress_links %}
             <c-layout-flow gap="sm">
                 <c-heading type="h4"><c-icon icon="externe-link" size="md" color="hemelblauw" />Publieke links</c-heading>
-                <c-layout-row gap="sm">
+                <c-layout-flow gap="sm">
                     {% for link in deployment.ingress_links %}
                     <c-button
                         label="{{ link.component_name }}"
@@ -118,7 +118,7 @@
                         icon="externe-link"
                         @click="window.open('{{ link.url }}', '_blank')" />
                     {% endfor %}
-                </c-layout-row>
+                </c-layout-flow>
             </c-layout-flow>
             {% endif %}
 

@@ -1617,18 +1617,21 @@ async def project_details(request: Request, project_name: str):
             logger.warning(f"Failed to initialize backup manager: {backup_init_error}")
             backups_available = False
 
-        # Generate ingress URLs for components with inbound ports
+        # Generate ingress URLs for components with publish-on-web service
         from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
+        from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.utils.naming import HostnameFormat, generate_public_url, get_component_ingress_map
+
+        project_file_handler = ProjectFileHandler()
 
         # Add ingress information to deployments
         for deployment in project_details["deployments"]:
             cluster = deployment.get("cluster")
+            deployment["ingress_links"] = []
             if cluster:
                 try:
                     ingress_postfix = get_ingress_postfix(cluster)
                     use_https = get_ingress_tls_enabled(cluster)
-                    deployment["ingress_links"] = []
                     subdomain = deployment.get("subdomain")
                     base_domain = deployment.get("base-domain")
                     hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
@@ -1638,13 +1641,11 @@ async def project_details(request: Request, project_name: str):
                     for component in deployment.get("components", []):
                         component_name = component.get("reference")
                         if component_name:
-                            # Find the component definition to check for inbound ports
-                            component_def = next(
-                                (c for c in project_details["components"] if c.get("name") == component_name), None
+                            has_publish_on_web = project_file_handler.extract_component_publish_on_web(
+                                project_data, component_name
                             )
 
-                            # Only create ingress links for components with inbound ports
-                            if component_def and component_def.get("ports", {}).get("inbound"):
+                            if has_publish_on_web:
                                 ingress_map = get_component_ingress_map(
                                     component_name=component_name,
                                     deployment_name=deployment["name"],
@@ -1675,48 +1676,51 @@ async def project_details(request: Request, project_name: str):
         # Also add ingress information directly to components for the components section
         for component in project_details["components"]:
             component["ingress_links"] = []
-            # Only show ingress links for components with inbound ports
-            if component.get("ports", {}).get("inbound"):
-                # Find deployments that use this component
-                for deployment in project_details["deployments"]:
-                    cluster = deployment.get("cluster")
-                    if cluster and any(
-                        c.get("reference") == component["name"] for c in deployment.get("components", [])
-                    ):
-                        try:
-                            ingress_postfix = get_ingress_postfix(cluster)
-                            use_https = get_ingress_tls_enabled(cluster)
-                            subdomain = deployment.get("subdomain")
-                            base_domain = deployment.get("base-domain")
-                            hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
-                            domain_format = deployment.get("domain-format")
+            component_name = component.get("name")
+            if component_name:
+                has_publish_on_web = project_file_handler.extract_component_publish_on_web(project_data, component_name)
 
-                            ingress_map = get_component_ingress_map(
-                                component_name=component["name"],
-                                deployment_name=deployment["name"],
-                                project_name=project_name,
-                                ingress_postfix=ingress_postfix,
-                                subdomain=subdomain,
-                                base_domain=base_domain,
-                                hostname_format=hostname_format,
-                                domain_format=domain_format,
-                            )
+                if has_publish_on_web:
+                    # Find deployments that use this component
+                    for deployment in project_details["deployments"]:
+                        cluster = deployment.get("cluster")
+                        if cluster and any(
+                            c.get("reference") == component_name for c in deployment.get("components", [])
+                        ):
+                            try:
+                                ingress_postfix = get_ingress_postfix(cluster)
+                                use_https = get_ingress_tls_enabled(cluster)
+                                subdomain = deployment.get("subdomain")
+                                base_domain = deployment.get("base-domain")
+                                hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+                                domain_format = deployment.get("domain-format")
 
-                            for ingress_name, hostname in ingress_map.items():
-                                public_url = generate_public_url(hostname, use_https)
-                                component["ingress_links"].append(
-                                    {
-                                        "deployment_name": deployment["name"],
-                                        "cluster": cluster,
-                                        "ingress_name": ingress_name,
-                                        "hostname": hostname,
-                                        "url": public_url,
-                                    }
+                                ingress_map = get_component_ingress_map(
+                                    component_name=component_name,
+                                    deployment_name=deployment["name"],
+                                    project_name=project_name,
+                                    ingress_postfix=ingress_postfix,
+                                    subdomain=subdomain,
+                                    base_domain=base_domain,
+                                    hostname_format=hostname_format,
+                                    domain_format=domain_format,
                                 )
-                        except Exception as ingress_error:
-                            logger.warning(
-                                f"Failed to generate ingress links for component {component['name']} in deployment {deployment['name']}: {ingress_error}"
-                            )
+
+                                for ingress_name, hostname in ingress_map.items():
+                                    public_url = generate_public_url(hostname, use_https)
+                                    component["ingress_links"].append(
+                                        {
+                                            "deployment_name": deployment["name"],
+                                            "cluster": cluster,
+                                            "ingress_name": ingress_name,
+                                            "hostname": hostname,
+                                            "url": public_url,
+                                        }
+                                    )
+                            except Exception as ingress_error:
+                                logger.warning(
+                                    f"Failed to generate ingress links for component {component_name} in deployment {deployment['name']}: {ingress_error}"
+                                )
 
         # Get cluster base domains for domain settings modal
         from opi.web.router_self_service import get_cluster_base_domains_for_template
