@@ -14,31 +14,19 @@
 #}
 <div class="edit-section-content">
     {% if error %}
-    <c-notification type="error" heading="Validatiefout">
-        {{ error }}
-    </c-notification>
+    <c-alert kind="error" heading="Validatiefout" content="{{ error }}" />
     {% else %}
     <c-layout-flow gap="md">
 
-        <c-notification type="info" heading="Bevestiging">
-            Dit voert een eenmalige job uit in namespace <strong>{{ namespace }}</strong>.
-            De job wordt automatisch opgeruimd na voltooiing.
-        </c-notification>
+        <c-alert kind="info" heading="Bevestiging" content="Dit voert een eenmalige job uit in namespace {{ namespace }}. De job wordt automatisch opgeruimd na voltooiing." />
 
-        <c-description-list>
-            <c-description-list-item label="Image">{{ image }}</c-description-list-item>
-            {% if command %}
-            <c-description-list-item label="Command"><code>{{ command }}</code></c-description-list-item>
-            {% else %}
-            <c-description-list-item label="Command"><em>Standaard entrypoint</em></c-description-list-item>
-            {% endif %}
-            {% if env_vars_text %}
-            <c-description-list-item label="Omgevingsvariabelen"><pre style="margin:0; white-space:pre-wrap;">{{ env_vars_text }}</pre></c-description-list-item>
-            {% endif %}
-            {% if selected_service_labels %}
-            <c-description-list-item label="Services">{{ selected_service_labels | join(', ') }}</c-description-list-item>
-            {% endif %}
-        </c-description-list>
+        <c-data-list items='[
+            {"term": "Image", "value": "{{ image }}"}
+            {% if command %},{"term": "Command", "value": "{{ command }}"}{% endif %}
+            {% if env_vars_text %},{"term": "Omgevingsvariabelen", "value": "{{ env_vars_text | replace("\n", ", ") }}"}{% endif %}
+            {% if selected_service_labels %},{"term": "Services", "value": "{{ selected_service_labels | join(", ") }}"}{% endif %}
+            {% if not command %},{"term": "Command", "value": "Standaard entrypoint"}{% endif %}
+        ]' />
 
     </c-layout-flow>
 
