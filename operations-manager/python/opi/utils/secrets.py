@@ -356,6 +356,85 @@ class UserSecret(BaseSecret):
         return cls(env_vars=secret_data.copy())
 
 
+def get_deployment_service_secrets(
+    project_data: dict[str, Any],
+    deployment_name: str,
+) -> list[dict[str, str]]:
+    """Return available service secrets for a deployment.
+
+    Walks all components referenced by the deployment, collects the union
+    of service types, and maps each to its Kubernetes secret name.
+
+    This is the single source of truth for the service→secret mapping,
+    shared by both the project_manager (manifest generation) and the
+    job runner (envFrom references).
+
+    Args:
+        project_data: Full parsed project data dict.
+        deployment_name: Name of the deployment to inspect.
+
+    Returns:
+        List of dicts with ``name`` (display label) and ``secret_name``
+        (Kubernetes secret name).
+    """
+    from opi.handlers.project_file_handler import extract_service_names_from_component
+
+    # Mapping: (service type values, display label, secret class)
+    _SERVICE_SECRET_MAP: list[tuple[list[str], str, type[BaseSecret]]] = [
+        (
+            [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value],
+            "PostgreSQL database",
+            DatabaseSecret,
+        ),
+        (
+            [ServiceType.MINIO_STORAGE.value],
+            "MinIO object storage",
+            MinIOSecret,
+        ),
+        (
+            [ServiceType.KEYCLOAK.value],
+            "Keycloak SSO",
+            KeycloakSecret,
+        ),
+        (
+            [ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value],
+            "Redis cache",
+            RedisSecret,
+        ),
+    ]
+
+    # Find the deployment
+    deployment = None
+    for dep in project_data.get("deployments", []):
+        if dep.get("name") == deployment_name:
+            deployment = dep
+            break
+    if not deployment:
+        return []
+
+    # Collect all service names across all components in this deployment
+    base_components = {c.get("name"): c for c in project_data.get("components", [])}
+    all_service_names: set[str] = set()
+
+    for dep_component in deployment.get("components", []):
+        ref_name = dep_component.get("reference") if isinstance(dep_component, dict) else dep_component
+        if ref_name and ref_name in base_components:
+            component_services = extract_service_names_from_component(base_components[ref_name])
+            all_service_names.update(component_services)
+
+    # Build result
+    result: list[dict[str, str]] = []
+    for service_types, display_name, secret_cls in _SERVICE_SECRET_MAP:
+        if any(st in all_service_names for st in service_types):
+            result.append(
+                {
+                    "name": display_name,
+                    "secret_name": secret_cls.get_secret_name(deployment_name),
+                }
+            )
+    return result
+
+
 @dataclass
 class RegistrySecret(BaseSecret):
     """Container registry secret configuration for imagePullSecrets."""

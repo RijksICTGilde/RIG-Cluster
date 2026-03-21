@@ -20,11 +20,18 @@ spec:
         job-name: "{{ job_name }}"
     spec:
       restartPolicy: Never
+      {% if imagePullSecretsMap and image in imagePullSecretsMap %}
+      imagePullSecrets:
+        - name: {{ imagePullSecretsMap[image] }}
+      {% endif %}
       securityContext:
-        runAsNonRoot: true
         {% if cluster in ['local', 'sandboxed-local'] %}
+        runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
+        fsGroup: 1001
+        {% else %}
+        runAsNonRoot: true
         {% endif %}
         seccompProfile:
           type: RuntimeDefault
@@ -46,12 +53,20 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
-          {% if env_vars %}
+          {% if env_vars or (ca_config and ca_config.enabled and ca_config.env_vars) %}
           env:
+          {% if env_vars %}
           {% for env_name, env_value in env_vars.items() %}
             - name: {{ env_name }}
               value: "{{ env_value }}"
           {% endfor %}
+          {% endif %}
+          {% if ca_config and ca_config.enabled and ca_config.env_vars %}
+          {% for env_name, env_value in ca_config.env_vars.items() %}
+            - name: {{ env_name }}
+              value: "{{ env_value }}"
+          {% endfor %}
+          {% endif %}
           {% endif %}
           {% if env_from_secrets %}
           envFrom:
@@ -60,6 +75,17 @@ spec:
                 name: {{ secret_name }}
           {% endfor %}
           {% endif %}
+          {% if ca_config and ca_config.enabled %}
+          volumeMounts:
+            - name: ca-certificate
+              mountPath: {{ ca_config.container_path }}
+              readOnly: true
+          {% if ca_config.hash %}
+            - name: ca-certificate
+              mountPath: /etc/ssl/certs/{{ ca_config.hash }}.0
+              readOnly: true
+          {% endif %}
+          {% endif %}
           resources:
             requests:
               memory: "256Mi"
@@ -67,3 +93,10 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+      {% if ca_config and ca_config.enabled %}
+      volumes:
+        - name: ca-certificate
+          hostPath:
+            path: {{ ca_config.node_path }}
+            type: File
+      {% endif %}

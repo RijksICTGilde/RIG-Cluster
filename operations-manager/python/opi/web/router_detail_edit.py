@@ -1387,83 +1387,16 @@ async def _handle_backup_restore_submit(
 # ---------------------------------------------------------------------------
 
 
-def _get_deployment_service_secrets(project_data: dict[str, Any], deployment_name: str) -> list[dict[str, str]]:
-    """Return available service secrets for a deployment.
-
-    Inspects the deployment's components to find which services are used,
-    then maps them to Kubernetes secret names.
-
-    Returns:
-        List of dicts with "name" (display label) and "secret_name" (K8s secret name).
-    """
-    from opi.handlers.project_file_handler import extract_service_names_from_component
-    from opi.services.services_enums import ServiceType
-    from opi.utils.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
-
-    service_secret_map: list[tuple[list[str], str, type]] = [
-        (
-            [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value],
-            "PostgreSQL database",
-            DatabaseSecret,
-        ),
-        (
-            [ServiceType.MINIO_STORAGE.value],
-            "MinIO object storage",
-            MinIOSecret,
-        ),
-        (
-            [ServiceType.KEYCLOAK.value],
-            "Keycloak SSO",
-            KeycloakSecret,
-        ),
-        (
-            [ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value],
-            "Redis cache",
-            RedisSecret,
-        ),
-    ]
-
-    # Collect all service names used by any component in this deployment
-    all_service_names: set[str] = set()
-    deployment = None
-    for dep in project_data.get("deployments", []):
-        if dep.get("name") == deployment_name:
-            deployment = dep
-            break
-
-    if not deployment:
-        return []
-
-    base_components = {c.get("name"): c for c in project_data.get("components", [])}
-
-    for dep_component in deployment.get("components", []):
-        ref_name = dep_component.get("reference") if isinstance(dep_component, dict) else dep_component
-        if ref_name and ref_name in base_components:
-            component_services = extract_service_names_from_component(base_components[ref_name])
-            all_service_names.update(component_services)
-
-    # Build result list
-    result: list[dict[str, str]] = []
-    for service_types, display_name, secret_cls in service_secret_map:
-        if any(st in all_service_names for st in service_types):
-            result.append(
-                {
-                    "name": display_name,
-                    "secret_name": secret_cls.get_secret_name(deployment_name),
-                }
-            )
-
-    return result
-
-
 @detail_edit_router.get("/{project_name}/run-job/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
 async def job_runner_form(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Return the job runner form HTML fragment."""
+    from opi.utils.secrets import get_deployment_service_secrets
+
     project, _user_email = _require_project_edit_access(request, project_name)
     project_data = project.data or {}
 
-    available_services = _get_deployment_service_secrets(project_data, deployment_name)
+    available_services = get_deployment_service_secrets(project_data, deployment_name)
 
     templates = get_templates()
     context = {
@@ -1482,6 +1415,8 @@ async def job_runner_form(request: Request, project_name: str, deployment_name: 
 @requires_sso
 async def job_runner_submit(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Validate form and return confirmation view."""
+    from opi.utils.secrets import get_deployment_service_secrets
+
     project, _user_email = _require_project_edit_access(request, project_name)
     project_data = project.data or {}
 
@@ -1507,7 +1442,7 @@ async def job_runner_submit(request: Request, project_name: str, deployment_name
             error = f"Ongeldige omgevingsvariabelen: {e}"
 
     # Build display labels for selected services
-    available_services = _get_deployment_service_secrets(project_data, deployment_name)
+    available_services = get_deployment_service_secrets(project_data, deployment_name)
     secret_to_label = {s["secret_name"]: s["name"] for s in available_services}
     selected_service_labels = [secret_to_label.get(s, s) for s in selected_services]
 
