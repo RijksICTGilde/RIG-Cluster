@@ -16,6 +16,13 @@
                     icon="bewerken"
                     @click="openEditModal('modal-edit-deployment-{{ original_index }}', 'Images bewerken - {{ deployment.name }}')" />
                 <c-button
+                    label="Job uitvoeren"
+                    kind="secondary"
+                    size="sm"
+                    showIcon="before"
+                    icon="publicatie"
+                    @click="openJobRunner('{{ deployment.name }}')" />
+                <c-button
                     label="Deployment herverwerken"
                     kind="secondary"
                     size="sm"

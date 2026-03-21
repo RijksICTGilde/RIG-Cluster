@@ -1382,6 +1382,218 @@ async def _handle_backup_restore_submit(
     return HTMLResponse(content=rendered)
 
 
+# ---------------------------------------------------------------------------
+# Job Runner endpoints
+# ---------------------------------------------------------------------------
+
+
+def _get_deployment_service_secrets(project_data: dict[str, Any], deployment_name: str) -> list[dict[str, str]]:
+    """Return available service secrets for a deployment.
+
+    Inspects the deployment's components to find which services are used,
+    then maps them to Kubernetes secret names.
+
+    Returns:
+        List of dicts with "name" (display label) and "secret_name" (K8s secret name).
+    """
+    from opi.handlers.project_file_handler import extract_service_names_from_component
+    from opi.services.services_enums import ServiceType
+    from opi.utils.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
+
+    service_secret_map: list[tuple[list[str], str, type]] = [
+        (
+            [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value],
+            "PostgreSQL database",
+            DatabaseSecret,
+        ),
+        (
+            [ServiceType.MINIO_STORAGE.value],
+            "MinIO object storage",
+            MinIOSecret,
+        ),
+        (
+            [ServiceType.KEYCLOAK.value],
+            "Keycloak SSO",
+            KeycloakSecret,
+        ),
+        (
+            [ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value],
+            "Redis cache",
+            RedisSecret,
+        ),
+    ]
+
+    # Collect all service names used by any component in this deployment
+    all_service_names: set[str] = set()
+    deployment = None
+    for dep in project_data.get("deployments", []):
+        if dep.get("name") == deployment_name:
+            deployment = dep
+            break
+
+    if not deployment:
+        return []
+
+    base_components = {c.get("name"): c for c in project_data.get("components", [])}
+
+    for dep_component in deployment.get("components", []):
+        ref_name = dep_component.get("reference") if isinstance(dep_component, dict) else dep_component
+        if ref_name and ref_name in base_components:
+            component_services = extract_service_names_from_component(base_components[ref_name])
+            all_service_names.update(component_services)
+
+    # Build result list
+    result: list[dict[str, str]] = []
+    for service_types, display_name, secret_cls in service_secret_map:
+        if any(st in all_service_names for st in service_types):
+            result.append(
+                {
+                    "name": display_name,
+                    "secret_name": secret_cls.get_secret_name(deployment_name),
+                }
+            )
+
+    return result
+
+
+@detail_edit_router.get("/{project_name}/run-job/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def job_runner_form(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Return the job runner form HTML fragment."""
+    project, _user_email = _require_project_edit_access(request, project_name)
+    project_data = project.data or {}
+
+    available_services = _get_deployment_service_secrets(project_data, deployment_name)
+
+    templates = get_templates()
+    context = {
+        "project_name": project_name,
+        "deployment_name": deployment_name,
+        "available_services": available_services,
+    }
+    rendered = templates.get_template("project-details/job-runner-form.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+    return HTMLResponse(content=rendered)
+
+
+@detail_edit_router.post("/{project_name}/run-job/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def job_runner_submit(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Validate form and return confirmation view."""
+    project, _user_email = _require_project_edit_access(request, project_name)
+    project_data = project.data or {}
+
+    form = await request.form()
+    image = (form.get("image") or "").strip()
+    command = (form.get("command") or "").strip() or None
+    env_vars_text = (form.get("env_vars_text") or "").strip() or None
+    selected_services = form.getlist("selected_services")
+
+    # Validate
+    error = None
+    if not image:
+        error = "Container image is verplicht."
+    elif not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_./:@-]*$", image):
+        error = "Ongeldig image formaat."
+
+    if not error and env_vars_text:
+        from opi.utils.env_vars import validate_and_parse_env_vars
+
+        try:
+            validate_and_parse_env_vars(env_vars_text)
+        except ValueError as e:
+            error = f"Ongeldige omgevingsvariabelen: {e}"
+
+    # Build display labels for selected services
+    available_services = _get_deployment_service_secrets(project_data, deployment_name)
+    secret_to_label = {s["secret_name"]: s["name"] for s in available_services}
+    selected_service_labels = [secret_to_label.get(s, s) for s in selected_services]
+
+    # Resolve namespace for display
+    from opi.core.cluster_config import get_prefixed_namespace
+    from opi.core.config import settings
+    from opi.handlers.project_file_handler import create_project_file_handler
+
+    pfh = create_project_file_handler()
+    raw_namespace = pfh.extract_deployment_namespace(project_data, deployment_name)
+    namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, raw_namespace) if raw_namespace else "onbekend"
+
+    templates = get_templates()
+    context = {
+        "project_name": project_name,
+        "deployment_name": deployment_name,
+        "image": image,
+        "command": command,
+        "env_vars_text": env_vars_text,
+        "selected_services": selected_services,
+        "selected_service_labels": selected_service_labels,
+        "namespace": namespace,
+        "error": error,
+    }
+    rendered = templates.get_template("project-details/job-runner-confirm.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+    return HTMLResponse(content=rendered)
+
+
+@detail_edit_router.post("/{project_name}/run-job/{deployment_name}/confirm", response_class=HTMLResponse)
+@requires_sso
+async def job_runner_confirm(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Start the job as a background task and return progress view."""
+    _require_project_edit_access(request, project_name)
+
+    form = await request.form()
+    image = (form.get("image") or "").strip()
+    command = (form.get("command") or "").strip() or None
+    env_vars_text = (form.get("env_vars_text") or "").strip() or None
+    selected_services: list[str] = form.getlist("selected_services")
+
+    # Parse env vars
+    env_vars: dict[str, str] = {}
+    if env_vars_text:
+        from opi.utils.env_vars import validate_and_parse_env_vars
+
+        env_vars = validate_and_parse_env_vars(env_vars_text)
+
+    from opi.core.job_tasks import run_job_task
+    from opi.core.task_manager import create_task
+
+    task_id = create_task(project_name)
+
+    logger.info(
+        "Starting job for %s/%s: image=%s, services=%s",
+        project_name,
+        deployment_name,
+        image,
+        selected_services,
+    )
+
+    bg_task = BackgroundTask(
+        run_job_task,
+        task_id,
+        project_name,
+        deployment_name,
+        image,
+        command,
+        env_vars,
+        selected_services,
+    )
+
+    templates = get_templates()
+    context = {"task_id": task_id, "project_name": project_name}
+    rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    response = HTMLResponse(content=rendered)
+    response.background = bg_task
+    return response
+
+
 @detail_edit_router.get("/{project_name}/modal-wizard/progress/{task_id}", response_class=HTMLResponse)
 @requires_sso
 async def modal_wizard_progress_html(request: Request, project_name: str, task_id: str) -> HTMLResponse:

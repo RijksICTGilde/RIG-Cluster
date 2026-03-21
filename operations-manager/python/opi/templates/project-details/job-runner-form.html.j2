@@ -1,0 +1,57 @@
+{#
+  Job Runner Form - step 1: configure the job.
+
+  Required context:
+    - project_name: str
+    - deployment_name: str
+    - available_services: list of dicts with "name" (display) and "secret_name" (K8s secret)
+#}
+<div class="edit-section-content">
+    <form id="job-runner-form"
+          hx-post="/projects/{{ project_name }}/run-job/{{ deployment_name }}"
+          hx-target="#edit-section-inner"
+          hx-swap="innerHTML">
+
+        <c-layout-flow gap="md">
+
+            <c-form-field>
+                <c-label>Container image <c-icon icon="verplicht" size="sm" color="rood" /></c-label>
+                <c-helper-text>Volledig image path, bijv. <code>alpine:latest</code> of <code>registry.example.com/my-tool:v1</code></c-helper-text>
+                <c-input name="image" type="text" required placeholder="alpine:latest" />
+            </c-form-field>
+
+            <c-form-field>
+                <c-label>Command</c-label>
+                <c-helper-text>Shell command om uit te voeren (optioneel). Wordt uitgevoerd als <code>/bin/sh -c "..."</code></c-helper-text>
+                <c-textarea name="command" rows="3" placeholder="echo hello && sleep 5"></c-textarea>
+            </c-form-field>
+
+            <c-form-field>
+                <c-label>Omgevingsvariabelen</c-label>
+                <c-helper-text>Extra omgevingsvariabelen in <code>KEY=VALUE</code> formaat, een per regel (optioneel)</c-helper-text>
+                <c-textarea name="env_vars_text" rows="4" placeholder="MY_VAR=value&#10;DEBUG=true"></c-textarea>
+            </c-form-field>
+
+            {% if available_services %}
+            <c-form-field>
+                <c-label>Services</c-label>
+                <c-helper-text>Selecteer welke deployment-services beschikbaar moeten zijn in de job (credentials worden als omgevingsvariabelen ge&iuml;njecteerd)</c-helper-text>
+                <c-layout-flow gap="sm">
+                    {% for svc in available_services %}
+                    <c-checkbox
+                        name="selected_services"
+                        value="{{ svc.secret_name }}"
+                        label="{{ svc.name }}"
+                        checked />
+                    {% endfor %}
+                </c-layout-flow>
+            </c-form-field>
+            {% endif %}
+
+        </c-layout-flow>
+    </form>
+</div>
+<div class="edit-section-actions">
+    <c-button kind="tertiary" label="Annuleren" @click="closeEditModal()" />
+    <c-button kind="primary" label="Volgende" @click="htmx.trigger('#job-runner-form', 'submit')" />
+</div>
