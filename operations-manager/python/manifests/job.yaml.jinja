@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ job_name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/managed-by: opi-job-runner
+    job.rig.nl/project: "{{ project_name }}"
+    job.rig.nl/deployment: "{{ deployment_name }}"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: opi-job-runner
+        job.rig.nl/project: "{{ project_name }}"
+        job.rig.nl/deployment: "{{ deployment_name }}"
+        job-name: "{{ job_name }}"
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        {% if cluster in ['local', 'sandboxed-local'] %}
+        runAsUser: 1001
+        runAsGroup: 1001
+        {% endif %}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: job
+          image: "{{ image }}"
+          imagePullPolicy: IfNotPresent
+          {% if command %}
+          command: ["/bin/sh", "-c"]
+          args:
+            - "{{ command }}"
+          {% endif %}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          {% if env_vars %}
+          env:
+          {% for env_name, env_value in env_vars.items() %}
+            - name: {{ env_name }}
+              value: "{{ env_value }}"
+          {% endfor %}
+          {% endif %}
+          {% if env_from_secrets %}
+          envFrom:
+          {% for secret_name in env_from_secrets %}
+            - secretRef:
+                name: {{ secret_name }}
+          {% endfor %}
+          {% endif %}
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

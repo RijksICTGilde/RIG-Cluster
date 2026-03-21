@@ -1804,6 +1804,44 @@
        the global ``isEditSubmitting`` flag live in /static/js/edit_modal.js so
        they are in scope on every page that mounts the wizard. */
 
+    function openJobRunner(deploymentName) {
+        isEditSubmitting = false;
+
+        document.getElementById('edit-section-title-text').textContent = 'Job uitvoeren - ' + deploymentName;
+
+        var errorEl = document.getElementById('edit-section-error');
+        errorEl.style.display = 'none';
+
+        var innerEl = document.getElementById('edit-section-inner');
+        innerEl.innerHTML =
+            '<div class="edit-section-content">' +
+                '<div class="edit-section-loading"><p>Laden...</p></div>' +
+            '</div>';
+
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        // Hide the default save button (job form has its own buttons)
+        var saveBtn = document.getElementById('edit-section-save-btn');
+        if (saveBtn) saveBtn.style.display = 'none';
+
+        fetch('/projects/{{ project.name }}/run-job/' + deploymentName, {
+            credentials: 'same-origin',
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van het formulier');
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    }
+
     /* -- HTMX integration: detect progress view and track submit state -- */
 
     document.addEventListener('htmx:afterSwap', function(evt) {
