@@ -105,6 +105,8 @@ class JobManager:
         cluster: str,
     ) -> None:
         """Render Job manifest from template and apply via kubectl."""
+        from opi.core.cluster_config import get_ca_certificate_config
+
         variables = {
             "job_name": job_name,
             "namespace": namespace,
@@ -115,6 +117,8 @@ class JobManager:
             "env_vars": env_vars,
             "env_from_secrets": env_from_secrets,
             "cluster": cluster,
+            "ca_config": get_ca_certificate_config(cluster),
+            "imagePullSecretsMap": {},  # TODO: populate from project registries when needed
         }
 
         manifest_yaml = render_template("job.yaml.jinja", variables)
