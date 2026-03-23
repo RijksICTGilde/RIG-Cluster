@@ -294,10 +294,13 @@ def create_app() -> FastAPI:
         logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
         raise exc
 
+    from opi.middleware.security_headers import SecurityHeadersMiddleware
+
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(MaintenanceMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+    app.add_middleware(SecurityHeadersMiddleware, keycloak_url=settings.KEYCLOAK_URL)
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
 
     # Flow ID middleware - runs first (outermost) to tag all log lines for this request
@@ -352,6 +355,19 @@ def create_app() -> FastAPI:
     if os.path.exists(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
         logger.info(f"Regular static files mounted at /static from {static_dir}")
+
+    # security.txt for responsible disclosure (internet.nl compliance)
+    from fastapi.responses import PlainTextResponse
+
+    @app.get("/.well-known/security.txt", include_in_schema=False, response_class=PlainTextResponse)
+    async def security_txt() -> PlainTextResponse:
+        """Serve security.txt for vulnerability disclosure per RFC 9116."""
+        content = (
+            "Contact: mailto:rig-platform@rijksoverheid.nl\n"
+            "Expires: 2027-01-01T00:00:00.000Z\n"
+            "Preferred-Languages: nl, en\n"
+        )
+        return PlainTextResponse(content, media_type="text/plain")
 
     # Liveness probe - always OK (keeps the pod alive)
     @app.get("/health", include_in_schema=False, response_class=JSONResponse)
