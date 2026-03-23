@@ -57,9 +57,42 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
 
     project_name = yaml_data.get("name") or "projectid"
 
-    # Get component names from yaml_data
-    components = yaml_data.get("components", [])
-    component_names = [comp["name"] for comp in components if isinstance(comp, dict) and comp.get("name")]
+    # Get component names scoped to this deployment.
+    # In edit mode (deployment has components list), filter to components
+    # assigned to this deployment that have the publish-on-web service.
+    # In create mode (no deployment components yet, no services configured),
+    # show all project-level component names as a preview.
+    dep_components = dep.get("components", [])
+    dep_component_refs = {c["reference"] for c in dep_components if isinstance(c, dict) and c.get("reference")}
+
+    all_components = yaml_data.get("components", [])
+
+    # Detect whether any component has services configured at all.
+    # During the create wizard, services haven't been assigned yet.
+    any_services_configured = any(
+        (isinstance(c, dict) and (c.get("services") or c.get("uses-services"))) for c in all_components
+    )
+
+    component_names: list[str] = []
+    for comp in all_components:
+        if not isinstance(comp, dict) or not comp.get("name"):
+            continue
+        name = comp["name"]
+        # Filter to deployment's components (skip filter if deployment has no component list yet)
+        if dep_component_refs and name not in dep_component_refs:
+            continue
+        # Filter to components with publish-on-web service (skip filter during create wizard)
+        if any_services_configured:
+            comp_services = comp.get("services", []) + comp.get("uses-services", [])
+            service_names = []
+            for s in comp_services:
+                if isinstance(s, str):
+                    service_names.append(s)
+                elif isinstance(s, dict):
+                    service_names.extend(s.keys())
+            if "publish-on-web" not in service_names:
+                continue
+        component_names.append(name)
 
     if not component_names:
         component_names = ["component"]
