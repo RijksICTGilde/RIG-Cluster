@@ -536,7 +536,7 @@ class TestUrlPreviewBareDomain:
 
         yaml_data = {
             "name": "myproject",
-            "components": [{"name": "frontend"}],
+            "components": [{"name": "frontend", "services": ["publish-on-web"]}],
             "deployments": [
                 {
                     "name": "productie",
@@ -560,7 +560,7 @@ class TestUrlPreviewBareDomain:
 
         yaml_data = {
             "name": "myproject",
-            "components": [{"name": "frontend"}],
+            "components": [{"name": "frontend", "services": ["publish-on-web"]}],
             "deployments": [
                 {
                     "name": "productie",
@@ -581,7 +581,7 @@ class TestUrlPreviewBareDomain:
 
         yaml_data = {
             "name": "myproject",
-            "components": [{"name": "frontend"}],
+            "components": [{"name": "frontend", "services": ["publish-on-web"]}],
             "deployments": [
                 {
                     "name": "productie",
@@ -597,3 +597,98 @@ class TestUrlPreviewBareDomain:
         urls = result["urls"]
         bare_urls = [u for u in urls if "kaal domein" in u["component"]]
         assert len(bare_urls) == 0
+
+
+class TestUrlPreviewComponentFiltering:
+    """URL preview only shows components in the deployment with publish-on-web."""
+
+    def test_only_deployment_components_shown(self):
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [
+                {"name": "frontend", "services": ["publish-on-web"]},
+                {"name": "backend", "services": ["publish-on-web"]},
+                {"name": "worker", "services": ["publish-on-web"]},
+            ],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "component-deployment-project",
+                    "components": [
+                        {"reference": "frontend"},
+                        {"reference": "backend"},
+                    ],
+                }
+            ],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        component_names = [u["component"] for u in result["urls"]]
+        assert "frontend" in component_names
+        assert "backend" in component_names
+        assert "worker" not in component_names
+
+    def test_only_publish_on_web_components_shown(self):
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [
+                {"name": "frontend", "services": ["publish-on-web"]},
+                {"name": "worker", "services": ["postgresql"]},
+            ],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "component-deployment-project",
+                    "components": [
+                        {"reference": "frontend"},
+                        {"reference": "worker"},
+                    ],
+                }
+            ],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        component_names = [u["component"] for u in result["urls"]]
+        assert "frontend" in component_names
+        assert "worker" not in component_names
+
+    def test_fallback_placeholder_when_no_web_components(self):
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [{"name": "worker", "services": ["postgresql"]}],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "component-deployment-project",
+                }
+            ],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        assert result["has_urls"]
+        assert result["urls"][0]["component"] == "component"
+
+    def test_create_wizard_shows_all_components_without_services(self):
+        """During creation, components have no services yet — show all names."""
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+
+        yaml_data = {
+            "name": "myproject",
+            "components": [
+                {"name": "frontend"},
+                {"name": "api"},
+            ],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "component-deployment-project",
+                }
+            ],
+        }
+        result = compute_url_preview(yaml_data, {"deployment_index": 0})
+        component_names = [u["component"] for u in result["urls"]]
+        assert "frontend" in component_names
+        assert "api" in component_names

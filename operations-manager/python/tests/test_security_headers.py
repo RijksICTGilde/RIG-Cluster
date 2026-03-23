@@ -50,6 +50,21 @@ class TestSecurityHeadersMiddleware:
         csp = mw._build_csp()
         assert "https://cdn.jsdelivr.net" in csp
 
+    def test_csp_includes_unpkg(self):
+        """CSP script-src includes unpkg.com for HTMX (loaded by jinja-roos-components)."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        mw._keycloak_host = ""
+        csp = mw._build_csp()
+        assert "https://unpkg.com" in csp
+
+    def test_csp_img_src_includes_keycloak(self):
+        """CSP img-src includes Keycloak origin for auth redirects."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        mw._keycloak_host = "https://keycloak.example.com"
+        csp = mw._build_csp()
+        assert "img-src" in csp
+        assert "https://keycloak.example.com" in csp.split("img-src")[1].split(";")[0]
+
     def test_csp_frame_ancestors_none(self):
         """CSP blocks framing via frame-ancestors 'none'."""
         mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
@@ -89,7 +104,7 @@ class TestSecurityHeadersIntegration:
         response = client.get("/test")
         csp = response.headers["Content-Security-Policy"]
         assert "default-src 'self'" in csp
-        assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net" in csp
+        assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com" in csp
         assert "https://keycloak.test" in csp
 
     def test_no_hsts_on_http(self, client: TestClient):

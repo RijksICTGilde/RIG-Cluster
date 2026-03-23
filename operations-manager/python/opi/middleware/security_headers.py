@@ -42,11 +42,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Inline styles: ROOS components render style attributes; 'unsafe-inline' required.
         # Inline scripts: HTMX event handlers are inline; 'unsafe-inline' required.
         # cdn.jsdelivr.net: Chart.js loaded from CDN on project-details page.
+        # unpkg.com: HTMX loaded from CDN by jinja-roos-components.
         parts = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-            "style-src 'self' 'unsafe-inline'",
-            "img-src 'self' data:",
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com",
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+            f"img-src 'self' data: https://fastapi.tiangolo.com{keycloak}",
             "font-src 'self'",
             f"connect-src 'self'{keycloak}",
             f"form-action 'self'{keycloak}",

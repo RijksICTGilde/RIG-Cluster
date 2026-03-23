@@ -48,6 +48,7 @@ DOMAIN_BASE_DOMAIN_EDITABLE = Editable(
     converter=CustomDomainSelectConverter(),
     defers_to="deployments[*]/base-domain:custom",
     defer_when=SentinelValueCondition(),
+    remove_when_none=True,
 )
 
 DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE = Editable(
