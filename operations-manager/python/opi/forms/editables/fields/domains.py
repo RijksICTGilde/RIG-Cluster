@@ -43,7 +43,6 @@ DOMAIN_SUBDOMAIN_EDITABLE = Editable(
 
 DOMAIN_BASE_DOMAIN_EDITABLE = Editable(
     yaml_path="deployments[*]/base-domain",
-    required=True,
     values_provider="ClusterBaseDomainOptionsProvider",
     validator=BaseDomainValidator(),
     converter=CustomDomainSelectConverter(),
@@ -66,6 +65,14 @@ DOMAIN_ROOT_COMPONENT_EDITABLE = Editable(
     show_when={"value": ROOT_COMPONENT_FORMAT_IDS},
 )
 
+DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE = Editable(
+    yaml_path="deployments[*]/expose-component-on-bare-domain",
+    values_provider="BareDomainComponentOptionsProvider",
+    depends_on="deployments[*]/base-domain",
+    show_when={"value": ["__custom__"]},
+    remove_when_none=True,
+)
+
 DOMAIN_ISSUER_EDITABLE = Editable(
     yaml_path="deployments[*]/issuer",
     depends_on="deployments[*]/base-domain",
@@ -82,6 +89,7 @@ DOMAIN_CONFIG_EDITABLE = Editable(
         DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
         DOMAIN_SUBDOMAIN_EDITABLE,
         DOMAIN_ROOT_COMPONENT_EDITABLE,
+        DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE,
         DOMAIN_ISSUER_EDITABLE,
     ],
 )

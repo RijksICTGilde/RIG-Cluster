@@ -8,16 +8,15 @@ from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_for
 
 
 def _get_default_domain() -> str:
-    """Return the first supported domain for the current cluster."""
+    """Return the ingress postfix domain for the current cluster (the cluster default)."""
     from opi.core.cluster_config import CLUSTER_CONFIG
     from opi.core.config import settings
 
     cluster = settings.CLUSTER_MANAGER
     if cluster and cluster in CLUSTER_CONFIG:
-        raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
-        if raw:
-            entry = raw[0]
-            return entry["domain"] if isinstance(entry, dict) else entry
+        postfix = CLUSTER_CONFIG[cluster].get("ingress_postfix", "")
+        if postfix:
+            return postfix.lstrip(".")
     return "domein.nl"
 
 
@@ -103,5 +102,10 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
             domain=domain,
         )
         urls.append({"component": f"{root_component} (root)", "url": short_url})
+
+    # Bare domain URL when a component is selected for expose-on-bare-domain
+    bare_domain_component = dep.get("expose-component-on-bare-domain")
+    if bare_domain_component and domain:
+        urls.append({"component": f"{bare_domain_component} (kaal domein)", "url": domain})
 
     return {"urls": urls, "has_urls": bool(urls)}

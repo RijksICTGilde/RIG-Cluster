@@ -60,7 +60,7 @@ class TestTuneDeploymentResources:
     async def test_tune_with_oom_kills(
         self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
     ):
-        """OOM kills should produce a 1.5x recommendation."""
+        """OOM kills should produce a 2x recommendation (128Mi is in the <256Mi range)."""
         project_data = {
             "name": "my-project",
             "components": [
@@ -102,7 +102,7 @@ class TestTuneDeploymentResources:
         assert isinstance(result, TuneResult)
         assert len(result.changes) == 1
         assert result.changes[0]["has_oom_kills"] == "True"
-        assert result.changes[0]["new_limits_memory"] == "192Mi"  # 128 * 1.5
+        assert result.changes[0]["new_limits_memory"] == "256Mi"  # 128 * 2.0
         assert result.deployment_refresh_triggered is True
 
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-my-project")

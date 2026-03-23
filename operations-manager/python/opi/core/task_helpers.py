@@ -33,7 +33,18 @@ async def create_async_task(
 
     Returns:
         Task dict with task_id and status.
+
+    Raises:
+        HTTPException 503: When the application is draining (graceful shutdown).
     """
+    from opi.core.shutdown import is_draining
+
+    if is_draining():
+        raise HTTPException(
+            status_code=503,
+            detail="Service is shutting down. Please retry shortly — the new instance will pick up pending work.",
+        )
+
     task_service = get_task_service(request)
 
     federation_service = getattr(request.app.state, "federation_service", None)

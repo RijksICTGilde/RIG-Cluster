@@ -331,7 +331,7 @@ class WebVariables(Enum):
 
     PUBLIC_HOST = VariableDefinition(
         name="PUBLIC_HOST",
-        description="De publieke hostname/URL waar deze component bereikbaar zal zijn",
+        description="De publieke hostname/URL waar een component bereikbaar zal zijn",
         source="direct",
     )
 

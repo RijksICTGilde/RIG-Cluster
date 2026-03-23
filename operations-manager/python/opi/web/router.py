@@ -26,6 +26,7 @@ from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
 from .router_detail_edit import detail_edit_router
 from .router_self_service import check_subdomain_availability_web
+from .router_user_admin import user_admin_router
 from .router_wizard import wizard_router
 from .services_router import services_router
 
@@ -40,6 +41,7 @@ web_router.include_router(services_router)
 web_router.include_router(metrics_explorer_router)
 web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
+web_router.include_router(user_admin_router)
 
 
 @web_router.get("/")
@@ -2994,7 +2996,56 @@ async def deployment_memory_check(
         warnings = check_deployment_resources(project_name, deployment_name)
     except Exception as e:
         logger.debug(f"Memory check failed for {project_name}/{deployment_name}: {e}")
-        return HTMLResponse("")
+        warnings = []
+
+    # Supplement with kubectl-based OOM detection: Prometheus may report
+    # reason="Error" instead of "OOMKilled" for exit-code-137 kills,
+    # so kubectl (which checks both reason and exit code) is more reliable.
+    try:
+        from opi.core.cluster_config import get_prefixed_namespace
+        from opi.services.oom_watcher import detect_oom_kills
+        from opi.services.resource_tuning_service import MemoryCheckResult, get_project_data
+        from opi.utils.naming import generate_unique_name
+
+        project_data, _ = get_project_data(project_name)
+        oom_warned_components = {w.component for w in warnings if w.oom_detected}
+
+        for dep in project_data.get("deployments", []):
+            if dep.get("name") != deployment_name:
+                continue
+            base_ns = dep.get("namespace", "")
+            cluster = dep.get("cluster", "")
+            if not base_ns or not cluster:
+                continue
+            namespace = get_prefixed_namespace(cluster, base_ns)
+
+            for comp in dep.get("components", []):
+                comp_ref = comp.get("reference", "")
+                if not comp_ref or comp_ref in oom_warned_components:
+                    continue
+                unique_name = generate_unique_name(deployment_name, comp_ref)
+                oom_kills = await detect_oom_kills(namespace, [unique_name])
+                if oom_kills:
+                    # Extract current limit from project data for display
+                    from opi.handlers.project_file_handler import ProjectFileHandler
+
+                    fh = ProjectFileHandler()
+                    res = fh.extract_component_resources(project_data, comp_ref)
+                    dep_res = fh.extract_deployment_component_resources(project_data, deployment_name, comp_ref)
+                    if dep_res:
+                        res.update(dep_res)
+                    current_limit = res.get("limits_memory", "?")
+                    warnings.append(
+                        MemoryCheckResult(
+                            component=comp_ref,
+                            current_limit=current_limit,
+                            recommended_limit="(tune to auto-detect)",
+                            saving_mb=0,
+                            oom_detected=True,
+                        )
+                    )
+    except Exception as e:
+        logger.debug(f"kubectl OOM check failed for {project_name}/{deployment_name}: {e}")
 
     container_id = f"memory-check-{id_prefix or deployment_name}"
 
@@ -3080,7 +3131,6 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
     from opi.core.startup import ensure_projects_fresh
     from opi.core.task_manager import create_task
     from opi.services.project_service import get_project_service
-    from opi.services.resource_tuning_service import tune_deployment_resources
 
     templates = get_templates()
     user = get_current_user(request)
@@ -3100,18 +3150,138 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
     metrics_task = progress.add_task("Prometheus metrics ophalen")
 
     async def _run_tune() -> None:
+        from opi.services.resource_tuning_service import (
+            commit_project_yaml,
+            get_project_data,
+            trigger_reprocessing,
+        )
+
         try:
-            result = await tune_deployment_resources(project_name, deployment_name)
+            # Step 1: Query Prometheus and compute recommendations
+            from datetime import UTC, datetime
+
+            from opi.core.cluster_config import get_prefixed_namespace
+            from opi.handlers.project_file_handler import ProjectFileHandler
+            from opi.services.resource_tuning_service import (
+                _analyze_component_resources,
+                get_metrics_connector,
+            )
+
+            project_data, filename = get_project_data(project_name)
+            file_handler = ProjectFileHandler()
+
+            try:
+                connector = get_metrics_connector()
+            except Exception as e:
+                raise RuntimeError(f"Metrics backend unavailable: {e}") from e
+
             progress.complete_task(metrics_task)
 
-            if result.changes:
-                for c in result.changes:
+            # Step 2: Analyze and apply changes
+            analyze_task = progress.add_task("Aanbevelingen berekenen")
+            changes: list[dict[str, str]] = []
+            unchanged: list[str] = []
+
+            deployments = project_data.get("deployments", [])
+            for dep in deployments:
+                dep_name = dep.get("name", "")
+                if deployment_name and dep_name != deployment_name:
+                    continue
+                base_namespace = dep.get("namespace")
+                cluster = dep.get("cluster")
+                if not base_namespace or not cluster:
+                    continue
+                namespace = get_prefixed_namespace(cluster, base_namespace)
+
+                for comp in dep.get("components", []):
+                    component_ref = comp.get("reference", "")
+                    if not component_ref:
+                        continue
+                    analysis = _analyze_component_resources(
+                        connector, file_handler, project_data, dep_name, component_ref, namespace, cluster
+                    )
+                    if analysis is None:
+                        unchanged.append(component_ref)
+                        continue
+
+                    file_handler.set_deployment_component_resources(
+                        project_data,
+                        dep_name,
+                        component_ref,
+                        {"limits_memory": analysis.new_limit, "requests_memory": analysis.new_request},
+                    )
+                    base_resources = file_handler.extract_component_resources(project_data, component_ref)
+                    base_updates: dict[str, str] = {}
+                    if analysis.new_request != base_resources["requests_memory"]:
+                        base_updates["requests_memory"] = analysis.new_request
+                    if analysis.new_limit != base_resources["limits_memory"]:
+                        base_updates["limits_memory"] = analysis.new_limit
+                    if base_updates:
+                        file_handler.set_component_resources(project_data, component_ref, base_updates)
+
+                    source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"
+                    now = datetime.now(UTC).isoformat()
+                    file_handler.append_deployment_component_resource_history(
+                        project_data,
+                        dep_name,
+                        component_ref,
+                        {
+                            "timestamp": now,
+                            "limits": {"memory": analysis.new_limit},
+                            "source": source,
+                            "reason": analysis.reason,
+                        },
+                    )
+                    file_handler.append_component_resource_history(
+                        project_data,
+                        component_ref,
+                        {
+                            "timestamp": now,
+                            "limits": {"memory": analysis.new_limit},
+                            "source": source,
+                            "deployment": dep_name,
+                            "reason": analysis.reason,
+                        },
+                    )
+
+                    changes.append(
+                        {
+                            "component": component_ref,
+                            "deployment": dep_name,
+                            "previous_limits_memory": analysis.current_resources["limits_memory"],
+                            "new_limits_memory": analysis.new_limit,
+                            "previous_requests_memory": analysis.current_resources["requests_memory"],
+                            "new_requests_memory": analysis.new_request,
+                            "max_observed_memory_mb": f"{analysis.max_observed_mb:.0f}",
+                            "avg_observed_memory_mb": f"{analysis.avg_observed_mb:.0f}",
+                            "has_oom_kills": str(analysis.has_oom_kills),
+                            "reason": analysis.reason,
+                        }
+                    )
+
+            progress.complete_task(analyze_task)
+
+            if changes:
+                for c in changes:
                     change_task = progress.add_task(
                         f"{c['component']} ({c['deployment']}): "
                         f"{c['previous_limits_memory']} \u2192 {c['new_limits_memory']}"
                     )
                     progress.complete_task(change_task)
-                progress.update_current_step(f"{len(result.changes)} component(s) aangepast")
+
+                # Step 3: Commit
+                commit_task = progress.add_task("Wijzigingen opslaan")
+                component_names = [c["component"] for c in changes]
+                commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
+                await commit_project_yaml(project_name, filename, project_data, commit_msg)
+                progress.complete_task(commit_task)
+
+                # Step 4: Reprocess
+                reprocess_task = progress.add_task("Project opnieuw deployen")
+                await trigger_reprocessing(project_name, filename, deployment_name, argocd_resources_changed=False)
+                progress.complete_task(reprocess_task)
+
+                progress.update_current_step(f"{len(changes)} component(s) aangepast")
             else:
                 no_change = progress.add_task("Geen aanpassingen nodig")
                 progress.complete_task(no_change)

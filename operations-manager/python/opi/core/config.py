@@ -323,6 +323,7 @@ class Settings(BaseSettings):
     RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
     RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed
     RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Only recommend if diff > 20%
+    RESOURCE_TUNING_MAX_MEMORY_MI: int = 1024  # Auto-tune will never set limits above this
 
     # Deployment sanitization configuration
     SANITIZE_RESTART_THRESHOLD: int = 10  # Restarts above this = broken

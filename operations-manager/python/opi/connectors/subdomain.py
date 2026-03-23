@@ -83,6 +83,10 @@ def validate_base_domain(base_domain: str, cluster: str | None = None, language:
     return True, None
 
 
+# Sentinel value for bare domain registrations in subdomain_registry.
+# Uses the DNS convention "@" to represent the apex/bare domain.
+BARE_DOMAIN_SUBDOMAIN = "@"
+
 # DNS subdomain validation constants
 SUBDOMAIN_MAX_LENGTH = 63
 SUBDOMAIN_MIN_LENGTH = 1
@@ -737,6 +741,102 @@ class SubdomainConnector:
             return count
         finally:
             await pool.release(conn)
+
+    async def register_bare_domain(
+        self,
+        base_domain: str,
+        project_name: str,
+        deployment_name: str,
+        cluster: str,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Register the bare/apex domain in the subdomain registry.
+
+        Uses ``@`` as the subdomain value (DNS convention for apex).
+        Skips subdomain format validation since ``@`` is not a DNS label.
+
+        Args:
+            base_domain: The custom domain (e.g., "voorbeeld.nl")
+            project_name: The project name that owns this domain
+            deployment_name: The deployment name using this domain
+            cluster: The cluster where this domain is deployed
+            created_by: Optional email/identifier of who created the registration
+
+        Returns:
+            Dictionary with the created registration details
+
+        Raises:
+            BaseDomainValidationError: If the base domain is not valid
+            SubdomainNotAvailableError: If the bare domain is already taken
+            SubdomainError: If registration fails
+        """
+        base_domain_lower = base_domain.lower()
+
+        # Validate base domain syntax
+        is_valid, error_message = validate_base_domain(base_domain_lower, cluster)
+        if not is_valid:
+            raise BaseDomainValidationError(error_message)
+
+        if not await self.check_availability(BARE_DOMAIN_SUBDOMAIN, base_domain_lower):
+            existing = await self.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain_lower)
+            if existing and existing.get("project_name") == project_name:
+                logger.info(f"Bare domain '{base_domain_lower}' already registered to same project '{project_name}'")
+                return existing
+            raise SubdomainNotAvailableError(f"Kaal domein '{base_domain_lower}' is niet beschikbaar")
+
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.fetchrow(
+                f"""
+                INSERT INTO {self.TABLE_NAME}
+                (subdomain, base_domain, project_name, deployment_name, cluster, created_by)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (subdomain, base_domain) DO NOTHING
+                RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                """,
+                BARE_DOMAIN_SUBDOMAIN,
+                base_domain_lower,
+                project_name,
+                deployment_name,
+                cluster,
+                created_by,
+            )
+
+            if result is None:
+                existing = await self.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain_lower)
+                if existing and existing.get("project_name") == project_name:
+                    return existing
+                raise SubdomainNotAvailableError(f"Kaal domein '{base_domain_lower}' is niet beschikbaar")
+
+            logger.info(
+                f"Registered bare domain '{base_domain_lower}' "
+                f"for project '{project_name}', deployment '{deployment_name}'"
+            )
+            audit_logger.info(
+                f"BARE_DOMAIN_REGISTERED: {base_domain_lower} "
+                f"project={project_name} deployment={deployment_name} cluster={cluster}"
+            )
+
+            return dict(result)
+        except SubdomainNotAvailableError:
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to register bare domain '{base_domain_lower}'")
+            raise SubdomainError(f"Bare domain registration failed: {e}") from e
+        finally:
+            await pool.release(conn)
+
+    async def delete_bare_domain(self, base_domain: str) -> bool:
+        """Delete a bare domain registration.
+
+        Args:
+            base_domain: The base domain to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return await self.delete(BARE_DOMAIN_SUBDOMAIN, base_domain)
 
     async def register_or_update_for_deployment(
         self,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.fields.domains import (
+    DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE,
     DOMAIN_BASE_DOMAIN_EDITABLE,
     DOMAIN_CONFIG_EDITABLE,
     DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
@@ -58,6 +59,17 @@ DOMAIN_ROOT_COMPONENT = EditableVisualizer(
     help_text="Optioneel. Het component dat ook bereikbaar wordt op de kortere basis-URL.",
 )
 
+DOMAIN_BARE_DOMAIN_COMPONENT = EditableVisualizer(
+    editable=DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Bereikbaar op kaal domein",
+    help_text=(
+        "Optioneel. Het component dat ook bereikbaar wordt op het kale domein "
+        "(bijv. voorbeeld.nl naast www.voorbeeld.nl)."
+    ),
+    attributes={"data-rerender": "true"},
+)
+
 DOMAIN_CONFIG = EditableVisualizer(
     editable=DOMAIN_CONFIG_EDITABLE,
     widget=WidgetType.GROUP,
@@ -68,6 +80,7 @@ DOMAIN_CONFIG = EditableVisualizer(
         DOMAIN_FORMAT,
         DOMAIN_SUBDOMAIN,
         DOMAIN_ROOT_COMPONENT,
+        DOMAIN_BARE_DOMAIN_COMPONENT,
     ],
 )
 
