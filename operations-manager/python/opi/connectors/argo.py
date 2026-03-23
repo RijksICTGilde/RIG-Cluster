@@ -420,7 +420,7 @@ class ArgoConnector:
         refresh_url = f"{self._actual_base_url}/api/v1/applications/{app_name}?refresh={refresh_param}"
 
         try:
-            status_code, response_text = await self._make_authenticated_request("GET", refresh_url)
+            status_code, response_text = await self._make_authenticated_request("GET", refresh_url, timeout_seconds=120)
 
             if status_code == 200:
                 logger.info(f"Successfully triggered {refresh_type} refresh for application: {app_name}")

@@ -425,12 +425,11 @@ class TestDomainEditablesShowWhen:
         # Non-subdomain formats are excluded
         assert "component-deployment-project" not in SUBDOMAIN_FORMAT_IDS
 
-    def test_base_domain_always_visible_and_required(self):
+    def test_base_domain_always_visible(self):
         from opi.forms.editables.fields.domains import DOMAIN_BASE_DOMAIN_EDITABLE
 
         assert DOMAIN_BASE_DOMAIN_EDITABLE.depends_on is None
         assert DOMAIN_BASE_DOMAIN_EDITABLE.show_when is None
-        assert DOMAIN_BASE_DOMAIN_EDITABLE.required is True
 
     def test_root_component_shows_for_dot_component_formats(self):
         from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE

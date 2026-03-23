@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.subdomain import (
+    BARE_DOMAIN_SUBDOMAIN,
     RESERVED_SUBDOMAINS,
     SUBDOMAIN_REGISTRY_TABLE_SQL,
     SubdomainConnector,
@@ -940,3 +941,115 @@ class TestSubdomainRollbackHelper:
         result = await manager._rollback_subdomain_if_needed()
 
         assert result is False
+
+
+class TestBareDomainConstant:
+    """Tests for the BARE_DOMAIN_SUBDOMAIN constant."""
+
+    def test_bare_domain_subdomain_is_at_sign(self):
+        """The bare domain sentinel is '@' (DNS convention for apex)."""
+        assert BARE_DOMAIN_SUBDOMAIN == "@"
+
+
+class TestRegisterBareDomain:
+    """Tests for SubdomainConnector.register_bare_domain method."""
+
+    @pytest.mark.asyncio
+    async def test_register_bare_domain_success(self):
+        """register_bare_domain inserts '@' as subdomain for the base domain."""
+        connector = SubdomainConnector()
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = None  # Available
+        mock_conn.fetchrow.return_value = {
+            "id": 1,
+            "subdomain": "@",
+            "base_domain": "voorbeeld.nl",
+            "project_name": "myproject",
+            "deployment_name": "prod",
+            "cluster": "local",
+            "created_at": "2026-01-01",
+            "created_by": None,
+        }
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with patch.object(connector, "_get_pool", return_value=mock_pool):
+            result = await connector.register_bare_domain(
+                base_domain="voorbeeld.nl",
+                project_name="myproject",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert result["subdomain"] == "@"
+        assert result["base_domain"] == "voorbeeld.nl"
+
+    @pytest.mark.asyncio
+    async def test_register_bare_domain_already_taken(self):
+        """register_bare_domain raises SubdomainNotAvailableError when taken by another project."""
+        connector = SubdomainConnector()
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = 1  # Not available
+        mock_conn.fetchrow.return_value = {
+            "id": 1,
+            "subdomain": "@",
+            "base_domain": "voorbeeld.nl",
+            "project_name": "other-project",
+            "deployment_name": "prod",
+            "cluster": "local",
+            "created_at": "2026-01-01",
+            "created_by": None,
+        }
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with (
+            patch.object(connector, "_get_pool", return_value=mock_pool),
+            pytest.raises(SubdomainNotAvailableError, match="niet beschikbaar"),
+        ):
+            await connector.register_bare_domain(
+                base_domain="voorbeeld.nl",
+                project_name="myproject",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+    @pytest.mark.asyncio
+    async def test_register_bare_domain_same_project_returns_existing(self):
+        """register_bare_domain returns existing when same project owns it."""
+        connector = SubdomainConnector()
+
+        existing = {
+            "id": 1,
+            "subdomain": "@",
+            "base_domain": "voorbeeld.nl",
+            "project_name": "myproject",
+            "deployment_name": "prod",
+            "cluster": "local",
+            "created_at": "2026-01-01",
+            "created_by": None,
+        }
+
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = 1  # Not available
+        mock_conn.fetchrow.return_value = existing
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = AsyncMock(return_value=mock_conn)
+        mock_pool.release = AsyncMock()
+
+        with patch.object(connector, "_get_pool", return_value=mock_pool):
+            result = await connector.register_bare_domain(
+                base_domain="voorbeeld.nl",
+                project_name="myproject",
+                deployment_name="prod",
+                cluster="local",
+            )
+
+        assert result["project_name"] == "myproject"

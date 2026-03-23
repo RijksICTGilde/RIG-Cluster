@@ -616,6 +616,22 @@ async def _setup_projects(readiness: "ReadinessState", app: FastAPI, skip_checks
             if env_emails:
                 user_service.add_allowed_emails(env_emails)
 
+        # Load platform users from the users database table into the allowlist
+        try:
+            from opi.core.database_pools import get_database_pool
+            from opi.services.user_admin_service import UserAdminService
+
+            pool = get_database_pool("main")
+            admin_service = UserAdminService(pool)
+            db_users = await admin_service.list_users()
+            if db_users:
+                db_emails = [u["email"] for u in db_users if u.get("email")]
+                if db_emails:
+                    user_service.add_allowed_emails(db_emails)
+                    logger.info(f"Loaded {len(db_emails)} platform users from database into allowlist")
+        except Exception as e:
+            logger.warning(f"Could not load platform users from database: {e}")
+
         project_service = get_project_service()
         default_admin_emails = [
             "robbert.uittenbroek@rijksoverheid.nl",

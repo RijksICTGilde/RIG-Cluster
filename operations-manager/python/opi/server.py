@@ -166,9 +166,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     yield
 
-    # Stop task worker
+    # Begin graceful drain: reject new task creation via API immediately
+    from opi.core.shutdown import begin_drain
+
+    begin_drain()
+
+    # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:
         await _worker_instance.stop()
+    # Cancel the worker asyncio task to clean up helper loops (stale recovery, cleanup)
     if _worker_asyncio_task is not None:
         _worker_asyncio_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

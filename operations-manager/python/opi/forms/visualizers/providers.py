@@ -408,14 +408,18 @@ class ClusterBaseDomainOptionsProvider:
 
         cluster = self.cluster or settings.CLUSTER_MANAGER
         if cluster and cluster in CLUSTER_CONFIG:
+            postfix = CLUSTER_CONFIG[cluster].get("ingress_postfix", "")
+            default_label = f"Cluster standaard ({postfix.lstrip('.')})" if postfix else "Cluster standaard"
+            options: list[dict[str, Any]] = [{"value": "", "label": default_label}]
+
             raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
             domains = [_extract_domain(d) for d in raw]
-            options = [{"value": d, "label": d} for d in domains]
+            options.extend({"value": d, "label": d} for d in domains)
             options.append({"value": "__custom__", "label": "Eigen domein..."})
             return options
 
         # Fallback: no matching cluster config - return empty with custom option
-        return [{"value": "__custom__", "label": "Eigen domein..."}]
+        return [{"value": "", "label": "Cluster standaard"}, {"value": "__custom__", "label": "Eigen domein..."}]
 
 
 class FilteredServiceOptionsProvider:
@@ -483,6 +487,20 @@ class RootComponentOptionsProvider(ComponentReferenceOptionsProvider):
 
     def __init__(self, component_names: list[str] | None = None) -> None:
         super().__init__(component_names=component_names, include_empty=True)
+
+
+class BareDomainComponentOptionsProvider(ComponentReferenceOptionsProvider):
+    """ComponentReferenceOptionsProvider for bare domain component selection.
+
+    Shows component names with an empty 'not on bare domain' option.
+    """
+
+    def __init__(self, component_names: list[str] | None = None) -> None:
+        super().__init__(
+            component_names=component_names,
+            include_empty=True,
+            empty_label="Niet bereikbaar op kaal domein",
+        )
 
 
 class DeploymentCloneFromOptionsProvider:
@@ -609,6 +627,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
     "DeploymentCloneFromOptionsProvider": DeploymentCloneFromOptionsProvider,
     "RootComponentOptionsProvider": RootComponentOptionsProvider,
+    "BareDomainComponentOptionsProvider": BareDomainComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
     "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
     "DeploymentSelectOptionsProvider": DeploymentSelectOptionsProvider,

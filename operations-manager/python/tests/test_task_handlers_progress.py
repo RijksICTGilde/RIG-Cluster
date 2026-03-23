@@ -520,6 +520,7 @@ class TestHandleUpsertDeployment:
             task_progress_manager=progress,
             deployment_name="dev",
             force_clone=False,
+            argocd_resources_changed=True,
         )
 
         # Web addresses reported

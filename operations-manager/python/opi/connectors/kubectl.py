@@ -826,6 +826,14 @@ class KubectlConnector:
             logger.error(f"Error starting log stream for {deployment_name}: {e}")
             return None
 
+    # Event object prefixes and reasons that are infrastructure noise —
+    # not actionable by project users.
+    _IGNORED_EVENT_PREFIXES = ("cm-acme-",)
+    _IGNORED_EVENT_REASONS = (
+        "FailedToUpdateEndpoint",
+        "FailedIngressToRouteConversion",
+    )
+
     async def get_namespace_events(
         self,
         namespace: str,
@@ -873,11 +881,20 @@ class KubectlConnector:
                             continue
                     except (ValueError, TypeError):
                         pass
+
+                # Filter out infrastructure noise that users can't act on
+                obj_name = event.get("involvedObject", {}).get("name", "")
+                reason = event.get("reason", "")
+                if any(obj_name.startswith(p) for p in self._IGNORED_EVENT_PREFIXES):
+                    continue
+                if reason in self._IGNORED_EVENT_REASONS:
+                    continue
+
                 events.append(
                     {
                         "type": event.get("type", ""),
-                        "reason": event.get("reason", ""),
-                        "object": event.get("involvedObject", {}).get("name", ""),
+                        "reason": reason,
+                        "object": obj_name,
                         "message": event.get("message", ""),
                         "time": timestamp,
                     }

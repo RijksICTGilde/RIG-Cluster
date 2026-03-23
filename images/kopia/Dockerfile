@@ -1,7 +1,7 @@
 # Simple Kopia backup image for RIG
 FROM alpine:3.19
 
-ARG KOPIA_VERSION=0.18.2
+ARG KOPIA_VERSION=0.22.3
 
 # Install basics
 RUN apk add --no-cache ca-certificates bash

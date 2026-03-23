@@ -9,10 +9,7 @@ and by the OOM watcher (oom_watcher).
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from io import StringIO
 from typing import Any
-
-from ruamel.yaml import YAML
 
 from opi.connectors.git import create_git_connector_for_project_files
 from opi.connectors.prometheus import get_metrics_connector
@@ -23,6 +20,7 @@ from opi.manager.project_manager import create_project_manager
 from opi.services.project_service import get_project_service
 from opi.services.resource_analyzer import _k8s_memory_to_mb, _mb_to_k8s_memory, compute_memory_recommendation
 from opi.utils.naming import generate_unique_name
+from opi.utils.yaml_util import dump_yaml_to_string
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +36,13 @@ class TuneResult:
 
 @dataclass
 class MemoryCheckResult:
-    """Per-component result of a memory overprovision check."""
+    """Per-component result of a memory check (overprovision or OOM)."""
 
     component: str
     current_limit: str
     recommended_limit: str
     saving_mb: float
+    oom_detected: bool = False
 
 
 def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
@@ -89,11 +88,7 @@ async def commit_project_yaml(
         commit_message: Git commit message
     """
 
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    stream = StringIO()
-    yaml.dump(project_data, stream)
-    updated_yaml = stream.getvalue()
+    updated_yaml = dump_yaml_to_string(project_data)
 
     git_connector = await create_git_connector_for_project_files(project_name)
     try:
@@ -105,7 +100,12 @@ async def commit_project_yaml(
         await git_connector.close()
 
 
-async def trigger_reprocessing(project_name: str, filename: str, deployment_name: str | None = None) -> bool:
+async def trigger_reprocessing(
+    project_name: str,
+    filename: str,
+    deployment_name: str | None = None,
+    argocd_resources_changed: bool = True,
+) -> bool:
     """
     Trigger project reprocessing via the standard pipeline.
 
@@ -113,6 +113,8 @@ async def trigger_reprocessing(project_name: str, filename: str, deployment_name
         project_name: Name of the project
         filename: Project YAML filename
         deployment_name: Optional specific deployment to reprocess
+        argocd_resources_changed: Whether ArgoCD Application/AppProject manifests
+            may have changed.  False for operations like resource tuning.
 
     Returns:
         True if reprocessing succeeded
@@ -122,6 +124,7 @@ async def trigger_reprocessing(project_name: str, filename: str, deployment_name
         result = await project_manager.process_project_from_git(
             f"projects/{filename}",
             deployment_name=deployment_name,
+            argocd_resources_changed=argocd_resources_changed,
         )
         return bool(result)
     finally:
@@ -240,6 +243,7 @@ def _analyze_component_resources(
         threshold_percent=threshold_percent,
         has_oom_kills=has_oom_kills,
         min_memory_mi=get_min_memory_limit_mi(cluster),
+        max_memory_mi=settings.RESOURCE_TUNING_MAX_MEMORY_MI,
     )
 
     if recommendation is None:
@@ -251,18 +255,44 @@ def _analyze_component_resources(
     if oom_floor_mb is not None:
         new_limit_mb = _k8s_memory_to_mb(new_limit)
         if new_limit_mb < oom_floor_mb:
-            logger.info(
-                f"OOM floor {oom_floor_mb:.0f}Mi prevents reducing limit for {component_ref} "
-                f"in deployment {dep_name} (recommendation was {new_limit})"
-            )
-            # If the current limit already matches the floor, no change needed
-            if current_limit_mb <= oom_floor_mb:
-                return None
-            new_limit = _mb_to_k8s_memory(oom_floor_mb)
-            new_request_mb = _k8s_memory_to_mb(new_request)
-            if new_request_mb > oom_floor_mb:
-                new_request = new_limit
-            reason += f" (clamped to OOM floor {new_limit})"
+            if has_oom_kills and current_limit_mb <= oom_floor_mb:
+                # Still OOM-killing at the floor — the floor itself is too low.
+                # Bump above it using the sliding factor.
+                if oom_floor_mb < 64:
+                    floor_factor = 3.0
+                elif oom_floor_mb < 256:
+                    floor_factor = 2.0
+                else:
+                    floor_factor = 1.5
+                new_floor = oom_floor_mb * floor_factor
+                max_memory = float(settings.RESOURCE_TUNING_MAX_MEMORY_MI)
+                if new_floor > max_memory:
+                    new_floor = max_memory
+                    logger.warning(
+                        f"OOM auto-tune for {component_ref} in {dep_name} hit max limit "
+                        f"({max_memory:.0f}Mi) — manual intervention required"
+                    )
+                ratio = current_request_mb / current_limit_mb if current_limit_mb > 0 else 1.0
+                new_limit = _mb_to_k8s_memory(new_floor)
+                new_request = _mb_to_k8s_memory(new_floor * ratio)
+                reason = f"OOM at floor {oom_floor_mb:.0f}Mi — bumping to {new_floor:.0f}Mi ({floor_factor:.1f}x)"
+                logger.info(
+                    f"OOM floor {oom_floor_mb:.0f}Mi is too low for {component_ref} "
+                    f"in deployment {dep_name}, bumping to {new_limit}"
+                )
+            else:
+                logger.info(
+                    f"OOM floor {oom_floor_mb:.0f}Mi prevents reducing limit for {component_ref} "
+                    f"in deployment {dep_name} (recommendation was {new_limit})"
+                )
+                # If the current limit already matches the floor, no change needed
+                if current_limit_mb <= oom_floor_mb:
+                    return None
+                new_limit = _mb_to_k8s_memory(oom_floor_mb)
+                new_request_mb = _k8s_memory_to_mb(new_request)
+                if new_request_mb > oom_floor_mb:
+                    new_request = new_limit
+                reason += f" (clamped to OOM floor {new_limit})"
 
     return _ComponentAnalysis(
         current_resources=current_resources,
@@ -330,7 +360,17 @@ def check_deployment_resources(
             new_limit_mb = _k8s_memory_to_mb(analysis.new_limit)
             saving_mb = current_limit_mb - new_limit_mb
 
-            if saving_mb > 0:
+            if analysis.has_oom_kills:
+                results.append(
+                    MemoryCheckResult(
+                        component=component_ref,
+                        current_limit=analysis.current_resources["limits_memory"],
+                        recommended_limit=analysis.new_limit,
+                        saving_mb=saving_mb,
+                        oom_detected=True,
+                    )
+                )
+            elif saving_mb > 0:
                 results.append(
                     MemoryCheckResult(
                         component=component_ref,
@@ -346,6 +386,7 @@ def check_deployment_resources(
 async def tune_deployment_resources(
     project_name: str,
     deployment_name: str | None = None,
+    skip_reprocessing: bool = False,
 ) -> TuneResult:
     """
     Query Prometheus, compute recommendations, commit YAML, trigger reprocess.
@@ -353,6 +394,9 @@ async def tune_deployment_resources(
     Args:
         project_name: Name of the project
         deployment_name: Optional specific deployment to tune
+        skip_reprocessing: If True, only commit the YAML changes without
+            triggering reprocessing.  Use when the caller will queue a
+            separate task for reprocessing (e.g. OOM detection during deploy).
 
     Returns:
         TuneResult with changes, unchanged components, and whether refresh was triggered
@@ -458,14 +502,17 @@ async def tune_deployment_resources(
                 }
             )
 
-    # If changes were made, commit and reprocess
+    # If changes were made, commit and optionally reprocess
     deployment_refresh_triggered = False
     if changes:
         component_names = [c["component"] for c in changes]
         commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
 
         await commit_project_yaml(project_name, filename, project_data, commit_msg)
-        deployment_refresh_triggered = await trigger_reprocessing(project_name, filename, deployment_name)
+        if not skip_reprocessing:
+            deployment_refresh_triggered = await trigger_reprocessing(
+                project_name, filename, deployment_name, argocd_resources_changed=False
+            )
 
     return TuneResult(
         changes=changes,

@@ -314,7 +314,7 @@ class TestTuneBaseComponentUpdate:
         # The commit receives the modified data - check the base component was updated
         committed_data = mock_commit.call_args[0][2]
         base_limits = committed_data["components"][0]["resources"]["limits"]["memory"]
-        assert base_limits == "192Mi"  # 128 * 1.5
+        assert base_limits == "256Mi"  # 128 * 2.0 (< 256Mi range)
 
     @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
@@ -410,6 +410,27 @@ class TestCheckDeploymentResources:
         assert isinstance(results[0], MemoryCheckResult)
         assert results[0].component == "api"
         assert results[0].saving_mb > 0
+        assert results[0].oom_detected is False
+
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_metrics_connector")
+    def test_returns_oom_warning(self, mock_connector, mock_service, mock_prefix, mock_min):
+        """Should return OOM warning even when there are no savings."""
+        data = _make_project_data(component_limits="256Mi", component_requests="200Mi")
+        mock_project = MagicMock()
+        mock_project.data = data
+        mock_project.filename = "test.yaml"
+        mock_service.return_value.get_project.return_value = mock_project
+        # Usage near limits but with OOM kills
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=200, avg_mb=180, has_oom=True)
+
+        results = check_deployment_resources("test-project", "production")
+
+        assert len(results) == 1
+        assert results[0].oom_detected is True
+        assert results[0].component == "api"
 
     @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")

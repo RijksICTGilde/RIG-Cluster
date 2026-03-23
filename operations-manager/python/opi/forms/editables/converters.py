@@ -481,8 +481,9 @@ class CustomDomainSelectConverter:
         if not value:
             return value
         from opi.connectors.subdomain import get_supported_base_domains
+        from opi.core.config import settings
 
-        if str(value) not in get_supported_base_domains():
+        if str(value) not in get_supported_base_domains(cluster=settings.CLUSTER_MANAGER):
             return "__custom__"
         return value
 

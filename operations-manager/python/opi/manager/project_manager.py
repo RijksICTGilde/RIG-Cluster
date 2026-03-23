@@ -72,6 +72,7 @@ from opi.utils.naming import (
     DOMAIN_FORMAT_TEMPLATES,
     HostnameFormat,
     generate_argocd_application_name,
+    generate_bare_domain_hostname,
     generate_external_hostname,
     generate_helm_values_filename,
     generate_ingress_name_from_path,
@@ -113,6 +114,7 @@ from opi.utils.sops import encrypt_to_sops_files
 from opi.utils.yaml_util import (
     dump_yaml_to_string,
     find_value_by_jsonpath,
+    save_yaml_to_path,
 )
 
 if TYPE_CHECKING:
@@ -1214,14 +1216,7 @@ class ProjectManager:
 
     async def save_project_data(self) -> None:
         project_full_file_path = await self.get_project_full_file_path()
-        yaml = YAML()
-        yaml.default_flow_style = False
-        yaml.preserve_quotes = True
-        yaml.width = 4096
-        yaml.representer.ignore_aliases = lambda *_: True
-
-        with open(project_full_file_path, "w") as f:
-            yaml.dump(await self.get_contents(), f)
+        save_yaml_to_path(project_full_file_path, await self.get_contents())
 
     async def check_and_create_namespaces(self, deployment_name: str | None = None) -> bool:
         """
@@ -2026,6 +2021,7 @@ class ProjectManager:
         task_progress_manager: "TaskProgressManager | None" = None,
         deployment_name: str | None = None,
         force_clone: bool = False,
+        argocd_resources_changed: bool = True,
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -2043,6 +2039,11 @@ class ProjectManager:
             task_progress_manager: Optional progress manager for tracking operation status
             deployment_name: Optional deployment name to process only specific deployment
             force_clone: Force clone even if target resources exist (runtime parameter)
+            argocd_resources_changed: Whether ArgoCD Application/AppProject manifests
+                may have changed (new/removed deployment, repo URL change).  When False,
+                skips refreshing the user-applications ArgoCD app and waiting for app
+                creation — significantly faster for operations that only change deployment
+                manifests (e.g. resource tuning, image updates).  Defaults to True.
 
         Returns:
             True if all operations were successful, False otherwise
@@ -2204,45 +2205,140 @@ class ProjectManager:
 
             argo_connector = create_argo_connector()
 
-            # Refresh user-applications first (contains project definitions / ArgoCD Application manifests)
-            await argo_connector.refresh_application("user-applications")
+            # Refresh user-applications (contains ArgoCD Application/AppProject manifests).
+            # Skip when only deployment manifests changed (e.g. resource tuning).
+            if argocd_resources_changed:
+                await argo_connector.refresh_application("user-applications")
+            else:
+                logger.info("Skipping user-applications refresh (no ArgoCD resource changes)")
 
             project_name = await self.get_name()
-            deployments = await self.get_deployments(cluster_filter=True)
+            deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
             sync_failures: list[str] = []
 
             if deployments and project_name:
-                app_names = []
+                from opi.services.oom_watcher import OOMDetectedError, create_oom_progressing_callback
+                from opi.services.resource_tuning_service import tune_deployment_resources
+                from opi.utils.naming import generate_unique_name
+
+                # Build (app_name, deployment) pairs
+                app_deployments: list[tuple[str, dict]] = []
                 for deployment in deployments:
                     dep_name = deployment.get("name")
                     if dep_name:
-                        app_names.append(generate_argocd_application_name(project_name, dep_name))
+                        app_name = generate_argocd_application_name(project_name, dep_name)
+                        app_deployments.append((app_name, deployment))
 
+                app_names = [ad[0] for ad in app_deployments]
                 logger.info(f"Waiting for {len(app_names)} ArgoCD applications to sync for {project_name}")
 
-                # Wait for all applications to be created (ArgoCD needs to sync user-applications first)
-                for app_name in app_names:
-                    try:
-                        await self._argo_manager.wait_for_application_created(
-                            app_name=app_name, timeout=120, poll_interval=5
-                        )
-                    except TimeoutError:
-                        sync_failures.append(f"{app_name}: timed out waiting for application to be created")
-                        logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
+                # Wait for all applications to be created (ArgoCD needs to sync user-applications first).
+                # Skip when user-applications refresh was skipped — apps already exist.
+                if argocd_resources_changed:
+                    for app_name in app_names:
+                        try:
+                            await self._argo_manager.wait_for_application_created(
+                                app_name=app_name, timeout=120, poll_interval=5
+                            )
+                        except TimeoutError:
+                            sync_failures.append(f"{app_name}: timed out waiting for application to be created")
+                            logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
 
                 # Refresh each application that was created, then wait for sync+healthy
-                for app_name in app_names:
+                for app_name, deployment in app_deployments:
                     if any(app_name in f for f in sync_failures):
                         continue  # Skip apps that failed to be created
+
+                    dep_name = deployment.get("name", "")
+                    base_namespace = deployment.get("namespace", "")
+                    cluster = deployment.get("cluster", "")
+                    namespace = get_prefixed_namespace(cluster, base_namespace) if base_namespace and cluster else ""
+
+                    # Build OOM detection callback for this deployment
+                    oom_callback = None
+                    if namespace:
+                        component_names = [
+                            generate_unique_name(dep_name, comp.get("reference", ""))
+                            for comp in deployment.get("components", [])
+                            if comp.get("reference")
+                        ]
+                        if component_names:
+                            oom_callback = create_oom_progressing_callback(
+                                project_name, dep_name, namespace, component_names
+                            )
 
                     try:
                         reconciled_at = await argo_connector.refresh_application(app_name)
                         if progress_manager and argo_task:
                             progress_manager.update_task(argo_task, f"Waiting for {app_name} to sync")
                         await self._argo_manager.wait_for_application_synced(
-                            app_name=app_name, timeout=300, poll_interval=5, refreshed_after=reconciled_at
+                            app_name=app_name,
+                            timeout=300,
+                            poll_interval=5,
+                            refreshed_after=reconciled_at,
+                            on_progressing=oom_callback,
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
+                    except OOMDetectedError as e:
+                        logger.warning(
+                            "OOM detected during sync of '%s': %s — tuning and queuing refresh",
+                            app_name,
+                            e,
+                        )
+                        if progress_manager and argo_task:
+                            progress_manager.update_task(
+                                argo_task,
+                                f"OOM detected for {app_name}, tuning resources...",
+                            )
+                        try:
+                            # Tune resources (commit only, no inline reprocess to avoid
+                            # race conditions with the current task's processing).
+                            result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
+                            if result.changes:
+                                logger.info(
+                                    "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
+                                    len(result.changes),
+                                    project_name,
+                                    dep_name,
+                                )
+                                # Queue a refresh task — the worker will pick it up
+                                # after this task completes (queue guard prevents
+                                # concurrent processing of the same deployment).
+                                task_service = (
+                                    progress_manager._task_service
+                                    if progress_manager and hasattr(progress_manager, "_task_service")
+                                    else None
+                                )
+                                if task_service:
+                                    await task_service.create_task(
+                                        task_type="refresh_deployment",
+                                        project_name=project_name,
+                                        deployment_name=dep_name,
+                                        cluster=settings.CLUSTER_MANAGER,
+                                        payload={
+                                            "project_name": project_name,
+                                            "deployment_name": dep_name,
+                                            "force_clone": False,
+                                        },
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Task service not available, cannot queue refresh for %s/%s",
+                                        project_name,
+                                        dep_name,
+                                    )
+                            else:
+                                logger.warning(
+                                    "OOM auto-tune found no actionable changes for %s/%s",
+                                    project_name,
+                                    dep_name,
+                                )
+                                sync_failures.append(
+                                    f"{app_name}: OOM detected but auto-tune could not determine new limits"
+                                )
+                        except Exception as tune_err:
+                            logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
+                            sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
                     except TimeoutError:
                         sync_failures.append(f"{app_name}: timed out waiting for sync")
                         logger.error(f"Timed out waiting for '{app_name}' to sync")
@@ -3852,18 +3948,41 @@ class ProjectManager:
             subdomain_registered = is_new_registration  # Mark for rollback only if new
             logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
 
+        # Register or clean up bare domain in subdomain registry
+        expose_on_bare_domain = deployment.get("expose-component-on-bare-domain")
+        bare_domain_registered = False
+        if expose_on_bare_domain and base_domain:
+            if subdomain_connector is None:
+                subdomain_connector = SubdomainConnector()
+            await subdomain_connector.register_bare_domain(
+                base_domain=base_domain,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=cluster,
+            )
+            bare_domain_registered = True
+            logger.info(f"Bare domain '{base_domain}' registered for project '{project_name}'")
+        elif base_domain and not expose_on_bare_domain:
+            # Bare domain deselected — clean up any existing registration
+            if subdomain_connector is None:
+                subdomain_connector = SubdomainConnector()
+            deleted = await subdomain_connector.delete_bare_domain(base_domain)
+            if deleted:
+                logger.info(f"Bare domain '{base_domain}' deregistered for project '{project_name}'")
+
         # Store rollback info for use in exception handler
         # These variables are used by _rollback_subdomain_on_failure if needed
+        should_rollback = subdomain_registered or bare_domain_registered
         self._pending_subdomain_rollback = (
             {
-                "should_rollback": subdomain_registered,
+                "should_rollback": should_rollback,
                 "connector": subdomain_connector,
                 "project_name": project_name,
                 "deployment_name": deployment_name,
                 "subdomain": subdomain,
                 "base_domain": base_domain,
             }
-            if subdomain_registered
+            if should_rollback
             else None
         )
 
@@ -4078,9 +4197,11 @@ class ProjectManager:
             issuer_config = deployment.get("issuer")
             domain_mode = deployment.get("domain-mode")
             domain_format = deployment.get("domain-format")
+            expose_on_bare_domain = deployment.get("expose-component-on-bare-domain", False)
             logger.info(
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
-                f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}"
+                f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}, "
+                f"expose-component-on-bare-domain: {expose_on_bare_domain}"
             )
 
             # Get ingress map using centralized function
@@ -4585,6 +4706,58 @@ class ProjectManager:
                         root_web_address = generate_public_url(root_hostname, use_https)
                         self._deployment_results[deployment_name].urls["root"] = root_web_address
                         logger.info(f"Tracked root URL: {root_web_address}")
+
+                    # Create bare domain ingress for expose-component-on-bare-domain mode.
+                    # expose_on_bare_domain holds the component name that should serve the bare domain.
+                    if expose_on_bare_domain and base_domain and component_name == expose_on_bare_domain:
+                        bare_hostname = generate_bare_domain_hostname(base_domain)
+                        bare_ingress_name = f"{deployment_name}-bare-domain"
+                        bare_manifest_name = generate_manifest_name(component_name, "ingress-bare-domain")
+
+                        bare_ingress_variables = variables.copy()
+
+                        # Determine issuer for bare domain ingress (same logic as component ingress)
+                        bare_issuer_name = None
+                        bare_cluster_issuer = None
+
+                        if base_domain and issuer_config:
+                            if issuer_config in ("letsencrypt", "letsencrypt-staging"):
+                                bare_issuer_name = generate_issuer_name(base_domain, issuer_config)
+                            else:
+                                bare_issuer_name = issuer_config
+                        else:
+                            bare_cluster_issuer = get_ingress_cluster_issuer(cluster)
+
+                        bare_ingress_variables.update(
+                            {
+                                "name": bare_ingress_name,
+                                "service_name": unique_name,  # Points to same service as component
+                                "hostname": bare_hostname,
+                                "path": "/",
+                                "issuer_name": bare_issuer_name,
+                                "cluster_issuer": bare_cluster_issuer,
+                                "tls_secret_name": generate_tls_secret_name(bare_ingress_name),
+                            }
+                        )
+
+                        # Create the bare domain ingress manifest
+                        bare_manifest_file_path = self._manifest_generator.create_manifest_file(
+                            template_path=manifest_path,
+                            values=bare_ingress_variables,
+                            output_dir=full_output_dir,
+                            output_filename=bare_manifest_name,
+                            use_sops=False,
+                        )
+                        created_files.append(f"{bare_manifest_name}.yaml")
+                        logger.info(
+                            f"Successfully created bare domain ingress manifest for {bare_hostname}: {bare_manifest_file_path}"
+                        )
+
+                        # Track bare domain URL in deployment results
+                        bare_web_address = generate_public_url(bare_hostname, use_https)
+                        self._deployment_results[deployment_name].urls["bare-domain"] = bare_web_address
+                        logger.info(f"Tracked bare domain URL: {bare_web_address}")
+
                 else:
                     # Standard single manifest creation
                     unique_manifest_name = generate_manifest_name(component_name, manifest_name)

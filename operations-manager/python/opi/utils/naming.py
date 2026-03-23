@@ -1590,6 +1590,27 @@ def generate_nice_url_root_hostname(subdomain: str, base_domain: str) -> str:
     return f"{subdomain_clean}.{base_domain}"
 
 
+def generate_bare_domain_hostname(base_domain: str) -> str:
+    """Generate the bare domain hostname for expose-on-bare-domain mode.
+
+    Returns the base domain itself as the hostname, used when a deployment
+    is configured with ``expose-component-on-bare-domain`` to serve traffic on
+    the apex domain (e.g., ``voorbeeld.nl``) alongside the prefixed domain
+    (e.g., ``www.voorbeeld.nl``).
+
+    Args:
+        base_domain: The custom base domain (e.g., "voorbeeld.nl")
+
+    Returns:
+        Bare domain hostname
+
+    Examples:
+        >>> generate_bare_domain_hostname("voorbeeld.nl")
+        'voorbeeld.nl'
+    """
+    return base_domain.lower()
+
+
 def find_root_component(components: list[dict]) -> str | None:
     """
     Find the component marked as root in a list of component configurations.
@@ -1722,6 +1743,7 @@ def get_deployment_hostnames(
     base_domain: str | None = None,
     hostname_format: HostnameFormat = HostnameFormat.DASHES,
     domain_format: str | None = None,
+    expose_on_bare_domain: str | bool = False,
 ) -> list[str]:
     """
     Get all hostnames for components in a deployment.
@@ -1737,6 +1759,8 @@ def get_deployment_hostnames(
         base_domain: Optional custom base domain (e.g., "rijks.app")
         hostname_format: Format for hostname (DASHES or DOTS)
         domain_format: Optional domain-format template ID from project YAML
+        expose_on_bare_domain: Component name that serves the bare domain,
+            or False/empty when disabled
 
     Returns:
         List of unique hostnames for the deployment
@@ -1765,6 +1789,12 @@ def get_deployment_hostnames(
         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)
+
+    # Add bare domain hostname when expose-on-bare-domain is enabled
+    if expose_on_bare_domain and base_domain:
+        bare_hostname = generate_bare_domain_hostname(base_domain)
+        if bare_hostname not in hostnames:
+            hostnames.append(bare_hostname)
 
     return hostnames
 

@@ -278,6 +278,7 @@ DOMAIN_SECTION = FormSection(
         "deployments[*]/domain-format",
         "deployments[*]/subdomain",
         "deployments[*]/root-component",
+        "deployments[*]/expose-component-on-bare-domain",
         DisplayBlock(
             display_id="url-preview",
             compute=_compute_url_preview,

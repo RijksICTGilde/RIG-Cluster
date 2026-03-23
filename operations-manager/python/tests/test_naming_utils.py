@@ -17,6 +17,7 @@ from opi.utils.naming import (
     generate_backup_pod_name,
     generate_backup_prefix,
     generate_backup_snapshot_name,
+    generate_bare_domain_hostname,
     generate_bucket_name,
     generate_database_name,
     generate_database_schema,
@@ -960,3 +961,80 @@ class TestGenerateTlsSecretName:
     def test_complex_ingress_name(self):
         """Works with complex ingress names."""
         assert generate_tls_secret_name("frontend-api-v1users") == "frontend-api-v1users-tls"
+
+
+class TestGenerateBareDomainHostname:
+    """Tests for generate_bare_domain_hostname function."""
+
+    def test_basic_domain(self):
+        """Returns the base domain as-is (lowercased)."""
+        assert generate_bare_domain_hostname("voorbeeld.nl") == "voorbeeld.nl"
+
+    def test_uppercase_lowered(self):
+        """Uppercase input is lowercased."""
+        assert generate_bare_domain_hostname("VOORBEELD.NL") == "voorbeeld.nl"
+
+    def test_mixed_case(self):
+        """Mixed case is lowercased."""
+        assert generate_bare_domain_hostname("Mijn-App.Example.Com") == "mijn-app.example.com"
+
+
+class TestGetDeploymentHostnamesBareDomain:
+    """Tests for get_deployment_hostnames with expose_on_bare_domain."""
+
+    def test_bare_domain_included_when_set(self):
+        """Bare domain hostname is appended when expose_on_bare_domain is set."""
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            subdomain="www",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            expose_on_bare_domain="frontend",
+        )
+        assert "voorbeeld.nl" in hostnames
+        assert "www.voorbeeld.nl" in hostnames
+
+    def test_bare_domain_not_included_when_false(self):
+        """Bare domain hostname is not added when expose_on_bare_domain is False."""
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            subdomain="www",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            expose_on_bare_domain=False,
+        )
+        assert "voorbeeld.nl" not in hostnames
+
+    def test_bare_domain_not_included_when_empty(self):
+        """Bare domain hostname is not added when expose_on_bare_domain is empty string."""
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            subdomain="www",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            expose_on_bare_domain="",
+        )
+        assert "voorbeeld.nl" not in hostnames
+
+    def test_bare_domain_not_duplicated(self):
+        """Bare domain appears only once even if it matches a component hostname."""
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            subdomain="www",
+            expose_on_bare_domain="frontend",
+        )
+        assert hostnames.count("voorbeeld.nl") == 1

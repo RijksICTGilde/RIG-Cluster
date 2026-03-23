@@ -109,8 +109,9 @@ identityProviders:
           claim: "sso-rijk-userid-lowercase"
           user.attribute: "sso-rijk-userid-lowercase"
 
-# No custom authentication flow - use standard browser flow with login form
-# Users can choose between local login or SSO via button
+# Explicitly set browser flow to the built-in "browser" flow
+# This ensures switching from sso-only to sso-support resets the auto-redirect
+browserFlow: "browser"
 
 # Client for operations manager invite flow
 # Allows the operations manager to authenticate users via this realm for invitations

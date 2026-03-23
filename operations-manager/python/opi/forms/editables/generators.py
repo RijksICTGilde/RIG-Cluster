@@ -109,7 +109,17 @@ class IssuerGenerator:
             return None
 
         cluster = settings.CLUSTER_MANAGER
-        return get_domain_issuer(cluster, base_domain)
+        issuer = get_domain_issuer(cluster, base_domain)
+        if issuer:
+            return issuer
+
+        # Custom domains (not in cluster's supported_domains) need letsencrypt
+        from opi.connectors.subdomain import get_supported_base_domains
+
+        if base_domain not in get_supported_base_domains(cluster=cluster):
+            return "letsencrypt"
+
+        return None
 
 
 class UserEnvVarsEncryptGenerator:

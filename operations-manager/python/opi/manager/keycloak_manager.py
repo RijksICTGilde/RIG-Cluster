@@ -114,6 +114,7 @@ class KeycloakManager:
             base_domain = deployment.get("base-domain")
             domain_mode = deployment.get("domain-mode")
             domain_format = deployment.get("domain-format")
+            expose_on_bare_domain = deployment.get("expose-component-on-bare-domain", False)
 
             if domain_mode == "nice-url":
                 logger.info(
@@ -143,6 +144,7 @@ class KeycloakManager:
                 base_domain=base_domain,
                 hostname_format=HostnameFormat.from_domain_mode(domain_mode),
                 domain_format=domain_format,
+                expose_on_bare_domain=expose_on_bare_domain,
             )
             if all_ingress_hosts:
                 logger.info(f"Generated hostnames for components: {all_ingress_hosts}")
