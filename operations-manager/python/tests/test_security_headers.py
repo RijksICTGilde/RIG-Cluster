@@ -1,0 +1,147 @@
+"""
+Tests for the security headers middleware and security.txt endpoint.
+"""
+
+import pytest
+from opi.middleware.security_headers import SecurityHeadersMiddleware
+from starlette.testclient import TestClient
+
+
+class TestSecurityHeadersMiddleware:
+    """Tests for SecurityHeadersMiddleware."""
+
+    def test_extract_origin_full_url(self):
+        """Extracts scheme+host from a full URL."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        assert mw._extract_origin("https://keycloak.example.com/realms/master") == "https://keycloak.example.com"
+
+    def test_extract_origin_empty(self):
+        """Returns empty string for empty input."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        assert mw._extract_origin("") == ""
+
+    def test_extract_origin_bare_host(self):
+        """Handles URL without path."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        assert mw._extract_origin("https://keycloak.kind") == "https://keycloak.kind"
+
+    def test_csp_includes_keycloak(self):
+        """CSP connect-src and form-action include Keycloak origin."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        mw._keycloak_host = "https://keycloak.example.com"
+        csp = mw._build_csp()
+        assert "connect-src 'self' https://keycloak.example.com" in csp
+        assert "form-action 'self' https://keycloak.example.com" in csp
+
+    def test_csp_without_keycloak(self):
+        """CSP works without Keycloak URL."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        mw._keycloak_host = ""
+        csp = mw._build_csp()
+        assert "connect-src 'self'" in csp
+        assert "form-action 'self'" in csp
+        # No trailing space after 'self'
+        assert "connect-src 'self' " not in csp
+
+    def test_csp_includes_jsdelivr(self):
+        """CSP script-src includes jsdelivr for Chart.js."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        mw._keycloak_host = ""
+        csp = mw._build_csp()
+        assert "https://cdn.jsdelivr.net" in csp
+
+    def test_csp_frame_ancestors_none(self):
+        """CSP blocks framing via frame-ancestors 'none'."""
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        mw._keycloak_host = ""
+        csp = mw._build_csp()
+        assert "frame-ancestors 'none'" in csp
+
+
+class TestSecurityHeadersIntegration:
+    """Integration tests using the FastAPI test client."""
+
+    @pytest.fixture
+    def client(self):
+        from fastapi import FastAPI
+        from fastapi.responses import PlainTextResponse
+
+        app = FastAPI()
+        app.add_middleware(SecurityHeadersMiddleware, keycloak_url="https://keycloak.test")
+
+        @app.get("/test")
+        async def test_route():
+            return PlainTextResponse("ok")
+
+        return TestClient(app)
+
+    def test_security_headers_present(self, client: TestClient):
+        """All security headers are set on responses."""
+        response = client.get("/test")
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+        assert "geolocation=()" in response.headers["Permissions-Policy"]
+        assert "Content-Security-Policy" in response.headers
+
+    def test_csp_header_value(self, client: TestClient):
+        """CSP header contains expected directives."""
+        response = client.get("/test")
+        csp = response.headers["Content-Security-Policy"]
+        assert "default-src 'self'" in csp
+        assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net" in csp
+        assert "https://keycloak.test" in csp
+
+    def test_no_hsts_on_http(self, client: TestClient):
+        """HSTS is not set for plain HTTP requests."""
+        response = client.get("/test")
+        assert "Strict-Transport-Security" not in response.headers
+
+    def test_headers_do_not_override_existing(self):
+        """Middleware does not overwrite headers already set by the application."""
+        from fastapi import FastAPI
+        from starlette.responses import Response
+
+        app = FastAPI()
+        app.add_middleware(SecurityHeadersMiddleware, keycloak_url="")
+
+        @app.get("/custom")
+        async def custom_route():
+            resp = Response("ok")
+            resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+            return resp
+
+        client = TestClient(app)
+        response = client.get("/custom")
+        assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+
+
+class TestSecurityTxt:
+    """Tests for the /.well-known/security.txt endpoint."""
+
+    @pytest.fixture
+    def client(self):
+        from opi.server import create_app
+
+        app = create_app()
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_security_txt_exists(self, client: TestClient):
+        """security.txt endpoint returns 200."""
+        response = client.get("/.well-known/security.txt")
+        assert response.status_code == 200
+
+    def test_security_txt_content_type(self, client: TestClient):
+        """security.txt has text/plain content type."""
+        response = client.get("/.well-known/security.txt")
+        assert "text/plain" in response.headers["content-type"]
+
+    def test_security_txt_has_contact(self, client: TestClient):
+        """security.txt contains a Contact field."""
+        response = client.get("/.well-known/security.txt")
+        assert "Contact:" in response.text
+
+    def test_security_txt_has_expires(self, client: TestClient):
+        """security.txt contains an Expires field."""
+        response = client.get("/.well-known/security.txt")
+        assert "Expires:" in response.text
