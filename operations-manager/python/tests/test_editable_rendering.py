@@ -414,7 +414,7 @@ class TestDomainSectionRendering:
         )
         assert "URL-formaat" in html
 
-    def test_domain_section_has_group_editable_with_five_children(self):
+    def test_domain_section_has_group_editable_with_six_children(self):
         from opi.forms.editables.editable import WidgetType
         from opi.forms.visualizers.wizard_sections import DOMAIN_SECTION
 
@@ -422,8 +422,8 @@ class TestDomainSectionRendering:
         assert len(DOMAIN_SECTION.editables) == 1
         group = DOMAIN_SECTION.editables[0]
         assert group.widget == WidgetType.GROUP
-        # Group wraps 5 child domain fields
-        assert len(group.children) == 5
+        # Group wraps 6 child domain fields (including expose-component-on-bare-domain)
+        assert len(group.children) == 6
 
 
 class TestConditionalVisibility:
