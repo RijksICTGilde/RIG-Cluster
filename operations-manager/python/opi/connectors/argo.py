@@ -294,7 +294,7 @@ class ArgoConnector:
         status_url = f"{self._actual_base_url}/api/v1/applications/{app_name}"
 
         try:
-            status_code, response_text = await self._make_authenticated_request("GET", status_url)
+            status_code, response_text = await self._make_authenticated_request("GET", status_url, timeout_seconds=10)
 
             if status_code == 200:
                 status_data = json.loads(response_text)
@@ -338,7 +338,7 @@ class ArgoConnector:
         tree_url = f"{self._actual_base_url}/api/v1/applications/{app_name}/resource-tree"
 
         try:
-            status_code, response_text = await self._make_authenticated_request("GET", tree_url)
+            status_code, response_text = await self._make_authenticated_request("GET", tree_url, timeout_seconds=5)
 
             if status_code == 200:
                 tree_data = json.loads(response_text)
