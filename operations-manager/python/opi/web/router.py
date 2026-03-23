@@ -1355,197 +1355,201 @@ async def project_details(request: Request, project_name: str):
         except Exception as e:
             logger.debug(f"Prometheus not available: {e}")
 
-        # Fetch ArgoCD status for each deployment
+        # Fetch ArgoCD status for each deployment (in parallel)
         from typing import Any
 
         argocd_status: dict[str, dict[str, Any]] = {}
         argocd_available = False
         try:
-            from opi.connectors.argo import create_argo_connector
+            from opi.connectors.argo import ArgoConnector, create_argo_connector
             from opi.utils.naming import generate_argocd_application_name
 
             argo_connector = create_argo_connector()
             argocd_available = argo_connector.auth_token is not None
 
             if argocd_available:
-                for deployment in project_details["deployments"]:
+
+                async def _fetch_deployment_status(
+                    deployment: dict[str, Any],
+                    argo: ArgoConnector,
+                ) -> tuple[str, dict[str, Any]] | None:
+                    """Fetch ArgoCD status for a single deployment."""
                     deployment_name = deployment.get("name")
-                    if deployment_name:
-                        app_name = generate_argocd_application_name(project_name, deployment_name)
-                        try:
-                            status_data = await argo_connector.get_application_status(app_name)
-                            if status_data:
-                                # Extract relevant status information
-                                status = status_data.get("status", {})
-                                health = status.get("health", {})
-                                sync = status.get("sync", {})
-                                operation_state = status.get("operationState", {})
+                    if not deployment_name:
+                        return None
+                    app_name = generate_argocd_application_name(project_name, deployment_name)
+                    try:
+                        status_data = await argo.get_application_status(app_name)
+                        if status_data:
+                            status = status_data.get("status", {})
+                            health = status.get("health", {})
+                            sync = status.get("sync", {})
+                            operation_state = status.get("operationState", {})
 
-                                errors = []
-                                app_health = health.get("status", "Unknown")
+                            errors: list[dict[str, str]] = []
+                            app_health = health.get("status", "Unknown")
 
-                                if app_health != "Healthy":
-                                    # Extract errors from top-level resources
-                                    for resource in status.get("resources", []):
-                                        resource_health = resource.get("health", {})
-                                        health_status = resource_health.get("status")
-                                        health_msg = resource_health.get("message", "")
-                                        if health_status in ["Degraded", "Missing"]:
-                                            error_msg = health_msg or "Unknown error"
-                                            resource_name = (
-                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
-                                            )
-                                            errors.append({"resource": resource_name, "message": error_msg})
-                                        elif health_status == "Progressing" and health_msg:
-                                            resource_name = (
-                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
-                                            )
-                                            errors.append({"resource": resource_name, "message": health_msg})
+                            if app_health != "Healthy":
+                                for resource in status.get("resources", []):
+                                    resource_health = resource.get("health", {})
+                                    health_status = resource_health.get("status")
+                                    health_msg = resource_health.get("message", "")
+                                    if health_status in ["Degraded", "Missing"]:
+                                        error_msg = health_msg or "Unknown error"
+                                        resource_name = (
+                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                        )
+                                        errors.append({"resource": resource_name, "message": error_msg})
+                                    elif health_status == "Progressing" and health_msg:
+                                        resource_name = (
+                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                        )
+                                        errors.append({"resource": resource_name, "message": health_msg})
 
-                                    # Fetch resource tree for child-level errors (Pods, ReplicaSets)
-                                    try:
-                                        tree_nodes = await argo_connector.get_application_resource_tree(app_name)
-                                        for node in tree_nodes:
-                                            node_health = node.get("health", {})
-                                            node_health_status = node_health.get("status")
-                                            node_health_msg = node_health.get("message", "")
-                                            if not node_health_msg:
-                                                continue
-                                            node_kind = node.get("kind", "")
-                                            if node_kind not in ("Pod", "ReplicaSet"):
-                                                continue
-                                            if node_health_status in ("Degraded", "Missing"):
-                                                node_name = node.get("name", "unknown")
-                                                node_error: dict[str, str] = {
-                                                    "resource": f"{node_kind}/{node_name}",
-                                                    "message": node_health_msg,
-                                                }
-                                                node_created = node.get("createdAt")
-                                                if node_created:
-                                                    node_error["timestamp"] = node_created
-                                                errors.append(node_error)
-                                    except Exception as tree_error:
-                                        logger.debug(f"Could not fetch resource tree for {app_name}: {tree_error}")
-
-                                    # Fetch recent Warning events when Degraded or when errors already found
-                                    if app_health == "Degraded" or errors:
-                                        try:
-                                            from opi.connectors.kubectl import KubectlConnector
-                                            from opi.core.cluster_config import get_prefixed_namespace
-
-                                            base_ns = deployment.get("namespace")
-                                            dep_cluster = deployment.get("cluster")
-                                            if base_ns and dep_cluster:
-                                                k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
-                                                kubectl = KubectlConnector()
-                                                events = await kubectl.get_namespace_events(k8s_ns, limit=30)
-                                                for event in events:
-                                                    obj = event.get("object", "unknown")
-                                                    reason = event.get("reason", "")
-                                                    msg = event.get("message", "")
-                                                    if msg:
-                                                        error_entry: dict[str, str] = {
-                                                            "resource": f"Event/{obj}",
-                                                            "message": f"[{reason}] {msg}",
-                                                        }
-                                                        event_time = event.get("time")
-                                                        if event_time:
-                                                            error_entry["timestamp"] = event_time
-                                                        errors.append(error_entry)
-                                        except Exception as events_error:
-                                            logger.debug(
-                                                f"Could not fetch namespace events for {deployment_name}: {events_error}"
-                                            )
-
-                                    # Extract per-resource sync failures from syncResult
-                                    sync_result = operation_state.get("syncResult", {})
-                                    for resource in sync_result.get("resources", []):
-                                        if resource.get("status") == "SyncFailed":
-                                            resource_name = (
-                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
-                                            )
-                                            error_msg = resource.get("message", "Sync failed")
-                                            errors.append({"resource": resource_name, "message": error_msg})
-
-                                    # Extract application-level conditions
-                                    for condition in status.get("conditions", []):
-                                        condition_type = condition.get("type", "Unknown")
-                                        condition_msg = condition.get("message", "")
-                                        if condition_msg:
-                                            errors.append({"resource": condition_type, "message": condition_msg})
-
-                                    # Check for sync operation errors
-                                    if operation_state.get("phase") in ("Failed", "Error"):
-                                        op_message = operation_state.get("message", "Sync operation failed")
-                                        errors.append(
-                                            {
-                                                "resource": "SyncOperation",
-                                                "message": op_message,
-                                                "timestamp": operation_state.get("finishedAt"),
+                                try:
+                                    tree_nodes = await argo.get_application_resource_tree(app_name)
+                                    for node in tree_nodes:
+                                        node_health = node.get("health", {})
+                                        node_health_status = node_health.get("status")
+                                        node_health_msg = node_health.get("message", "")
+                                        if not node_health_msg:
+                                            continue
+                                        node_kind = node.get("kind", "")
+                                        if node_kind not in ("Pod", "ReplicaSet"):
+                                            continue
+                                        if node_health_status in ("Degraded", "Missing"):
+                                            node_name = node.get("name", "unknown")
+                                            node_error: dict[str, str] = {
+                                                "resource": f"{node_kind}/{node_name}",
+                                                "message": node_health_msg,
                                             }
+                                            node_created = node.get("createdAt")
+                                            if node_created:
+                                                node_error["timestamp"] = node_created
+                                            errors.append(node_error)
+                                except Exception as tree_error:
+                                    logger.debug(f"Could not fetch resource tree for {app_name}: {tree_error}")
+
+                                if app_health == "Degraded" or errors:
+                                    try:
+                                        from opi.connectors.kubectl import KubectlConnector
+                                        from opi.core.cluster_config import get_prefixed_namespace
+
+                                        base_ns = deployment.get("namespace")
+                                        dep_cluster = deployment.get("cluster")
+                                        if base_ns and dep_cluster:
+                                            k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
+                                            kubectl = KubectlConnector()
+                                            events = await kubectl.get_namespace_events(k8s_ns, limit=30)
+                                            for event in events:
+                                                obj = event.get("object", "unknown")
+                                                reason = event.get("reason", "")
+                                                msg = event.get("message", "")
+                                                if msg:
+                                                    error_entry: dict[str, str] = {
+                                                        "resource": f"Event/{obj}",
+                                                        "message": f"[{reason}] {msg}",
+                                                    }
+                                                    event_time = event.get("time")
+                                                    if event_time:
+                                                        error_entry["timestamp"] = event_time
+                                                    errors.append(error_entry)
+                                    except Exception as events_error:
+                                        logger.debug(
+                                            f"Could not fetch namespace events for {deployment_name}: {events_error}"
                                         )
 
-                                # Get last sync time
-                                last_sync = None
-                                if operation_state.get("finishedAt"):
-                                    last_sync = operation_state.get("finishedAt")
-                                elif sync.get("status") == "Synced":
-                                    last_sync = status.get("reconciledAt")
+                                sync_result = operation_state.get("syncResult", {})
+                                for resource in sync_result.get("resources", []):
+                                    if resource.get("status") == "SyncFailed":
+                                        resource_name = (
+                                            f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
+                                        )
+                                        error_msg = resource.get("message", "Sync failed")
+                                        errors.append({"resource": resource_name, "message": error_msg})
 
-                                # Compute relative age for each error with a timestamp
-                                from datetime import datetime
+                                for condition in status.get("conditions", []):
+                                    condition_type = condition.get("type", "Unknown")
+                                    condition_msg = condition.get("message", "")
+                                    if condition_msg:
+                                        errors.append({"resource": condition_type, "message": condition_msg})
 
-                                now = datetime.now(UTC)
-                                for error in errors:
-                                    ts = error.get("timestamp")
-                                    if not ts:
-                                        continue
-                                    try:
-                                        dt = datetime.fromisoformat(ts)
-                                        diff_min = int((now - dt).total_seconds() / 60)
-                                        if diff_min < 1:
-                                            error["age"] = "zojuist"
-                                        elif diff_min < 60:
-                                            error["age"] = f"{diff_min} min geleden"
-                                        else:
-                                            error["age"] = f"{diff_min // 60} uur geleden"
-                                    except (ValueError, TypeError):
-                                        pass
+                                if operation_state.get("phase") in ("Failed", "Error"):
+                                    op_message = operation_state.get("message", "Sync operation failed")
+                                    errors.append(
+                                        {
+                                            "resource": "SyncOperation",
+                                            "message": op_message,
+                                            "timestamp": operation_state.get("finishedAt"),
+                                        }
+                                    )
 
-                                argocd_status[deployment_name] = {
-                                    "app_name": app_name,
-                                    "available": True,
-                                    "health": health.get("status", "Unknown"),
-                                    "health_message": health.get("message"),
-                                    "sync": sync.get("status", "Unknown"),
-                                    "revision": sync.get("revision", "")[:7] if sync.get("revision") else None,
-                                    "last_sync": last_sync,
-                                    "operation_phase": operation_state.get("phase"),
-                                    "operation_message": operation_state.get("message"),
-                                    "errors": errors,
-                                }
-                                logger.debug(
-                                    f"Fetched ArgoCD status for {app_name}: health={health.get('status')}, sync={sync.get('status')}"
-                                )
-                            else:
-                                argocd_status[deployment_name] = {
-                                    "app_name": app_name,
-                                    "available": False,
-                                    "health": "Unknown",
-                                    "sync": "Unknown",
-                                    "errors": [
-                                        {"resource": "Application", "message": "Application not found in ArgoCD"}
-                                    ],
-                                }
-                        except Exception as app_error:
-                            logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
-                            argocd_status[deployment_name] = {
+                            last_sync = None
+                            if operation_state.get("finishedAt"):
+                                last_sync = operation_state.get("finishedAt")
+                            elif sync.get("status") == "Synced":
+                                last_sync = status.get("reconciledAt")
+
+                            from datetime import datetime
+
+                            now = datetime.now(UTC)
+                            for error in errors:
+                                ts = error.get("timestamp")
+                                if not ts:
+                                    continue
+                                try:
+                                    dt = datetime.fromisoformat(ts)
+                                    diff_min = int((now - dt).total_seconds() / 60)
+                                    if diff_min < 1:
+                                        error["age"] = "zojuist"
+                                    elif diff_min < 60:
+                                        error["age"] = f"{diff_min} min geleden"
+                                    else:
+                                        error["age"] = f"{diff_min // 60} uur geleden"
+                                except (ValueError, TypeError):
+                                    pass
+
+                            result = {
+                                "app_name": app_name,
+                                "available": True,
+                                "health": health.get("status", "Unknown"),
+                                "health_message": health.get("message"),
+                                "sync": sync.get("status", "Unknown"),
+                                "revision": sync.get("revision", "")[:7] if sync.get("revision") else None,
+                                "last_sync": last_sync,
+                                "operation_phase": operation_state.get("phase"),
+                                "operation_message": operation_state.get("message"),
+                                "errors": errors,
+                            }
+                            logger.debug(
+                                f"Fetched ArgoCD status for {app_name}: health={health.get('status')}, sync={sync.get('status')}"
+                            )
+                            return deployment_name, result
+                        else:
+                            return deployment_name, {
                                 "app_name": app_name,
                                 "available": False,
                                 "health": "Unknown",
                                 "sync": "Unknown",
-                                "errors": [{"resource": "API", "message": str(app_error)}],
+                                "errors": [{"resource": "Application", "message": "Application not found in ArgoCD"}],
                             }
+                    except Exception as app_error:
+                        logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
+                        return deployment_name, {
+                            "app_name": app_name,
+                            "available": False,
+                            "health": "Unknown",
+                            "sync": "Unknown",
+                            "errors": [{"resource": "API", "message": str(app_error)}],
+                        }
+
+                results = await asyncio.gather(
+                    *[_fetch_deployment_status(dep, argo_connector) for dep in project_details["deployments"]]
+                )
+                for result in results:
+                    if result is not None:
+                        argocd_status[result[0]] = result[1]
+
         except Exception as argo_error:
             logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
 
