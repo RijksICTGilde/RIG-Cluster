@@ -33,6 +33,7 @@ CLUSTER_CONFIG = {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
         },
         "min_memory_limit_mi": 25,
+        "max_memory_limit_mi": 4096,
         "uses_capsule": False,
         "ca_certificate": {
             "enabled": True,
@@ -77,6 +78,7 @@ CLUSTER_CONFIG = {
             "support_http": False,
         },
         "min_memory_limit_mi": 25,
+        "max_memory_limit_mi": 4096,
         "uses_capsule": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -112,6 +114,7 @@ CLUSTER_CONFIG = {
             "support_http": False,  # Only generate HTTPS redirect URIs in production
         },
         "min_memory_limit_mi": 25,
+        "max_memory_limit_mi": 4096,
         "uses_capsule": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
@@ -572,6 +575,22 @@ def get_min_memory_limit_mi(cluster_name: str) -> int:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("min_memory_limit_mi", 25)
+
+
+def get_max_memory_limit_mi(cluster_name: str) -> int:
+    """
+    Get the maximum memory limit in Mi for a specific cluster.
+
+    This is the upper bound for auto-tuning and wizard dropdowns.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Maximum memory limit in Mi
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("max_memory_limit_mi", 4096)
 
 
 def uses_capsule(cluster_name: str) -> bool:

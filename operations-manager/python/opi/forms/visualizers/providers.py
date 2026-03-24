@@ -233,16 +233,32 @@ class CpuLimitOptionsProvider:
         ]
 
 
-MEMORY_STEPS: list[tuple[str, str]] = [
-    ("32Mi", "32 MB"),
-    ("64Mi", "64 MB"),
-    ("96Mi", "96 MB"),
-    ("128Mi", "128 MB"),
-    ("256Mi", "256 MB"),
-    ("512Mi", "512 MB"),
-    ("768Mi", "768 MB"),
-    ("1Gi", "1 GB"),
+ALL_MEMORY_STEPS: list[tuple[str, str, int]] = [
+    ("32Mi", "32 MB", 32),
+    ("64Mi", "64 MB", 64),
+    ("96Mi", "96 MB", 96),
+    ("128Mi", "128 MB", 128),
+    ("256Mi", "256 MB", 256),
+    ("512Mi", "512 MB", 512),
+    ("768Mi", "768 MB", 768),
+    ("1Gi", "1 GB", 1024),
+    ("1536Mi", "1.5 GB", 1536),
+    ("2Gi", "2 GB", 2048),
+    ("2560Mi", "2.5 GB", 2560),
+    ("3Gi", "3 GB", 3072),
+    ("3584Mi", "3.5 GB", 3584),
+    ("4Gi", "4 GB", 4096),
 ]
+
+
+def get_memory_steps(max_mi: int | None = None) -> list[tuple[str, str]]:
+    """Return memory steps up to the cluster's max_memory_limit_mi."""
+    if max_mi is None:
+        from opi.core.cluster_config import get_max_memory_limit_mi
+        from opi.core.config import settings
+
+        max_mi = get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
+    return [(v, lbl) for v, lbl, mi in ALL_MEMORY_STEPS if mi <= max_mi]
 
 
 class MemoryOptionsProvider:
@@ -257,7 +273,8 @@ class MemoryOptionsProvider:
         self.current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        options = [{"value": v, "label": lbl} for v, lbl in MEMORY_STEPS]
+        steps = get_memory_steps()
+        options = [{"value": v, "label": lbl} for v, lbl in steps]
 
         if self.current_value and not any(o["value"] == self.current_value for o in options):
             from opi.services.resource_analyzer import parse_k8s_memory_to_mi
@@ -271,7 +288,7 @@ class MemoryOptionsProvider:
             new_option = {"value": self.current_value, "label": label}
 
             # Insert at sorted position
-            step_mis = [parse_k8s_memory_to_mi(v) for v, _ in MEMORY_STEPS]
+            step_mis = [parse_k8s_memory_to_mi(v) for v, _ in steps]
             insert_idx = len(options)
             for i, step_mi in enumerate(step_mis):
                 if current_mi < step_mi:

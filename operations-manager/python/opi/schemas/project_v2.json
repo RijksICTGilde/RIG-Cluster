@@ -76,7 +76,7 @@
       "additionalProperties": false,
       "properties": {
         "email": { "type": "string", "format": "email" },
-        "role": { "type": "string", "enum": ["admin", "administrator", "owner", "member"] }
+        "role": { "type": "string", "enum": ["admin", "owner", "member"] }
       }
     },
 

@@ -29,13 +29,20 @@ class HealthEndpointFilter(logging.Filter):
         return not any(f'"GET {path}' in message or f'"HEAD {path}' in message for path in self.EXCLUDED_PATHS)
 
 
-def setup_logging(log_to_file: bool = False, log_file_path: str = "log.txt") -> None:
+def setup_logging(
+    log_to_file: bool = False,
+    log_file_path: str = "log.txt",
+    log_errors_to_file: bool = False,
+    log_errors_file_path: str = "/data/logs/errors.log",
+) -> None:
     """
-    Configure logging to output to stdout and optionally to a file.
+    Configure logging to output to stdout and optionally to file(s).
 
     Args:
         log_to_file: Whether to enable file logging alongside stdout
         log_file_path: Path to log file when file logging is enabled
+        log_errors_to_file: Whether to write WARNING+ to a separate error log file
+        log_errors_file_path: Path to error log file (should be on persistent storage)
     """
     # Create logger configuration
     log_format = "%(asctime)s - %(name)s - %(levelname)s - [%(flow_id)s] %(message)s"
@@ -88,3 +95,25 @@ def setup_logging(log_to_file: bool = False, log_file_path: str = "log.txt") -> 
             logging.info("Continuing with stdout logging only")  # noqa: LOG015
     else:
         logging.info("File logging disabled - using stdout only")  # noqa: LOG015
+
+    # Add error-only file handler for persistent failure monitoring
+    if log_errors_to_file:
+        try:
+            error_log_path = Path(log_errors_file_path)
+            error_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Rotating file handler: 100MB max, keep 3 backups (up to 400MB total)
+            error_file_handler = logging.handlers.RotatingFileHandler(
+                log_errors_file_path,
+                maxBytes=100 * 1024 * 1024,  # 100MB
+                backupCount=3,
+            )
+            error_file_handler.setLevel(logging.WARNING)
+            error_file_handler.setFormatter(logging.Formatter(log_format))
+            root_logger.addHandler(error_file_handler)
+
+            logging.info(f"Error file logging enabled: {log_errors_file_path}")  # noqa: LOG015
+
+        except Exception as e:
+            logging.exception(f"Failed to setup error file logging to {log_errors_file_path}: {e}")  # noqa: LOG015
+            logging.info("Continuing without error file logging")  # noqa: LOG015

@@ -85,7 +85,7 @@ class UserService:
         # Add role-based flags for easier template logic
         if organization_info.get("role"):
             role = organization_info["role"].lower()
-            user_info["is_admin"] = role in ["admin", "administrator"]
+            user_info["is_admin"] = role == "admin"
             user_info["is_developer"] = role in ["developer", "dev"]
             user_info["is_manager"] = role in ["manager", "lead", "supervisor"]
 

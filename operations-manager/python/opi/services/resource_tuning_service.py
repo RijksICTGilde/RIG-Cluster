@@ -13,7 +13,7 @@ from typing import Any
 
 from opi.connectors.git import create_git_connector_for_project_files
 from opi.connectors.prometheus import get_metrics_connector
-from opi.core.cluster_config import get_min_memory_limit_mi, get_prefixed_namespace
+from opi.core.cluster_config import get_max_memory_limit_mi, get_min_memory_limit_mi, get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.project_manager import create_project_manager
@@ -243,7 +243,7 @@ async def _analyze_component_resources(
         threshold_percent=threshold_percent,
         has_oom_kills=has_oom_kills,
         min_memory_mi=get_min_memory_limit_mi(cluster),
-        max_memory_mi=settings.RESOURCE_TUNING_MAX_MEMORY_MI,
+        max_memory_mi=get_max_memory_limit_mi(cluster),
     )
 
     if recommendation is None:
@@ -265,7 +265,7 @@ async def _analyze_component_resources(
                 else:
                     floor_factor = 1.5
                 new_floor = oom_floor_mb * floor_factor
-                max_memory = float(settings.RESOURCE_TUNING_MAX_MEMORY_MI)
+                max_memory = float(get_max_memory_limit_mi(cluster))
                 if new_floor > max_memory:
                     new_floor = max_memory
                     logger.warning(

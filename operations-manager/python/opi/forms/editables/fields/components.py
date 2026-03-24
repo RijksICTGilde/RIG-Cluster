@@ -73,14 +73,14 @@ COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE = Editable(
 COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE = Editable(
     yaml_path="components[*]/resources/requests/memory",
     values_provider="MemoryOptionsProvider",
-    validator=MemoryRangeValidator(min_mi=32, max_mi=1024),
+    validator=MemoryRangeValidator(min_mi=32),
     default="256Mi",
 )
 
 COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE = Editable(
     yaml_path="components[*]/resources/limits/memory",
     values_provider="MemoryOptionsProvider",
-    validator=MemoryRangeValidator(min_mi=32, max_mi=1024),
+    validator=MemoryRangeValidator(min_mi=32),
     default="512Mi",
 )
 

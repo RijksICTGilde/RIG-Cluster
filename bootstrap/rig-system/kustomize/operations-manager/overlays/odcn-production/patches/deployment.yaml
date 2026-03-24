@@ -23,10 +23,16 @@ spec:
             secretKeyRef:
               name: prometheus-metrics-auth
               key: token
+        - name: LOG_ERRORS_TO_FILE
+          value: "true"
+        - name: LOG_ERRORS_FILE_PATH
+          value: "/data/logs/errors.log"
         volumeMounts:
         - name: config-volume
           mountPath: /etc/config
           readOnly: true
+        - name: error-logs
+          mountPath: /data/logs
       volumes:
       - name: config-volume
         configMap:
@@ -34,3 +40,6 @@ spec:
       - name: tmp
         emptyDir:
           sizeLimit: 8Gi
+      - name: error-logs
+        persistentVolumeClaim:
+          claimName: operations-manager-error-logs

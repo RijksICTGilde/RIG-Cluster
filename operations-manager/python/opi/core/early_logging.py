@@ -22,9 +22,16 @@ def initialize_logging() -> None:
     # Get basic logging settings from environment
     log_to_file = os.environ.get("LOG_TO_FILE", "false").lower() == "true"
     log_file_path = os.environ.get("LOG_FILE_PATH", "log.txt")
+    log_errors_to_file = os.environ.get("LOG_ERRORS_TO_FILE", "false").lower() == "true"
+    log_errors_file_path = os.environ.get("LOG_ERRORS_FILE_PATH", "/data/logs/errors.log")
 
     # Set up logging immediately
-    setup_logging(log_to_file=log_to_file, log_file_path=log_file_path)
+    setup_logging(
+        log_to_file=log_to_file,
+        log_file_path=log_file_path,
+        log_errors_to_file=log_errors_to_file,
+        log_errors_file_path=log_errors_file_path,
+    )
 
     # Get logger for this module
     logger = logging.getLogger(__name__)
