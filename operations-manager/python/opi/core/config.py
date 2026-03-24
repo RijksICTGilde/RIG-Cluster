@@ -233,6 +233,8 @@ class Settings(BaseSettings):
     # Logging configuration
     LOG_TO_FILE: bool = False  # Enable file logging alongside stdout
     LOG_FILE_PATH: str = "log.txt"  # Path to log file when LOG_TO_FILE is enabled
+    LOG_ERRORS_TO_FILE: bool = False  # Write WARNING+ to a separate persistent error log
+    LOG_ERRORS_FILE_PATH: str = "/data/logs/errors.log"  # Path to error log (should be on PVC)
 
     # Temporary directory configuration
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
@@ -323,7 +325,7 @@ class Settings(BaseSettings):
     RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
     RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed
     RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Only recommend if diff > 20%
-    RESOURCE_TUNING_MAX_MEMORY_MI: int = 1024  # Auto-tune will never set limits above this
+    # max_memory_limit_mi is now in cluster_config (per-cluster setting)
 
     # Deployment sanitization configuration
     SANITIZE_RESTART_THRESHOLD: int = 10  # Restarts above this = broken
@@ -440,7 +442,12 @@ def _load_sops_key_from_local_file() -> str | None:
 def _get_settings() -> Settings:
     settings = Settings()
 
-    setup_logging(log_to_file=settings.LOG_TO_FILE, log_file_path=settings.LOG_FILE_PATH)
+    setup_logging(
+        log_to_file=settings.LOG_TO_FILE,
+        log_file_path=settings.LOG_FILE_PATH,
+        log_errors_to_file=settings.LOG_ERRORS_TO_FILE,
+        log_errors_file_path=settings.LOG_ERRORS_FILE_PATH,
+    )
 
     # Detailed logging for SOPS key configuration
     logger.info("=== SOPS Age Key Configuration Debug ===")

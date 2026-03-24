@@ -212,11 +212,22 @@ class MemoryRangeValidator:
 
     Parses values like ``256Mi``, ``1Gi``, ``384Mi`` and checks that the
     value in MiB is between *min_mi* and *max_mi* (inclusive).
+
+    When *max_mi* is None the cluster's ``max_memory_limit_mi`` is used.
     """
 
-    def __init__(self, min_mi: int = 32, max_mi: int = 1024) -> None:
+    def __init__(self, min_mi: int = 32, max_mi: int | None = None) -> None:
         self.min_mi = min_mi
-        self.max_mi = max_mi
+        self._max_mi = max_mi
+
+    @property
+    def max_mi(self) -> int:
+        if self._max_mi is not None:
+            return self._max_mi
+        from opi.core.cluster_config import get_max_memory_limit_mi
+        from opi.core.config import settings
+
+        return get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
 
     def validate(self, value: Any) -> list[str]:
         if value is None or (isinstance(value, str) and not value.strip()):
@@ -227,8 +238,9 @@ class MemoryRangeValidator:
             mi = parse_k8s_memory_to_mi(str(value))
         except ValueError:
             return [f"Ongeldige geheugenwaarde: {value}"]
-        if mi < self.min_mi or mi > self.max_mi:
-            return [f"Geheugen moet tussen {self.min_mi}Mi en {self.max_mi}Mi liggen (was: {value})"]
+        max_mi = self.max_mi
+        if mi < self.min_mi or mi > max_mi:
+            return [f"Geheugen moet tussen {self.min_mi}Mi en {max_mi}Mi liggen (was: {value})"]
         return []
 
 

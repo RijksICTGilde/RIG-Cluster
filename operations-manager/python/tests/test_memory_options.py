@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from opi.forms.editables.enforcers import ComponentServicesEnforcer, FieldError
 from opi.forms.editables.validators import MemoryRangeValidator
-from opi.forms.visualizers.providers import MEMORY_STEPS, MemoryOptionsProvider
+from opi.forms.visualizers.providers import MemoryOptionsProvider, get_memory_steps
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ class TestMemoryRangeValidator:
     def test_above_maximum(self):
         errors = self.validator.validate("2Gi")
         assert len(errors) == 1
-        assert "1024Mi" in errors[0]
+        assert "1024" in errors[0]
 
     def test_none_is_valid(self):
         assert self.validator.validate(None) == []
@@ -95,7 +95,7 @@ class TestMemoryOptionsProvider:
     def test_standard_steps(self):
         options = MemoryOptionsProvider().get_options()
         values = [o["value"] for o in options]
-        assert values == [v for v, _ in MEMORY_STEPS]
+        assert values == [v for v, _ in get_memory_steps()]
 
     def test_current_value_in_steps_no_duplicate(self):
         options = MemoryOptionsProvider(current_value="256Mi").get_options()
@@ -118,19 +118,19 @@ class TestMemoryOptionsProvider:
         assert values[0] == "16Mi"
 
     def test_current_value_above_all_steps(self):
-        options = MemoryOptionsProvider(current_value="2Gi").get_options()
+        options = MemoryOptionsProvider(current_value="5Gi").get_options()
         values = [o["value"] for o in options]
-        assert values[-1] == "2Gi"
+        assert values[-1] == "5Gi"
 
     def test_current_value_invalid_format_ignored(self):
         options = MemoryOptionsProvider(current_value="invalid").get_options()
         values = [o["value"] for o in options]
-        assert values == [v for v, _ in MEMORY_STEPS]
+        assert values == [v for v, _ in get_memory_steps()]
 
     def test_current_value_none(self):
         options = MemoryOptionsProvider(current_value=None).get_options()
         values = [o["value"] for o in options]
-        assert values == [v for v, _ in MEMORY_STEPS]
+        assert values == [v for v, _ in get_memory_steps()]
 
     def test_injected_label_is_mb(self):
         options = MemoryOptionsProvider(current_value="384Mi").get_options()

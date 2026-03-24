@@ -6,6 +6,7 @@ cluster and application metrics.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from typing import Any
 
@@ -461,15 +462,14 @@ class PrometheusConnector:
         Returns:
             Dictionary mapping component names to their metrics
         """
-        result: dict[str, dict[str, float | None]] = {}
+        pod_prefixes = {name: generate_unique_name(deployment_name, name) for name in components}
 
-        for component_name in components:
-            # Pod names follow pattern: {deployment_name}-{component_name}-{hash}-{hash}
-            # Use generate_unique_name to construct the Kubernetes resource name
-            pod_prefix = generate_unique_name(deployment_name, component_name)
-            result[component_name] = self.get_component_metrics(namespace, pod_prefix, time_range)
-
-        return result
+        with ThreadPoolExecutor(max_workers=len(pod_prefixes)) as executor:
+            futures = {
+                name: executor.submit(self.get_component_metrics, namespace, prefix, time_range)
+                for name, prefix in pod_prefixes.items()
+            }
+            return {name: future.result() for name, future in futures.items()}
 
     def get_component_metrics_timeseries(
         self, namespace: str, pod_prefix: str, duration_minutes: int = 60, step_minutes: int = 5
@@ -744,17 +744,16 @@ class PrometheusConnector:
         Returns:
             Dictionary mapping component names to their time-series metrics
         """
-        result: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        pod_prefixes = {name: generate_unique_name(deployment_name, name) for name in components}
 
-        for component_name in components:
-            # Pod names follow pattern: {deployment_name}-{component_name}-{hash}-{hash}
-            # Use generate_unique_name to construct the Kubernetes resource name
-            pod_prefix = generate_unique_name(deployment_name, component_name)
-            result[component_name] = self.get_component_metrics_timeseries(
-                namespace, pod_prefix, duration_minutes, step_minutes
-            )
-
-        return result
+        with ThreadPoolExecutor(max_workers=len(pod_prefixes)) as executor:
+            futures = {
+                name: executor.submit(
+                    self.get_component_metrics_timeseries, namespace, prefix, duration_minutes, step_minutes
+                )
+                for name, prefix in pod_prefixes.items()
+            }
+            return {name: future.result() for name, future in futures.items()}
 
     def get_pvc_storage_by_namespace(
         self, namespace: str, duration_minutes: int = 60, step_minutes: int = 5
@@ -997,19 +996,16 @@ class PrometheusConnector:
         Returns:
             Dictionary mapping workload names to their time-series metrics
         """
-        result: dict[str, dict[str, Any]] = {}
+        names = [w.get("name", "") for w in workloads if w.get("name")]
 
-        for workload in workloads:
-            workload_name = workload.get("name", "")
-            if not workload_name:
-                continue
-
-            # Use workload name as pod prefix for metrics queries
-            result[workload_name] = self.get_component_metrics_timeseries(
-                namespace, workload_name, duration_minutes, step_minutes
-            )
-
-        return result
+        with ThreadPoolExecutor(max_workers=len(names) or 1) as executor:
+            futures = {
+                name: executor.submit(
+                    self.get_component_metrics_timeseries, namespace, name, duration_minutes, step_minutes
+                )
+                for name in names
+            }
+            return {name: future.result() for name, future in futures.items()}
 
 
 def create_prometheus_connector() -> PrometheusConnector:
