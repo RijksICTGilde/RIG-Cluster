@@ -27,7 +27,7 @@ DEFAULT_RESOURCES: dict[str, str] = {
     "requests_memory": "128Mi",
     "requests_cpu": "50m",
     "limits_memory": "512Mi",
-    "limits_cpu": "1000m",
+    "limits_cpu": "500m",
 }
 
 

@@ -1,0 +1,4 @@
+- UI components must use the Jinja ROOS components as much as possible, check references/jinja_roos_copied.md
+- Logic may not be duplicated, check for similar naming of code patterns, DRY
+- Methods must have been added in the files and/or classes where they belong
+- UI changes must have tests using playwright using the mock system

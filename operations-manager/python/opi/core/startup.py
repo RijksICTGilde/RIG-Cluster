@@ -180,7 +180,7 @@ async def start_prometheus_reconnection_task() -> None:
     The application continues to function without Prometheus - metrics will
     simply be unavailable until connection is established.
     """
-    metrics_connector = get_metrics_connector()
+    metrics_connector = await get_metrics_connector()
 
     if metrics_connector.is_connected:
         logger.info("Metrics connector already connected, no background reconnection needed")
@@ -790,7 +790,7 @@ async def run_startup_tasks(app: FastAPI) -> bool:
 
     # Initialize metrics connector (non-critical)
     logger.info("Initializing metrics connector")
-    metrics_connector = get_metrics_connector()
+    metrics_connector = await get_metrics_connector()
     if not metrics_connector.is_connected:
         logger.warning("Metrics connector not available at startup, starting background reconnection task")
         app.state.metrics_reconnect_task = asyncio.create_task(start_prometheus_reconnection_task())

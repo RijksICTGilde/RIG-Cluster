@@ -1023,7 +1023,7 @@ def create_prometheus_connector() -> PrometheusConnector:
     return PrometheusConnector()
 
 
-def get_metrics_connector() -> Any:
+async def get_metrics_connector() -> Any:
     """
     Get the appropriate metrics connector based on configuration.
 
@@ -1047,7 +1047,7 @@ def get_metrics_connector() -> Any:
         from opi.connectors.grafana_prometheus import create_grafana_prometheus_connector
 
         logger.info("Using Grafana-based metrics connector (METRICS_BACKEND=grafana)")
-        return create_grafana_prometheus_connector()
+        return await create_grafana_prometheus_connector()
     else:
         logger.info("Using direct Prometheus connector (METRICS_BACKEND=prometheus)")
         return create_prometheus_connector()
