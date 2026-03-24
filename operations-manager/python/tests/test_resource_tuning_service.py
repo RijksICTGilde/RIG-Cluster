@@ -55,7 +55,7 @@ class TestTuneDeploymentResources:
     @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.commit_project_yaml", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector")
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_tune_with_oom_kills(
         self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
@@ -88,7 +88,7 @@ class TestTuneDeploymentResources:
         mock_service.get_project.return_value = mock_project
         mock_get_service.return_value = mock_service
 
-        mock_connector = MagicMock()
+        mock_connector = AsyncMock()
         mock_connector.custom_query.side_effect = [
             [],  # max: no data
             [],  # avg: no data
@@ -107,7 +107,7 @@ class TestTuneDeploymentResources:
 
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-my-project")
     @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector")
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_no_data_returns_unchanged(self, mock_get_connector, mock_get_service, mock_prefix):
         """No Prometheus data and no OOM should return unchanged."""
@@ -130,7 +130,7 @@ class TestTuneDeploymentResources:
         mock_service.get_project.return_value = mock_project
         mock_get_service.return_value = mock_service
 
-        mock_connector = MagicMock()
+        mock_connector = AsyncMock()
         mock_connector.custom_query.return_value = []
         mock_get_connector.return_value = mock_connector
 
@@ -156,7 +156,9 @@ class TestTuneDeploymentResources:
         """Should raise RuntimeError when metrics backend is unavailable."""
         with (
             patch("opi.services.resource_tuning_service.get_project_service") as mock_get_service,
-            patch("opi.services.resource_tuning_service.get_metrics_connector") as mock_get_connector,
+            patch(
+                "opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock
+            ) as mock_get_connector,
         ):
             mock_project = MagicMock()
             mock_project.data = {"deployments": []}

@@ -1,0 +1,1 @@
+- UI components must use the Jinja ROOS components as much as possible, if a component seems to be missing, add it to the list of components in request_for_components.md with a detailed request for it so it can be built later

@@ -118,7 +118,7 @@ async def sanitize_deployment(
     file_handler = ProjectFileHandler()
 
     try:
-        connector = get_metrics_connector()
+        connector = await get_metrics_connector()
     except Exception:
         connector = None
         logger.warning("Metrics backend unavailable, sanitize will use kubectl only")
@@ -179,7 +179,7 @@ async def sanitize_deployment(
             restart_count = 0
             if connector:
                 try:
-                    pod_restarts = connector.get_pod_restarts(namespace)
+                    pod_restarts = await connector.get_pod_restarts(namespace)
                     for pod_data in pod_restarts:
                         pod_name = pod_data.get("metric", {}).get("pod", "")
                         if pod_name.startswith(unique_name):
@@ -200,7 +200,7 @@ async def sanitize_deployment(
                         f'namespace="{namespace}", '
                         f'pod=~"{unique_name}.*"}}'
                     )
-                    oom_results = connector.custom_query(oom_query)
+                    oom_results = await connector.custom_query(oom_query)
                     if oom_results:
                         reasons.append("OOMKilled detected")
                 except Exception as e:

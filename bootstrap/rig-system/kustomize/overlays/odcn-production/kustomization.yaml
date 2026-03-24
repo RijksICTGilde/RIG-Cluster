@@ -72,11 +72,24 @@ patches:
         path: /spec/repo/sidecarContainers/0/resources
         value:
           limits:
-            cpu: "3"
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 512Mi
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/resources
+        value:
+          limits:
+            cpu: "1"
             memory: 1Gi
           requests:
             cpu: 250m
-            memory: 512Mi
+            memory: 128Mi
   # Scale repo-server to 2 replicas for better CMP throughput
   - target:
       kind: ArgoCD

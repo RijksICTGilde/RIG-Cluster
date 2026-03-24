@@ -144,7 +144,7 @@ class _ComponentAnalysis:
     has_oom_kills: bool
 
 
-def _analyze_component_resources(
+async def _analyze_component_resources(
     connector: Any,
     file_handler: ProjectFileHandler,
     project_data: dict[str, Any],
@@ -184,7 +184,7 @@ def _analyze_component_resources(
             f'container="app"}}'
             f"[{window_hours}h])"
         )
-        max_results = connector.custom_query(max_query)
+        max_results = await connector.custom_query(max_query)
         if max_results:
             for result in max_results:
                 value = float(result.get("value", [0, 0])[1])
@@ -197,7 +197,7 @@ def _analyze_component_resources(
             f'container="app"}}'
             f"[{window_hours}h])"
         )
-        avg_results = connector.custom_query(avg_query)
+        avg_results = await connector.custom_query(avg_query)
         if avg_results:
             for result in avg_results:
                 value = float(result.get("value", [0, 0])[1])
@@ -215,7 +215,7 @@ def _analyze_component_resources(
             f'namespace="{namespace}", '
             f'pod=~"{unique_name}.*"}}'
         )
-        oom_results = connector.custom_query(oom_query)
+        oom_results = await connector.custom_query(oom_query)
         has_oom_kills = bool(oom_results)
     except Exception as e:
         logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")
@@ -305,7 +305,7 @@ def _analyze_component_resources(
     )
 
 
-def check_deployment_resources(
+async def check_deployment_resources(
     project_name: str,
     deployment_name: str,
 ) -> list[MemoryCheckResult]:
@@ -327,7 +327,7 @@ def check_deployment_resources(
     file_handler = ProjectFileHandler()
 
     try:
-        connector = get_metrics_connector()
+        connector = await get_metrics_connector()
     except Exception:
         return []
 
@@ -350,7 +350,7 @@ def check_deployment_resources(
             if not component_ref:
                 continue
 
-            analysis = _analyze_component_resources(
+            analysis = await _analyze_component_resources(
                 connector, file_handler, project_data, deployment_name, component_ref, namespace, cluster
             )
             if analysis is None:
@@ -409,7 +409,7 @@ async def tune_deployment_resources(
     file_handler = ProjectFileHandler()
 
     try:
-        connector = get_metrics_connector()
+        connector = await get_metrics_connector()
     except Exception as e:
         raise RuntimeError(f"Metrics backend unavailable: {e}") from e
 
@@ -436,7 +436,7 @@ async def tune_deployment_resources(
             if not component_ref:
                 continue
 
-            analysis = _analyze_component_resources(
+            analysis = await _analyze_component_resources(
                 connector, file_handler, project_data, dep_name, component_ref, namespace, cluster
             )
             if analysis is None:

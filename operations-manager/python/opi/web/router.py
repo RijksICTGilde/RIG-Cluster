@@ -757,7 +757,7 @@ async def dashboard(request: Request):
             try:
                 from opi.connectors.prometheus import get_metrics_connector
 
-                prom = get_metrics_connector()
+                prom = await get_metrics_connector()
                 prometheus_available = prom.is_connected
 
                 if prometheus_available:
@@ -765,7 +765,7 @@ async def dashboard(request: Request):
                     cpu_usage_val = 0.0
                     cpu_limit_val = 0.0
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
                         )
                         if result and result[0].get("value"):
@@ -774,7 +774,7 @@ async def dashboard(request: Request):
                         logger.debug(f"Dashboard CPU usage query failed: {e}")
 
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
                         )
                         if result and result[0].get("value"):
@@ -786,7 +786,7 @@ async def dashboard(request: Request):
                     mem_usage_val = 0.0
                     mem_limit_val = 0.0
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
                         )
                         if result and result[0].get("value"):
@@ -795,7 +795,7 @@ async def dashboard(request: Request):
                         logger.debug(f"Dashboard memory usage query failed: {e}")
 
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
                         )
                         if result and result[0].get("value"):
@@ -807,14 +807,16 @@ async def dashboard(request: Request):
                     storage_used_val = 0.0
                     storage_cap_val = 0.0
                     try:
-                        result = prom.custom_query(f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})')
+                        result = await prom.custom_query(
+                            f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})'
+                        )
                         if result and result[0].get("value"):
                             storage_used_val = float(result[0]["value"][1])
                     except Exception as e:
                         logger.debug(f"Dashboard storage usage query failed: {e}")
 
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(kubelet_volume_stats_capacity_bytes{{namespace=~"{ns_regex}"}})'
                         )
                         if result and result[0].get("value"):
@@ -824,7 +826,7 @@ async def dashboard(request: Request):
 
                     # Pod count
                     try:
-                        result = prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                        result = await prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
                         if result and result[0].get("value"):
                             pod_count = int(float(result[0]["value"][1]))
                     except Exception as e:
@@ -837,7 +839,7 @@ async def dashboard(request: Request):
                         now = datetime.now(UTC)
                         start = now.timestamp() - 1800  # 30 minutes ago
                         end = now.timestamp()
-                        in_results = prom.query_range(
+                        in_results = await prom.query_range(
                             f'sum(rate(container_network_receive_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
                             start_time=str(int(start)),
                             end_time=str(int(end)),
@@ -852,7 +854,7 @@ async def dashboard(request: Request):
                                     }
                                 )
 
-                        out_results = prom.query_range(
+                        out_results = await prom.query_range(
                             f'sum(rate(container_network_transmit_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
                             start_time=str(int(start)),
                             end_time=str(int(end)),
@@ -908,7 +910,7 @@ async def dashboard(request: Request):
                             continue
                         try:
                             proj_regex = "|".join(proj_ns)
-                            result = prom.custom_query(
+                            result = await prom.custom_query(
                                 f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{proj_regex}",container!=""}}[5m]))'
                             )
                             if result and result[0].get("value"):
@@ -1350,7 +1352,7 @@ async def project_details(request: Request, project_name: str):
         try:
             from opi.connectors.prometheus import get_metrics_connector
 
-            prom = get_metrics_connector()
+            prom = await get_metrics_connector()
             prometheus_available = prom.is_connected
         except Exception as e:
             logger.debug(f"Prometheus not available: {e}")
@@ -1830,14 +1832,14 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
             from opi.connectors.prometheus import get_metrics_connector
             from opi.core.cluster_config import get_prefixed_namespace
 
-            prom = get_metrics_connector()
+            prom = await get_metrics_connector()
             if prom.is_connected:
                 k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
 
                 if components:
                     component_names = [c.get("reference") for c in components if c.get("reference")]
                     if component_names:
-                        metrics = prom.get_deployment_component_metrics_timeseries(
+                        metrics = await prom.get_deployment_component_metrics_timeseries(
                             namespace=k8s_namespace,
                             components=component_names,
                             deployment_name=deployment_name,
@@ -1845,10 +1847,10 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
                             step_minutes=5,
                         )
                 elif helm_charts:
-                    workloads = prom.discover_workloads_in_namespace(k8s_namespace)
+                    workloads = await prom.discover_workloads_in_namespace(k8s_namespace)
                     if workloads:
                         discovered_workloads = workloads
-                        metrics = prom.get_discovered_workload_metrics_timeseries(
+                        metrics = await prom.get_discovered_workload_metrics_timeseries(
                             namespace=k8s_namespace,
                             workloads=workloads,
                             duration_minutes=60,
@@ -1856,7 +1858,7 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
                         )
 
                 try:
-                    pvc_data = prom.get_pvc_storage_by_namespace(
+                    pvc_data = await prom.get_pvc_storage_by_namespace(
                         namespace=k8s_namespace,
                         duration_minutes=60,
                         step_minutes=5,
@@ -2997,7 +2999,7 @@ async def deployment_memory_check(
         return HTMLResponse("")
 
     try:
-        warnings = check_deployment_resources(project_name, deployment_name)
+        warnings = await check_deployment_resources(project_name, deployment_name)
     except Exception as e:
         logger.debug(f"Memory check failed for {project_name}/{deployment_name}: {e}")
         warnings = []
@@ -3175,7 +3177,7 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
             file_handler = ProjectFileHandler()
 
             try:
-                connector = get_metrics_connector()
+                connector = await get_metrics_connector()
             except Exception as e:
                 raise RuntimeError(f"Metrics backend unavailable: {e}") from e
 
@@ -3201,7 +3203,7 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
                     component_ref = comp.get("reference", "")
                     if not component_ref:
                         continue
-                    analysis = _analyze_component_resources(
+                    analysis = await _analyze_component_resources(
                         connector, file_handler, project_data, dep_name, component_ref, namespace, cluster
                     )
                     if analysis is None:
