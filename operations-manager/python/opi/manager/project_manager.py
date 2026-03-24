@@ -3878,15 +3878,8 @@ class ProjectManager:
 
         # Validate nice-url mode requirements BEFORE subdomain registration
         # This prevents orphaned subdomain entries when validation fails
+        root_component_name = deployment.get("root-component")
         if domain_mode == "nice-url" and subdomain and base_domain:
-            # Validate only one component has root: true for nice-url mode
-            root_components = [c.get("reference") or c.get("name") for c in components if c.get("root") is True]
-            if len(root_components) > 1:
-                raise ValueError(
-                    f"Multiple components marked as root in deployment '{deployment_name}': {root_components}. "
-                    f"Only one component can have 'root: true' for nice-url mode."
-                )
-
             # Validate that all components with publish-on-web have ports configured
             # In nice-url mode, each component gets its own ingress at component.subdomain.base_domain
             components_missing_ports = []
@@ -3913,8 +3906,7 @@ class ProjectManager:
                 )
 
             # Validate that root component has publish-on-web (required for root ingress creation)
-            if root_components:
-                root_component_name = root_components[0]
+            if root_component_name:
                 root_has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
                     project_data, root_component_name
                 )
@@ -4647,7 +4639,7 @@ class ProjectManager:
                     # Create root ingress for nice-url mode if this is the root component.
                     # When domain-format is set, skip root ingress if the template does not
                     # include {component} (all components already share the same hostname).
-                    is_root_component = component.get("root") is True
+                    is_root_component = component_name == root_component_name
                     template_has_component = (
                         "{component}" in DOMAIN_FORMAT_TEMPLATES.get(domain_format, "") if domain_format else True
                     )
@@ -5703,7 +5695,7 @@ class ProjectManager:
                     "error_type": "invalid_deployments",
                 }
 
-            # Validate path uniqueness and root component constraints per target deployment
+            # Validate path uniqueness per target deployment
             for deployment in existing_deployments:
                 dep_name = deployment.get("name")
                 if dep_name not in deployment_names:
@@ -5712,22 +5704,12 @@ class ProjectManager:
 
                 # Collect existing component paths in this deployment
                 existing_paths = []
-                existing_root_info = []
                 for comp_ref in deployment.get("components", []):
                     comp_ref_name = comp_ref.get("reference")
                     if comp_ref_name:
                         for comp_def in existing_components:
                             if comp_def.get("name") == comp_ref_name:
                                 existing_paths.append(comp_def.get("path", "/"))
-                                existing_root_info.append(
-                                    (
-                                        comp_ref_name,
-                                        comp_ref.get("root", False),
-                                        comp_def.get("ports", {}).get("inbound", [None])[0]
-                                        if comp_def.get("ports", {}).get("inbound")
-                                        else None,
-                                    )
-                                )
                                 break
 
                 # Validate path uniqueness (including the new component)
@@ -5740,15 +5722,19 @@ class ProjectManager:
                         "error_type": "validation_error",
                     }
 
-                # Validate root component constraints (including the new component)
-                try:
-                    validate_root_component([*existing_root_info, (name, root, port)], domain_mode)
-                except ComponentValidationError as e:
-                    return {
-                        "success": False,
-                        "error": str(e),
-                        "error_type": "validation_error",
-                    }
+                # Validate root component constraints
+                if root:
+                    dep_component_names = [
+                        c.get("reference") for c in deployment.get("components", []) if c.get("reference")
+                    ]
+                    try:
+                        validate_root_component(name, [*dep_component_names, name], domain_mode)
+                    except ComponentValidationError as e:
+                        return {
+                            "success": False,
+                            "error": str(e),
+                            "error_type": "validation_error",
+                        }
 
             # Validate requested services against project-level services
             if services:
@@ -5782,7 +5768,6 @@ class ProjectManager:
                     memory_limit=memory_limit,
                     env_vars=env_vars,
                     aliases=aliases,
-                    root=root,
                     public_key=public_key,
                 )
             except (ComponentValidationError, ValueError) as e:
@@ -5805,9 +5790,9 @@ class ProjectManager:
                     existing_refs = {c.get("reference") for c in deployment.get("components", [])}
                     if name not in existing_refs:
                         ref: dict[str, Any] = {"reference": name, "image": normalized_image}
-                        if root:
-                            ref["root"] = True
                         deployment.setdefault("components", []).append(ref)
+                        if root:
+                            deployment["root-component"] = name
                         deployments_updated.append(dep_name)
 
             # Save and commit
@@ -5945,46 +5930,21 @@ class ProjectManager:
                     "error_type": "duplicate_component_in_deployment",
                 }
 
-            # Validate path uniqueness and root component constraints
+            # Validate path uniqueness
             domain_mode = target_deployment.get("domain-mode", "component-specific")
             new_path = component_def.get("path", "/")
-            new_root = component_def.get("root", False)
-            new_port = (
-                component_def.get("ports", {}).get("inbound", [None])[0]
-                if component_def.get("ports", {}).get("inbound")
-                else None
-            )
 
             existing_paths = []
-            existing_root_info = []
             for comp_ref in target_deployment.get("components", []):
                 comp_ref_name = comp_ref.get("reference")
                 if comp_ref_name:
-                    for comp_def in existing_components:
-                        if comp_def.get("name") == comp_ref_name:
-                            existing_paths.append(comp_def.get("path", "/"))
-                            existing_root_info.append(
-                                (
-                                    comp_ref_name,
-                                    comp_ref.get("root", False),
-                                    comp_def.get("ports", {}).get("inbound", [None])[0]
-                                    if comp_def.get("ports", {}).get("inbound")
-                                    else None,
-                                )
-                            )
+                    for existing_comp in existing_components:
+                        if existing_comp.get("name") == comp_ref_name:
+                            existing_paths.append(existing_comp.get("path", "/"))
                             break
 
             try:
                 validate_component_paths([*existing_paths, new_path], domain_mode)
-            except ComponentValidationError as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "error_type": "validation_error",
-                }
-
-            try:
-                validate_root_component([*existing_root_info, (component_name, new_root, new_port)], domain_mode)
             except ComponentValidationError as e:
                 return {
                     "success": False,
@@ -6000,8 +5960,6 @@ class ProjectManager:
 
             # Add component reference to the deployment
             component_ref: dict[str, Any] = {"reference": component_name, "image": normalized_image}
-            if new_root:
-                component_ref["root"] = True
             target_deployment.setdefault("components", []).append(component_ref)
 
             # Save and commit

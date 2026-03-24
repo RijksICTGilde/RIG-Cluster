@@ -443,6 +443,19 @@ async def tune_deployment_resources(
                 unchanged.append(component_ref)
                 continue
 
+            # Skip if recommendation matches current values (avoids duplicate history entries
+            # when the tuner keeps hitting the max cap)
+            if (
+                analysis.new_limit == analysis.current_resources["limits_memory"]
+                and analysis.new_request == analysis.current_resources["requests_memory"]
+            ):
+                logger.info(
+                    f"Skipping {component_ref} in {dep_name}: recommendation matches current "
+                    f"({analysis.new_limit} limit, {analysis.new_request} request)"
+                )
+                unchanged.append(component_ref)
+                continue
+
             # Apply the change at deployment-component level
             file_handler.set_deployment_component_resources(
                 project_data,

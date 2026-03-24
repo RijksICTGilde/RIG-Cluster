@@ -1611,33 +1611,27 @@ def generate_bare_domain_hostname(base_domain: str) -> str:
     return base_domain.lower()
 
 
-def find_root_component(components: list[dict]) -> str | None:
+def find_root_component(deployment: dict) -> str | None:
     """
-    Find the component marked as root in a list of component configurations.
+    Find the root component for a deployment.
 
     The root component receives traffic for the root hostname (subdomain.base_domain)
-    in nice-url mode. It should be marked with root: true in the component config.
+    in nice-url mode. It is specified via the ``root-component`` field on the deployment.
 
     Args:
-        components: List of component dictionaries with optional 'root' field
+        deployment: Deployment dictionary with optional 'root-component' field
 
     Returns:
-        Component name (from 'reference' or 'name' field), or None if no root found
+        Component name, or None if no root component is configured
 
     Examples:
-        >>> find_root_component([{"reference": "frontend", "root": True}, {"reference": "backend"}])
+        >>> find_root_component({"name": "prod", "root-component": "frontend"})
         'frontend'
 
-        >>> find_root_component([{"name": "api"}, {"name": "web", "root": True}])
-        'web'
-
-        >>> find_root_component([{"name": "api"}, {"name": "web"}])
+        >>> find_root_component({"name": "prod"})
         None
     """
-    for comp in components:
-        if comp.get("root") is True:
-            return comp.get("reference") or comp.get("name")
-    return None
+    return deployment.get("root-component")
 
 
 def get_component_ingress_map(

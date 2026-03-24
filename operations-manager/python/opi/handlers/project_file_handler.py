@@ -112,8 +112,9 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
         res["limits"]["memory"] = resources["limits_memory"]
     if "limits_cpu" in resources:
         res["limits"]["cpu"] = resources["limits_cpu"]
-    # Remove legacy format (memory/request, memory/limit)
-    res.pop("memory", None)
+    # Remove legacy flat formats
+    res.pop("memory", None)  # legacy {request, limit} or plain string
+    res.pop("cpu", None)  # legacy {request, limit}
 
 
 class ProjectFileHandler:

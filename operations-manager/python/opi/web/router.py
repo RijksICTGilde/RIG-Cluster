@@ -1960,15 +1960,12 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
         base_domain = deployment.get("base-domain")
 
         # Find root component (if any)
-        root_component = None
+        root_component = deployment.get("root-component")
         components_list = []
         for comp in deployment.get("components", []):
             comp_ref = comp.get("reference")
-            is_root = comp.get("root", False)
-            if is_root and comp_ref:
-                root_component = comp_ref
             if comp_ref:
-                components_list.append({"reference": comp_ref, "root": is_root})
+                components_list.append({"reference": comp_ref, "root": comp_ref == root_component})
 
         # Get supported base domains for this cluster
         cluster_base_domains = get_cluster_base_domains_for_template()
@@ -2500,14 +2497,16 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                     if "issuer" in yaml_dep:
                         del yaml_dep["issuer"]
 
-                # Handle root component
+                # Handle root component — set on deployment level
+                if root_component:
+                    yaml_dep["root-component"] = root_component
+                elif "root-component" in yaml_dep:
+                    del yaml_dep["root-component"]
+
+                # Clean up any legacy root flags on components
                 for comp in yaml_dep.get("components", []):
-                    # Clear existing root flags
                     if "root" in comp:
                         del comp["root"]
-                    # Set root flag on selected component
-                    if root_component and comp.get("reference") == root_component:
-                        comp["root"] = True
 
                 break
 

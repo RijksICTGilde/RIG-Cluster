@@ -10,7 +10,7 @@
     "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
     "display-name": { "type": "string" },
     "description": { "type": "string" },
-    "schema-version": { "type": "integer" },
+    "schema-version": { "type": "number" },
     "clusters": {
       "type": "array",
       "items": { "type": "string" }
@@ -231,7 +231,6 @@
         "name": { "type": "string" },
         "type": { "type": "string" },
         "image": { "type": "string" },
-        "root": { "type": "boolean" },
         "ports": {
           "type": "object",
           "additionalProperties": false,
@@ -316,6 +315,7 @@
           "type": "array",
           "items": { "$ref": "#/$defs/deployment-helmfile" }
         },
+        "root-component": { "type": "string" },
         "clone-from": { "$ref": "#/$defs/clone-from" }
       }
     },
@@ -329,7 +329,6 @@
         "image": { "type": "string" },
         "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
         "registry": { "type": "string" },
-        "root": { "type": "boolean" },
         "resources": { "$ref": "#/$defs/resources" },
         "services": {
           "type": "object",

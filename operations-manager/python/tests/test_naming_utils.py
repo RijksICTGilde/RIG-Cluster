@@ -640,34 +640,19 @@ class TestGenerateHelmValuesFilename:
 class TestFindRootComponent:
     """Tests for find_root_component function."""
 
-    def test_finds_by_reference(self):
-        """Finds root component using reference field."""
-        components = [{"reference": "frontend", "root": True}, {"reference": "backend"}]
-        assert find_root_component(components) == "frontend"
-
-    def test_finds_by_name(self):
-        """Finds root component using name field."""
-        components = [{"name": "api"}, {"name": "web", "root": True}]
-        assert find_root_component(components) == "web"
+    def test_finds_root_from_deployment(self):
+        """Reads root-component from deployment dict."""
+        deployment = {"name": "prod", "root-component": "frontend"}
+        assert find_root_component(deployment) == "frontend"
 
     def test_no_root_returns_none(self):
-        """Returns None when no root found."""
-        components = [{"name": "api"}, {"name": "web"}]
-        assert find_root_component(components) is None
+        """Returns None when no root-component set."""
+        deployment = {"name": "prod"}
+        assert find_root_component(deployment) is None
 
-    def test_empty_list_returns_none(self):
-        """Returns None for empty list."""
-        assert find_root_component([]) is None
-
-    def test_prefers_reference_over_name(self):
-        """Prefers reference field over name field."""
-        components = [{"reference": "ref", "name": "fallback", "root": True}]
-        assert find_root_component(components) == "ref"
-
-    def test_root_false_not_matched(self):
-        """root: False is not matched."""
-        components = [{"name": "api", "root": False}]
-        assert find_root_component(components) is None
+    def test_empty_dict_returns_none(self):
+        """Returns None for empty deployment dict."""
+        assert find_root_component({}) is None
 
 
 class TestGetComponentIngressMap:

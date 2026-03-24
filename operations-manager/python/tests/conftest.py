@@ -114,6 +114,7 @@ def mock_settings() -> Any:
         mock_settings.SECRET_KEY = "test-secret-key-for-testing-only"
         mock_settings.OIDC_DISABLED = True
         mock_settings.ENABLE_GIT_MONITOR = False
+        mock_settings.KEYCLOAK_URL = ""
         yield mock_settings
 
 

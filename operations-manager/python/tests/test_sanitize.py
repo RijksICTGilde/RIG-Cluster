@@ -12,7 +12,7 @@ class TestSanitizeUnhealthyPods:
     @patch("opi.api.resource_router.commit_project_yaml", new_callable=AsyncMock)
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
-    @patch("opi.api.resource_router.get_metrics_connector")
+    @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
     async def test_high_restarts_disables_component(
@@ -43,7 +43,7 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl_cls.return_value = mock_kubectl
 
         # Prometheus returns 15 restarts
-        mock_connector = MagicMock()
+        mock_connector = AsyncMock()
         mock_connector.get_pod_restarts.return_value = [
             {
                 "metric": {"pod": "production-api-abc123"},
