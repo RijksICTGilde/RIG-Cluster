@@ -398,7 +398,7 @@ class TestMigrateV1ToV2:
     def test_schema_version_set(self):
         data = _v1_project_simple()
         result, _ = migrate_to_latest(data)
-        assert result["schema-version"] == 2
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
 
     def test_no_components_no_v1_keys_no_migration(self):
         """Project with no components and no v1 keys is detected as v2."""
@@ -444,3 +444,197 @@ class TestMigrateV1ToV2:
         assert isinstance(persistent, dict)
         assert "persistent-storage" in persistent
         assert upload["services"][2] == "postgresql-database"
+
+
+# ---------------------------------------------------------------------------
+# migrate_to_latest - v2 → v2.1 (root: true → root-component)
+# ---------------------------------------------------------------------------
+
+
+class TestMigrateV2ToV2_1:
+    """Tests for lifting root: true from components to root-component on deployments."""
+
+    def test_root_true_migrated_to_root_component(self):
+        """Component root: true is lifted to deployment root-component."""
+        data = {
+            "schema-version": 2,
+            "name": "test-project",
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "odcn-production",
+                    "namespace": "test",
+                    "components": [
+                        {"reference": "frontend", "image": "app:latest", "root": True},
+                        {"reference": "backend", "image": "api:latest"},
+                    ],
+                }
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        dep = result["deployments"][0]
+        assert dep["root-component"] == "frontend"
+        # root: true must be removed from the component
+        assert "root" not in dep["components"][0]
+        assert "root" not in dep["components"][1]
+
+    def test_existing_root_component_takes_precedence(self):
+        """When both root-component and root: true exist, root-component wins."""
+        data = {
+            "schema-version": 2,
+            "name": "test-project",
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "odcn-production",
+                    "namespace": "test",
+                    "root-component": "landing",
+                    "components": [
+                        {"reference": "editor", "image": "app:latest", "root": True},
+                        {"reference": "landing", "image": "landing:latest"},
+                    ],
+                }
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        dep = result["deployments"][0]
+        # root-component should remain as "landing" (not overwritten by editor's root: true)
+        assert dep["root-component"] == "landing"
+        assert "root" not in dep["components"][0]
+
+    def test_no_root_no_migration(self):
+        """Deployment without root flags or root-component is untouched."""
+        data = {
+            "schema-version": 2,
+            "name": "test-project",
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "local",
+                    "namespace": "test",
+                    "components": [
+                        {"reference": "frontend", "image": "app:latest"},
+                    ],
+                }
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        # No root flags to clean up — nothing to migrate
+        assert was_migrated is False
+        dep = result["deployments"][0]
+        assert "root-component" not in dep
+
+    def test_root_false_cleaned_up(self):
+        """Explicit root: false on components is cleaned up."""
+        data = {
+            "schema-version": 2,
+            "name": "test-project",
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "local",
+                    "namespace": "test",
+                    "components": [
+                        {"reference": "frontend", "image": "app:latest", "root": False},
+                    ],
+                }
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        dep = result["deployments"][0]
+        assert "root" not in dep["components"][0]
+        assert "root-component" not in dep
+
+    def test_already_v2_1_no_migration(self):
+        """Files already at v2.1 are not migrated again."""
+        data = {
+            "schema-version": 2.1,
+            "name": "test-project",
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "local",
+                    "namespace": "test",
+                    "root-component": "frontend",
+                    "components": [
+                        {"reference": "frontend", "image": "app:latest"},
+                    ],
+                }
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is False
+        assert result["schema-version"] == 2.1
+
+    def test_multiple_deployments(self):
+        """Each deployment is migrated independently."""
+        data = {
+            "schema-version": 2,
+            "name": "test-project",
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "odcn-production",
+                    "namespace": "test",
+                    "components": [
+                        {"reference": "frontend", "image": "app:latest", "root": True},
+                        {"reference": "backend", "image": "api:latest"},
+                    ],
+                },
+                {
+                    "name": "staging",
+                    "cluster": "local",
+                    "namespace": "test-staging",
+                    "components": [
+                        {"reference": "api", "image": "api:latest", "root": True},
+                    ],
+                },
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["deployments"][0]["root-component"] == "frontend"
+        assert result["deployments"][1]["root-component"] == "api"
+        # All root flags removed
+        for dep in result["deployments"]:
+            for comp in dep["components"]:
+                assert "root" not in comp
+
+    def test_v1_project_also_gets_v2_1_migration(self):
+        """V1 projects go through both v1→v2 and v2→v2.1."""
+        data = {
+            "name": "old-project",
+            "components": [
+                {
+                    "name": "frontend",
+                    "uses-services": ["publish-on-web"],
+                }
+            ],
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "local",
+                    "namespace": "old",
+                    "components": [
+                        {"reference": "frontend", "image": "app:latest", "root": True},
+                    ],
+                }
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        dep = result["deployments"][0]
+        assert dep["root-component"] == "frontend"
+        assert "root" not in dep["components"][0]

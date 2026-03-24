@@ -1200,7 +1200,6 @@ def _assemble_deployment(final_data: dict[str, Any]) -> None:
 
     # Build deployment components from project components
     components = final_data.get("components", [])
-    root_component_name = deployment.pop("root-component", None)
 
     dep_components: list[dict[str, Any]] = []
     for comp in components:
@@ -1209,8 +1208,6 @@ def _assemble_deployment(final_data: dict[str, Any]) -> None:
                 "reference": comp["name"],
                 "image": comp.get("image", ""),
             }
-            if root_component_name and comp["name"] == root_component_name:
-                dep_comp["root"] = True
             dep_components.append(dep_comp)
 
     if dep_components:

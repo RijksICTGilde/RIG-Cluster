@@ -2717,10 +2717,9 @@ async def create_self_service_project(
             if project_data.components:
                 root_components = [c for c in project_data.components if c.root]
                 if root_components:
-                    root_component = root_components[0]
-                    if root_component.port is None:
-                        # Find the component name/index for error message
-                        root_idx = project_data.components.index(root_component)
+                    root_comp = root_components[0]
+                    if root_comp.port is None:
+                        root_idx = project_data.components.index(root_comp)
                         raise HTTPException(
                             status_code=400,
                             detail=f"Root component (component {root_idx + 1}) must have a port defined for nice-url mode. "

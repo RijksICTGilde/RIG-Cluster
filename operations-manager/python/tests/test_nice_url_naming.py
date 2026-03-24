@@ -68,45 +68,19 @@ class TestGenerateNiceUrlRootHostname:
 class TestFindRootComponent:
     """Tests for find_root_component function."""
 
-    def test_finds_root_component_by_reference(self):
-        """Finds component marked with root: true using reference field."""
-        components = [
-            {"reference": "frontend", "root": True},
-            {"reference": "backend"},
-        ]
-        result = find_root_component(components)
-        assert result == "frontend"
-
-    def test_finds_root_component_by_name(self):
-        """Finds component marked with root: true using name field."""
-        components = [
-            {"name": "api"},
-            {"name": "web", "root": True},
-        ]
-        result = find_root_component(components)
-        assert result == "web"
+    def test_finds_root_component_from_deployment(self):
+        """Reads root-component from deployment dict."""
+        deployment = {"name": "prod", "root-component": "frontend"}
+        assert find_root_component(deployment) == "frontend"
 
     def test_returns_none_when_no_root(self):
-        """Returns None when no component has root: true."""
-        components = [
-            {"name": "api"},
-            {"name": "web"},
-        ]
-        result = find_root_component(components)
-        assert result is None
+        """Returns None when no root-component set."""
+        deployment = {"name": "prod"}
+        assert find_root_component(deployment) is None
 
-    def test_returns_none_for_empty_list(self):
-        """Returns None for empty component list."""
-        result = find_root_component([])
-        assert result is None
-
-    def test_prefers_reference_over_name(self):
-        """Prefers 'reference' field over 'name' field."""
-        components = [
-            {"reference": "ref-name", "name": "fallback-name", "root": True},
-        ]
-        result = find_root_component(components)
-        assert result == "ref-name"
+    def test_returns_none_for_empty_dict(self):
+        """Returns None for empty deployment dict."""
+        assert find_root_component({}) is None
 
 
 class TestGetComponentIngressMapNiceUrl:

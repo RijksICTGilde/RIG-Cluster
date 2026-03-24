@@ -14,7 +14,7 @@ from opi.services.services_enums import ServiceType
 
 logger = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 2.1
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -25,7 +25,7 @@ _STORAGE_SERVICE_TO_TYPE = {
 _STORAGE_TYPE_TO_SERVICE = {v: k for k, v in _STORAGE_SERVICE_TO_TYPE.items()}
 
 
-def detect_schema_version(project_data: dict[str, Any]) -> int:
+def detect_schema_version(project_data: dict[str, Any]) -> int | float:
     """
     Detect the schema version of a project file.
 
@@ -80,6 +80,14 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         # Repair: clean up stale v1 keys on files already marked v2
         if _cleanup_stale_v1_keys(project_data):
             migrated = True
+
+    if version < 2.1 and _migrate_v2_to_v2_1(project_data):
+        project_data["schema-version"] = LATEST_SCHEMA_VERSION
+        migrated = True
+
+    # Always run v2 fixups to clean up corruption from past bugs
+    if _fixup_v2_data(project_data):
+        migrated = True
 
     return project_data, migrated
 
@@ -332,3 +340,138 @@ def _merge_uses_services_into_services(entity: dict[str, Any]) -> None:
 
     entity["services"] = existing
     entity.pop("uses-services", None)
+
+
+def _migrate_v2_to_v2_1(project_data: dict[str, Any]) -> bool:
+    """Migrate root component from component-level ``root: true`` to deployment-level ``root-component``.
+
+    For each deployment, if a component has ``root: true``, set ``root-component``
+    on the deployment and remove the ``root`` key from the component.
+    If the deployment already has ``root-component``, it takes precedence and
+    any stale ``root`` flags on components are removed.
+
+    Returns True if any changes were made.
+    """
+    migrated = False
+
+    for dep in project_data.get("deployments", []):
+        if not isinstance(dep, dict):
+            continue
+
+        existing_root_component = dep.get("root-component")
+        components = dep.get("components", [])
+
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+
+            if comp.get("root") is True:
+                if not existing_root_component:
+                    # Lift the root flag to the deployment level
+                    comp_name = comp.get("reference") or comp.get("name")
+                    if comp_name:
+                        dep["root-component"] = comp_name
+                        existing_root_component = comp_name
+
+                del comp["root"]
+                migrated = True
+            elif "root" in comp:
+                # Clean up root: false
+                del comp["root"]
+                migrated = True
+
+    return migrated
+
+
+def _fixup_v2_data(project_data: dict[str, Any]) -> bool:
+    """Clean up corruption from past bugs on v2 project files.
+
+    Fixes:
+    - Literal ``services{...}`` keys on components (wizard bug wrote path syntax as dict keys)
+    - Old flat resource format (``cpu: {request, limit}``, ``memory: "256Mi"``)
+    - Stale root-level ``publish-on-web: true`` keys on components
+
+    Returns True if any cleanup was performed.
+    """
+    cleaned = False
+
+    all_entities: list[dict[str, Any]] = [c for c in project_data.get("components", []) if isinstance(c, dict)]
+    for dep in project_data.get("deployments", []):
+        if isinstance(dep, dict):
+            all_entities.extend(c for c in dep.get("components", []) if isinstance(c, dict))
+
+    for entity in all_entities:
+        # Remove literal services{...} keys (dead data from wizard bug)
+        stale_keys = [k for k in entity if isinstance(k, str) and k.startswith("services{")]
+        for key in stale_keys:
+            del entity[key]
+            cleaned = True
+
+        # Remove stale publish-on-web: true at root level (V0 format)
+        if entity.get("publish-on-web") is True:
+            del entity["publish-on-web"]
+            cleaned = True
+
+        # Migrate old flat resource format
+        if _fixup_flat_resources(entity):
+            cleaned = True
+
+    if cleaned:
+        project_name = project_data.get("name", "unknown")
+        logger.info(f"Cleaned up stale data in project '{project_name}'")
+
+    return cleaned
+
+
+def _fixup_flat_resources(entity: dict[str, Any]) -> bool:
+    """Migrate old flat resource format to nested requests/limits structure.
+
+    Old format: ``resources: {cpu: {request: "50m", limit: "1"}, memory: "256Mi"}``
+    New format: ``resources: {requests: {cpu: "50m", memory: "256Mi"}, limits: {cpu: "1", memory: "256Mi"}}``
+
+    Returns True if any migration was performed.
+    """
+    res = entity.get("resources")
+    if not isinstance(res, dict):
+        return False
+
+    changed = False
+
+    # Migrate flat cpu formats → requests/limits
+    cpu = res.get("cpu")
+    if isinstance(cpu, dict) and ("request" in cpu or "limit" in cpu):
+        # Old dict format: cpu: {request: "50m", limit: "1"}
+        if "requests" not in res:
+            res["requests"] = {}
+        if "limits" not in res:
+            res["limits"] = {}
+        if "request" in cpu and "cpu" not in res["requests"]:
+            res["requests"]["cpu"] = str(cpu["request"])
+        if "limit" in cpu and "cpu" not in res["limits"]:
+            res["limits"]["cpu"] = str(cpu["limit"])
+        del res["cpu"]
+        changed = True
+    elif isinstance(cpu, str | int | float):
+        # Plain value: cpu: "1" → treat as limit (matches how memory shorthand works)
+        if "limits" not in res:
+            res["limits"] = {}
+        if "cpu" not in res["limits"]:
+            res["limits"]["cpu"] = str(cpu)
+        del res["cpu"]
+        changed = True
+
+    # Migrate flat memory: "256Mi" → limits: {memory: "256Mi"}
+    memory = res.get("memory")
+    if isinstance(memory, str):
+        if "limits" not in res:
+            res["limits"] = {}
+        if "memory" not in res["limits"]:
+            res["limits"]["memory"] = memory
+        if "requests" not in res:
+            res["requests"] = {}
+        if "memory" not in res["requests"]:
+            res["requests"]["memory"] = memory
+        del res["memory"]
+        changed = True
+
+    return changed

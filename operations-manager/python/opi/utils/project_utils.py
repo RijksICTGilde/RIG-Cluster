@@ -58,43 +58,35 @@ def validate_component_paths(component_paths: list[str], domain_mode: str) -> No
         )
 
 
-def validate_root_component(components_with_root: list[tuple[str, bool, int | None]], domain_mode: str) -> None:
+def validate_root_component(
+    root_component_name: str | None,
+    deployment_component_names: list[str],
+    domain_mode: str,
+) -> None:
     """
-    Validate root component constraints.
-
-    In nice-url mode, at most one component can be the root, and it must have a port.
+    Validate root-component constraints on a deployment.
 
     Args:
-        components_with_root: List of (name, is_root, port) tuples for all components in the deployment
+        root_component_name: Value of ``root-component`` on the deployment, or None
+        deployment_component_names: Names of components referenced by this deployment
         domain_mode: The deployment's domain mode
 
     Raises:
-        ValueError: If root component constraints are violated
+        ComponentValidationError: If root component constraints are violated
     """
-    root_components = [(name, port) for name, is_root, port in components_with_root if is_root]
-
-    if not root_components:
+    if not root_component_name:
         return
 
     if domain_mode != "nice-url":
-        root_names = [name for name, _ in root_components]
         raise ComponentValidationError(
-            f"Root component flag is only valid in nice-url domain mode, "
-            f"but domain mode is '{domain_mode}'. Components marked as root: {', '.join(root_names)}"
+            f"root-component is only valid in nice-url domain mode, "
+            f"but domain mode is '{domain_mode}'. root-component: {root_component_name}"
         )
 
-    if len(root_components) > 1:
-        root_names = [name for name, _ in root_components]
+    if root_component_name not in deployment_component_names:
         raise ComponentValidationError(
-            f"In nice-url mode, only one component can be marked as root. "
-            f"Found {len(root_components)} root components: {', '.join(root_names)}"
-        )
-
-    root_name, root_port = root_components[0]
-    if root_port is None:
-        raise ComponentValidationError(
-            f"Component '{root_name}' is marked as root but has no port specified. "
-            f"Root component must have a port for web publishing."
+            f"root-component '{root_component_name}' is not a component in this deployment. "
+            f"Valid components: {', '.join(deployment_component_names)}"
         )
 
 
@@ -134,7 +126,6 @@ async def build_component_config(
     memory_limit: str | None = None,
     env_vars: str | None = None,
     aliases: str | None = None,
-    root: bool = False,
     public_key: str | None = None,
     default_port: int | None = None,
 ) -> dict[str, Any]:
@@ -154,7 +145,6 @@ async def build_component_config(
         memory_limit: Memory limit (e.g., "256Mi", "1Gi")
         env_vars: Environment variables in KEY=value format (will be encrypted)
         aliases: YAML string of alias definitions
-        root: Whether this is the root component (nice-url mode)
         public_key: AGE public key for encrypting env vars
         default_port: Default port if none specified (e.g., 8080 for project creation)
 
@@ -173,10 +163,6 @@ async def build_component_config(
         "services": services_list,
         "uses-components": [],
     }
-
-    # Add root flag for nice-url mode
-    if root:
-        component_config["root"] = True
 
     # Add resource limits if specified
     if cpu_limit or memory_limit:
@@ -303,7 +289,6 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
                     memory_limit=comp.memory_limit,
                     env_vars=comp.env_vars,
                     aliases=comp.aliases,
-                    root=comp.root,
                     public_key=public_key,
                     default_port=8080,
                 )
@@ -365,6 +350,12 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
             deployment_config["domain-format"] = project_data.domain_format
         if hasattr(project_data, "issuer") and project_data.issuer:
             deployment_config["issuer"] = project_data.issuer
+
+        # Set root-component on deployment if any component is marked as root
+        for idx, comp in enumerate(project_data.components):
+            if comp.root:
+                deployment_config["root-component"] = f"component-{idx + 1}"
+                break
 
         deployments_list.append(deployment_config)
     else:
