@@ -28,6 +28,7 @@ COMPONENT_NAME_EDITABLE = Editable(
     required=True,
 )
 
+# TODO: clarify purpose of image on top-level components — see features/component-image-field-clarification.md
 COMPONENT_IMAGE_EDITABLE = Editable(
     yaml_path="components[*]/image",
     validator=ContainerImageValidator(),

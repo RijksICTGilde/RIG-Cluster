@@ -196,6 +196,10 @@ class ProjectManager:
         # Last processing error message (set when process_project fails)
         self._processing_error: str | None = None
 
+        # Change context from YAML diff (populated by process_project_changes)
+        # Structure: {"previous_yaml": {...}, "current_yaml": {...}, "changes": {"added": {}, "changed": {}, "deleted": {}}}
+        self._project_changes: dict[str, Any] | None = None
+
         self._closed = False
 
         # Service managers for handling service-specific operations
@@ -1128,6 +1132,29 @@ class ProjectManager:
     def set_progress_manager(self, task_progress_manager: "TaskProgressManager") -> None:
         """Set the task progress manager for tracking operation status."""
         self.__progress_manager = task_progress_manager
+
+    def get_project_changes(self) -> dict[str, Any] | None:
+        """Get the change context from YAML diff analysis.
+
+        Available after process_project_changes has run. Returns the structured
+        changes dict with previous_yaml, current_yaml, and changes (added/changed/deleted).
+        """
+        return self._project_changes
+
+    def get_previous_deployment(self, deployment_name: str) -> dict[str, Any] | None:
+        """Get a deployment's data from the previous YAML version.
+
+        Useful for detecting what changed (e.g. root-component was X, now is Y).
+        """
+        if not self._project_changes:
+            return None
+        previous_yaml = self._project_changes.get("previous_yaml")
+        if not previous_yaml:
+            return None
+        for dep in previous_yaml.get("deployments", []):
+            if isinstance(dep, dict) and dep.get("name") == deployment_name:
+                return dep
+        return None
 
     def get_progress_manager(self) -> "TaskProgressManager | None":
         """Get the task progress manager for tracking operation status."""
@@ -2099,6 +2126,13 @@ class ProjectManager:
 
             previous_yaml = analysis["previous_yaml"]
             changes = analysis["changes"]
+
+            # Store change context for use throughout the processing flow
+            self._project_changes = {
+                "previous_yaml": previous_yaml,
+                "current_yaml": current_yaml,
+                "changes": changes,
+            }
 
             # Log the changes summary
             if previous_yaml is None:
@@ -4699,6 +4733,20 @@ class ProjectManager:
                         self._deployment_results[deployment_name].urls["root"] = root_web_address
                         logger.info(f"Tracked root URL: {root_web_address}")
 
+                        # Clean up stale root ingress from previous root component
+                        previous_dep = self.get_previous_deployment(deployment_name)
+                        if previous_dep:
+                            old_root = previous_dep.get("root-component")
+                            if old_root and old_root != root_component_name:
+                                old_manifest = f"{generate_manifest_name(old_root, 'ingress-root')}.yaml"
+                                old_manifest_path = os.path.join(full_output_dir, old_manifest)
+                                if os.path.exists(old_manifest_path):
+                                    os.remove(old_manifest_path)
+                                    logger.info(
+                                        f"Removed stale root ingress manifest '{old_manifest}' "
+                                        f"(root-component changed from '{old_root}' to '{root_component_name}')"
+                                    )
+
                     # Create bare domain ingress for expose-component-on-bare-domain mode.
                     # expose_on_bare_domain holds the component name that should serve the bare domain.
                     if expose_on_bare_domain and base_domain and component_name == expose_on_bare_domain:
@@ -4749,6 +4797,20 @@ class ProjectManager:
                         bare_web_address = generate_public_url(bare_hostname, use_https)
                         self._deployment_results[deployment_name].urls["bare-domain"] = bare_web_address
                         logger.info(f"Tracked bare domain URL: {bare_web_address}")
+
+                        # Clean up stale bare domain ingress from previous component
+                        previous_dep = self.get_previous_deployment(deployment_name)
+                        if previous_dep:
+                            old_bare = previous_dep.get("expose-component-on-bare-domain")
+                            if old_bare and old_bare != expose_on_bare_domain:
+                                old_manifest = f"{generate_manifest_name(old_bare, 'ingress-bare-domain')}.yaml"
+                                old_manifest_path = os.path.join(full_output_dir, old_manifest)
+                                if os.path.exists(old_manifest_path):
+                                    os.remove(old_manifest_path)
+                                    logger.info(
+                                        f"Removed stale bare domain ingress manifest '{old_manifest}' "
+                                        f"(expose-component-on-bare-domain changed from '{old_bare}' to '{expose_on_bare_domain}')"
+                                    )
 
                 else:
                     # Standard single manifest creation
