@@ -1,0 +1,68 @@
+# Memory usage (GiB) and cost (EUR) - fixed 31-day range
+# Use two separate queries in the same Grafana panel
+# Price per GiB: 27 EUR
+
+# Query A: Memory usage in GiB
+label_replace(
+  round(
+    sum((
+      sum_over_time(
+        (
+          sum by(namespace,pod) (kube_pod_resource_request{
+            job="scheduler",
+            namespace=~"rig-prd.*",
+            resource="memory"
+          })
+          +
+          clamp_min(
+            sum by(namespace,pod) (container_memory_working_set_bytes{
+              job="kubelet",
+              metrics_path="/metrics/cadvisor",
+              namespace=~"rig-prd.*"
+            })
+            -
+            sum by(namespace,pod) (kube_pod_resource_request{
+              job="scheduler",
+              namespace=~"rig-prd.*",
+              resource="memory"
+            }),
+            0
+          )
+        )[31d:1h]
+      ) * 3600
+    ) / (31 * 86400) / 1024^3)
+  , 0.01) or on() vector(0)
+, "metric", "gib", "", "")
+
+or
+
+label_replace(
+  round(
+    sum((
+      sum_over_time(
+        (
+          sum by(namespace,pod) (kube_pod_resource_request{
+            job="scheduler",
+            namespace=~"rig-prd.*",
+            resource="memory"
+          })
+          +
+          clamp_min(
+            sum by(namespace,pod) (container_memory_working_set_bytes{
+              job="kubelet",
+              metrics_path="/metrics/cadvisor",
+              namespace=~"rig-prd.*"
+            })
+            -
+            sum by(namespace,pod) (kube_pod_resource_request{
+              job="scheduler",
+              namespace=~"rig-prd.*",
+              resource="memory"
+            }),
+            0
+          )
+        )[31d:1h]
+      ) * 3600
+    ) / (31 * 86400) / 1024^3) * 27
+  , 0.01) or on() vector(0)
+, "metric", "cost_eur", "", "")

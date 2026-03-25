@@ -1,0 +1,63 @@
+label_replace(
+  round(
+    sum((
+      sum_over_time(
+        (
+          sum by(namespace,pod) (kube_pod_resource_request{
+            job="scheduler",
+            namespace=~"rig-prd.*",
+            resource="memory"
+          })
+          +
+          clamp_min(
+            sum by(namespace,pod) (container_memory_working_set_bytes{
+              job="kubelet",
+              metrics_path="/metrics/cadvisor",
+              namespace=~"rig-prd.*"
+            })
+            -
+            sum by(namespace,pod) (kube_pod_resource_request{
+              job="scheduler",
+              namespace=~"rig-prd.*",
+              resource="memory"
+            }),
+            0
+          )
+        )[${__range_s}s:1h]
+      ) * 3600
+    ) / ($__range_s) / 1024^3)
+  , 0.01) or on() vector(0)
+, "metric", "gib", "", "")
+
+or
+
+label_replace(
+  round(
+    sum((
+      sum_over_time(
+        (
+          sum by(namespace,pod) (kube_pod_resource_request{
+            job="scheduler",
+            namespace=~"rig-prd.*",
+            resource="memory"
+          })
+          +
+          clamp_min(
+            sum by(namespace,pod) (container_memory_working_set_bytes{
+              job="kubelet",
+              metrics_path="/metrics/cadvisor",
+              namespace=~"rig-prd.*"
+            })
+            -
+            sum by(namespace,pod) (kube_pod_resource_request{
+              job="scheduler",
+              namespace=~"rig-prd.*",
+              resource="memory"
+            }),
+            0
+          )
+        )[${__range_s}s:1h]
+      ) * 3600
+    ) / ($__range_s) / 1024^3) * 27
+  , 0.01) or on() vector(0)
+, "metric", "cost_eur", "", "")
