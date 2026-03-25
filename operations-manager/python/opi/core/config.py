@@ -320,6 +320,7 @@ class Settings(BaseSettings):
     GRAFANA_URL: str = "http://grafana-service.rig-system.svc.cluster.local:3000"
     GRAFANA_TOKEN: str | None = None
     GRAFANA_DATASOURCE_UID: str | None = None  # Auto-discovered if not set
+    GRAFANA_BILLING_DATASOURCE_UID: str | None = None  # UID of the billing Mimir datasource in Grafana
 
     # Resource tuning configuration
     RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage

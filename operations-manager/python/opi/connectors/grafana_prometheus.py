@@ -168,13 +168,15 @@ class GrafanaPrometheusConnector:
         if not GrafanaPrometheusConnector.is_connected or self._client is None:
             raise GrafanaConnectionError("Grafana is not connected")
 
-    def _build_query_obj(self, ref_id: str, query: str, instant: bool, step: str = "5m") -> dict[str, Any]:
+    def _build_query_obj(
+        self, ref_id: str, query: str, instant: bool, step: str = "5m", datasource_uid: str | None = None
+    ) -> dict[str, Any]:
         """Build a single query object for the Grafana API."""
         query_obj: dict[str, Any] = {
             "refId": ref_id,
             "datasource": {
                 "type": self._datasource_type,
-                "uid": self._datasource_uid,
+                "uid": datasource_uid or self._datasource_uid,
             },
             "expr": query,
             "instant": instant,
@@ -191,6 +193,7 @@ class GrafanaPrometheusConnector:
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         step: str = "5m",
+        datasource_uid: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Execute a single PromQL query through Grafana's API (async, non-blocking).
@@ -201,6 +204,7 @@ class GrafanaPrometheusConnector:
             start_time: Start time for range queries
             end_time: End time for range queries
             step: Step interval for range queries
+            datasource_uid: Optional datasource UID override (e.g. for billing Mimir)
 
         Returns:
             List of metric results in Prometheus API format
@@ -211,6 +215,7 @@ class GrafanaPrometheusConnector:
             start_time=start_time,
             end_time=end_time,
             step=step,
+            datasource_uid=datasource_uid,
         )
         return results.get("A", [])
 
@@ -221,6 +226,7 @@ class GrafanaPrometheusConnector:
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         step: str = "5m",
+        datasource_uid: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """
         Execute multiple PromQL queries in a single Grafana API request.
@@ -233,6 +239,7 @@ class GrafanaPrometheusConnector:
             start_time: Start time for range queries
             end_time: End time for range queries
             step: Step interval for range queries
+            datasource_uid: Optional datasource UID override (e.g. for billing Mimir)
 
         Returns:
             Dictionary mapping refId to list of metric results in Prometheus API format
@@ -245,7 +252,9 @@ class GrafanaPrometheusConnector:
 
         url = f"{self._grafana_url}/api/ds/query"
 
-        query_objects = [self._build_query_obj(ref_id, query, instant, step) for ref_id, query in queries.items()]
+        query_objects = [
+            self._build_query_obj(ref_id, query, instant, step, datasource_uid) for ref_id, query in queries.items()
+        ]
 
         payload: dict[str, Any] = {
             "queries": query_objects,
@@ -359,12 +368,13 @@ class GrafanaPrometheusConnector:
 
         return results
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def custom_query(self, query: str, datasource_uid: str | None = None) -> list[dict[str, Any]]:
         """
         Execute a custom PromQL query.
 
         Args:
             query: The PromQL query to execute.
+            datasource_uid: Optional datasource UID override (e.g. for billing Mimir).
 
         Returns:
             List of metric results.
@@ -373,7 +383,7 @@ class GrafanaPrometheusConnector:
         logger.debug(f"Executing custom query: {query}")
 
         try:
-            return await self._execute_query(query, instant=True)
+            return await self._execute_query(query, instant=True, datasource_uid=datasource_uid)
         except Exception as e:
             logger.error(f"Failed to execute custom query: {e}")
             raise GrafanaQueryError(f"Failed to execute custom query: {e}") from e
