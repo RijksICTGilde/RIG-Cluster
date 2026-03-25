@@ -45,6 +45,7 @@ data:
 
     ALLOWED_EMAILS=ravi.meijer@rijksoverheid.nl,maurits.mink@rijksoverheid.nl,sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
     GRAFANA_DATASOURCE_UID=mimir-prd
+    GRAFANA_BILLING_DATASOURCE_UID=mimir-billing
     ENABLE_TRACEMALLOC=false
     ARGOCD_MANAGER=rig-prd-operations
 
