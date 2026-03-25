@@ -609,7 +609,9 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
             return
         component = components[component_index]
         comp_name = component.get("name")
-        comp_image = component.get("image")
+        comp_image = component.get(
+            "image"
+        )  # TODO: clarify purpose — see features/component-image-field-clarification.md
         if not comp_name:
             return
 
