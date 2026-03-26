@@ -16,6 +16,7 @@ from opi.services.resource_tuning_service import (
     MemoryCheckResult,
     check_deployment_resources,
     get_project_data,
+    get_project_data_from_git,
     tune_deployment_resources,
 )
 
@@ -294,18 +295,16 @@ class TestTuneBaseComponentUpdate:
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
     @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.commit_project_yaml", new_callable=AsyncMock)
-    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_base_component_limits_updated_when_increased(
-        self, mock_connector, mock_service, mock_commit, mock_reprocess, mock_prefix, mock_min
+        self, mock_connector, mock_git_data, mock_commit, mock_reprocess, mock_prefix, mock_min
     ):
         """When tune raises limits, base component definition should also be raised."""
         data = _make_project_data(component_limits="128Mi", component_requests="64Mi")
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
+        mock_git_connector = AsyncMock()
+        mock_git_data.return_value = (data, "test.yaml", mock_git_connector)
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
         mock_reprocess.return_value = True
 
@@ -320,18 +319,16 @@ class TestTuneBaseComponentUpdate:
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
     @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.commit_project_yaml", new_callable=AsyncMock)
-    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_history_written_to_both_levels(
-        self, mock_connector, mock_service, mock_commit, mock_reprocess, mock_prefix, mock_min
+        self, mock_connector, mock_git_data, mock_commit, mock_reprocess, mock_prefix, mock_min
     ):
         """Tune should write history entries at both deployment and component level."""
         data = _make_project_data(component_limits="128Mi", component_requests="64Mi")
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
+        mock_git_connector = AsyncMock()
+        mock_git_data.return_value = (data, "test.yaml", mock_git_connector)
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
         mock_reprocess.return_value = True
 
@@ -355,11 +352,11 @@ class TestTuneBaseComponentUpdate:
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
     @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.commit_project_yaml", new_callable=AsyncMock)
-    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_oom_floor_prevents_downward_tune(
-        self, mock_connector, mock_service, mock_commit, mock_reprocess, mock_prefix, mock_min
+        self, mock_connector, mock_git_data, mock_commit, mock_reprocess, mock_prefix, mock_min
     ):
         """If OOM history set a floor, the tuner should not recommend below it."""
         oom_history = [{"timestamp": "2026-01-01", "limits": {"memory": "512Mi"}, "source": "oom-watcher"}]
@@ -370,10 +367,8 @@ class TestTuneBaseComponentUpdate:
             deployment_requests="256Mi",
             deployment_history=oom_history,
         )
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
+        mock_git_connector = AsyncMock()
+        mock_git_data.return_value = (data, "test.yaml", mock_git_connector)
         # Low usage - tuner would normally recommend ~150Mi
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
         mock_reprocess.return_value = True
