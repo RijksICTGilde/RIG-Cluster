@@ -94,8 +94,8 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
     """Write flat resource keys into a nested resources block.
 
     Ensures the ``requests``/``limits`` structure exists, applies values,
-    and removes the legacy ``memory`` sub-dict (which used ``request``/``limit``
-    keys) to prevent dual-format entries.
+    and migrates any legacy flat ``cpu``/``memory`` keys into the nested
+    structure before removing them to prevent data loss.
     """
     if "resources" not in target:
         target["resources"] = {}
@@ -104,6 +104,13 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
         res["requests"] = {}
     if "limits" not in res:
         res["limits"] = {}
+
+    # Migrate legacy flat keys into the nested structure before they could
+    # be removed.  This prevents silently losing CPU or memory values that
+    # only existed in the old flat format.
+    _migrate_flat_key_before_apply(res, "cpu")
+    _migrate_flat_key_before_apply(res, "memory")
+
     if "requests_memory" in resources:
         res["requests"]["memory"] = resources["requests_memory"]
     if "requests_cpu" in resources:
@@ -112,9 +119,35 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
         res["limits"]["memory"] = resources["limits_memory"]
     if "limits_cpu" in resources:
         res["limits"]["cpu"] = resources["limits_cpu"]
-    # Remove legacy flat formats
-    res.pop("memory", None)  # legacy {request, limit} or plain string
-    res.pop("cpu", None)  # legacy {request, limit}
+
+
+def _migrate_flat_key_before_apply(res: dict[str, Any], key: str) -> None:
+    """Migrate a legacy flat resource key into requests/limits if present.
+
+    Handles three legacy formats:
+    - ``cpu: {request: "50m", limit: "1"}`` — dict with request/limit
+    - ``cpu: "1"`` or ``memory: "256Mi"`` — plain string treated as limit
+    - ``memory: {request: "128Mi", limit: "256Mi"}`` — dict with request/limit
+
+    Only fills in nested values that are not already set, then removes
+    the flat key so the dual-format entry is cleaned up.
+    """
+    value = res.get(key)
+    if value is None:
+        return
+
+    if isinstance(value, dict):
+        if "request" in value and key not in res.get("requests", {}):
+            res.setdefault("requests", {})[key] = str(value["request"])
+        if "limit" in value and key not in res.get("limits", {}):
+            res.setdefault("limits", {})[key] = str(value["limit"])
+    elif isinstance(value, str | int | float):
+        if key not in res.get("limits", {}):
+            res.setdefault("limits", {})[key] = str(value)
+        if key == "memory" and key not in res.get("requests", {}):
+            res.setdefault("requests", {})[key] = str(value)
+
+    del res[key]
 
 
 class ProjectFileHandler:

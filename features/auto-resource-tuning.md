@@ -2,7 +2,7 @@
 
 **Status**: Implemented (on-demand), Planned (scheduled)
 **Created**: 2026-02-10
-**Updated**: 2026-03-04
+**Updated**: 2026-03-26
 
 ## Overview
 
@@ -165,6 +165,8 @@ All changes flow through git commits. Direct mutation of pod specs (as VPA Auto 
 | **10% collapse** | Eliminates noise from near-identical limit/request values |
 | **Git-based changes** | All changes are auditable, reviewable, and reversible |
 | **Deployment-level scoping** | Tuning writes to deployment overrides, not shared definitions (except request propagation) |
+| **Fresh git reads** | Tuning reads the latest YAML from git before modifying, preventing stale cache data from overwriting concurrent changes |
+| **Legacy key migration** | Flat `cpu`/`memory` resource keys are migrated into nested `requests`/`limits` before removal, preventing silent data loss |
 
 ## Future: Scheduled Auto-Tuning
 

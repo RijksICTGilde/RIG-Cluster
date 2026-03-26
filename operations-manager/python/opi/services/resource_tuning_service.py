@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from opi.connectors.git import create_git_connector_for_project_files
+from opi.connectors.git import GitConnector, create_git_connector_for_project_files
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_max_memory_limit_mi, get_min_memory_limit_mi, get_prefixed_namespace
 from opi.core.config import settings
@@ -20,7 +20,7 @@ from opi.manager.project_manager import create_project_manager
 from opi.services.project_service import get_project_service
 from opi.services.resource_analyzer import _k8s_memory_to_mb, _mb_to_k8s_memory, compute_memory_recommendation
 from opi.utils.naming import generate_unique_name
-from opi.utils.yaml_util import dump_yaml_to_string
+from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +47,11 @@ class MemoryCheckResult:
 
 def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
     """
-    Get a deep copy of project data and filename from the project service.
+    Get a deep copy of project data and filename from the project service cache.
 
-    Returns a copy to prevent in-place modifications from affecting the
-    project service's cached data (which contains encrypted secrets).
-
-    Args:
-        project_name: Name of the project
+    Suitable for read-only operations. For write operations that will commit
+    back to git, use ``get_project_data_from_git`` instead to avoid
+    overwriting fields that changed since the cache was populated.
 
     Returns:
         Tuple of (project_data_copy, filename)
@@ -75,8 +73,49 @@ def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
     return copy.deepcopy(project.data), project.filename
 
 
+async def get_project_data_from_git(project_name: str) -> tuple[dict[str, Any], str, GitConnector]:
+    """
+    Read the latest project data directly from git.
+
+    Unlike ``get_project_data`` (which reads from the in-memory cache),
+    this clones the projects repository and parses the YAML file on disk.
+    This prevents stale cache data from silently overwriting fields that
+    were added or changed since the last project processing run.
+
+    The caller is responsible for closing the returned GitConnector.
+
+    Returns:
+        Tuple of (project_data, filename, git_connector)
+
+    Raises:
+        ValueError: If project not found or YAML file missing/invalid
+    """
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+
+    if not project:
+        raise ValueError(f"Project '{project_name}' not found")
+
+    filename = project.filename
+    git_connector = await create_git_connector_for_project_files(project_name)
+
+    file_path = f"projects/{filename}"
+    content = await git_connector.read_file_content(file_path)
+    project_data = load_yaml_from_string(content)
+
+    if not project_data:
+        await git_connector.close()
+        raise ValueError(f"Failed to parse YAML for project '{project_name}' from git")
+
+    return project_data, filename, git_connector
+
+
 async def commit_project_yaml(
-    project_name: str, filename: str, project_data: dict[str, Any], commit_message: str
+    project_name: str,
+    filename: str,
+    project_data: dict[str, Any],
+    commit_message: str,
+    git_connector: GitConnector | None = None,
 ) -> None:
     """
     Write updated project data back to git and commit.
@@ -86,18 +125,22 @@ async def commit_project_yaml(
         filename: Project YAML filename
         project_data: Updated project data dict
         commit_message: Git commit message
+        git_connector: Optional existing connector to reuse (caller manages lifecycle)
     """
 
     updated_yaml = dump_yaml_to_string(project_data)
 
-    git_connector = await create_git_connector_for_project_files(project_name)
+    owns_connector = git_connector is None
+    if owns_connector:
+        git_connector = await create_git_connector_for_project_files(project_name)
     try:
         file_path = f"projects/{filename}"
         await git_connector.add_file(file_path, updated_yaml)
         await git_connector.commit_and_push(commit_message)
         logger.info(f"Committed project YAML changes: {commit_message}")
     finally:
-        await git_connector.close()
+        if owns_connector:
+            await git_connector.close()
 
 
 async def trigger_reprocessing(
@@ -405,12 +448,15 @@ async def tune_deployment_resources(
         ValueError: If project not found or has no data
         RuntimeError: If metrics backend is unavailable
     """
-    project_data, filename = get_project_data(project_name)
+    # Read fresh from git to avoid overwriting fields that changed since
+    # the in-memory cache was last populated.
+    project_data, filename, git_connector = await get_project_data_from_git(project_name)
     file_handler = ProjectFileHandler()
 
     try:
         connector = await get_metrics_connector()
     except Exception as e:
+        await git_connector.close()
         raise RuntimeError(f"Metrics backend unavailable: {e}") from e
 
     changes: list[dict[str, str]] = []
@@ -521,11 +567,13 @@ async def tune_deployment_resources(
         component_names = [c["component"] for c in changes]
         commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
 
-        await commit_project_yaml(project_name, filename, project_data, commit_msg)
+        await commit_project_yaml(project_name, filename, project_data, commit_msg, git_connector=git_connector)
         if not skip_reprocessing:
             deployment_refresh_triggered = await trigger_reprocessing(
                 project_name, filename, deployment_name, argocd_resources_changed=False
             )
+
+    await git_connector.close()
 
     return TuneResult(
         changes=changes,
