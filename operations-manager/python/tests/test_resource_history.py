@@ -16,7 +16,6 @@ from opi.services.resource_tuning_service import (
     MemoryCheckResult,
     check_deployment_resources,
     get_project_data,
-    get_project_data_from_git,
     tune_deployment_resources,
 )
 
