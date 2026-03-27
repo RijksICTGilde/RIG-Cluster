@@ -56,7 +56,8 @@ class TestDeploymentComponentMetricsParallel:
 class TestDeploymentTimeseriesParallel:
     """Test that get_deployment_component_metrics_timeseries runs in parallel."""
 
-    def test_parallel_execution(self, connector):
+    @pytest.mark.asyncio
+    async def test_parallel_execution(self, connector):
         """Timeseries queries should run in parallel."""
         call_times: list[float] = []
         empty_result = {
@@ -82,7 +83,7 @@ class TestDeploymentTimeseriesParallel:
             return empty_result
 
         with patch.object(connector, "get_component_metrics_timeseries", side_effect=slow_timeseries):
-            result = connector.get_deployment_component_metrics_timeseries(
+            result = await connector.get_deployment_component_metrics_timeseries(
                 namespace="test-ns",
                 components=["web", "api"],
                 deployment_name="my-app",
@@ -96,7 +97,8 @@ class TestDeploymentTimeseriesParallel:
 class TestDiscoveredWorkloadsParallel:
     """Test that get_discovered_workload_metrics_timeseries runs in parallel."""
 
-    def test_parallel_execution(self, connector):
+    @pytest.mark.asyncio
+    async def test_parallel_execution(self, connector):
         """Workloads should be queried in parallel."""
         call_count = 0
         empty_result = {
@@ -123,7 +125,7 @@ class TestDiscoveredWorkloadsParallel:
             return empty_result
 
         with patch.object(connector, "get_component_metrics_timeseries", side_effect=mock_timeseries):
-            result = connector.get_discovered_workload_metrics_timeseries(
+            result = await connector.get_discovered_workload_metrics_timeseries(
                 namespace="test-ns",
                 workloads=[
                     {"name": "frontend"},
@@ -135,9 +137,10 @@ class TestDiscoveredWorkloadsParallel:
         assert set(result.keys()) == {"frontend", "backend"}
         assert call_count == 2
 
-    def test_empty_workloads(self, connector):
+    @pytest.mark.asyncio
+    async def test_empty_workloads(self, connector):
         """Empty workloads list should return empty dict."""
-        result = connector.get_discovered_workload_metrics_timeseries(
+        result = await connector.get_discovered_workload_metrics_timeseries(
             namespace="test-ns",
             workloads=[],
         )
