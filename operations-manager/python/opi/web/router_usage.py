@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.cluster_config import get_namespace_prefix
+from opi.core.cluster_config import get_cluster_config, get_namespace_prefix
 from opi.core.config import settings
 from opi.core.templates import get_templates
 from opi.services.project_service import get_project_service
@@ -98,7 +98,18 @@ def _get_available_namespaces(cluster_name: str) -> list[str]:
     project_service = get_project_service()
     projects = project_service.get_all_projects()
     namespaces = sorted({f"{prefix}{name}" for name in projects})
+    opi_namespace = get_cluster_config(cluster_name).get("namespace")
+    if opi_namespace and opi_namespace not in namespaces:
+        namespaces.insert(0, opi_namespace)
     return namespaces
+
+
+def _get_month_end(year: int, month: int, days: int) -> datetime:
+    """Get the evaluation time for a month query (end of month, or now if current month)."""
+    now = datetime.now(UTC)
+    if year == now.year and month == now.month:
+        return now
+    return datetime(year, month, days, 23, 59, 59, tzinfo=UTC)
 
 
 async def _query_month_usage(
@@ -111,13 +122,15 @@ async def _query_month_usage(
 
     connector = GrafanaPrometheusConnector()
 
+    eval_time = _get_month_end(month_info["year"], month_info["month"], month_info["days"])
+
     query = MEMORY_USAGE_QUERY.format(
         namespace_filter=namespace_filter,
         days=month_info["days"],
     )
 
     try:
-        results = await connector.custom_query(query, datasource_uid=datasource_uid)
+        results = await connector.custom_query(query, datasource_uid=datasource_uid, eval_time=eval_time)
         value = float(results[0].get("value", [None, "0"])[1]) if results else 0.0
     except Exception:
         logger.exception("Failed to query billing data for %s %d", month_info["name"], month_info["year"])
