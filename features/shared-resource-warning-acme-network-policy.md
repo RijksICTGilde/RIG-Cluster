@@ -62,19 +62,6 @@ Each uses the same naming functions from `opi/utils/naming.py`:
 
 ## Possible Solutions
 
-### Option A: Namespace-Level Shared Resources (Recommended)
-
-Generate namespace-scoped resources (Issuer, ACME NetworkPolicy) once per namespace instead of per deployment. Track which namespaces have already been processed during a project sync and skip duplicate generation.
-
-**Approach:**
-- Maintain a set of `(namespace, base_domain, issuer_config)` tuples during project processing
-- On first encounter, generate the Issuer and NetworkPolicy
-- On subsequent encounters with the same tuple, skip generation
-- Assign the shared resources to the first deployment's ArgoCD Application
-
-**Pros:** Minimal code change, eliminates the warning entirely
-**Cons:** Creates an implicit dependency - deleting the "first" deployment removes shared resources
-
 ### Option B: Deployment-Scoped Resource Names
 
 Make the resource names unique per deployment by including the deployment name:
@@ -89,27 +76,4 @@ issuer-letsencrypt-rijksapp-nl-pr-164
 **Pros:** Each Application owns its own resources, no sharing conflicts
 **Cons:** Creates duplicate Issuers in the same namespace (functionally wasteful but harmless), duplicate NetworkPolicies (also harmless)
 
-### Option C: Separate Infrastructure Application per Namespace
-
-Create a dedicated ArgoCD Application per namespace that owns shared infrastructure resources (Issuers, NetworkPolicies, PVCs). Deployment Applications only contain deployment-specific resources.
-
-**Approach:**
-- Generate a `{project}-{namespace}-infra` directory with shared resources
-- Create an ArgoCD Application for this directory
-- Deployment directories only contain secrets, kustomization, and deployment-specific manifests
-
-**Pros:** Clean separation of concerns, most architecturally sound
-**Cons:** Significant refactoring of the manifest generation pipeline, adds an extra ArgoCD Application per namespace
-
-### Option D: ArgoCD Resource Tracking Annotation
-
-Use ArgoCD's `argocd.argoproj.io/managed-by` annotation or resource exclusion to tell ArgoCD that certain resources are shared and should not trigger warnings.
-
-**Pros:** No changes to resource generation
-**Cons:** Masks the underlying issue rather than fixing it, requires careful annotation management
-
-## Recommendation
-
-**Option A** is the pragmatic choice - it's the smallest change that fully resolves the warning. The generation code already has precedent for deduplication (see `created_issuers` set in the component deployment path at ~line 4490).
-
-For a longer-term architecture improvement, **Option C** would provide the cleanest separation, but the effort is significantly higher and the current impact is low.
+As network policies in the future also need to target pods owned by their own deployment, this is the preferred solution
