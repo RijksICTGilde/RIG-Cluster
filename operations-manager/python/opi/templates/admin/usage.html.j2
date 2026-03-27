@@ -21,7 +21,7 @@
             <c-layout-flow gap="md">
                 <c-grid columns="four">
                     <c-select-field id="namespace" name="namespace" label="Namespace"
-                                    options="{{ namespace_options }}" value="{{ selected_namespace }}" />
+                                    options='{{ namespace_options | tojson }}' value="{{ selected_namespace }}" />
                     <c-text-input-field id="price" name="price" label="Prijs per GiB (&euro;)" type="number"
                                         value="{{ price_per_gib }}" />
                     <c-text-input-field id="year" name="year" label="Jaar" type="number"
