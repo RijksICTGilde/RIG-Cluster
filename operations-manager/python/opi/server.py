@@ -9,7 +9,7 @@ from pathlib import Path
 import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -356,9 +356,15 @@ def create_app() -> FastAPI:
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
         logger.info(f"Regular static files mounted at /static from {static_dir}")
 
-    # security.txt for responsible disclosure (internet.nl compliance)
-    from fastapi.responses import PlainTextResponse
+    # Favicon at the root path (browsers request /favicon.ico automatically)
+    favicon_path = os.path.join(static_dir, "favicon.ico")
 
+    @app.get("/favicon.ico", include_in_schema=False, response_class=FileResponse)
+    async def favicon():
+        """Serve favicon from the expected root path."""
+        return FileResponse(favicon_path, media_type="image/x-icon")
+
+    # security.txt for responsible disclosure (internet.nl compliance)
     @app.get("/.well-known/security.txt", include_in_schema=False, response_class=PlainTextResponse)
     async def security_txt() -> PlainTextResponse:
         """Serve security.txt for vulnerability disclosure per RFC 9116."""
