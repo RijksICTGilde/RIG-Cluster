@@ -723,7 +723,7 @@ class PrometheusConnector:
 
         return result
 
-    def get_deployment_component_metrics_timeseries(
+    async def get_deployment_component_metrics_timeseries(
         self,
         namespace: str,
         components: list[str],
@@ -755,7 +755,7 @@ class PrometheusConnector:
             }
             return {name: future.result() for name, future in futures.items()}
 
-    def get_pvc_storage_by_namespace(
+    async def get_pvc_storage_by_namespace(
         self, namespace: str, duration_minutes: int = 60, step_minutes: int = 5
     ) -> dict[str, dict[str, Any]]:
         """
@@ -844,7 +844,7 @@ class PrometheusConnector:
 
         return result
 
-    def discover_workloads_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
+    async def discover_workloads_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
         """
         Discover workloads (deployments/statefulsets) in a namespace via Prometheus metrics.
 
@@ -974,7 +974,7 @@ class PrometheusConnector:
 
         return pod_name
 
-    def get_discovered_workload_metrics_timeseries(
+    async def get_discovered_workload_metrics_timeseries(
         self,
         namespace: str,
         workloads: list[dict[str, Any]],
