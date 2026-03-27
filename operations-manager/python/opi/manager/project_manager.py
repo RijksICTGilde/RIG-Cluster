@@ -2674,7 +2674,7 @@ class ProjectManager:
         if issuer_config:
             if issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
                 # Generate full issuer name to match the Issuer resource we create
-                context["ISSUER"] = generate_issuer_name(base_domain, issuer_config)
+                context["ISSUER"] = generate_issuer_name(base_domain, issuer_config, deployment_name)
             else:
                 context["ISSUER"] = issuer_config
         else:
@@ -3017,11 +3017,11 @@ class ProjectManager:
                     os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
                 )
 
-                issuer_name_generated = generate_issuer_name(base_domain, issuer_config)
-                issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config)
-                issuer_manifest_filename = generate_issuer_manifest_name(base_domain, issuer_config).replace(
-                    ".yaml", ""
-                )
+                issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
+                issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
+                issuer_manifest_filename = generate_issuer_manifest_name(
+                    base_domain, issuer_config, deployment_name
+                ).replace(".yaml", "")
 
                 issuer_variables = {
                     "issuer_name": issuer_name_generated,
@@ -3047,9 +3047,9 @@ class ProjectManager:
                 network_policy_template_path = os.path.join(
                     os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
                 )
-                network_policy_filename = generate_network_policy_manifest_name("acme-http")
+                network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
                 network_policy_variables = {
-                    "name": generate_network_policy_name("acme-http"),
+                    "name": generate_network_policy_name("acme-http", deployment_name),
                     "namespace": prefixed_namespace,
                     "pod_selector": None,  # Match all pods
                     "ports": [80],
@@ -3404,11 +3404,11 @@ class ProjectManager:
                     os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
                 )
 
-                issuer_name_generated = generate_issuer_name(base_domain, issuer_config)
-                issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config)
-                issuer_manifest_filename = generate_issuer_manifest_name(base_domain, issuer_config).replace(
-                    ".yaml", ""
-                )
+                issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
+                issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
+                issuer_manifest_filename = generate_issuer_manifest_name(
+                    base_domain, issuer_config, deployment_name
+                ).replace(".yaml", "")
 
                 issuer_variables = {
                     "issuer_name": issuer_name_generated,
@@ -3433,9 +3433,9 @@ class ProjectManager:
                 network_policy_template_path = os.path.join(
                     os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
                 )
-                network_policy_filename = generate_network_policy_manifest_name("acme-http")
+                network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
                 network_policy_variables = {
-                    "name": generate_network_policy_name("acme-http"),
+                    "name": generate_network_policy_name("acme-http", deployment_name),
                     "namespace": prefixed_namespace,
                     "pod_selector": None,
                     "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
@@ -4636,7 +4636,9 @@ class ProjectManager:
                                 # External domain with specified issuer
                                 if issuer_config in ("letsencrypt", "letsencrypt-staging"):
                                     # Auto-generated namespace Issuer for Let's Encrypt
-                                    ingress_issuer_name = generate_issuer_name(base_domain, issuer_config)
+                                    ingress_issuer_name = generate_issuer_name(
+                                        base_domain, issuer_config, deployment_name
+                                    )
                                 else:
                                     # Custom issuer name - use as namespace-scoped Issuer reference
                                     ingress_issuer_name = issuer_config
@@ -4697,7 +4699,7 @@ class ProjectManager:
 
                         if base_domain and issuer_config:
                             if issuer_config in ("letsencrypt", "letsencrypt-staging"):
-                                root_issuer_name = generate_issuer_name(base_domain, issuer_config)
+                                root_issuer_name = generate_issuer_name(base_domain, issuer_config, deployment_name)
                             else:
                                 root_issuer_name = issuer_config
                         else:
@@ -4762,7 +4764,7 @@ class ProjectManager:
 
                         if base_domain and issuer_config:
                             if issuer_config in ("letsencrypt", "letsencrypt-staging"):
-                                bare_issuer_name = generate_issuer_name(base_domain, issuer_config)
+                                bare_issuer_name = generate_issuer_name(base_domain, issuer_config, deployment_name)
                             else:
                                 bare_issuer_name = issuer_config
                         else:
@@ -5028,11 +5030,11 @@ class ProjectManager:
                             os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
                         )
 
-                        issuer_name_generated = generate_issuer_name(base_domain, issuer_config)
-                        issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config)
-                        issuer_manifest_filename = generate_issuer_manifest_name(base_domain, issuer_config).replace(
-                            ".yaml", ""
-                        )
+                        issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
+                        issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
+                        issuer_manifest_filename = generate_issuer_manifest_name(
+                            base_domain, issuer_config, deployment_name
+                        ).replace(".yaml", "")
 
                         issuer_variables = {
                             "issuer_name": issuer_name_generated,
@@ -5060,9 +5062,9 @@ class ProjectManager:
                         network_policy_template_path = os.path.join(
                             os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
                         )
-                        network_policy_filename = generate_network_policy_manifest_name("acme-http")
+                        network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
                         network_policy_variables = {
-                            "name": generate_network_policy_name("acme-http"),
+                            "name": generate_network_policy_name("acme-http", deployment_name),
                             "namespace": namespace,
                             "pod_selector": None,  # Match all pods
                             "ports": [80],

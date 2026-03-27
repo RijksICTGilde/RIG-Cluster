@@ -1379,16 +1379,19 @@ def normalize_base_domain(base_domain: str, max_length: int = 50) -> str:
     return normalized or "domain"
 
 
-def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt", deployment_name: str | None = None) -> str:
     """
     Generate a consistent cert-manager Issuer name for a base domain.
 
     The issuer name includes the issuer type prefix and normalized domain
-    to ensure uniqueness per domain within a namespace.
+    to ensure uniqueness per domain within a namespace. When deployment_name
+    is provided, the name is scoped to the deployment to avoid
+    SharedResourceWarning in ArgoCD when multiple deployments share a namespace.
 
     Args:
         base_domain: The base domain (e.g., "rijksapp.com")
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+        deployment_name: Optional deployment name to scope the issuer
 
     Returns:
         Issuer name string
@@ -1398,12 +1401,19 @@ def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt") -> 
         'letsencrypt-rijksapp-com'
         >>> generate_issuer_name("rijksapp.com", "letsencrypt-staging")
         'letsencrypt-staging-rijksapp-com'
+        >>> generate_issuer_name("rijksapp.com", deployment_name="staging2")
+        'letsencrypt-rijksapp-com-staging2'
     """
     normalized = normalize_base_domain(base_domain)
-    return sanitize_kubernetes_name(f"{issuer_type}-{normalized}")
+    name = f"{issuer_type}-{normalized}"
+    if deployment_name:
+        name = f"{name}-{deployment_name}"
+    return sanitize_kubernetes_name(name)
 
 
-def generate_issuer_secret_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+def generate_issuer_secret_name(
+    base_domain: str, issuer_type: str = "letsencrypt", deployment_name: str | None = None
+) -> str:
     """
     Generate a consistent ACME account private key secret name for an Issuer.
 
@@ -1412,6 +1422,7 @@ def generate_issuer_secret_name(base_domain: str, issuer_type: str = "letsencryp
     Args:
         base_domain: The base domain (e.g., "rijksapp.com")
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+        deployment_name: Optional deployment name to scope the secret
 
     Returns:
         Secret name string
@@ -1421,18 +1432,23 @@ def generate_issuer_secret_name(base_domain: str, issuer_type: str = "letsencryp
         'letsencrypt-rijksapp-com-key'
         >>> generate_issuer_secret_name("rijksapp.com", "letsencrypt-staging")
         'letsencrypt-staging-rijksapp-com-key'
+        >>> generate_issuer_secret_name("rijksapp.com", deployment_name="staging2")
+        'letsencrypt-rijksapp-com-staging2-key'
     """
-    issuer_name = generate_issuer_name(base_domain, issuer_type)
+    issuer_name = generate_issuer_name(base_domain, issuer_type, deployment_name)
     return f"{issuer_name}-key"
 
 
-def generate_issuer_manifest_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+def generate_issuer_manifest_name(
+    base_domain: str, issuer_type: str = "letsencrypt", deployment_name: str | None = None
+) -> str:
     """
     Generate a consistent filename for the Issuer manifest.
 
     Args:
         base_domain: The base domain (e.g., "rijksapp.com")
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+        deployment_name: Optional deployment name to scope the manifest
 
     Returns:
         Manifest filename string
@@ -1442,17 +1458,24 @@ def generate_issuer_manifest_name(base_domain: str, issuer_type: str = "letsencr
         'issuer-letsencrypt-rijksapp-com.yaml'
         >>> generate_issuer_manifest_name("rijksapp.com", "letsencrypt-staging")
         'issuer-letsencrypt-staging-rijksapp-com.yaml'
+        >>> generate_issuer_manifest_name("rijksapp.com", deployment_name="staging2")
+        'issuer-letsencrypt-rijksapp-com-staging2.yaml'
     """
-    issuer_name = generate_issuer_name(base_domain, issuer_type)
+    issuer_name = generate_issuer_name(base_domain, issuer_type, deployment_name)
     return f"issuer-{issuer_name}.yaml"
 
 
-def generate_network_policy_name(purpose: str) -> str:
+def generate_network_policy_name(purpose: str, deployment_name: str | None = None) -> str:
     """
     Generate a consistent name for a NetworkPolicy.
 
+    When deployment_name is provided, the name is scoped to the deployment
+    to avoid SharedResourceWarning in ArgoCD when multiple deployments
+    share a namespace.
+
     Args:
         purpose: The purpose of the network policy (e.g., "acme-http")
+        deployment_name: Optional deployment name to scope the policy
 
     Returns:
         NetworkPolicy name string
@@ -1460,16 +1483,21 @@ def generate_network_policy_name(purpose: str) -> str:
     Example:
         >>> generate_network_policy_name("acme-http")
         'acme-http-network-policy'
+        >>> generate_network_policy_name("acme-http", "staging2")
+        'acme-http-staging2-network-policy'
     """
+    if deployment_name:
+        return f"{purpose}-{deployment_name}-network-policy"
     return f"{purpose}-network-policy"
 
 
-def generate_network_policy_manifest_name(purpose: str) -> str:
+def generate_network_policy_manifest_name(purpose: str, deployment_name: str | None = None) -> str:
     """
     Generate a consistent filename for a NetworkPolicy manifest.
 
     Args:
         purpose: The purpose of the network policy (e.g., "acme-http")
+        deployment_name: Optional deployment name to scope the manifest
 
     Returns:
         Manifest filename string (without .yaml extension)
@@ -1477,8 +1505,10 @@ def generate_network_policy_manifest_name(purpose: str) -> str:
     Example:
         >>> generate_network_policy_manifest_name("acme-http")
         'acme-http-network-policy'
+        >>> generate_network_policy_manifest_name("acme-http", "staging2")
+        'acme-http-staging2-network-policy'
     """
-    return generate_network_policy_name(purpose)
+    return generate_network_policy_name(purpose, deployment_name)
 
 
 def resolve_effective_base_domain(base_domain: str | None, ingress_postfix: str) -> str:

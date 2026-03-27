@@ -882,6 +882,16 @@ class TestGenerateIssuerName:
         result = generate_issuer_name("rijksapp.com", "letsencrypt-staging")
         assert result == "letsencrypt-staging-rijksapp-com"
 
+    def test_deployment_scoped(self):
+        """Deployment name is appended to scope the issuer per deployment."""
+        result = generate_issuer_name("rijksapp.com", deployment_name="staging2")
+        assert result == "letsencrypt-rijksapp-com-staging2"
+
+    def test_staging_deployment_scoped(self):
+        """Staging issuer with deployment name."""
+        result = generate_issuer_name("rijksapp.com", "letsencrypt-staging", "pr-164")
+        assert result == "letsencrypt-staging-rijksapp-com-pr-164"
+
 
 class TestGenerateIssuerSecretName:
     """Tests for generate_issuer_secret_name function."""
@@ -895,6 +905,11 @@ class TestGenerateIssuerSecretName:
         result = generate_issuer_secret_name("rijksapp.com", "letsencrypt-staging")
         assert result == "letsencrypt-staging-rijksapp-com-key"
 
+    def test_deployment_scoped_secret(self):
+        """Deployment-scoped secret name."""
+        result = generate_issuer_secret_name("rijksapp.com", deployment_name="staging2")
+        assert result == "letsencrypt-rijksapp-com-staging2-key"
+
 
 class TestGenerateNetworkPolicyName:
     """Tests for generate_network_policy_name function."""
@@ -902,6 +917,10 @@ class TestGenerateNetworkPolicyName:
     def test_basic_policy(self):
         """Appends -network-policy to purpose."""
         assert generate_network_policy_name("acme-http") == "acme-http-network-policy"
+
+    def test_deployment_scoped_policy(self):
+        """Deployment name is inserted before -network-policy suffix."""
+        assert generate_network_policy_name("acme-http", "staging2") == "acme-http-staging2-network-policy"
 
 
 class TestResolveEffectiveBaseDomain:
