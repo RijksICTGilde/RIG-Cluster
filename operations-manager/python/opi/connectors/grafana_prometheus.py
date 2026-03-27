@@ -262,8 +262,11 @@ class GrafanaPrometheusConnector:
             "to": "now",
         }
 
-        if not instant and start_time and end_time:
+        if start_time and end_time:
             payload["from"] = str(int(start_time.timestamp() * 1000))
+            payload["to"] = str(int(end_time.timestamp() * 1000))
+        elif end_time:
+            payload["from"] = str(int(end_time.timestamp() * 1000))
             payload["to"] = str(int(end_time.timestamp() * 1000))
 
         try:
@@ -368,13 +371,19 @@ class GrafanaPrometheusConnector:
 
         return results
 
-    async def custom_query(self, query: str, datasource_uid: str | None = None) -> list[dict[str, Any]]:
+    async def custom_query(
+        self,
+        query: str,
+        datasource_uid: str | None = None,
+        eval_time: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Execute a custom PromQL query.
 
         Args:
             query: The PromQL query to execute.
             datasource_uid: Optional datasource UID override (e.g. for billing Mimir).
+            eval_time: Optional evaluation timestamp. Defaults to now.
 
         Returns:
             List of metric results.
@@ -383,7 +392,7 @@ class GrafanaPrometheusConnector:
         logger.debug(f"Executing custom query: {query}")
 
         try:
-            return await self._execute_query(query, instant=True, datasource_uid=datasource_uid)
+            return await self._execute_query(query, instant=True, datasource_uid=datasource_uid, end_time=eval_time)
         except Exception as e:
             logger.error(f"Failed to execute custom query: {e}")
             raise GrafanaQueryError(f"Failed to execute custom query: {e}") from e
