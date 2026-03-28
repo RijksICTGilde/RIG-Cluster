@@ -74,7 +74,7 @@ class TestJobRunnerValidation:
         """Submitting without an image should be prevented by browser validation."""
         runner.open_job_runner(DEPLOYMENT)
         # Leave image empty, click Volgende — browser native validation prevents submit
-        runner.submit_form()
+        runner.submit_form(expect_confirmation=False)
 
         # The form should still be visible (not navigated to confirmation)
         assert runner.page.locator("#job-runner-form").count() > 0, "Form should still be visible after empty submit"
@@ -83,7 +83,7 @@ class TestJobRunnerValidation:
         """An image with invalid characters should show a format error."""
         runner.open_job_runner(DEPLOYMENT)
         runner.fill_image("invalid image!@#$")
-        runner.submit_form()
+        runner.submit_form(expect_confirmation=False)
 
         body = runner.get_modal_text()
         assert "ongeldig" in body.lower(), f"Expected format error, got: {body[:300]}"
@@ -93,7 +93,7 @@ class TestJobRunnerValidation:
         runner.open_job_runner(DEPLOYMENT)
         runner.fill_image("alpine:latest")
         runner.fill_env_vars("NOT_A_VALID_LINE")
-        runner.submit_form()
+        runner.submit_form(expect_confirmation=False)
 
         body = runner.get_modal_text()
         assert "omgevingsvariabelen" in body.lower() or "ongeldig" in body.lower(), (
