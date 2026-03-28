@@ -76,12 +76,21 @@ class JobRunnerHelper:
         if cb.is_checked():
             cb.click()
 
-    def submit_form(self) -> None:
-        """Click 'Volgende' to submit the form and wait for response."""
+    def submit_form(self, expect_confirmation: bool = True) -> None:
+        """Click 'Volgende' to submit the form and wait for response.
+
+        If expect_confirmation is True (default), also waits for the confirmation
+        page to appear after the HTMX swap.
+        """
         # The Volgende button triggers htmx submit on the form
         btn = self.page.locator("button:has-text('Volgende'), c-button[label='Volgende']").first
         btn.click()
         self.page.wait_for_load_state("networkidle", timeout=10000)
+        if expect_confirmation:
+            # Wait for the confirmation form to appear after HTMX swap
+            self.page.locator("#job-runner-confirm-form").wait_for(
+                state="attached", timeout=5000
+            )
 
     def get_modal_text(self) -> str:
         """Return the text content of the modal inner area."""
