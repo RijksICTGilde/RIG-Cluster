@@ -9,6 +9,208 @@ Briefing for Claude sessions working on this repository.
 - Each cluster runs its own OPI instance. Instances never manage resources on other clusters
 - Three git repos are managed by OPI: `zad-projects` (definitions), `zad-argo-user-applications` (ArgoCD apps), `zad-deployments` (generated manifests + secrets)
 
+## Project Files
+
+Every project on the platform is defined by a single YAML file stored in the `zad-projects` git repository. OPI reads these files and uses them to provision databases, storage, authentication, Kubernetes manifests, and ArgoCD deployments. Users create project files through the self-service wizard or the API; OPI also writes back to them (e.g. when auto-tuning resources or adding deployments).
+
+### Schema
+
+The canonical schema is defined as Pydantic models in `opi/forms/models/project_file.py`:
+
+| Model | Purpose |
+|---|---|
+| `ProjectFileModel` | Root model — basic info, clusters, services, users, repositories, components, deployments |
+| `ComponentModel` | Application component — type, ports, resources, path routing, service bindings, env vars, aliases |
+| `DeploymentModel` | Deployment of components to a cluster — image references, namespace, repository, configuration |
+| `RepositoryModel` | Git repository — URL, credentials, branch, path |
+| `ProjectUserModel` | Team member — email and role (at least one admin required) |
+| `ResourcesModel` | CPU and memory limits |
+| `PortsModel` | Inbound and outbound ports |
+| `DeploymentComponentModel` | Component reference within a deployment — image, pull policy |
+
+In addition to the schema-modeled fields, project files contain OPI-managed sections that are not user-editable through forms:
+- `config` — project-specific AGE keypair, API key, Keycloak credentials (all AGE-encrypted)
+- `registries` — container registry credentials
+- `schema-version` — currently `2`
+
+### Key Sections
+
+| Section | What it defines |
+|---|---|
+| `name` / `display-name` / `description` | Project identity |
+| `users` | Team members and roles (`admin` or `developer`) |
+| `clusters` | Which clusters this project targets (e.g. `odcn-production`) |
+| `services` | Platform services the project uses — can be plain strings (`publish-on-web`) or dicts with config (`keycloak: {config: {template: ...}}`) |
+| `registries` | Container registries with encrypted credentials |
+| `repositories` | Git repositories containing application source code |
+| `components` | Application components — each defines ports, resource limits, path routing, service bindings, and environment variables |
+| `deployments` | Concrete deployments of components to a cluster — ties components to container images and a namespace |
+| `config` | OPI-managed cryptographic material and service credentials |
+
+### Full Example (sanitized)
+
+Based on a real production project with three components (backend, frontend, admin frontend) and Keycloak + PostgreSQL services. AGE-encrypted values are replaced with `<AGE-encrypted>`.
+
+```yaml
+schema-version: 2
+name: algor-odc
+display-name: Algoritmeregister (eigen database)
+description: Project created via self-service portal
+
+users:
+  - email: user@rijksoverheid.nl
+    role: admin
+
+clusters:
+  - odcn-production
+
+services:
+  - publish-on-web
+  - keycloak:
+      config:
+        template: algoritmeregister
+        additional_redirect_uris:
+          - http://localhost:8080/*
+          - http://127.0.0.1:8080/*
+  - namespace-postgresql-database:
+      config:
+        image: ghcr.io/rijksictgilde/algoritmeregister/postgresql-with-dictionaries:2024.11.19
+        registry: github-registry
+        instances: 1
+        storage: 1Gi
+        privileges:
+          - SUPERUSER
+
+registries:
+  - name: github-registry
+    url: ghcr.io
+    username: someuser
+    password: <AGE-encrypted>
+
+repositories:
+  - name: main-repo
+    url: https://github.com/RijksICTGilde/rig-cluster-application-test.git
+    username: git
+    password: <AGE-encrypted>
+    branch: main
+    path: .
+    project_name: algor-odc
+
+components:
+  - name: component-1
+    type: single
+    ports:
+      inbound: [8000]
+      outbound: [80, 443]
+    path:
+      - match: /aanleverapi
+      - match: /api
+    uses-components: []
+    resources:
+      cpu: '1'
+      requests:
+        memory: 649Mi
+      limits:
+        memory: 649Mi
+      history:
+        - timestamp: '2026-03-24T12:52:18.964665+00:00'
+          limits:
+            memory: 649Mi
+          source: auto-tune
+          deployment: deployment-1
+          reason: 'Limit: max 499Mi + 25% + 25Mi headroom = 649Mi'
+    aliases:
+      POSTGRES_SERVER: $DATABASE_SERVER_HOST
+      POSTGRES_PORT: $DATABASE_SERVER_PORT
+      POSTGRES_USER: $DATABASE_SERVER_USER
+      POSTGRES_PASSWORD: $DATABASE_PASSWORD
+      POSTGRES_DB: $DATABASE_DB
+      KEYCLOAK_URI: $OIDC_URL
+      KEYCLOAK_REALM: $OIDC_REALM
+      PREVIEW_URL: $PUBLIC_HOST
+    user-env-vars: <AGE-encrypted>
+    services:
+      - publish-on-web
+      - keycloak
+      - namespace-postgresql-database
+
+  - name: component-2
+    type: frontend
+    ports:
+      inbound: [3000]
+      outbound: [80, 443]
+    path: /
+    uses-components: []
+    resources:
+      requests:
+        memory: 158Mi
+      limits:
+        memory: 158Mi
+    user-env-vars: <AGE-encrypted>
+    services:
+      - publish-on-web
+      - keycloak
+
+  - name: component-3
+    type: frontend
+    ports:
+      inbound: [8080]
+      outbound: [80, 443]
+    path: /webformulier
+    uses-components: []
+    resources:
+      requests:
+        memory: 88Mi
+      limits:
+        memory: 88Mi
+    services:
+      - publish-on-web
+      - keycloak
+
+deployments:
+  - name: deployment-1
+    cluster: odcn-production
+    namespace: algor-odc
+    repository: main-repo
+    subdomain: deployment-1
+    configuration: <AGE-encrypted>
+    components:
+      - reference: component-1
+        image: ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24-fixed
+        registry: github-registry
+        resources:
+          requests:
+            memory: 649Mi
+          limits:
+            memory: 649Mi
+      - reference: component-2
+        image: ghcr.io/rijksictgilde/algoritmeregister/frontend:2024.11.21
+        registry: github-registry
+        resources:
+          requests:
+            memory: 158Mi
+          limits:
+            memory: 158Mi
+      - reference: component-3
+        image: ghcr.io/rijksictgilde/algoritmeregister/frontend-beheer:2024.12.08
+        imagePullPolicy: Always
+        resources:
+          requests:
+            memory: 88Mi
+          limits:
+            memory: 88Mi
+
+config:
+  age-public-key: age1d489e9c48pmwam6603vecp7y29zz9fx5cgpe9uk6cu9l7asfzg9sx5s0tq
+  age-private-key: <AGE-encrypted>
+  api-key: <AGE-encrypted>
+  keycloak:
+    - host: https://keycloak.rijksapp.nl
+      realm: algor-odc-odcn-production
+      username: algor_odc_odcn_production_admin
+      password: <AGE-encrypted>
+```
+
 ## Two Distinct Concerns
 
 ### Infrastructure
