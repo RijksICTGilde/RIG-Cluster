@@ -182,7 +182,7 @@ class DatabaseSecret(BaseSecret):
     @property
     def connection_string(self) -> str:
         """Generate PostgreSQL connection string."""
-        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self.schema}"
+        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self.schema},public"
 
     def _get_additional_keys(self) -> dict[str, str]:
         """Add computed keys that are not defined in service definitions."""
