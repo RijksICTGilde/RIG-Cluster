@@ -868,7 +868,7 @@ class PostgresConnector:
 
         conn = await self._get_or_create_connection(validated_database)
         await conn.execute(
-            f"ALTER ROLE {quoted_username} IN DATABASE {quoted_database} SET search_path TO {quoted_schema}"
+            f"ALTER ROLE {quoted_username} IN DATABASE {quoted_database} SET search_path TO {quoted_schema}, public"
         )
         logger.info(
             f"Set default search_path for role {validated_username} "

@@ -142,7 +142,7 @@ class TestDatabaseSecretProperties:
             database="mydb",
             schema="public",
         )
-        expected = "postgresql://admin:secret@db.example.com:5432/mydb?options=--search_path%3Dpublic"
+        expected = "postgresql://admin:secret@db.example.com:5432/mydb?options=--search_path%3Dpublic,public"
         assert secret.connection_string == expected
 
     def test_connection_string_with_special_chars(self):
@@ -157,7 +157,7 @@ class TestDatabaseSecretProperties:
         )
         assert "p@ss!word" in secret.connection_string
         assert secret.connection_string.startswith("postgresql://")
-        assert "search_path%3Dapp" in secret.connection_string
+        assert "search_path%3Dapp,public" in secret.connection_string
 
     def test_connection_string_custom_port(self):
         """connection_string uses the configured port."""
