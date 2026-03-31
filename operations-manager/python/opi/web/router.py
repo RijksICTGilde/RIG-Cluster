@@ -617,6 +617,67 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
     return HTMLResponse(content=rendered)
 
 
+@web_router.post("/projects/{project_name}/refresh/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def refresh_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Reprocess a single deployment from Git via web interface."""
+    from opi.core.simple_background import refresh_project_background
+    from opi.core.task_manager import create_task, update_progress
+    from opi.services.project_service import get_project_service
+
+    templates = get_templates()
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    logger.info(f"Web deployment refresh request for '{project_name}/{deployment_name}' by user: {user_email}")
+
+    project_service = get_project_service()
+
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = project_service.get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen een deployment herverwerken. Uw rol: {user_role}",
+        )
+
+    project = project_service.get_project(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+
+    task_id = create_task(project_name)
+    update_progress(task_id, 0, f"Deployment '{deployment_name}' herverwerken gestart...")
+
+    task = asyncio.create_task(
+        refresh_project_background(
+            task_id, project_name, f"projects/{project.filename}", deployment_name=deployment_name
+        ),
+        name=f"refresh-{project_name}-{deployment_name}",
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    context = {
+        "task_id": task_id,
+        "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
+        "progress": 0,
+        "current_step": f"Deployment '{deployment_name}' herverwerken gestart...",
+        "tasks": [],
+        "status": "running",
+        "success_message": f"Deployment '{deployment_name}' succesvol herverwerkt!",
+        "on_complete": "location.reload()",
+    }
+
+    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    return HTMLResponse(content=rendered)
+
+
 @web_router.get("/test-architecture", response_class=HTMLResponse)
 @requires_sso
 async def test_architecture(request: Request):

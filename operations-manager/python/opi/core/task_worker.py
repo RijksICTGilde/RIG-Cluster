@@ -163,10 +163,13 @@ class TaskWorker:
             )
 
             try:
-                # Call the handler
-                result = await handler(
-                    payload=task.get("payload", {}),
-                    progress=progress,
+                # Call the handler with a global timeout to prevent zombie tasks
+                result = await asyncio.wait_for(
+                    handler(
+                        payload=task.get("payload", {}),
+                        progress=progress,
+                    ),
+                    timeout=settings.TASK_WORKER_MAX_DURATION,
                 )
 
                 # Close progress manager (final flush)
@@ -175,6 +178,12 @@ class TaskWorker:
                 # Mark task as completed
                 await self._task_service.complete_task(task_id, result)
                 logger.info("Task %s completed successfully", task_id)
+
+            except TimeoutError:
+                error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"
+                logger.error("Task %s timed out: %s", task_id, error_msg)
+                await progress.close()
+                raise TimeoutError(error_msg)
 
             except Exception:
                 # Close progress manager even on failure

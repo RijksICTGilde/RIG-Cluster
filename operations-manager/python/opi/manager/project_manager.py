@@ -47,6 +47,7 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
+from opi.extensions import load_extensions
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import (
     ProjectFileHandler,
@@ -2561,6 +2562,12 @@ class ProjectManager:
             raise
 
         # Note: SSO and user secrets are already created in create_application_manifests above
+
+        # Run manifest extensions (e.g. registry rewrite for ODCN)
+        extension_pipeline = load_extensions(cluster_name)
+        if extension_pipeline.has_extensions:
+            logger.info(f"Running manifest extensions for deployment: {deployment_name}")
+            extension_pipeline.process_directory(target_path)
 
         # Create a kustomization file BEFORE encrypting .to-sops.yaml files
         # This ensures kustomization and decrypt-sops.yaml can see all .to-sops.yaml files
@@ -6233,6 +6240,16 @@ class ProjectManager:
             )
 
         logger.info(f"Updated image: {old_image} -> {new_image_url}")
+
+        # Re-enable component if it was disabled due to an image pull error
+        is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
+            project_data, deployment_name, component_name
+        )
+        if is_disabled and "ImagePullBackOff" in disabled_reason:
+            self._project_file_handler.set_deployment_component_disabled(
+                project_data, deployment_name, component_name, False, ""
+            )
+            logger.info(f"Re-enabled component '{component_name}' (was disabled: {disabled_reason})")
 
         # 4. Process service actions (e.g., increment PVC generations for persistent-storage)
         generation_changes = {}

@@ -2205,7 +2205,7 @@ tasks:
           grep -v '^[[:space:]]*#' "{{.ENV_FILE}}" | grep -v '^[[:space:]]*$' | while IFS='=' read -r key value; do
             value=$(echo "$value" | sed 's/^["'\'']//' | sed 's/["'\'']$//')
             # Replace the empty value in the template with the actual value
-            sed -i '' "s|$key: \"\"|$key: \"$value\"|" "$SECRET_FILE"
+            sed "s|$key: \"\"|$key: \"$value\"|" "$SECRET_FILE" > "$SECRET_FILE.tmp" && mv "$SECRET_FILE.tmp" "$SECRET_FILE"
             echo "  Set: $key"
           done
         else
