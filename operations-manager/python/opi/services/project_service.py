@@ -169,6 +169,15 @@ class ProjectService:
         """
         return self._projects.copy()
 
+    def replace_all_projects(self, projects: dict[str, "Project"]) -> None:
+        """Atomically replace all project mappings.
+
+        This avoids the race condition of clear-then-rebuild, where concurrent
+        requests would see an empty or partially populated cache.
+        """
+        self._projects = projects
+        logger.debug("Replaced all project mappings (%d projects)", len(projects))
+
     def clear_all_projects(self) -> None:
         """Clear all project mappings. Primarily for testing."""
         self._projects.clear()

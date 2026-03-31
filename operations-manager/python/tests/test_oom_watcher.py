@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.services.oom_watcher import (
     OOMDetectedError,
+    _check_image_pull_errors,
     _check_oom_kills_via_kubectl,
     _run_oom_check,
     create_oom_progressing_callback,
@@ -406,3 +407,225 @@ class TestCreateOomProgressingCallback:
         create_oom_progressing_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
 
         assert "myproject/production" not in _inline_oom_attempts
+
+
+# ---------------------------------------------------------------------------
+# _check_image_pull_errors
+# ---------------------------------------------------------------------------
+
+
+class TestCheckImagePullErrors:
+    """Tests for pod-status-based ImagePullBackOff detection."""
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_detects_image_pull_backoff(self, mock_kubectl_cls):
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+
+        pods_json = (
+            '{"items": [{"metadata": {"name": "prod-api-abc"}, '
+            '"status": {"containerStatuses": [{"name": "app", '
+            '"state": {"waiting": {"reason": "ImagePullBackOff", '
+            '"message": "Back-off pulling image"}}}]}}]}'
+        )
+        mock_kubectl.run_command = AsyncMock(return_value=(pods_json, "", 0))
+
+        result = await _check_image_pull_errors("rig-prd-ns", "prod-api")
+        assert result is not None
+        assert "ImagePullBackOff" in result
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_detects_err_image_pull(self, mock_kubectl_cls):
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+
+        pods_json = (
+            '{"items": [{"metadata": {"name": "prod-api-abc"}, '
+            '"status": {"containerStatuses": [{"name": "app", '
+            '"state": {"waiting": {"reason": "ErrImagePull", '
+            '"message": "manifest unknown"}}}]}}]}'
+        )
+        mock_kubectl.run_command = AsyncMock(return_value=(pods_json, "", 0))
+
+        result = await _check_image_pull_errors("rig-prd-ns", "prod-api")
+        assert result is not None
+        assert "ErrImagePull" in result
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_no_error_returns_none(self, mock_kubectl_cls):
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+
+        pods_json = (
+            '{"items": [{"metadata": {"name": "prod-api-abc"}, '
+            '"status": {"containerStatuses": [{"name": "app", '
+            '"state": {"running": {"startedAt": "2026-01-01T00:00:00Z"}}}]}}]}'
+        )
+        mock_kubectl.run_command = AsyncMock(return_value=(pods_json, "", 0))
+
+        result = await _check_image_pull_errors("rig-prd-ns", "prod-api")
+        assert result is None
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_kubectl_not_connected_returns_none(self, mock_kubectl_cls):
+        mock_kubectl_cls.isConnected = False
+
+        result = await _check_image_pull_errors("rig-prd-ns", "prod-api")
+        assert result is None
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_crashloop_waiting_not_matched(self, mock_kubectl_cls):
+        """CrashLoopBackOff is a waiting reason but should NOT be matched."""
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+
+        pods_json = (
+            '{"items": [{"metadata": {"name": "prod-api-abc"}, '
+            '"status": {"containerStatuses": [{"name": "app", '
+            '"state": {"waiting": {"reason": "CrashLoopBackOff", '
+            '"message": "back-off"}}}]}}]}'
+        )
+        mock_kubectl.run_command = AsyncMock(return_value=(pods_json, "", 0))
+
+        result = await _check_image_pull_errors("rig-prd-ns", "prod-api")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _run_oom_check — image pull integration
+# ---------------------------------------------------------------------------
+
+
+class TestRunOomCheckImagePull:
+    """Tests for image pull detection within the OOM check loop."""
+
+    def _project_data(self, disabled: bool = False) -> dict:
+        comp: dict[str, str | bool] = {"reference": "api"}
+        if disabled:
+            comp["disabled"] = True
+            comp["disabled-reason"] = "ImagePullBackOff: previously broken"
+        return {
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "myproject",
+                    "cluster": "local",
+                    "components": [comp],
+                }
+            ],
+        }
+
+    @patch("opi.services.oom_watcher._disable_components_for_image_pull", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._check_image_pull_errors", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @pytest.mark.asyncio
+    async def test_image_pull_error_triggers_disable(
+        self, mock_prefix, mock_get_data, mock_check_oom, mock_check_pull, mock_disable
+    ):
+        mock_get_data.return_value = (self._project_data(), "myproject.yaml")
+        mock_check_oom.return_value = False
+        mock_check_pull.return_value = "ImagePullBackOff: Back-off pulling image"
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_disable.assert_called_once_with(
+            "myproject", "production", [("api", "ImagePullBackOff: Back-off pulling image")]
+        )
+
+    @patch("opi.services.oom_watcher._disable_components_for_image_pull", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._check_image_pull_errors", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @pytest.mark.asyncio
+    async def test_disabled_components_skipped(
+        self, mock_prefix, mock_get_data, mock_check_oom, mock_check_pull, mock_disable
+    ):
+        """Already-disabled components should not be checked at all."""
+        mock_get_data.return_value = (self._project_data(disabled=True), "myproject.yaml")
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_check_oom.assert_not_called()
+        mock_check_pull.assert_not_called()
+        mock_disable.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _run_oom_check — attempt counter progression
+# ---------------------------------------------------------------------------
+
+
+class TestRunOomCheckAttemptProgression:
+    """Verify that schedule_oom_check is called with attempt+1 after OOM tune."""
+
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @patch("opi.services.oom_watcher.tune_deployment_resources", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._check_image_pull_errors", new_callable=AsyncMock, return_value=None)
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @pytest.mark.asyncio
+    async def test_schedules_next_check_with_incremented_attempt(
+        self, mock_prefix, mock_get_data, mock_check_oom, mock_check_pull, mock_tune, mock_schedule
+    ):
+        mock_get_data.return_value = (
+            {
+                "deployments": [
+                    {
+                        "name": "production",
+                        "namespace": "myproject",
+                        "cluster": "local",
+                        "components": [{"reference": "api"}],
+                    }
+                ]
+            },
+            "myproject.yaml",
+        )
+        mock_check_oom.return_value = True
+        mock_tune.return_value = MagicMock(changes=[{"component": "api"}])
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_schedule.assert_called_once_with("myproject", "production", attempt=2, max_attempts=3)
+
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @patch("opi.services.oom_watcher.tune_deployment_resources", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._check_image_pull_errors", new_callable=AsyncMock, return_value=None)
+    @patch("opi.services.oom_watcher._check_oom_kills_via_kubectl", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @pytest.mark.asyncio
+    async def test_no_reschedule_when_tune_has_no_changes(
+        self, mock_prefix, mock_get_data, mock_check_oom, mock_check_pull, mock_tune, mock_schedule
+    ):
+        mock_get_data.return_value = (
+            {
+                "deployments": [
+                    {
+                        "name": "production",
+                        "namespace": "myproject",
+                        "cluster": "local",
+                        "components": [{"reference": "api"}],
+                    }
+                ]
+            },
+            "myproject.yaml",
+        )
+        mock_check_oom.return_value = True
+        mock_tune.return_value = MagicMock(changes=[])
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_schedule.assert_not_called()

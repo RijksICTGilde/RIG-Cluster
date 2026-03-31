@@ -14,6 +14,13 @@
                     showIcon="before"
                     icon="bewerken"
                     @click="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Images bewerken - {{ deployment.name }}')" />
+                <c-button
+                    label="Deployment herverwerken"
+                    kind="secondary"
+                    size="sm"
+                    showIcon="before"
+                    icon="refresh"
+                    @click="showDangerConfirmation('deployment-refresh', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt herverwerken? Dit synchroniseert de manifesten voor deze deployment.')" />
             </c-layout-row>
         </c-layout-flow>
     </c-card>
