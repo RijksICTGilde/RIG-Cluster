@@ -1,7 +1,7 @@
 """
-OOM Kill Watcher - memory auto-tuning during and after deployment.
+OOM Kill Watcher and ImagePullBackOff detection.
 
-Provides two mechanisms:
+Provides two mechanisms for OOM detection:
 1. **Inline detection** (``detect_oom_kills`` / ``create_oom_progressing_callback``):
    Used during the ArgoCD polling loop to detect OOM kills while the
    application is still ``Progressing``.  When detected, raises
@@ -11,6 +11,13 @@ Provides two mechanisms:
    After a deploy or refresh completes, a delayed background check queries
    kubectl for OOM-killed containers.  If detected, the tune service bumps
    memory limits and triggers reprocessing.  Capped at max_attempts.
+
+Additionally detects **ImagePullBackOff** errors on pods.  When detected,
+the affected deployment component is disabled (``disabled: true``,
+``disabled-reason: "ImagePullBackOff: ..."``) and the project is
+reprocessed to set ``replicas: 0``, stopping the retry loop.  The
+component is automatically re-enabled when a new image is pushed via
+``update_image_and_regenerate()``.
 """
 
 import asyncio
@@ -135,6 +142,100 @@ async def _check_oom_kills_via_kubectl(namespace: str, unique_name: str) -> bool
     return False
 
 
+_IMAGE_PULL_REASONS = {"ImagePullBackOff", "ErrImagePull", "InvalidImageName"}
+
+
+async def _check_image_pull_errors(namespace: str, unique_name: str) -> str | None:
+    """
+    Check whether any pod matching *unique_name* has an image pull error.
+
+    Inspects each container's current ``waiting`` state for ImagePullBackOff,
+    ErrImagePull, or InvalidImageName reasons.
+
+    Returns:
+        The error message if an image pull error is found, None otherwise.
+    """
+    kubectl = KubectlConnector()
+
+    if not KubectlConnector.isConnected:
+        return None
+
+    try:
+        args = ["get", "pods", "-n", namespace, "-l", f"app={unique_name}", "-o", "json"]
+        stdout, stderr, code = await kubectl.run_command(args)
+
+        if code != 0:
+            logger.warning("Failed to get pods for image pull check (%s/%s): %s", namespace, unique_name, stderr)
+            return None
+
+        pods_data = json.loads(stdout)
+        for pod in pods_data.get("items", []):
+            for container_status in pod.get("status", {}).get("containerStatuses", []):
+                waiting = container_status.get("state", {}).get("waiting", {})
+                reason = waiting.get("reason", "")
+                if reason in _IMAGE_PULL_REASONS:
+                    message = waiting.get("message", "image pull failed")
+                    logger.info(
+                        "Image pull error for pod %s container %s in %s: %s - %s",
+                        pod.get("metadata", {}).get("name", "unknown"),
+                        container_status.get("name", "unknown"),
+                        namespace,
+                        reason,
+                        message,
+                    )
+                    return f"{reason}: {message}"
+
+    except Exception as e:
+        logger.warning("Error checking image pull errors for %s/%s: %s", namespace, unique_name, e)
+
+    return None
+
+
+async def _disable_components_for_image_pull(
+    project_name: str,
+    deployment_name: str,
+    disabled_components: list[tuple[str, str]],
+) -> None:
+    """
+    Disable components with image pull errors: update YAML, commit, reprocess.
+
+    Args:
+        project_name: Name of the project
+        deployment_name: Name of the deployment
+        disabled_components: List of (component_reference, error_message) tuples
+    """
+    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.resource_tuning_service import (
+        commit_project_yaml,
+        get_project_data_from_git,
+        trigger_reprocessing,
+    )
+
+    project_data, filename, git_connector = await get_project_data_from_git(project_name)
+    try:
+        file_handler = ProjectFileHandler()
+        names = []
+        for component_ref, error_message in disabled_components:
+            file_handler.set_deployment_component_disabled(
+                project_data, deployment_name, component_ref, True, error_message
+            )
+            names.append(component_ref)
+
+        commit_msg = f"auto-disable: image pull errors for {', '.join(names)} in {project_name}/{deployment_name}"
+        await commit_project_yaml(project_name, filename, project_data, commit_msg, git_connector)
+    finally:
+        await git_connector.close()
+
+    await trigger_reprocessing(project_name, filename, deployment_name)
+    logger.info(
+        "Disabled %d component(s) with image pull errors in %s/%s: %s",
+        len(disabled_components),
+        project_name,
+        deployment_name,
+        ", ".join(n for n, _ in disabled_components),
+    )
+
+
 async def _run_oom_check(
     project_name: str,
     deployment_name: str,
@@ -183,31 +284,49 @@ async def _run_oom_check(
 
     namespace = get_prefixed_namespace(cluster, base_namespace)
 
-    # Check each component for OOM kills
+    # Check each component for OOM kills and image pull errors
     any_oom = False
+    image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
     components = target_dep.get("components", [])
     for comp in components:
         component_ref = comp.get("reference", "")
         if not component_ref:
             continue
+        if comp.get("disabled"):
+            continue
 
         unique_name = generate_unique_name(deployment_name, component_ref)
+
         if await _check_oom_kills_via_kubectl(namespace, unique_name):
             any_oom = True
-            break  # One OOM is enough to trigger tuning
 
+        error_msg = await _check_image_pull_errors(namespace, unique_name)
+        if error_msg:
+            image_pull_errors.append((component_ref, error_msg))
+
+    # Handle image pull errors: disable components, commit, reprocess
+    if image_pull_errors:
+        try:
+            await _disable_components_for_image_pull(project_name, deployment_name, image_pull_errors)
+        except Exception as e:
+            logger.error(
+                "Failed to disable components for image pull errors in %s/%s: %s", project_name, deployment_name, e
+            )
+
+    # Handle OOM kills: tune resources and schedule next check
     if not any_oom:
-        logger.info(
-            "OOM watcher: no OOM kills detected for %s/%s (attempt %d/%d)",
-            project_name,
-            deployment_name,
-            attempt,
-            max_attempts,
-        )
+        if not image_pull_errors:
+            logger.info(
+                "Deployment watcher: no issues detected for %s/%s (attempt %d/%d)",
+                project_name,
+                deployment_name,
+                attempt,
+                max_attempts,
+            )
         return
 
     logger.info(
-        "OOM watcher: OOM kills detected for %s/%s, triggering auto-tune (attempt %d/%d)",
+        "OOM watcher: OOM detected for %s/%s, triggering auto-tune (attempt %d/%d)",
         project_name,
         deployment_name,
         attempt,
@@ -223,22 +342,16 @@ async def _run_oom_check(
                 project_name,
                 deployment_name,
             )
-            # The tune service already triggered reprocessing.
-            # The reprocessed refresh handler will schedule the next OOM check
-            # with attempt+1 (passed via the oom_watch_attempt payload field).
-        else:
-            logger.info(
-                "OOM watcher: tune found no actionable changes for %s/%s",
+            schedule_oom_check(
                 project_name,
                 deployment_name,
+                attempt=attempt + 1,
+                max_attempts=max_attempts,
             )
+        else:
+            logger.info("OOM watcher: tune found no actionable changes for %s/%s", project_name, deployment_name)
     except Exception as e:
-        logger.error(
-            "OOM watcher: auto-tune failed for %s/%s: %s",
-            project_name,
-            deployment_name,
-            e,
-        )
+        logger.error("OOM watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
 
 
 def schedule_oom_check(

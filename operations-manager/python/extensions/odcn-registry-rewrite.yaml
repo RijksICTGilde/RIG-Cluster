@@ -1,0 +1,21 @@
+type: registry-rewrite
+config:
+  mappings:
+    - from: ghcr.io
+      to: rcr.rijksapps.nl/ghcr-rig
+      imagePullSecret: ghcr-rig-robot-pull-secret
+    - from: docker.io
+      to: rcr.rijksapps.nl/dockerhub-rig
+      imagePullSecret: dockerhub-rig-robot-pull-secret
+    - from: registry.gitlab.com
+      to: rcr.rijksapps.nl/gitlab-rig
+      imagePullSecret: gitlab-rig-robot-pull-secret
+    - from: gcr.io
+      to: rcr.rijksapps.nl/gcr-rig
+      imagePullSecret: gcr-rig-robot-pull-secret
+    - from: quay.io
+      to: rcr.rijksapps.nl/quay-rig
+      imagePullSecret: quay-rig-robot-pull-secret
+    - from: registry.k8s.io
+      to: rcr.rijksapps.nl/k8s-rig
+      imagePullSecret: k8s-rig-robot-pull-secret

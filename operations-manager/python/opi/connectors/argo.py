@@ -139,9 +139,10 @@ class ArgoConnector:
                 ssl_context.verify_mode = ssl.CERT_NONE
 
             connector = aiohttp.TCPConnector(ssl=ssl_context)
+            request_timeout = aiohttp.ClientTimeout(total=30)
 
             async with (
-                aiohttp.ClientSession(connector=connector) as session,
+                aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
                 session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
             ):
                 # Check if we got redirected to HTTPS

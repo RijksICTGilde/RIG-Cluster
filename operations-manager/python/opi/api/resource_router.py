@@ -206,6 +206,17 @@ async def sanitize_deployment(
                 except Exception as e:
                     logger.warning(f"Failed to query OOM kills for {unique_name}: {e}")
 
+            # Check for image pull errors
+            try:
+                events = await kubectl.get_namespace_events(namespace, limit=50, max_age_hours=1)
+                image_pull_reasons = {"ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
+                for event in events:
+                    if event.get("reason") in image_pull_reasons and event.get("object", "").startswith(unique_name):
+                        reasons.append(f"ImagePullBackOff: {event.get('message', 'image pull failed')}")
+                        break
+            except Exception as e:
+                logger.warning(f"Failed to check image pull events for {unique_name}: {e}")
+
             if reasons:
                 reason_str = "; ".join(reasons)
                 file_handler.set_deployment_component_disabled(project_data, dep_name, component_ref, True, reason_str)

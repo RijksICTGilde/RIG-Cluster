@@ -266,7 +266,7 @@ class GrafanaPrometheusConnector:
             payload["from"] = str(int(start_time.timestamp() * 1000))
             payload["to"] = str(int(end_time.timestamp() * 1000))
         elif end_time:
-            payload["from"] = str(int(end_time.timestamp() * 1000))
+            payload["from"] = str(int(end_time.timestamp() * 1000) - 60_000)
             payload["to"] = str(int(end_time.timestamp() * 1000))
 
         try:

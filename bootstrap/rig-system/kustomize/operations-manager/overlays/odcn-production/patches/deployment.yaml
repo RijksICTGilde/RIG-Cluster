@@ -5,9 +5,11 @@ metadata:
 spec:
   template:
     spec:
+      imagePullSecrets:
+      - name: ghcr-rig-robot-pull-secret
       containers:
       - name: operations-manager
-        image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest
+        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:latest
         resources:
           limits:
             cpu: "3"

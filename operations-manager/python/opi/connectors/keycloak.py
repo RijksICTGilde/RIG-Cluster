@@ -564,10 +564,20 @@ class KeycloakConnector:
             # Delete the client using its internal ID
             self.admin.delete_client(client_id=target_client["id"])
 
+            logger.info(f"Successfully deleted client '{client_id}' for deployment '{deployment_name}'")
+
+            # Also delete the public client (used for keycloak-js / browser-based OIDC flows)
+            public_client_id = f"{client_id}-public"
+            public_client = await self.find_client_by_client_id(public_client_id, realm_name)
+            if public_client:
+                self.admin.change_current_realm(realm_name)
+                self.admin.delete_client(client_id=public_client["id"])
+                logger.info(f"Successfully deleted public client '{public_client_id}'")
+            else:
+                logger.debug(f"Public client '{public_client_id}' not found in realm '{realm_name}', skipping")
+
             # Switch back to master
             self.admin.change_current_realm("master")
-
-            logger.info(f"Successfully deleted client '{client_id}' for deployment '{deployment_name}'")
             return True
 
         except KeycloakError as e:

@@ -72,6 +72,7 @@ DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/user-env-vars",
     converter=KeyValueConverter(fmt="env", write_as="string"),
     validator=KeyValueValidator(),
+    remove_when_none=True,
 )
 
 DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(

@@ -285,6 +285,7 @@ class Settings(BaseSettings):
     TASK_WORKER_MAX_ATTEMPTS: int = 3
     TASK_WORKER_CONCURRENCY: int = 4
     TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1
+    TASK_WORKER_MAX_DURATION: int = 1800  # 30 minutes
 
     # MinIO configuration
     MINIO_HOST: str = "minio.kind:9000"

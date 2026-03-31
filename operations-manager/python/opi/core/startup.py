@@ -39,7 +39,7 @@ from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_service import get_project_service, initialize_project_service
+from opi.services.project_service import Project, ProjectUser, get_project_service, initialize_project_service
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
@@ -331,9 +331,6 @@ async def refresh_projects_from_git() -> int:
 
     project_service = get_project_service()
 
-    # Clear existing projects to reload fresh data
-    project_service.clear_all_projects()
-
     # Create a shared Git connector that will be reused across all ProjectManagers
     shared_git_connector = None
     try:
@@ -347,6 +344,9 @@ async def refresh_projects_from_git() -> int:
         raise
 
     try:
+        # Build new project dict first, then swap atomically to avoid
+        # a window where the cache is empty or partially populated (causes 401s).
+        new_projects: dict[str, Project] = {}
         loaded_count = 0
         for project_file in project_files:
             # Each ProjectManager shares the git connector for project files
@@ -364,16 +364,28 @@ async def refresh_projects_from_git() -> int:
                 project_name = await project_manager.get_name()
                 project_data = await project_manager.get_contents()
 
-                # Register project with users and full project data
-                project_service.register(
-                    project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
+                # Build Project object for the new dict
+                users_data = project_data.get("users", [])
+                users = None
+                if users_data and isinstance(users_data, list):
+                    users = [
+                        ProjectUser(email=u["email"], role=u["role"])
+                        for u in users_data
+                        if isinstance(u, dict) and "email" in u and "role" in u
+                    ]
+
+                new_projects[project_name] = Project(
+                    name=project_name,
+                    api_key=api_key,
+                    filename=project_file_base_name,
+                    users=users or None,
+                    data=project_data,
                 )
 
                 # Add project users to allowed emails list
-                project_users = project_data.get("users", [])
-                if project_users:
+                if users_data:
                     user_service = get_user_service()
-                    project_user_emails = [u.get("email") for u in project_users if u.get("email")]
+                    project_user_emails = [u.get("email") for u in users_data if u.get("email")]
                     if project_user_emails:
                         user_service.add_allowed_emails(project_user_emails)
 
@@ -382,6 +394,9 @@ async def refresh_projects_from_git() -> int:
                 logger.error(f"Error refreshing project file {project_file}: {e}")
             finally:
                 await project_manager.close()
+
+        # Atomic swap: concurrent requests always see a complete project set
+        project_service.replace_all_projects(new_projects)
 
         logger.info(f"Refreshed {loaded_count} projects from Git")
         return loaded_count

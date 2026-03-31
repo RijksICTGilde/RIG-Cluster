@@ -373,24 +373,33 @@ async def process_project_yaml_background(
             _projects[task_id].completed_at = datetime.now(tz=UTC)
 
 
-async def refresh_project_background(task_id: str, project_name: str, project_file_path: str) -> None:
+async def refresh_project_background(
+    task_id: str, project_name: str, project_file_path: str, deployment_name: str | None = None
+) -> None:
     """Background task that reprocesses a project from Git.
 
     Runs the full change detection pipeline: detects added/removed deployments,
     reconciles services, and regenerates manifests.
+
+    Args:
+        deployment_name: Optional deployment name to refresh only that deployment.
     """
     try:
-        logger.info(f"Background task {task_id} starting: refresh project {project_name}")
+        target = f"deployment {deployment_name}" if deployment_name else f"project {project_name}"
+        logger.info(f"Background task {task_id} starting: refresh {target}")
         start_time = time.time()
 
         task_progress_manager = TaskProgressManager(task_id, project_name)
 
-        deploy_task = task_progress_manager.add_task("Project herverwerken vanuit Git")
+        task_label = (
+            f"Deployment '{deployment_name}' herverwerken" if deployment_name else "Project herverwerken vanuit Git"
+        )
+        deploy_task = task_progress_manager.add_task(task_label)
         try:
             project_manager = ProjectManager()
             try:
                 processing_result = await project_manager.process_project_from_git(
-                    project_file_path, task_progress_manager
+                    project_file_path, task_progress_manager, deployment_name=deployment_name
                 )
             finally:
                 await project_manager.close()
