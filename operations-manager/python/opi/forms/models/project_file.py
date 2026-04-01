@@ -213,6 +213,8 @@ class ComponentModel(BaseModel):
         ),
     ] = Field(default=None)
 
+    model_config = ConfigDict(populate_by_name=True)
+
     user_env_vars: Annotated[
         str | None,
         FormMeta(
@@ -222,9 +224,6 @@ class ComponentModel(BaseModel):
             placeholder="KEY=value",
         ),
     ] = Field(default=None, alias="user-env-vars")
-
-    class Config:
-        populate_by_name = True
 
 
 class DeploymentComponentModel(BaseModel):
@@ -524,8 +523,7 @@ class ProjectFileModel(BaseModel):
     # Domain restrictions (not editable via forms — managed manually or by admin)
     domains: DomainsModel | None = Field(default=None)
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
     def validate_admin_user_exists(self) -> "ProjectFileModel":

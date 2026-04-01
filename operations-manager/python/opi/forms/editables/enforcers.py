@@ -239,7 +239,6 @@ class DomainConfigEnforcer:
                 get_supported_base_domains,
                 is_custom_domain_allowed_for_project,
             )
-            from opi.core.config import settings
 
             supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
             if actual_domain.lower() not in supported:
@@ -250,7 +249,6 @@ class DomainConfigEnforcer:
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
             from opi.connectors.subdomain import is_subdomain_allowed_for_project
-            from opi.core.config import settings
 
             cluster = settings.CLUSTER_MANAGER
             is_allowed, error_msg = is_subdomain_allowed_for_project(subdomain, actual_domain, value, cluster)
