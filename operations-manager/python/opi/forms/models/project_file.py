@@ -8,7 +8,7 @@ editing of project configurations.
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from opi.forms.layout import (
     ButtonGroup,
@@ -33,15 +33,14 @@ class CustomDomainHistoryEntry(BaseModel):
 class CustomDomainEntry(BaseModel):
     """A custom (non-platform) domain approved for use in a project."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     domain: str
     supports_dots: Annotated[bool, Field(alias="supports-dots")] = False
     issuer: str | None = None
     restricted_subdomains: Annotated[bool, Field(alias="restricted-subdomains")] = False
     status: str = Field(pattern=r"^(requested|approved|denied)$")
     history: list[CustomDomainHistoryEntry] = Field(default_factory=list)
-
-    class Config:
-        populate_by_name = True
 
 
 class AllowedSubdomainEntry(BaseModel):
@@ -54,11 +53,10 @@ class AllowedSubdomainEntry(BaseModel):
 class DomainsModel(BaseModel):
     """Project-level domain configuration: subdomain allow-lists and custom domains."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     allowed_subdomains: list[AllowedSubdomainEntry] = Field(default_factory=list, alias="allowed-subdomains")
     custom_domains: list[CustomDomainEntry] = Field(default_factory=list, alias="custom-domains")
-
-    class Config:
-        populate_by_name = True
 
 
 class ProjectUserModel(BaseModel):
