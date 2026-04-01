@@ -2,3 +2,4 @@
 - Logic may not be duplicated, check for similar naming of code patterns, DRY
 - Methods must have been added in the files and/or classes where they belong
 - UI changes must have tests using playwright using the mock system
+- Python imports must be at the top of the file, never inline or local. Verify with `ruff check --select I`.
