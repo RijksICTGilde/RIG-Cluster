@@ -489,11 +489,11 @@ def create_oom_progressing_callback(
         last_check_at = elapsed_seconds
         log = logger.info if is_first_check else logger.debug
         log(
-            "OOM check: probing %d component(s) in %s (elapsed %ds, attempt %d/%d)",
+            "OOM check: probing %d component(s) in %s (elapsed %ds, %d/%d tune cycles used)",
             len(component_names),
             namespace,
             elapsed_seconds,
-            current_attempts + 1,
+            current_attempts,
             OOM_INLINE_MAX_ATTEMPTS,
         )
 
