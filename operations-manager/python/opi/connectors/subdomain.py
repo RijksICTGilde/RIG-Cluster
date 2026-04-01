@@ -83,6 +83,129 @@ def validate_base_domain(base_domain: str, cluster: str | None = None, language:
     return True, None
 
 
+def get_project_allowed_subdomains(project_data: dict[str, Any], domain: str) -> list[str]:
+    """Get allowed subdomains for a specific domain from project data.
+
+    Args:
+        project_data: Parsed project YAML data
+        domain: The base domain to look up (e.g., "rijks.app")
+
+    Returns:
+        List of allowed subdomain strings. Empty list if no entry found.
+    """
+    domains_config = project_data.get("domains")
+    if not domains_config or not isinstance(domains_config, dict):
+        return []
+    for entry in domains_config.get("allowed-subdomains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry.get("subdomains", [])
+    return []
+
+
+def get_project_custom_domain_config(project_data: dict[str, Any], domain: str) -> dict[str, Any] | None:
+    """Get custom domain configuration from project data.
+
+    Args:
+        project_data: Parsed project YAML data
+        domain: The custom domain to look up (e.g., "mijn-app.nl")
+
+    Returns:
+        Custom domain config dict if found, None otherwise.
+    """
+    domains_config = project_data.get("domains")
+    if not domains_config or not isinstance(domains_config, dict):
+        return None
+    for entry in domains_config.get("custom-domains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry
+    return None
+
+
+def is_subdomain_allowed_for_project(
+    subdomain: str,
+    base_domain: str,
+    project_data: dict[str, Any],
+    cluster: str,
+) -> tuple[bool, str | None]:
+    """Check if a subdomain is allowed for a project on a restricted domain.
+
+    For domains with restricted_subdomains in cluster config, the subdomain
+    must appear in the project's allowed-subdomains list.
+
+    For custom domains with restricted-subdomains, the subdomain must appear
+    in the project's allowed-subdomains list for that custom domain.
+
+    Args:
+        subdomain: The subdomain to check
+        base_domain: The base domain
+        project_data: Parsed project YAML data
+        cluster: Cluster name
+
+    Returns:
+        Tuple of (is_allowed, error_message). If allowed, error_message is None.
+    """
+    from opi.core.cluster_config import is_domain_subdomain_restricted
+
+    # Check if this is a platform domain with restrictions
+    supported = get_supported_base_domains(cluster)
+    if base_domain in supported:
+        if not is_domain_subdomain_restricted(cluster, base_domain):
+            return True, None
+    else:
+        # Custom domain - check project-level restriction
+        custom_config = get_project_custom_domain_config(project_data, base_domain)
+        if custom_config and not custom_config.get("restricted-subdomains", False):
+            return True, None
+        if not custom_config:
+            return True, None  # No config means no restriction at domain level
+
+    # Domain is restricted - check project allow-list
+    allowed = get_project_allowed_subdomains(project_data, base_domain)
+    if not allowed:
+        return False, (
+            f"Het domein '{base_domain}' heeft subdomeinen beperkt. "
+            f"Er zijn geen subdomeinen toegestaan voor dit project. "
+            f"Voeg het subdomein toe aan 'domains.allowed-subdomains' in het projectbestand."
+        )
+    if subdomain.lower() not in [s.lower() for s in allowed]:
+        return False, (
+            f"Het subdomein '{subdomain}' is niet toegestaan voor '{base_domain}'. "
+            f"Toegestane subdomeinen: {', '.join(allowed)}"
+        )
+    return True, None
+
+
+def is_custom_domain_allowed_for_project(
+    domain: str,
+    project_data: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Check if a custom domain is approved for use in a project.
+
+    Custom domains must be listed in the project's custom-domains section
+    with status 'approved' to be used in deployments.
+
+    Args:
+        domain: The custom domain to check (e.g., "mijn-app.nl")
+        project_data: Parsed project YAML data
+
+    Returns:
+        Tuple of (is_allowed, error_message). If allowed, error_message is None.
+    """
+    custom_config = get_project_custom_domain_config(project_data, domain)
+    if custom_config is None:
+        return False, (
+            f"Het domein '{domain}' is niet geregistreerd als eigen domein voor dit project. "
+            f"Voeg het toe aan 'domains.custom-domains' in het projectbestand."
+        )
+    status = custom_config.get("status", "")
+    if status != "approved":
+        return False, (
+            f"Het domein '{domain}' heeft status '{status}' en kan nog niet worden gebruikt. "
+            f"Alleen domeinen met status 'approved' mogen worden ingezet."
+        )
+    return True, None
+
+
 # Sentinel value for bare domain registrations in subdomain_registry.
 # Uses the DNS convention "@" to represent the apex/bare domain.
 BARE_DOMAIN_SUBDOMAIN = "@"

@@ -217,12 +217,45 @@ class DomainConfigEnforcer:
         if actual_domain and "." in domain_format:
             cluster = settings.CLUSTER_MANAGER
             supports_dots = get_domain_supports_dots(cluster, actual_domain)
+            # For custom domains not in cluster config, check project-level config
+            if not supports_dots:
+                from opi.connectors.subdomain import get_project_custom_domain_config, get_supported_base_domains
+
+                supported = get_supported_base_domains(cluster=cluster)
+                if actual_domain.lower() not in supported:
+                    custom_config = get_project_custom_domain_config(value, actual_domain)
+                    if custom_config:
+                        supports_dots = custom_config.get("supports-dots", False)
             if not supports_dots:
                 raise ValueError(
                     f"Het gekozen URL-formaat ondersteunt geen punten in de domeinnaam. "
                     f"Dit domein ({actual_domain}) ondersteunt punten niet. "
                     f"Kies een ander URL-formaat of een ander domein."
                 )
+
+        # Check custom domain approval for non-platform domains
+        if actual_domain and base_domain == "__custom__":
+            from opi.connectors.subdomain import (
+                get_supported_base_domains,
+                is_custom_domain_allowed_for_project,
+            )
+            from opi.core.config import settings
+
+            supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
+            if actual_domain.lower() not in supported:
+                is_allowed, error_msg = is_custom_domain_allowed_for_project(actual_domain, value)
+                if not is_allowed:
+                    raise ValueError(error_msg)
+
+        # Check subdomain restrictions for restricted domains
+        if subdomain and actual_domain and "{subdomain}" in template:
+            from opi.connectors.subdomain import is_subdomain_allowed_for_project
+            from opi.core.config import settings
+
+            cluster = settings.CLUSTER_MANAGER
+            is_allowed, error_msg = is_subdomain_allowed_for_project(subdomain, actual_domain, value, cluster)
+            if not is_allowed:
+                raise ValueError(error_msg)
 
         # Check subdomain availability for nice-URL formats
         if subdomain and actual_domain and "{subdomain}" in template:
