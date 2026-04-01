@@ -43,5 +43,5 @@ spec:
         emptyDir:
           sizeLimit: 8Gi
       - name: error-logs
-        persistentVolumeClaim:
-          claimName: operations-manager-error-logs
+        emptyDir:
+          sizeLimit: 1Gi
