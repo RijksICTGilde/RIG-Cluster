@@ -844,6 +844,14 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # Forward navigation (Next / Review): block on field-level validation errors
     if is_forward and errors:
+        # Extract group-level errors (e.g. from enforcers on GROUP editables)
+        # and surface them as global_errors so they appear in the alert box.
+        # Group paths like "deployments[0]" have no leaf field to attach to.
+        group_errors: list[str] = []
+        for path, msgs in list(errors.items()):
+            if path.endswith("]") and "/" not in path.split("]")[-1]:
+                group_errors.extend(msgs)
+
         step_html = _render_step_html(
             section,
             yaml_data=submitted_yaml,
@@ -856,6 +864,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             section,
             step_html,
             errors=errors,
+            global_errors=group_errors or None,
         )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 

@@ -8,6 +8,8 @@ Tests the subdomain restriction and custom domain approval system:
 - DomainConfigEnforcer integration with restrictions
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
 from opi.connectors.subdomain import (
     get_project_allowed_subdomains,
@@ -357,6 +359,98 @@ class TestDomainsModel:
         }
         model = ProjectFileModel.model_validate(data)
         assert model.domains is None
+
+
+# ---------------------------------------------------------------------------
+# DomainConfigEnforcer integration: receives full project data
+# ---------------------------------------------------------------------------
+
+
+class TestDomainConfigEnforcerReceivesFullData:
+    """Verify that DomainConfigEnforcer.enforce() receives the full project YAML,
+    including the root-level 'domains' section needed for subdomain restriction checks.
+
+    The processor passes ``result = copy.deepcopy(yaml_data)`` to the enforcer,
+    so it always has access to domains.allowed-subdomains.
+    """
+
+    @pytest.mark.asyncio
+    async def test_enforcer_allows_subdomain_from_project_allowlist(self, monkeypatch):
+        """Enforcer allows a subdomain that is in the project's allowed-subdomains list."""
+        from opi.connectors.subdomain import SubdomainConnector
+        from opi.forms.editables.enforcers import DomainConfigEnforcer
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+        monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
+
+        enforcer = DomainConfigEnforcer(deployment_index=0)
+        # Full project YAML with domains.allowed-subdomains at root level
+        full_yaml = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "rijks.app",
+                    "subdomain": "wies",
+                }
+            ],
+            "domains": {
+                "allowed-subdomains": [
+                    {"domain": "rijks.app", "subdomains": ["wies", "portaal"]},
+                ],
+            },
+        }
+        # Should not raise — subdomain 'wies' is in the allow-list
+        result = await enforcer.enforce(full_yaml, {"project_name": "test-project"})
+        assert result is full_yaml
+
+    @pytest.mark.asyncio
+    async def test_enforcer_rejects_subdomain_not_in_allowlist(self, monkeypatch):
+        """Enforcer rejects a subdomain that is NOT in the project's allowed-subdomains list."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        enforcer = DomainConfigEnforcer(deployment_index=0)
+        full_yaml = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "rijks.app",
+                    "subdomain": "unauthorized",
+                }
+            ],
+            "domains": {
+                "allowed-subdomains": [
+                    {"domain": "rijks.app", "subdomains": ["wies"]},
+                ],
+            },
+        }
+        with pytest.raises(ValueError, match="niet toegestaan"):
+            await enforcer.enforce(full_yaml, {"project_name": "test-project"})
+
+    @pytest.mark.asyncio
+    async def test_enforcer_rejects_when_no_domains_section(self, monkeypatch):
+        """Enforcer rejects subdomain when project has no domains section at all."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        enforcer = DomainConfigEnforcer(deployment_index=0)
+        # No 'domains' key — simulates a new project without subdomain config
+        yaml_without_domains = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "rijks.app",
+                    "subdomain": "anything",
+                }
+            ],
+        }
+        with pytest.raises(ValueError, match="beperkt"):
+            await enforcer.enforce(yaml_without_domains, {"project_name": "test-project"})
 
 
 # ---------------------------------------------------------------------------
