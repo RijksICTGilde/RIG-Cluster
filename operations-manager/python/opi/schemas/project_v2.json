@@ -53,10 +53,69 @@
       "items": { "$ref": "#/$defs/remote-source" }
     },
     "invites": { "$ref": "#/$defs/invites" },
-    "backup": { "$ref": "#/$defs/backup" }
+    "backup": { "$ref": "#/$defs/backup" },
+    "domains": { "$ref": "#/$defs/domains" }
   },
 
   "$defs": {
+
+    "domains": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed-subdomains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/allowed-subdomain-entry" }
+        },
+        "custom-domains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/custom-domain-entry" }
+        }
+      }
+    },
+
+    "allowed-subdomain-entry": {
+      "type": "object",
+      "required": ["domain", "subdomains"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": { "type": "string" },
+        "subdomains": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "custom-domain-entry": {
+      "type": "object",
+      "required": ["domain", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": { "type": "string" },
+        "supports-dots": { "type": "boolean" },
+        "issuer": { "type": "string" },
+        "restricted-subdomains": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/custom-domain-history-entry" }
+        }
+      }
+    },
+
+    "custom-domain-history-entry": {
+      "type": "object",
+      "required": ["date", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "by": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+
 
     "age-encrypted": {
       "type": "string",

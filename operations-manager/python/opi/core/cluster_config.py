@@ -50,8 +50,8 @@ CLUSTER_CONFIG = {
         },
         "nice_url": {
             "supported_domains": [
-                {"domain": "kind", "supports_dots": True},
-                {"domain": "local", "supports_dots": True},
+                {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
+                {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
         },
     },
@@ -85,8 +85,13 @@ CLUSTER_CONFIG = {
         },
         "nice_url": {
             "supported_domains": [
-                {"domain": "sandbox.rijksapp.dev", "supports_dots": False},
-                {"domain": "robbertuittenbroek.nl", "supports_dots": True, "issuer": "letsencrypt"},
+                {"domain": "sandbox.rijksapp.dev", "supports_dots": False, "restricted_subdomains": True},
+                {
+                    "domain": "robbertuittenbroek.nl",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
             ],
         },
     },
@@ -121,10 +126,25 @@ CLUSTER_CONFIG = {
         },
         "nice_url": {
             "supported_domains": [
-                {"domain": "rijks.app", "supports_dots": True, "issuer": "letsencrypt"},
-                {"domain": "rijksapps.nl", "supports_dots": True, "issuer": "letsencrypt"},
-                {"domain": "rijksapp.nl", "supports_dots": True, "issuer": "letsencrypt"},
-                {"domain": "rijksapp.dev", "supports_dots": True, "issuer": "letsencrypt"},
+                {"domain": "rijks.app", "supports_dots": True, "issuer": "letsencrypt", "restricted_subdomains": True},
+                {
+                    "domain": "rijksapps.nl",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
+                {
+                    "domain": "rijksapp.nl",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
+                {
+                    "domain": "rijksapp.dev",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
             ],
         },
         "extensions": ["odcn-registry-rewrite"],
@@ -793,6 +813,55 @@ def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
             if isinstance(entry, dict) and entry.get("domain") == domain:
                 return entry.get("issuer")
     return None
+
+
+def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:
+    """
+    Check if a specific domain has restricted subdomains on a cluster.
+
+    When restricted, only subdomains explicitly listed in the project's
+    allowed-subdomains section may be used.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The domain to check (e.g., "rijks.app")
+
+    Returns:
+        True if the domain restricts subdomains, False otherwise.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return False
+    for entry in nice_url_config.get("supported_domains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry.get("restricted_subdomains", False)
+    return False
+
+
+def get_restricted_subdomain_domains(cluster_name: str) -> list[str]:
+    """
+    Get domains that have subdomain restrictions enabled on a cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        List of domain strings with restricted_subdomains=True.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return []
+    return [
+        entry["domain"]
+        for entry in nice_url_config.get("supported_domains", [])
+        if isinstance(entry, dict) and entry.get("restricted_subdomains", False)
+    ]
 
 
 def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:

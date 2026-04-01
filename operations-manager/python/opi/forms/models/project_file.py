@@ -21,6 +21,46 @@ from opi.forms.layout import (
 from opi.forms.schema import FormMeta
 
 
+class CustomDomainHistoryEntry(BaseModel):
+    """Single audit trail entry for a custom domain status change."""
+
+    date: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    by: str | None = None
+    message: str | None = None
+
+
+class CustomDomainEntry(BaseModel):
+    """A custom (non-platform) domain approved for use in a project."""
+
+    domain: str
+    supports_dots: Annotated[bool, Field(alias="supports-dots")] = False
+    issuer: str | None = None
+    restricted_subdomains: Annotated[bool, Field(alias="restricted-subdomains")] = False
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    history: list[CustomDomainHistoryEntry] = Field(default_factory=list)
+
+    class Config:
+        populate_by_name = True
+
+
+class AllowedSubdomainEntry(BaseModel):
+    """Allowed subdomains for a specific platform domain."""
+
+    domain: str
+    subdomains: list[str] = Field(default_factory=list)
+
+
+class DomainsModel(BaseModel):
+    """Project-level domain configuration: subdomain allow-lists and custom domains."""
+
+    allowed_subdomains: list[AllowedSubdomainEntry] = Field(default_factory=list, alias="allowed-subdomains")
+    custom_domains: list[CustomDomainEntry] = Field(default_factory=list, alias="custom-domains")
+
+    class Config:
+        populate_by_name = True
+
+
 class ProjectUserModel(BaseModel):
     """User with email and role in a project."""
 
@@ -482,6 +522,9 @@ class ProjectFileModel(BaseModel):
             section="deployments",
         ),
     ] = Field(default_factory=list)
+
+    # Domain restrictions (not editable via forms — managed manually or by admin)
+    domains: DomainsModel | None = Field(default=None)
 
     class Config:
         populate_by_name = True

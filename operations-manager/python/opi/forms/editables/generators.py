@@ -113,10 +113,13 @@ class IssuerGenerator:
         if issuer:
             return issuer
 
-        # Custom domains (not in cluster's supported_domains) need letsencrypt
-        from opi.connectors.subdomain import get_supported_base_domains
+        # Custom domains (not in cluster's supported_domains): check project config first
+        from opi.connectors.subdomain import get_project_custom_domain_config, get_supported_base_domains
 
         if base_domain not in get_supported_base_domains(cluster=cluster):
+            custom_config = get_project_custom_domain_config(yaml_data, base_domain)
+            if custom_config and custom_config.get("issuer"):
+                return custom_config["issuer"]
             return "letsencrypt"
 
         return None
