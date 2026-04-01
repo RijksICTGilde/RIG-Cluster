@@ -155,6 +155,7 @@ When introducing a new feature, create a markdown document in `features/` with: 
 
 ## Python Code Style
 
+- **Imports**: Always at the top of the file, never inline/local. Use `ruff check --select I --fix` to sort and organize.
 - **Modern type hints**: `dict`, `list`, `tuple` (lowercase), `str | None` (not `Optional`)
 - **Type annotations**: Always for function parameters and return types
 - **Error handling**: Specific exception types, avoid generic `except Exception`
