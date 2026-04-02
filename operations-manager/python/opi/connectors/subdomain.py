@@ -83,15 +83,16 @@ def validate_base_domain(base_domain: str, cluster: str | None = None, language:
     return True, None
 
 
-def get_project_allowed_subdomains(project_data: dict[str, Any], domain: str) -> list[str]:
-    """Get allowed subdomains for a specific domain from project data.
+def get_project_allowed_subdomains(project_data: dict[str, Any], domain: str) -> list[dict[str, Any]]:
+    """Get allowed subdomain details for a specific domain from project data.
 
     Args:
         project_data: Parsed project YAML data
         domain: The base domain to look up (e.g., "rijks.app")
 
     Returns:
-        List of allowed subdomain strings. Empty list if no entry found.
+        List of subdomain detail dicts (name, status, history).
+        Empty list if no entry found.
     """
     domains_config = project_data.get("domains")
     if not domains_config or not isinstance(domains_config, dict):
@@ -100,6 +101,19 @@ def get_project_allowed_subdomains(project_data: dict[str, Any], domain: str) ->
         if isinstance(entry, dict) and entry.get("domain") == domain:
             return entry.get("subdomains", [])
     return []
+
+
+def get_subdomain_status(project_data: dict[str, Any], domain: str, subdomain: str) -> str | None:
+    """Get the approval status for a specific subdomain on a domain.
+
+    Returns:
+        The status string ('requested', 'approved', 'denied') or None if
+        the subdomain is not in the allow-list.
+    """
+    for detail in get_project_allowed_subdomains(project_data, domain):
+        if isinstance(detail, dict) and detail.get("name", "").lower() == subdomain.lower():
+            return detail.get("status")
+    return None
 
 
 def get_project_custom_domain_config(project_data: dict[str, Any], domain: str) -> dict[str, Any] | None:
@@ -160,19 +174,18 @@ def is_subdomain_allowed_for_project(
             return True, None  # No config means no restriction at domain level
 
     # Domain is restricted - check project allow-list
-    allowed = get_project_allowed_subdomains(project_data, base_domain)
-    if not allowed:
+    status = get_subdomain_status(project_data, base_domain, subdomain)
+    if status is None:
         return False, (
             f"Het domein '{base_domain}' heeft subdomeinen beperkt. "
-            f"Er zijn geen subdomeinen toegestaan voor dit project. "
-            f"Voeg het subdomein toe aan 'domains.allowed-subdomains' in het projectbestand."
+            f"Het subdomein '{subdomain}' is niet aangevraagd voor dit project."
         )
-    if subdomain.lower() not in [s.lower() for s in allowed]:
-        return False, (
-            f"Het subdomein '{subdomain}' is niet toegestaan voor '{base_domain}'. "
-            f"Toegestane subdomeinen: {', '.join(allowed)}"
-        )
-    return True, None
+    if status == "approved":
+        return True, None
+    if status == "requested":
+        return False, (f"Het subdomein '{subdomain}' op '{base_domain}' is aangevraagd maar nog niet goedgekeurd.")
+    # status == "denied"
+    return False, (f"Het subdomein '{subdomain}' op '{base_domain}' is afgewezen.")
 
 
 def is_custom_domain_allowed_for_project(

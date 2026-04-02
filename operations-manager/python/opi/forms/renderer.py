@@ -284,10 +284,11 @@ class FormRenderer:
         layout: LayoutElement | list,
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
+        warnings: dict[str, list[str]] | None = None,
     ) -> str:
         """Render form fields without form wrapper (for HTMX partial updates)."""
         self._edit_mode = edit_mode
-        fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode)
+        fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode, warnings=warnings)
 
         if isinstance(layout, list):
             content_parts = [self._render_layout_element(elem, fields_by_name, yaml_data) for elem in layout]
@@ -301,6 +302,7 @@ class FormRenderer:
         yaml_data: dict[str, Any],
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
+        warnings: dict[str, list[str]] | None = None,
     ) -> dict[str, FormField]:
         """Convert editables to FormField dict for the layout pipeline."""
         from opi.forms.editables.service_path import smart_set_value
@@ -330,7 +332,9 @@ class FormRenderer:
 
             if editable.widget == WidgetType.GROUP:
                 # Groups flatten their children into the field list
-                group_fields = self._build_group_fields(editable, yaml_data, errors, edit_mode, provider_context)
+                group_fields = self._build_group_fields(
+                    editable, yaml_data, errors, edit_mode, provider_context, warnings=warnings
+                )
                 fields_by_name.update(group_fields)
             elif editable.widget == WidgetType.SEQUENCE:
                 seq_field = self._build_sequence_field(editable, yaml_data, errors, edit_mode, provider_context)
@@ -342,6 +346,7 @@ class FormRenderer:
                     errors,
                     edit_mode=edit_mode,
                     provider_context=provider_context,
+                    warnings=warnings,
                 )
                 # Pass locked services to service_cards widget
                 if editable.widget == WidgetType.SERVICE_CARDS and "_locked_services" in yaml_data:
@@ -493,6 +498,7 @@ class FormRenderer:
         errors: dict[str, list[str]],
         edit_mode: bool,
         provider_context: dict[str, Any] | None = None,
+        warnings: dict[str, list[str]] | None = None,
     ) -> dict[str, FormField]:
         """Flatten a group editable's children into individual form fields.
 
@@ -508,7 +514,9 @@ class FormRenderer:
             if not should_render_editable(child, yaml_data, siblings=group_children):
                 continue
             if child.widget == WidgetType.GROUP:
-                fields.update(self._build_group_fields(child, yaml_data, errors, edit_mode, provider_context))
+                fields.update(
+                    self._build_group_fields(child, yaml_data, errors, edit_mode, provider_context, warnings=warnings)
+                )
             elif child.widget == WidgetType.SEQUENCE:
                 seq_field = self._build_sequence_field(child, yaml_data, errors, edit_mode, provider_context)
                 fields[child.editable.yaml_path] = seq_field
@@ -519,6 +527,7 @@ class FormRenderer:
                     errors,
                     edit_mode=edit_mode,
                     provider_context=provider_context,
+                    warnings=warnings,
                 )
                 fields[form_field.path] = form_field
         return fields

@@ -22,6 +22,33 @@ from opi.utils.yaml_util import save_yaml_to_path
 
 logger = logging.getLogger(__name__)
 
+
+def _normalize_path_config(path_config: Any, label: str = "unknown") -> list[dict[str, str | None]]:
+    """Normalize a path value (string or list-of-dicts) to canonical list format.
+
+    Handles:
+    - ``str``: pre-migration plain string path (backward compat)
+    - ``list[dict]``: canonical v2.2+ format with ``match`` and optional ``rewrite``
+    """
+    if isinstance(path_config, str):
+        logger.debug(f"Found single path '{path_config}' for '{label}'")
+        return [{"match": path_config, "rewrite": None}]
+
+    if isinstance(path_config, list):
+        result = []
+        for p in path_config:
+            if isinstance(p, dict):
+                result.append({"match": p.get("match", "/"), "rewrite": p.get("rewrite")})
+            else:
+                result.append({"match": str(p), "rewrite": None})
+        if result:
+            logger.debug(f"Found {len(result)} path(s) for '{label}'")
+            return result
+
+    logger.debug(f"No path found for '{label}', using default '/'")
+    return [{"match": "/", "rewrite": None}]
+
+
 # Default resource values for deployment containers
 DEFAULT_RESOURCES: dict[str, str] = {
     "requests_memory": "128Mi",
@@ -615,7 +642,8 @@ class ProjectFileHandler:
         """
         Extract publication paths from a component definition.
 
-        Supports both simple string format and list format with optional rewrite.
+        Canonical format (v2.2+): list of dicts with ``match`` and optional ``rewrite``.
+        Backward compat: plain string path (pre-migration files).
 
         Args:
             project_data: The parsed project data
@@ -623,39 +651,10 @@ class ProjectFileHandler:
 
         Returns:
             List of path configs: [{"match": "/api", "rewrite": None}, ...]
-
-        Examples:
-            # Simple string format
-            path: "/"
-            -> [{"match": "/", "rewrite": None}]
-
-            # List format with rewrite
-            path:
-              - match: "/kader"
-                rewrite: "/"
-            -> [{"match": "/kader", "rewrite": "/"}]
         """
         json_path = f"$.components[?(@.name='{component_name}')].path"
         path_config = self.extract_value_by_path(project_data, json_path, "/")
-
-        # Normalize to list format
-        if isinstance(path_config, str):
-            logger.debug(f"Found single path '{path_config}' for component '{component_name}'")
-            return [{"match": path_config, "rewrite": None}]
-        elif isinstance(path_config, list):
-            result = []
-            for p in path_config:
-                if isinstance(p, dict):
-                    rewrite = p.get("rewrite")
-                    match_value = p.get("match", "/")
-                    result.append({"match": match_value, "rewrite": rewrite})
-                else:
-                    result.append({"match": str(p), "rewrite": None})
-            logger.info(f"Found {len(result)} path(s) for component '{component_name}'")
-            return result
-
-        logger.debug(f"No path found for component '{component_name}', using default '/'")
-        return [{"match": "/", "rewrite": None}]
+        return _normalize_path_config(path_config, component_name)
 
     def extract_deployment_component_paths(
         self,
@@ -666,7 +665,7 @@ class ProjectFileHandler:
         """
         Extract publication paths for a component in a deployment context.
 
-        Checks deployment-level paths first (deployments[].components[].paths),
+        Checks deployment-level path first (deployments[].components[].path),
         then falls back to component-level path (components[].path).
 
         Args:
@@ -677,19 +676,14 @@ class ProjectFileHandler:
         Returns:
             List of path configs: [{"match": "/api", "rewrite": None}, ...]
         """
-        # Check deployment-level paths first
+        # Check deployment-level path first
         components = deployment_data.get("components", [])
         for comp in components:
             if comp.get("reference") == component_reference:
-                paths = comp.get("paths")
-                if paths is not None:
-                    result = []
-                    for p in paths:
-                        if isinstance(p, dict):
-                            result.append({"match": p.get("match", "/"), "rewrite": p.get("rewrite")})
-                        else:
-                            result.append({"match": str(p), "rewrite": None})
-                    if result:
+                path_config = comp.get("path")
+                if path_config is not None:
+                    result = _normalize_path_config(path_config, component_reference)
+                    if result != [{"match": "/", "rewrite": None}]:
                         logger.info(
                             f"Found {len(result)} deployment-level path(s) for component '{component_reference}'"
                         )

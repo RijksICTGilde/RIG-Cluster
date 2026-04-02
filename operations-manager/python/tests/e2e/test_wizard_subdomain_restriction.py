@@ -1,8 +1,9 @@
 """
 E2E tests for subdomain restriction validation in the wizard.
 
-Tests that the wizard shows a validation error when a non-allowed subdomain
-is entered on a restricted domain.
+Tests that the wizard shows a request checkbox when a non-allowed subdomain
+is entered on a restricted domain, and that the form proceeds when the
+checkbox is checked.
 
 Run with: uv run pytest tests/e2e/test_wizard_subdomain_restriction.py -v
 """
@@ -45,13 +46,12 @@ def _wait_htmx_settled(page: Page, timeout: int = 10000) -> None:
 class TestSubdomainRestrictionValidation:
     """Tests that subdomain restriction validation fires in the wizard."""
 
-    def test_non_allowed_subdomain_shows_error(self, app_server: str, auth_page: Page) -> None:
-        """Entering a subdomain on a restricted domain shows a validation error.
+    def test_non_allowed_subdomain_shows_request_checkbox(self, app_server: str, auth_page: Page) -> None:
+        """Entering a subdomain on a restricted domain shows a request checkbox.
 
         The local cluster has 'kind' and 'local' as restricted domains with
-        restricted_subdomains=True. Since the wizard does not allow editing the
-        domains.allowed-subdomains section, any subdomain on a restricted domain
-        should be rejected with 'beperkt' error message.
+        restricted_subdomains=True. Since no subdomains are pre-approved, the
+        wizard should show a 'request subdomain' checkbox after re-render.
         """
         wizard = WizardHelper(auth_page, app_server)
         wizard.open_create_wizard()
@@ -77,20 +77,45 @@ class TestSubdomainRestrictionValidation:
         subdomain_input.press("Tab")
         _wait_htmx_settled(auth_page)
 
-        # Click submit. The response will contain the error HTML.
-        # After HTMX swaps it in, the text "beperkt" should be visible.
-        # But the submit click may trigger multiple HTMX swaps (OOB + main),
-        # so instead of relying on afterSettle, we wait for the specific
-        # text to appear in the DOM.
-        auth_page.locator(".wizard-step__actions button[type='submit']").click()
-
-        # Wait for "beperkt" to appear anywhere on the page (max 10s)
+        # After re-render, the request checkbox should be visible
         try:
-            auth_page.locator("text=beperkt").first.wait_for(state="attached", timeout=10000)
+            auth_page.locator("text=aanvragen").first.wait_for(state="attached", timeout=10000)
         except Exception:
             page_text = auth_page.locator("#wizard-step-content").inner_text()
             pytest.fail(
-                "Expected subdomain restriction error containing 'beperkt' to appear "
-                "after submitting a non-allowed subdomain on the restricted 'kind' domain. "
+                "Expected subdomain request checkbox containing 'aanvragen' to appear "
+                "after entering a subdomain on the restricted 'kind' domain. "
                 f"Page text: {page_text[:500]}"
             )
+
+    def test_submit_without_checkbox_shows_error(self, app_server: str, auth_page: Page) -> None:
+        """Submitting without checking the request checkbox shows an error."""
+        wizard = WizardHelper(auth_page, app_server)
+        wizard.open_create_wizard()
+        _navigate_to_domain_step(wizard)
+
+        _htmx_settle(auth_page)
+        auth_page.locator("select[name='deployments[0]/domain-format']").select_option(value="subdomain")
+        _wait_htmx_settled(auth_page)
+
+        _htmx_settle(auth_page)
+        auth_page.locator("select[name='deployments[0]/base-domain']").select_option(value="kind")
+        _wait_htmx_settled(auth_page)
+
+        subdomain_input = auth_page.locator("input[name='deployments[0]/subdomain']")
+        if subdomain_input.count() == 0:
+            subdomain_input = auth_page.locator("input[name*='/subdomain']")
+        _htmx_settle(auth_page)
+        subdomain_input.fill("my-test-app")
+        subdomain_input.press("Tab")
+        _wait_htmx_settled(auth_page)
+
+        # Submit WITHOUT checking the request checkbox
+        auth_page.locator(".wizard-step__actions button[type='submit']").click()
+
+        # Should show an error about the subdomain not being requested
+        try:
+            auth_page.locator("text=niet aangevraagd").first.wait_for(state="attached", timeout=10000)
+        except Exception:
+            page_text = auth_page.locator("#wizard-step-content").inner_text()
+            pytest.fail(f"Expected error about subdomain not being requested. Page text: {page_text[:500]}")

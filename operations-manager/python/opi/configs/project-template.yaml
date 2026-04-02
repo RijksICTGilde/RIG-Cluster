@@ -7,7 +7,7 @@
 # ${SETTING_NAME} placeholders are resolved from opi.core.config.settings
 # at load time.
 
-schema-version: 2
+schema-version: 2.2
 
 repositories:
   - name: main-repo

@@ -17,17 +17,33 @@ domains:
   allowed-subdomains:
     - domain: rijks.app
       subdomains:
-        - wies
-        - portaal
+        - name: wies
+          status: approved
+        - name: portaal
+          status: requested
+          history:
+            - date: "2026-03-28T14:30:00+00:00"
+              status: requested
+              by: developer@rijksoverheid.nl
     - domain: rijksapp.nl
       subdomains:
-        - mijn-service
+        - name: mijn-service
+          status: approved
 ```
+
+### Subdomain fields
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | The subdomain name |
+| `status` | Yes | Current approval status: `requested`, `approved`, or `denied` |
+| `history` | No | Audit trail of status changes (same format as custom domain history) |
 
 ### Behavior
 
-- If a deployment uses a subdomain-based domain format (e.g., `subdomain`, `component-subdomain`) on a restricted domain, the subdomain must appear in the project's `allowed-subdomains` list for that domain.
-- If no `allowed-subdomains` entry exists for the domain, all subdomain-based formats are rejected at validation time.
+- If a deployment uses a subdomain-based domain format (e.g., `subdomain`, `component-subdomain`) on a restricted domain, the subdomain must appear in the project's `allowed-subdomains` list for that domain with `status: approved`.
+- If no `allowed-subdomains` entry exists for the domain, the wizard shows a warning and offers a checkbox to request the subdomain.
+- Requesting a subdomain creates an entry with `status: requested`. Only approved subdomains are valid for deployment.
 - Matching is case-insensitive.
 - Reserved subdomains (www, api, admin, etc.) are still rejected regardless of allow-list.
 
