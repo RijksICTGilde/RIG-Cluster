@@ -60,6 +60,9 @@ def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:
 class EditableFormProcessor:
     """Processes form submissions through the editables pipeline."""
 
+    def __init__(self) -> None:
+        self.field_warnings: dict[str, list[str]] = {}
+
     @staticmethod
     def _validate_field(
         vis: EditableVisualizer,
@@ -87,6 +90,7 @@ class EditableFormProcessor:
         sections: list[FormSection],
         enforcer_context: dict[str, Any] | None = None,
         field_errors: dict[str, list[str]] | None = None,
+        field_warnings: dict[str, list[str]] | None = None,
     ) -> list[str]:
         """
         Run section-level enforcers.
@@ -96,11 +100,14 @@ class EditableFormProcessor:
             field_errors: When provided, ``FieldError`` exceptions are
                 merged into this dict (keyed by field path) instead of
                 appearing in the returned global errors list.
+            field_warnings: When provided, ``FieldWarning`` exceptions are
+                merged into this dict (keyed by field path). Warnings do
+                not block submission.
 
         Returns:
             List of global error messages. Empty means all passed.
         """
-        from opi.forms.editables.enforcers import FieldError
+        from opi.forms.editables.enforcers import FieldError, FieldWarning
 
         ctx = enforcer_context or {}
         global_errors: list[str] = []
@@ -108,6 +115,9 @@ class EditableFormProcessor:
             if section.enforcer:
                 try:
                     await section.enforcer.enforce(yaml_data, ctx)
+                except FieldWarning as e:
+                    if field_warnings is not None:
+                        field_warnings.setdefault(e.field_path, []).append(str(e))
                 except FieldError as e:
                     if field_errors is not None:
                         field_errors.setdefault(e.field_path, []).append(str(e))
@@ -286,6 +296,7 @@ class EditableFormProcessor:
                     errors,
                     edit_mode,
                     enforcer_context,
+                    warnings=self.field_warnings,
                 )
             elif vis.widget == WidgetType.SEQUENCE:
                 self._process_sequence_json(
@@ -313,7 +324,7 @@ class EditableFormProcessor:
         self._resolve_deferrals(result, editables)
 
         if strip_transients:
-            self._strip_transients(result, editables)
+            self.strip_transients_from(result, editables)
 
         return result, errors
 
@@ -325,6 +336,7 @@ class EditableFormProcessor:
         errors: dict[str, list[str]],
         edit_mode: bool,
         enforcer_context: dict[str, Any] | None = None,
+        warnings: dict[str, list[str]] | None = None,
     ) -> None:
         """Process a group editable: validate children, then run parent enforcer.
 
@@ -333,8 +345,12 @@ class EditableFormProcessor:
         are processed directly. The group's enforcer provides cross-field
         validation after all children pass individual validation.
         """
+        from opi.forms.editables.enforcers import FieldError, FieldWarning
+
         ed = vis.editable
         errors_before = len(errors)
+        if warnings is None:
+            warnings = {}
 
         # Process each child through the same dispatch logic
         group_children = vis.children or []
@@ -361,12 +377,20 @@ class EditableFormProcessor:
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(child_ed, child_ed.yaml_path, value, result)
 
-        # Run parent enforcer only if children introduced no new errors
-        if len(errors) == errors_before and ed.enforcer:
+        # Always run enforcer: warnings are collected regardless of child errors,
+        # but errors are only propagated when children have no errors.
+        has_child_errors = len(errors) > errors_before
+        if ed.enforcer:
             try:
                 await ed.enforcer.enforce(result, enforcer_context or {})
+            except FieldWarning as e:
+                warnings.setdefault(e.field_path, []).append(str(e))
+            except FieldError as e:
+                if not has_child_errors:
+                    errors.setdefault(e.field_path, []).append(str(e))
             except ValueError as e:
-                errors.setdefault(ed.yaml_path, []).append(str(e))
+                if not has_child_errors:
+                    errors.setdefault(ed.yaml_path, []).append(str(e))
 
     def _process_sequence_json(
         self,
@@ -666,7 +690,7 @@ class EditableFormProcessor:
                     transient_value,
                 )
 
-    def _strip_transients(
+    def strip_transients_from(
         self,
         data: dict[str, Any],
         editables: list[EditableVisualizer],

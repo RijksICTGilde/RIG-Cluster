@@ -82,7 +82,21 @@
         "domain": { "type": "string" },
         "subdomains": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": { "$ref": "#/$defs/allowed-subdomain-detail" }
+        }
+      }
+    },
+
+    "allowed-subdomain-detail": {
+      "type": "object",
+      "required": ["name", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/domain-history-entry" }
         }
       }
     },
@@ -99,12 +113,12 @@
         "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
         "history": {
           "type": "array",
-          "items": { "$ref": "#/$defs/custom-domain-history-entry" }
+          "items": { "$ref": "#/$defs/domain-history-entry" }
         }
       }
     },
 
-    "custom-domain-history-entry": {
+    "domain-history-entry": {
       "type": "object",
       "required": ["date", "status"],
       "additionalProperties": false,
@@ -215,6 +229,7 @@
 
     "component-path": {
       "type": "object",
+      "required": ["match"],
       "additionalProperties": false,
       "properties": {
         "match": { "type": "string" },
@@ -299,13 +314,8 @@
           }
         },
         "path": {
-          "oneOf": [
-            { "type": "string" },
-            {
-              "type": "array",
-              "items": { "$ref": "#/$defs/component-path" }
-            }
-          ]
+          "type": "array",
+          "items": { "$ref": "#/$defs/component-path" }
         },
         "resources": { "$ref": "#/$defs/resources" },
         "services": {
@@ -389,6 +399,10 @@
         "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
         "registry": { "type": "string" },
         "resources": { "$ref": "#/$defs/resources" },
+        "path": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/component-path" }
+        },
         "services": {
           "type": "object",
           "additionalProperties": {

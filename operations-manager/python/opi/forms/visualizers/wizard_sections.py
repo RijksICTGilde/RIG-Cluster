@@ -146,8 +146,7 @@ COMPONENTS_SECTION = FormSection(
                         "Bijvoorbeeld: / voor de frontend en /api voor de backend."
                     ),
                     children=[
-                        "path",
-                        "rewrite-path",
+                        Sequence(field_name="path"),
                     ],
                 ),
                 Fieldset(
@@ -277,6 +276,7 @@ DOMAIN_SECTION = FormSection(
         "deployments[*]/base-domain:custom",
         "deployments[*]/domain-format",
         "deployments[*]/subdomain",
+        "deployments[*]/_request-subdomain",
         "deployments[*]/root-component",
         "deployments[*]/expose-component-on-bare-domain",
         DisplayBlock(

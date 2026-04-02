@@ -21,8 +21,8 @@ from opi.forms.layout import (
 from opi.forms.schema import FormMeta
 
 
-class CustomDomainHistoryEntry(BaseModel):
-    """Single audit trail entry for a custom domain status change."""
+class DomainHistoryEntry(BaseModel):
+    """Single audit trail entry for a domain/subdomain status change."""
 
     date: str
     status: str = Field(pattern=r"^(requested|approved|denied)$")
@@ -40,14 +40,22 @@ class CustomDomainEntry(BaseModel):
     issuer: str | None = None
     restricted_subdomains: Annotated[bool, Field(alias="restricted-subdomains")] = False
     status: str = Field(pattern=r"^(requested|approved|denied)$")
-    history: list[CustomDomainHistoryEntry] = Field(default_factory=list)
+    history: list[DomainHistoryEntry] = Field(default_factory=list)
+
+
+class AllowedSubdomainDetail(BaseModel):
+    """Individual subdomain with approval status."""
+
+    name: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    history: list[DomainHistoryEntry] = Field(default_factory=list)
 
 
 class AllowedSubdomainEntry(BaseModel):
     """Allowed subdomains for a specific platform domain."""
 
     domain: str
-    subdomains: list[str] = Field(default_factory=list)
+    subdomains: list[AllowedSubdomainDetail] = Field(default_factory=list)
 
 
 class DomainsModel(BaseModel):

@@ -14,7 +14,6 @@ from opi.forms.editables.editable import Editable, EditableEnforcer
 from opi.forms.editables.fields.components import (
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
-    COMPONENT_PATH_EDITABLE,
     COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     COMPONENT_USER_ENV_VARS_EDITABLE,
@@ -26,7 +25,7 @@ from opi.forms.editables.fields.domains import (
     WIZARD_DEPLOYMENT_NAME_EDITABLE,
 )
 from opi.forms.editables.pipeline import convert_fields, enforce_rules, validate_fields
-from opi.forms.editables.validators import ContainerImageValidator, SlugValidator
+from opi.forms.editables.validators import ContainerImageValidator, PathValidator, SlugValidator
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ logger = logging.getLogger(__name__)
 ADD_COMPONENT_VALIDATORS: dict[str, Editable] = {
     "name": COMPONENT_NAME_EDITABLE,
     "image": COMPONENT_IMAGE_EDITABLE,
-    "path": COMPONENT_PATH_EDITABLE,
+    "path": Editable(yaml_path="components[*]/path[*]/match", validator=PathValidator()),
     "cpu_limit": COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
     "memory_limit": COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     "env_vars": COMPONENT_USER_ENV_VARS_EDITABLE,
