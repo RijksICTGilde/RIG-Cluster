@@ -8,13 +8,14 @@ from opi.forms.editables.fields.components import (
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
     COMPONENT_PATH_EDITABLE,
+    COMPONENT_PATH_MATCH_EDITABLE,
+    COMPONENT_PATH_REWRITE_EDITABLE,
     COMPONENT_PORTS_INBOUND_EDITABLE,
     COMPONENT_PORTS_OUTBOUND_EDITABLE,
     COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_CPU_REQUEST_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE,
-    COMPONENT_REWRITE_PATH_EDITABLE,
     COMPONENT_SERVICES_EDITABLE,
     COMPONENT_USER_ENV_VARS_EDITABLE,
     COMPONENTS_SEQUENCE_EDITABLE,
@@ -124,8 +125,8 @@ COMPONENT_SERVICES = EditableVisualizer(
     attributes={"data-rerender": "true"},
 )
 
-COMPONENT_PATH = EditableVisualizer(
-    editable=COMPONENT_PATH_EDITABLE,
+COMPONENT_PATH_MATCH = EditableVisualizer(
+    editable=COMPONENT_PATH_MATCH_EDITABLE,
     widget=WidgetType.TEXT,
     label="Publicatie pad",
     description="Het pad waarop dit component gepubliceerd wordt.",
@@ -136,11 +137,18 @@ COMPONENT_PATH = EditableVisualizer(
     ),
 )
 
-COMPONENT_REWRITE_PATH = EditableVisualizer(
-    editable=COMPONENT_REWRITE_PATH_EDITABLE,
+COMPONENT_PATH_REWRITE = EditableVisualizer(
+    editable=COMPONENT_PATH_REWRITE_EDITABLE,
     widget=WidgetType.TEXT,
     label="Rewrite pad",
     description="Optioneel. Meestal niet nodig. Gebruik de standaardwaarde tenzij je zeker weet wat je moet invullen.",
+)
+
+COMPONENT_PATH = EditableVisualizer(
+    editable=COMPONENT_PATH_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Paden",
+    children=[COMPONENT_PATH_MATCH, COMPONENT_PATH_REWRITE],
 )
 
 COMPONENT_ALIASES = EditableVisualizer(
@@ -256,7 +264,6 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         COMPONENT_PORTS_OUTBOUND,
         COMPONENT_SERVICES,
         COMPONENT_PATH,
-        COMPONENT_REWRITE_PATH,
         COMPONENT_ALIASES,
         COMPONENT_USER_ENV_VARS,
         PERSISTENT_STORAGE_SEQUENCE,

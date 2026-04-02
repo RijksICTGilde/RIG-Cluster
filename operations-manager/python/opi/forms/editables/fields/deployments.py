@@ -14,6 +14,7 @@ from opi.forms.editables.validators import (
     CustomDomainValidator,
     DomainFormatValidator,
     KeyValueValidator,
+    PathValidator,
     SubdomainValidator,
 )
 
@@ -66,8 +67,22 @@ DEPLOYMENT_COMP_IMAGE_EDITABLE = Editable(yaml_path="deployments[*]/components[*
 DEPLOYMENT_COMP_PULL_POLICY_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/imagePullPolicy", values_provider="PullPolicyOptionsProvider"
 )
-DEPLOYMENT_COMP_PATH_EDITABLE = Editable(yaml_path="deployments[*]/components[*]/paths")
-DEPLOYMENT_COMP_REWRITE_PATH_EDITABLE = Editable(yaml_path="deployments[*]/components[*]/rewrite-path")
+DEPLOYMENT_COMP_PATH_MATCH_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/path[*]/match",
+    validator=PathValidator(),
+)
+DEPLOYMENT_COMP_PATH_REWRITE_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/path[*]/rewrite",
+    validator=PathValidator(),
+    remove_when_none=True,
+)
+DEPLOYMENT_COMP_PATH_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/path",
+    children=[
+        DEPLOYMENT_COMP_PATH_MATCH_EDITABLE,
+        DEPLOYMENT_COMP_PATH_REWRITE_EDITABLE,
+    ],
+)
 DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/user-env-vars",
     converter=KeyValueConverter(fmt="env", write_as="string"),
@@ -83,7 +98,6 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
         DEPLOYMENT_COMP_IMAGE_EDITABLE,
         DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
         DEPLOYMENT_COMP_PATH_EDITABLE,
-        DEPLOYMENT_COMP_REWRITE_PATH_EDITABLE,
         DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
     ],
 )

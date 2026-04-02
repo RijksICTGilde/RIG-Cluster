@@ -22,6 +22,7 @@ def editable_to_form_field(
     edit_mode: bool = False,
     provider_context: dict[str, Any] | None = None,
     parent_virtualize: tuple[str, str] | None = None,
+    warnings: dict[str, list[str]] | None = None,
 ) -> FormField:
     """Convert an EditableVisualizer + YAML data into a FormField.
 
@@ -120,6 +121,7 @@ def editable_to_form_field(
         value=display_value,
         options=options or None,
         errors=(errors or {}).get(real_path, []),
+        warnings=(warnings or {}).get(real_path, []),
         readonly=readonly,
         readonly_on_edit=readonly_on_edit_flag,
         min_items=min_items,
@@ -180,20 +182,33 @@ def should_render_editable(
 ) -> bool:
     """Check if an editable should be rendered based on its dependencies.
 
-    Implements 3 dependency patterns:
+    Implements 4 dependency patterns:
 
-    1. No depends_on -> always render (True)
-    2. depends_on set, no show_when -> render if dependency value is truthy
-    3. depends_on + show_when -> evaluate conditions (see ``evaluate_show_when``)
+    1. show_when is an EditableCondition -> evaluate against yaml_data (no depends_on needed)
+    2. No depends_on -> always render (True)
+    3. depends_on set, no show_when -> render if dependency value is truthy
+    4. depends_on + show_when dict -> evaluate conditions (see ``evaluate_show_when``)
 
     When *siblings* is provided, the dependency value is passed through the
     dependency field's converter (if any) before comparison.  This is needed
     when a converter maps stored values to sentinel display values (e.g.
     ``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` → ``"__custom__"``).
     """
+    from opi.forms.editables.editable import EditableCondition
+
     ed = editable.editable
     depends_on = ed.depends_on
     show_when = ed.show_when
+
+    # Callable condition: evaluate against full yaml_data
+    if isinstance(show_when, EditableCondition):
+        from opi.forms.editables.resolvers import build_resolver_map
+
+        # Provide resolver map so the condition can resolve transient
+        # defaults (e.g. base-domain when not explicitly selected)
+        if siblings and hasattr(show_when, "set_resolvers"):
+            show_when.set_resolvers(build_resolver_map(siblings))
+        return show_when.check(yaml_data)
 
     if not depends_on:
         return True

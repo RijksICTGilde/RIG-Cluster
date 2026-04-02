@@ -91,16 +91,27 @@ COMPONENT_SERVICES_EDITABLE = Editable(
     values_provider="FilteredServiceOptionsProvider",
 )
 
-COMPONENT_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/path",
+COMPONENT_PATH_MATCH_EDITABLE = Editable(
+    yaml_path="components[*]/path[*]/match",
     default="/",
     validator=PathValidator(),
+    required=True,
 )
 
-COMPONENT_REWRITE_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/rewrite-path",
+COMPONENT_PATH_REWRITE_EDITABLE = Editable(
+    yaml_path="components[*]/path[*]/rewrite",
     validator=PathValidator(),
     remove_when_none=True,
+)
+
+COMPONENT_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/path",
+    default=[{"match": "/"}],
+    min_items=1,
+    children=[
+        COMPONENT_PATH_MATCH_EDITABLE,
+        COMPONENT_PATH_REWRITE_EDITABLE,
+    ],
 )
 
 COMPONENT_ALIASES_EDITABLE = Editable(
@@ -215,7 +226,6 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_PORTS_OUTBOUND_EDITABLE,
         COMPONENT_SERVICES_EDITABLE,
         COMPONENT_PATH_EDITABLE,
-        COMPONENT_REWRITE_PATH_EDITABLE,
         COMPONENT_ALIASES_EDITABLE,
         COMPONENT_USER_ENV_VARS_EDITABLE,
         PERSISTENT_STORAGE_SEQUENCE_EDITABLE,

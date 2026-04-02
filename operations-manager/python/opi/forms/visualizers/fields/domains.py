@@ -14,6 +14,7 @@ from opi.forms.editables.fields.domains import (
     DOMAIN_CONFIG_EDITABLE,
     DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
     DOMAIN_FORMAT_EDITABLE,
+    DOMAIN_REQUEST_SUBDOMAIN_EDITABLE,
     DOMAIN_ROOT_COMPONENT_EDITABLE,
     DOMAIN_SUBDOMAIN_EDITABLE,
     WIZARD_DEPLOYMENT_NAME_EDITABLE,
@@ -57,6 +58,7 @@ DOMAIN_ROOT_COMPONENT = EditableVisualizer(
     widget=WidgetType.SELECT,
     label="Root component",
     help_text="Optioneel. Het component dat ook bereikbaar wordt op de kortere basis-URL.",
+    attributes={"data-rerender": "true"},
 )
 
 DOMAIN_BARE_DOMAIN_COMPONENT = EditableVisualizer(
@@ -70,6 +72,17 @@ DOMAIN_BARE_DOMAIN_COMPONENT = EditableVisualizer(
     attributes={"data-rerender": "true"},
 )
 
+DOMAIN_REQUEST_SUBDOMAIN = EditableVisualizer(
+    editable=DOMAIN_REQUEST_SUBDOMAIN_EDITABLE,
+    widget=WidgetType.CHECKBOX,
+    label="Subdomein aanvragen",
+    help_text=(
+        "Het gekozen subdomein is nog niet goedgekeurd voor dit domein. "
+        "Vink de checkbox aan om het subdomein aan te vragen en verder te gaan. Na goedkeuring door een beheerder "
+        "kan het subdomein worden gebruikt."
+    ),
+)
+
 DOMAIN_CONFIG = EditableVisualizer(
     editable=DOMAIN_CONFIG_EDITABLE,
     widget=WidgetType.GROUP,
@@ -79,6 +92,7 @@ DOMAIN_CONFIG = EditableVisualizer(
         DOMAIN_CUSTOM_BASE_DOMAIN,
         DOMAIN_FORMAT,
         DOMAIN_SUBDOMAIN,
+        DOMAIN_REQUEST_SUBDOMAIN,
         DOMAIN_ROOT_COMPONENT,
         DOMAIN_BARE_DOMAIN_COMPONENT,
     ],

@@ -1077,6 +1077,11 @@ async def _modal_do_submit(
     for section in active_sections:
         processor.apply_dependent_generators(section.editables, existing_data)
 
+    # Strip transient fields (e.g. _target_deployments) that participated
+    # in form state / post_merge hooks but must not persist to YAML.
+    for section in active_sections:
+        processor._strip_transients(existing_data, section.editables)
+
     # Ensure AGE-encrypted multiline values use literal block scalars
     from opi.web.router_wizard import _apply_literal_scalars
 

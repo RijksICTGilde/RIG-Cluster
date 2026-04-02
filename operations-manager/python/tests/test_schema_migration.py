@@ -553,11 +553,14 @@ class TestMigrateV2ToV2_1:
         assert "root" not in dep["components"][0]
         assert "root-component" not in dep
 
-    def test_already_v2_1_no_migration(self):
-        """Files already at v2.1 are not migrated again."""
+    def test_already_v2_1_gets_v2_2_migration(self):
+        """Files at v2.1 with string path get v2.2 migration."""
         data = {
             "schema-version": 2.1,
             "name": "test-project",
+            "components": [
+                {"name": "frontend", "path": "/"},
+            ],
             "deployments": [
                 {
                     "name": "prod",
@@ -572,8 +575,9 @@ class TestMigrateV2ToV2_1:
         }
         result, was_migrated = migrate_to_latest(data)
 
-        assert was_migrated is False
-        assert result["schema-version"] == 2.1
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["components"][0]["path"] == [{"match": "/"}]
 
     def test_multiple_deployments(self):
         """Each deployment is migrated independently."""
@@ -638,3 +642,139 @@ class TestMigrateV2ToV2_1:
         dep = result["deployments"][0]
         assert dep["root-component"] == "frontend"
         assert "root" not in dep["components"][0]
+
+
+# ---------------------------------------------------------------------------
+# migrate_to_latest - v2.1 → v2.2 (path string → list-of-dicts)
+# ---------------------------------------------------------------------------
+
+
+class TestMigrateV2_1ToV2_2:
+    """Tests for normalizing component path to list-of-dicts format."""
+
+    def test_string_path_converted_to_list(self):
+        """Simple string path is converted to list with match key."""
+        data = {
+            "schema-version": 2.1,
+            "name": "test-project",
+            "components": [
+                {"name": "frontend", "path": "/"},
+            ],
+            "deployments": [],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["components"][0]["path"] == [{"match": "/"}]
+
+    def test_string_path_with_rewrite_merged(self):
+        """String path + rewrite-path are merged into a single list entry."""
+        data = {
+            "schema-version": 2.1,
+            "name": "test-project",
+            "components": [
+                {"name": "typesense", "path": "/typesense/", "rewrite-path": "/"},
+            ],
+            "deployments": [],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        comp = result["components"][0]
+        assert comp["path"] == [{"match": "/typesense/", "rewrite": "/"}]
+        assert "rewrite-path" not in comp
+
+    def test_already_list_format_untouched(self):
+        """Path already in list-of-dicts format is not changed."""
+        data = {
+            "schema-version": 2.1,
+            "name": "test-project",
+            "components": [
+                {"name": "api", "path": [{"match": "/api", "rewrite": "/"}]},
+            ],
+            "deployments": [],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        # No path migration needed (already list), but version bump still happens
+        assert result["components"][0]["path"] == [{"match": "/api", "rewrite": "/"}]
+
+    def test_deployment_component_string_path_converted(self):
+        """Deployment-level component string path is also converted."""
+        data = {
+            "schema-version": 2.1,
+            "name": "test-project",
+            "components": [{"name": "api", "path": "/api"}],
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "local",
+                    "namespace": "test",
+                    "components": [
+                        {"reference": "api", "image": "api:latest", "path": "/v2"},
+                    ],
+                }
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["components"][0]["path"] == [{"match": "/api"}]
+        assert result["deployments"][0]["components"][0]["path"] == [{"match": "/v2"}]
+
+    def test_deployment_component_paths_plural_renamed(self):
+        """Legacy plural 'paths' key on deployment components is renamed to 'path'."""
+        data = {
+            "schema-version": 2.1,
+            "name": "test-project",
+            "components": [{"name": "api"}],
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "local",
+                    "namespace": "test",
+                    "components": [
+                        {
+                            "reference": "api",
+                            "image": "api:latest",
+                            "paths": [{"match": "/api", "rewrite": "/"}],
+                        },
+                    ],
+                }
+            ],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        dep_comp = result["deployments"][0]["components"][0]
+        assert "paths" not in dep_comp
+        assert dep_comp["path"] == [{"match": "/api", "rewrite": "/"}]
+
+    def test_no_path_no_migration(self):
+        """Component without path field is not migrated."""
+        data = {
+            "schema-version": 2.1,
+            "name": "test-project",
+            "components": [{"name": "worker"}],
+            "deployments": [],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is False
+        assert "path" not in result["components"][0]
+
+    def test_v2_2_not_migrated_again(self):
+        """Files already at v2.2 are not migrated."""
+        data = {
+            "schema-version": 2.2,
+            "name": "test-project",
+            "components": [
+                {"name": "api", "path": [{"match": "/api"}]},
+            ],
+            "deployments": [],
+        }
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is False
+        assert result["schema-version"] == 2.2

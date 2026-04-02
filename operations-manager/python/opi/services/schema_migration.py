@@ -14,7 +14,7 @@ from opi.services.services_enums import ServiceType
 
 logger = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 2.1
+LATEST_SCHEMA_VERSION = 2.2
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -82,8 +82,13 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
             migrated = True
 
     if version < 2.1 and _migrate_v2_to_v2_1(project_data):
-        project_data["schema-version"] = LATEST_SCHEMA_VERSION
         migrated = True
+
+    if version < 2.2 and _migrate_v2_1_to_v2_2(project_data):
+        migrated = True
+
+    if migrated:
+        project_data["schema-version"] = LATEST_SCHEMA_VERSION
 
     # Always run v2 fixups to clean up corruption from past bugs
     if _fixup_v2_data(project_data):
@@ -473,5 +478,74 @@ def _fixup_flat_resources(entity: dict[str, Any]) -> bool:
             res["requests"]["memory"] = memory
         del res["memory"]
         changed = True
+
+    return changed
+
+
+def _migrate_v2_1_to_v2_2(project_data: dict[str, Any]) -> bool:
+    """Normalize component path to list-of-dicts format.
+
+    Converts:
+    - ``path: "/foo"`` + ``rewrite-path: "/"`` → ``path: [{match: "/foo", rewrite: "/"}]``
+    - ``path: "/foo"`` (no rewrite) → ``path: [{match: "/foo"}]``
+
+    Applies to both top-level components and deployment-level component overrides.
+
+    Returns True if any changes were made.
+    """
+    migrated = False
+
+    for comp in project_data.get("components", []):
+        if not isinstance(comp, dict):
+            continue
+        if _normalize_path_to_list(comp):
+            migrated = True
+
+    for dep in project_data.get("deployments", []):
+        if not isinstance(dep, dict):
+            continue
+        for comp in dep.get("components", []):
+            if not isinstance(comp, dict):
+                continue
+            if _normalize_path_to_list(comp):
+                migrated = True
+
+    return migrated
+
+
+def _normalize_path_to_list(entity: dict[str, Any]) -> bool:
+    """Convert path string + rewrite-path into a list-of-dicts on a single entity.
+
+    Also renames legacy ``paths`` (plural) to ``path`` (singular).
+
+    Returns True if any changes were made.
+    """
+    changed = False
+
+    # Rename legacy plural key
+    if "paths" in entity and "path" not in entity:
+        entity["path"] = entity.pop("paths")
+        changed = True
+    elif "paths" in entity:
+        entity.pop("paths")
+        changed = True
+
+    path = entity.get("path")
+    rewrite = entity.pop("rewrite-path", None)
+
+    if isinstance(path, str):
+        entry: dict[str, str] = {"match": path}
+        if rewrite:
+            entry["rewrite"] = rewrite
+        entity["path"] = [entry]
+        return True
+
+    if rewrite and isinstance(path, list):
+        # path is already a list but rewrite-path was lingering — just remove it
+        return True
+
+    if rewrite and path is None:
+        # rewrite-path without path — shouldn't happen, but clean up
+        return True
 
     return changed

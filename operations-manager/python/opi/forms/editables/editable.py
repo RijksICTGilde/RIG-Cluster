@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum, StrEnum, auto
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -42,6 +42,24 @@ class EditableEnforcer(Protocol):
 
 
 @runtime_checkable
+class AsyncEditableEnforcer(Protocol):
+    """Async business rule enforcer for cross-field and I/O-bound checks.
+
+    Used by enforcers that need database queries, external API calls, or
+    access to multiple fields (e.g. DomainConfigEnforcer).
+
+    May raise:
+    - ``ValueError`` for global/section-level errors
+    - ``FieldError`` for errors targeted at a specific field
+    - ``FieldWarning`` for warnings targeted at a specific field
+    """
+
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        """Enforce business rules asynchronously. Returns value."""
+        ...
+
+
+@runtime_checkable
 class EditableCondition(Protocol):
     """Condition check for deferred field behavior."""
 
@@ -60,6 +78,67 @@ class EditableGenerator(Protocol):
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
         """Compute a value from the current project data."""
+        ...
+
+
+@runtime_checkable
+class TransientValueResolver(Protocol):
+    """Resolves a transient value for a field when its value is None.
+
+    The resolved value is used during processing (validation, enforcers,
+    dependent field evaluation) but is NOT persisted to the YAML output.
+    """
+
+    def resolve(self, yaml_data: dict[str, Any]) -> Any:
+        """Compute the transient value from current project data."""
+        ...
+
+
+class FormState(Enum):
+    """States in the form submission flow.
+
+    The flow engine walks through these states sequentially. Each state
+    can have hooks registered that run at that point. Based on the TAD
+    editable system's state machine pattern.
+
+    Flow: VALIDATE → PRE_SAVE → SAVE → POST_SAVE → COMPLETED
+    """
+
+    VALIDATE = auto()
+    PRE_SAVE = auto()
+    SAVE = auto()
+    POST_SAVE = auto()
+    COMPLETED = auto()
+
+    @classmethod
+    def get_next_state(cls, state: FormState) -> FormState:
+        if state.value >= cls.COMPLETED.value:
+            return cls.COMPLETED
+        return cls(state.value + 1)
+
+    def is_before_save(self) -> bool:
+        return self in (FormState.VALIDATE, FormState.PRE_SAVE)
+
+    def is_save(self) -> bool:
+        return self == FormState.SAVE
+
+    def is_after_save(self) -> bool:
+        return self in (FormState.POST_SAVE, FormState.COMPLETED)
+
+
+@runtime_checkable
+class EditableHook(Protocol):
+    """Hook that runs at a specific point in the form submission flow.
+
+    Hooks are registered on editables with a ``FormState`` key. The flow
+    engine collects all hooks across editables and runs them in order.
+    """
+
+    order: int
+    """Execution order within a state. Lower runs first. Default 0."""
+
+    async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
+        """Execute the hook, mutating yaml_data in place."""
         ...
 
 
@@ -106,7 +185,7 @@ class Editable:
     min_items: int = 0
     max_items: int | None = None
     depends_on: str | None = None
-    show_when: dict[str, Any] | None = None
+    show_when: dict[str, Any] | EditableCondition | None = None
     transient: bool = False
     defers_to: str | None = None
     defer_when: EditableCondition | None = None
@@ -115,12 +194,16 @@ class Editable:
     (possibly converter-produced) value is empty (None, empty string,
     False, etc.).  Use on optional fields where an empty value should
     result in the key being absent."""
+    transient_value_when_none: TransientValueResolver | None = None
+    """When set and the field value is None, resolves a transient value
+    used during processing (validation, enforcers, dependent field
+    evaluation) but NOT persisted to the YAML output."""
     virtualize: tuple[str, str] | None = None
     """When set, renames a path segment in form field HTML names to avoid
     collisions with other fields sharing the same YAML path prefix.
     Tuple of (real_segment, virtual_segment).  The server reads from the
     virtual path in submitted data and writes to the real path in YAML."""
-    hooks: dict[str, Any] | None = field(default=None, repr=False)
+    hooks: dict[FormState, EditableHook] | None = field(default=None, repr=False)
     rename_targets: list[str] | None = field(default=None, repr=False)
     """Paths that reference this field's value and must be updated on rename.
 

@@ -59,6 +59,7 @@ def _render_step_html(
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
     edit_mode: bool = False,
+    warnings: dict[str, list[str]] | None = None,
 ) -> str:
     """Render the form fields for a single wizard step."""
     import copy
@@ -129,6 +130,7 @@ def _render_step_html(
         layout=section.layout,
         errors=errors,
         edit_mode=edit_mode,
+        warnings=warnings,
     )
 
 
@@ -778,8 +780,6 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Re-render only (preview update) — process submission but skip validation
     # to prevent spurious "required" errors on newly-visible fields with defaults.
     if is_rerender:
-        from opi.forms.editables.service_path import smart_get_value as _sgv
-
         submitted_yaml, _errors = await processor.process_json_submission(
             submitted_data,
             section.editables,
@@ -788,28 +788,15 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             enforcer_context=enforcer_context,
         )
 
-        logger.info(
-            "[RERENDER %s] services in submitted_yaml BEFORE clear_hidden: %r",
-            section_id,
-            _sgv(submitted_yaml, "components[0]/services"),
-        )
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
-        logger.info(
-            "[RERENDER %s] services in submitted_yaml AFTER clear_hidden: %r",
-            section_id,
-            _sgv(submitted_yaml, "components[0]/services"),
-        )
 
         section_data = _extract_section_data(section.editables, submitted_yaml)
         state.store_step_data(section_id, section_data)
         save_wizard_state(request, state)
 
-        logger.info(
-            "[RERENDER %s] services passed to renderer: %r",
-            section_id,
-            _sgv(submitted_yaml, "components[0]/services"),
+        step_html = _render_step_html(
+            section, yaml_data=submitted_yaml, edit_mode=edit_mode, warnings=processor.field_warnings
         )
-        step_html = _render_step_html(section, yaml_data=submitted_yaml, edit_mode=edit_mode)
         context = _build_step_context(request, flow_id, section, step_html)
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
@@ -857,6 +844,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             yaml_data=submitted_yaml,
             errors=errors,
             edit_mode=edit_mode,
+            warnings=processor.field_warnings,
         )
         context = _build_step_context(
             request,
@@ -871,7 +859,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Forward navigation: run section-level enforcer for cross-field validation
     if is_forward and section.enforcer:
         global_errors = await processor.enforce_sections(
-            submitted_yaml, [section], enforcer_context, field_errors=errors
+            submitted_yaml, [section], enforcer_context, field_errors=errors, field_warnings=processor.field_warnings
         )
 
         # CENTRALIZED VALIDATION LOGGING - section-level (enforcer) validation
@@ -886,6 +874,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 yaml_data=submitted_yaml,
                 errors=errors,
                 edit_mode=edit_mode,
+                warnings=processor.field_warnings,
             )
             context = _build_step_context(
                 request,
@@ -1152,27 +1141,6 @@ def _prune_empty_dicts(data: Any) -> None:
     elif isinstance(data, list):
         for item in data:
             _prune_empty_dicts(item)
-
-
-def _normalize_component_paths(final_data: dict[str, Any]) -> None:
-    """Merge ``rewrite-path`` into ``path`` for each component.
-
-    When a component has a non-empty ``rewrite-path``, the simple string
-    ``path`` is converted to the list format that
-    ``extract_component_paths()`` expects::
-
-        path: [{match: "/api", rewrite: "/"}]
-
-    The ``rewrite-path`` key is removed after merging.
-    """
-    components = final_data.get("components", [])
-    for comp in components:
-        if not isinstance(comp, dict):
-            continue
-        rewrite = comp.pop("rewrite-path", None)
-        if rewrite:
-            match_path = comp.get("path", "/")
-            comp["path"] = [{"match": match_path, "rewrite": rewrite}]
 
 
 def _assemble_deployment(final_data: dict[str, Any]) -> None:
@@ -1792,16 +1760,15 @@ async def _do_submit(
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
 
     # Validate and build final YAML in a single pass.
-    # The merged yaml_data is both the "submitted" values and the base -
-    # process_json_submission reads from it, validates, converts, and
-    # strips transients for the final output.
+    # The merged yaml_data is both the "submitted" values and the base.
+    # Process WITHOUT stripping transients first — generators may need them.
     final_data, errors = await processor.process_json_submission(
         yaml_data,
         all_editables,
         yaml_data,
         edit_mode=state.project_name is not None,
         enforcer_context=enforcer_context,
-        strip_transients=True,
+        strip_transients=False,
     )
 
     if errors:
@@ -1865,15 +1832,34 @@ async def _do_submit(
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
 
-    # Merge rewrite-path into path field for each component
-    _normalize_component_paths(final_data)
-
     try:
+        # PRE_SAVE hooks: run while transients are still available.
+        # Includes SubdomainRequestHook (creates domains entry from transient checkbox)
+        # and StripTransientsHook (order=999, removes transients last).
+        from opi.forms.editables.editable import Editable, FormState, WidgetType
+        from opi.forms.editables.hooks import StripTransientsHook
+        from opi.forms.editables.lifecycle import run_hooks
+        from opi.forms.visualizers.visualizer import EditableVisualizer
+
+        # Register StripTransientsHook as a system-level hook on a virtual editable
+        strip_hook_editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="_system/strip-transients",
+                hooks={FormState.PRE_SAVE: StripTransientsHook(all_editables)},
+            ),
+            widget=WidgetType.HIDDEN,
+            label="",
+        )
+        all_with_system = [*all_editables, strip_hook_editable]
+        from opi.forms.editables.resolvers import build_resolver_map
+
+        hook_context = {**enforcer_context, "resolvers": build_resolver_map(all_editables)}
+        await run_hooks(FormState.PRE_SAVE, all_with_system, final_data, hook_context)
+
         if state.project_name:
-            # Edit mode: save to existing project
             return await _save_existing_project(request, state.project_name, final_data)
         else:
-            # Create mode: run generators first (sets name, AGE keys, etc.),
+            # Create mode: run generators (sets name, AGE keys, etc.),
             # then assemble deployment (needs name for namespace).
             final_data = processor.apply_generators(flow.generated_editables, final_data)
             _assemble_deployment(final_data)

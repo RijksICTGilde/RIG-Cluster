@@ -161,7 +161,7 @@ class TestExtractDeploymentComponentPaths:
                 {
                     "reference": "frontend",
                     "image": "nginx:latest",
-                    "paths": [
+                    "path": [
                         {"match": "/app", "rewrite": "/"},
                     ],
                 }
@@ -203,7 +203,7 @@ class TestExtractDeploymentComponentPaths:
                 {
                     "reference": "frontend",
                     "image": "nginx:latest",
-                    "paths": [
+                    "path": [
                         {"match": "/app", "rewrite": "/"},
                         {"match": "/static"},
                     ],
@@ -222,7 +222,7 @@ class TestExtractDeploymentComponentPaths:
         deployment_data = {
             "name": "production",
             "components": [
-                {"reference": "api", "image": "myapi:latest", "paths": []},
+                {"reference": "api", "image": "myapi:latest", "path": []},
             ],
         }
         result = self.handler.extract_deployment_component_paths(project_data, deployment_data, "api")

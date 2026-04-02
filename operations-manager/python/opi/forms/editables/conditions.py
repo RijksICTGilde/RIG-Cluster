@@ -1,7 +1,10 @@
-"""Editable conditions for controlling deferred field behavior.
+"""Editable conditions for controlling field behavior.
 
-Conditions are used with ``defers_to`` on editables to determine
-when one field should yield its final value to another field.
+Conditions implement the ``EditableCondition`` protocol and are used in two places:
+
+- ``defer_when``: determines when one field should yield its value to another.
+- ``show_when``: determines field visibility based on computed logic
+  (receives full ``yaml_data`` instead of a single dependency value).
 """
 
 from __future__ import annotations
@@ -24,3 +27,64 @@ class SentinelValueCondition:
         if not value:
             return False
         return str(value) == self.sentinel
+
+
+class SubdomainNeedsRequestCondition:
+    """True when the deployment's subdomain needs a request on a restricted domain.
+
+    Used as ``show_when`` on the subdomain-request checkbox. When used this way,
+    ``check()`` receives the full ``yaml_data`` dict.
+
+    Returns True when:
+    - The deployment uses a subdomain-based domain format
+    - The base domain has restricted subdomains (cluster config)
+    - The subdomain is NOT already approved in ``domains.allowed-subdomains``
+    """
+
+    def __init__(self, deployment_index: int = 0) -> None:
+        self.deployment_index = deployment_index
+        self._resolvers: dict | None = None
+
+    def set_resolvers(self, resolvers: dict) -> None:
+        """Inject resolver map for transient value resolution."""
+        self._resolvers = resolvers
+
+    def check(self, value: Any) -> bool:
+        if not isinstance(value, dict):
+            return False
+
+        from opi.forms.editables.resolvers import get_effective_value
+
+        deployments = value.get("deployments", [])
+        if len(deployments) <= self.deployment_index:
+            return False
+        dep = deployments[self.deployment_index]
+        if not isinstance(dep, dict):
+            return False
+
+        subdomain = dep.get("subdomain")
+        base_domain = get_effective_value(value, f"deployments[{self.deployment_index}]/base-domain", self._resolvers)
+        if not subdomain or not base_domain or base_domain == "__custom__":
+            return False
+
+        from opi.core.cluster_config import is_domain_subdomain_restricted
+        from opi.core.config import settings
+
+        cluster = settings.CLUSTER_MANAGER
+
+        from opi.connectors.subdomain import get_project_custom_domain_config, get_supported_base_domains
+
+        supported = get_supported_base_domains(cluster)
+        if base_domain in supported:
+            if not is_domain_subdomain_restricted(cluster, base_domain):
+                return False
+        else:
+            custom_config = get_project_custom_domain_config(value, base_domain)
+            if not custom_config or not custom_config.get("restricted-subdomains", False):
+                return False
+
+        # Domain is restricted — check if subdomain is already approved
+        from opi.connectors.subdomain import get_subdomain_status
+
+        status = get_subdomain_status(value, base_domain, subdomain)
+        return status != "approved"

@@ -77,19 +77,39 @@ class TestGetProjectAllowedSubdomains:
         project_data = {
             "domains": {
                 "allowed-subdomains": [
-                    {"domain": "rijks.app", "subdomains": ["wies", "portaal"]},
-                    {"domain": "rijksapp.nl", "subdomains": ["test"]},
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "approved"},
+                            {"name": "portaal", "status": "approved"},
+                        ],
+                    },
+                    {
+                        "domain": "rijksapp.nl",
+                        "subdomains": [
+                            {"name": "test", "status": "approved"},
+                        ],
+                    },
                 ]
             }
         }
-        assert get_project_allowed_subdomains(project_data, "rijks.app") == ["wies", "portaal"]
-        assert get_project_allowed_subdomains(project_data, "rijksapp.nl") == ["test"]
+        result = get_project_allowed_subdomains(project_data, "rijks.app")
+        assert len(result) == 2
+        assert result[0]["name"] == "wies"
+        result_nl = get_project_allowed_subdomains(project_data, "rijksapp.nl")
+        assert len(result_nl) == 1
+        assert result_nl[0]["name"] == "test"
 
     def test_returns_empty_for_no_match(self):
         project_data = {
             "domains": {
                 "allowed-subdomains": [
-                    {"domain": "rijks.app", "subdomains": ["wies"]},
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "approved"},
+                        ],
+                    },
                 ]
             }
         }
@@ -142,11 +162,17 @@ class TestGetProjectCustomDomainConfig:
 
 
 class TestIsSubdomainAllowedForProject:
-    def test_allowed_subdomain_passes(self):
+    def test_approved_subdomain_passes(self):
         project_data = {
             "domains": {
                 "allowed-subdomains": [
-                    {"domain": "rijks.app", "subdomains": ["wies", "portaal"]},
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "approved"},
+                            {"name": "portaal", "status": "approved"},
+                        ],
+                    },
                 ]
             }
         }
@@ -154,29 +180,73 @@ class TestIsSubdomainAllowedForProject:
         assert is_allowed is True
         assert error is None
 
-    def test_disallowed_subdomain_fails(self):
+    def test_requested_subdomain_fails(self):
         project_data = {
             "domains": {
                 "allowed-subdomains": [
-                    {"domain": "rijks.app", "subdomains": ["wies"]},
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "requested"},
+                        ],
+                    },
+                ]
+            }
+        }
+        is_allowed, error = is_subdomain_allowed_for_project("wies", "rijks.app", project_data, "odcn-production")
+        assert is_allowed is False
+        assert "aangevraagd" in error
+
+    def test_denied_subdomain_fails(self):
+        project_data = {
+            "domains": {
+                "allowed-subdomains": [
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "denied"},
+                        ],
+                    },
+                ]
+            }
+        }
+        is_allowed, error = is_subdomain_allowed_for_project("wies", "rijks.app", project_data, "odcn-production")
+        assert is_allowed is False
+        assert "afgewezen" in error
+
+    def test_unknown_subdomain_fails(self):
+        project_data = {
+            "domains": {
+                "allowed-subdomains": [
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "approved"},
+                        ],
+                    },
                 ]
             }
         }
         is_allowed, error = is_subdomain_allowed_for_project("other", "rijks.app", project_data, "odcn-production")
         assert is_allowed is False
-        assert "niet toegestaan" in error
+        assert "niet aangevraagd" in error
 
     def test_no_allowed_subdomains_fails(self):
         project_data = {}
         is_allowed, error = is_subdomain_allowed_for_project("wies", "rijks.app", project_data, "odcn-production")
         assert is_allowed is False
-        assert "beperkt" in error
+        assert "niet aangevraagd" in error
 
     def test_case_insensitive_match(self):
         project_data = {
             "domains": {
                 "allowed-subdomains": [
-                    {"domain": "rijks.app", "subdomains": ["Wies"]},
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "Wies", "status": "approved"},
+                        ],
+                    },
                 ]
             }
         }
@@ -199,7 +269,12 @@ class TestIsSubdomainAllowedForProject:
             "domains": {
                 "custom-domains": [{"domain": "mijn-app.nl", "status": "approved", "restricted-subdomains": True}],
                 "allowed-subdomains": [
-                    {"domain": "mijn-app.nl", "subdomains": ["api"]},
+                    {
+                        "domain": "mijn-app.nl",
+                        "subdomains": [
+                            {"name": "api", "status": "approved"},
+                        ],
+                    },
                 ],
             }
         }
@@ -280,7 +355,13 @@ class TestDomainsModel:
 
         data = {
             "allowed-subdomains": [
-                {"domain": "rijks.app", "subdomains": ["wies", "portaal"]},
+                {
+                    "domain": "rijks.app",
+                    "subdomains": [
+                        {"name": "wies", "status": "approved"},
+                        {"name": "portaal", "status": "requested"},
+                    ],
+                },
             ],
             "custom-domains": [
                 {
@@ -303,7 +384,10 @@ class TestDomainsModel:
         model = DomainsModel.model_validate(data)
         assert len(model.allowed_subdomains) == 1
         assert model.allowed_subdomains[0].domain == "rijks.app"
-        assert model.allowed_subdomains[0].subdomains == ["wies", "portaal"]
+        assert len(model.allowed_subdomains[0].subdomains) == 2
+        assert model.allowed_subdomains[0].subdomains[0].name == "wies"
+        assert model.allowed_subdomains[0].subdomains[0].status == "approved"
+        assert model.allowed_subdomains[0].subdomains[1].status == "requested"
         assert len(model.custom_domains) == 1
         assert model.custom_domains[0].domain == "mijn-app.nl"
         assert model.custom_domains[0].supports_dots is True
@@ -337,7 +421,12 @@ class TestDomainsModel:
             "users": [{"email": "admin@test.nl", "role": "admin"}],
             "domains": {
                 "allowed-subdomains": [
-                    {"domain": "rijks.app", "subdomains": ["wies"]},
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "approved"},
+                        ],
+                    },
                 ],
                 "custom-domains": [
                     {"domain": "mijn-app.nl", "status": "approved"},
@@ -396,11 +485,17 @@ class TestDomainConfigEnforcerReceivesFullData:
             ],
             "domains": {
                 "allowed-subdomains": [
-                    {"domain": "rijks.app", "subdomains": ["wies", "portaal"]},
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "approved"},
+                            {"name": "portaal", "status": "approved"},
+                        ],
+                    },
                 ],
             },
         }
-        # Should not raise — subdomain 'wies' is in the allow-list
+        # Should not raise — subdomain 'wies' is approved in the allow-list
         result = await enforcer.enforce(full_yaml, {"project_name": "test-project"})
         assert result is full_yaml
 
@@ -423,17 +518,24 @@ class TestDomainConfigEnforcerReceivesFullData:
             ],
             "domains": {
                 "allowed-subdomains": [
-                    {"domain": "rijks.app", "subdomains": ["wies"]},
+                    {
+                        "domain": "rijks.app",
+                        "subdomains": [
+                            {"name": "wies", "status": "approved"},
+                        ],
+                    },
                 ],
             },
         }
-        with pytest.raises(ValueError, match="niet toegestaan"):
+        from opi.forms.editables.enforcers import FieldWarning
+
+        with pytest.raises(FieldWarning, match="op aanvraag"):
             await enforcer.enforce(full_yaml, {"project_name": "test-project"})
 
     @pytest.mark.asyncio
-    async def test_enforcer_rejects_when_no_domains_section(self, monkeypatch):
-        """Enforcer rejects subdomain when project has no domains section at all."""
-        from opi.forms.editables.enforcers import DomainConfigEnforcer
+    async def test_enforcer_warns_when_no_domains_section(self, monkeypatch):
+        """Enforcer warns about subdomain when project has no domains section at all."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
 
@@ -449,7 +551,7 @@ class TestDomainConfigEnforcerReceivesFullData:
                 }
             ],
         }
-        with pytest.raises(ValueError, match="beperkt"):
+        with pytest.raises(FieldWarning, match="op aanvraag"):
             await enforcer.enforce(yaml_without_domains, {"project_name": "test-project"})
 
 

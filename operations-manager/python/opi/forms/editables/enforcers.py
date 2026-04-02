@@ -16,6 +16,20 @@ class FieldError(ValueError):
         super().__init__(message)
 
 
+class FieldWarning(Exception):
+    """Non-blocking warning tied to a specific field path.
+
+    When raised from an enforcer, the warning message is attached to
+    the given field path in the form warnings dict. Unlike errors,
+    warnings do not block form submission.
+    """
+
+    def __init__(self, field_path: str, message: str) -> None:
+        self.field_path = field_path
+        self.message = message
+        super().__init__(message)
+
+
 class AdminRequiredEnforcer:
     """Ensures at least one user has role='admin'."""
 
@@ -205,9 +219,14 @@ class DomainConfigEnforcer:
                 raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
             # Use custom domain for further validation
             actual_domain = custom_domain
-        else:
-            # Standard domain was selected
+        elif base_domain:
             actual_domain = base_domain
+        else:
+            # Resolve default domain when not explicitly selected
+            from opi.connectors.subdomain import get_supported_base_domains
+
+            supported = get_supported_base_domains(settings.CLUSTER_MANAGER)
+            actual_domain = next(iter(supported)) if supported else None
 
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
         if "{subdomain}" in template and not subdomain:
@@ -248,12 +267,25 @@ class DomainConfigEnforcer:
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
-            from opi.connectors.subdomain import is_subdomain_allowed_for_project
+            from opi.connectors.subdomain import get_subdomain_status, is_subdomain_allowed_for_project
 
             cluster = settings.CLUSTER_MANAGER
+            subdomain_field = f"deployments[{self.deployment_index}]/subdomain"
             is_allowed, error_msg = is_subdomain_allowed_for_project(subdomain, actual_domain, value, cluster)
             if not is_allowed:
-                raise ValueError(error_msg)
+                status = get_subdomain_status(value, actual_domain, subdomain)
+                request_checked = dep.get("_request-subdomain")
+                if status is None and request_checked:
+                    pass  # User is requesting this subdomain — allow through
+                elif status == "requested":
+                    pass  # Already requested — allow through
+                elif status == "denied":
+                    raise FieldError(subdomain_field, error_msg)
+                else:
+                    raise FieldWarning(
+                        subdomain_field,
+                        f"Gebruik van een subdomein '{subdomain}' voor het domein '{actual_domain}' is op aanvraag.",
+                    )
 
         # Check subdomain availability for nice-URL formats
         if subdomain and actual_domain and "{subdomain}" in template:
