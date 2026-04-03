@@ -5,10 +5,13 @@ This module provides standardized methods for generating unique names for Kubern
 including deployments, services, PVCs, and other manifest resources.
 """
 
+import logging
 import re
 from datetime import UTC
 from enum import Enum
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
+
+logger = logging.getLogger(__name__)
 
 
 class HostnameFormat(Enum):
@@ -62,6 +65,10 @@ DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
     "deployment.subdomain": "{deployment}.{subdomain}.{domain}",
     "component.subdomain": "{component}.{subdomain}.{domain}",
 }
+
+# Safe fallback format — always works, no approval needed.
+# Used when the requested domain+subdomain is not yet approved.
+SAFE_FALLBACK_FORMAT = "component-deployment-project"
 
 # Type alias derived from the template keys so OpenAPI exposes an enum.
 # The Literal must be written explicitly (Python cannot construct Literal from
@@ -1664,6 +1671,47 @@ def find_root_component(deployment: dict) -> str | None:
     return deployment.get("root-component")
 
 
+def apply_domain_approval_fallback(
+    domain_format: str,
+    base_domain: str | None,
+    subdomain: str | None,
+    ingress_postfix: str,
+    project_data: dict[str, Any],
+    cluster: str,
+) -> tuple[str, str | None]:
+    """Check domain approval and return the effective format + domain.
+
+    If the requested domain+subdomain combination is approved, returns
+    them unchanged. If not approved, falls back to the safe format
+    (component-deployment-project) on the cluster domain.
+
+    Args:
+        domain_format: Requested domain format ID
+        base_domain: Requested base domain
+        subdomain: Requested subdomain
+        ingress_postfix: Cluster ingress postfix (for fallback domain)
+        project_data: Project YAML data (for approval check)
+        cluster: Cluster name (for approval check)
+
+    Returns:
+        (effective_format, effective_base_domain) tuple
+    """
+    from opi.connectors.subdomain import is_deployment_domain_approved
+
+    if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
+        return domain_format, base_domain
+
+    # Not approved — fall back to safe format on cluster domain
+    logger.warning(
+        "Domain '%s' with subdomain '%s' not approved, falling back to %s on cluster domain",
+        base_domain,
+        subdomain,
+        SAFE_FALLBACK_FORMAT,
+    )
+    cluster_domain = ingress_postfix.lstrip(".")
+    return SAFE_FALLBACK_FORMAT, cluster_domain
+
+
 def get_component_ingress_map(
     component_name: str,
     deployment_name: str,
@@ -1673,6 +1721,9 @@ def get_component_ingress_map(
     base_domain: str | None = None,
     hostname_format: HostnameFormat = HostnameFormat.DASHES,
     domain_format: str | None = None,
+    *,
+    project_data: dict[str, Any],
+    cluster: str,
 ) -> dict[str, str]:
     """
     Get the ingress map for a single component.
@@ -1731,9 +1782,12 @@ def get_component_ingress_map(
 
     # When domain_format is explicitly set, use the template-based generation
     if domain_format and domain_format in DOMAIN_FORMAT_TEMPLATES:
-        domain = resolve_domain_tail(base_domain, ingress_postfix)
+        effective_format, effective_domain = apply_domain_approval_fallback(
+            domain_format, base_domain, subdomain, ingress_postfix, project_data, cluster
+        )
+        domain = resolve_domain_tail(effective_domain, ingress_postfix)
         hostname = generate_hostname_from_format(
-            domain_format=domain_format,
+            domain_format=effective_format,
             component_name=component_name,
             deployment_name=deployment_name,
             project_name=project_name,
@@ -1768,6 +1822,9 @@ def get_deployment_hostnames(
     hostname_format: HostnameFormat = HostnameFormat.DASHES,
     domain_format: str | None = None,
     expose_on_bare_domain: str | bool = False,
+    *,
+    project_data: dict[str, Any],
+    cluster: str,
 ) -> list[str]:
     """
     Get all hostnames for components in a deployment.
@@ -1801,6 +1858,8 @@ def get_deployment_hostnames(
             base_domain,
             hostname_format=hostname_format,
             domain_format=domain_format,
+            project_data=project_data,
+            cluster=cluster,
         )
         hostname = next(iter(ingress_map.values()))
         if hostname not in hostnames:

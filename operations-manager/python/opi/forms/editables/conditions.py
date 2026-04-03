@@ -88,3 +88,57 @@ class SubdomainNeedsRequestCondition:
 
         status = get_subdomain_status(value, base_domain, subdomain)
         return status != "approved"
+
+
+class DomainNeedsRequestCondition:
+    """True when the deployment's base domain is not the cluster default and not approved.
+
+    Used as ``show_when`` on the domain-request checkbox. When the condition
+    returns True, the user needs to request approval for this domain.
+
+    Returns True when:
+    - A base domain is selected (not None, not __custom__)
+    - The domain is NOT the cluster default
+    - The domain is NOT in ``domains.allowed-domains`` with ``status: approved``
+    """
+
+    def __init__(self, deployment_index: int = 0) -> None:
+        self.deployment_index = deployment_index
+        self._resolvers: dict | None = None
+
+    def set_resolvers(self, resolvers: dict) -> None:
+        """Inject resolver map for transient value resolution."""
+        self._resolvers = resolvers
+
+    def check(self, value: Any) -> bool:
+        if not isinstance(value, dict):
+            return False
+
+        from opi.forms.editables.resolvers import get_effective_value
+
+        deployments = value.get("deployments", [])
+        if len(deployments) <= self.deployment_index:
+            return False
+        dep = deployments[self.deployment_index]
+        if not isinstance(dep, dict):
+            return False
+
+        base_domain = get_effective_value(value, f"deployments[{self.deployment_index}]/base-domain", self._resolvers)
+        if not base_domain or base_domain == "__custom__":
+            return False
+
+        from opi.connectors.subdomain import get_project_allowed_domain_config
+        from opi.core.cluster_config import get_ingress_postfix
+        from opi.core.config import settings
+
+        cluster = settings.CLUSTER_MANAGER
+
+        # Cluster default domain is always allowed
+        ingress_postfix = get_ingress_postfix(cluster)
+        cluster_domain = ingress_postfix.lstrip(".")
+        if base_domain == cluster_domain:
+            return False
+
+        # Check if domain is already approved
+        domain_config = get_project_allowed_domain_config(value, base_domain)
+        return not (domain_config and domain_config.get("status") == "approved")

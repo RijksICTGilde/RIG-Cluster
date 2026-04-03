@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from opi.connectors.subdomain import (
+    get_project_allowed_domain_config,
     get_project_allowed_subdomains,
-    get_project_custom_domain_config,
-    is_custom_domain_allowed_for_project,
+    is_domain_allowed_for_project,
     is_subdomain_allowed_for_project,
 )
 from opi.core.cluster_config import (
@@ -132,7 +132,7 @@ class TestGetProjectCustomDomainConfig:
     def test_returns_config_for_matching_domain(self):
         project_data = {
             "domains": {
-                "custom-domains": [
+                "allowed-domains": [
                     {
                         "domain": "mijn-app.nl",
                         "supports-dots": True,
@@ -142,18 +142,18 @@ class TestGetProjectCustomDomainConfig:
                 ]
             }
         }
-        config = get_project_custom_domain_config(project_data, "mijn-app.nl")
+        config = get_project_allowed_domain_config(project_data, "mijn-app.nl")
         assert config is not None
         assert config["domain"] == "mijn-app.nl"
         assert config["supports-dots"] is True
         assert config["status"] == "approved"
 
     def test_returns_none_for_no_match(self):
-        project_data = {"domains": {"custom-domains": [{"domain": "other.nl", "status": "approved"}]}}
-        assert get_project_custom_domain_config(project_data, "mijn-app.nl") is None
+        project_data = {"domains": {"allowed-domains": [{"domain": "other.nl", "status": "approved"}]}}
+        assert get_project_allowed_domain_config(project_data, "mijn-app.nl") is None
 
     def test_returns_none_for_no_domains_section(self):
-        assert get_project_custom_domain_config({}, "mijn-app.nl") is None
+        assert get_project_allowed_domain_config({}, "mijn-app.nl") is None
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ class TestIsSubdomainAllowedForProject:
         """Custom domains without restricted-subdomains allow any subdomain."""
         project_data = {
             "domains": {
-                "custom-domains": [{"domain": "mijn-app.nl", "status": "approved", "restricted-subdomains": False}]
+                "allowed-domains": [{"domain": "mijn-app.nl", "status": "approved", "restricted-subdomains": False}]
             }
         }
         is_allowed, error = is_subdomain_allowed_for_project("anything", "mijn-app.nl", project_data, "odcn-production")
@@ -267,7 +267,7 @@ class TestIsSubdomainAllowedForProject:
         """Custom domains with restricted-subdomains check the allow-list."""
         project_data = {
             "domains": {
-                "custom-domains": [{"domain": "mijn-app.nl", "status": "approved", "restricted-subdomains": True}],
+                "allowed-domains": [{"domain": "mijn-app.nl", "status": "approved", "restricted-subdomains": True}],
                 "allowed-subdomains": [
                     {
                         "domain": "mijn-app.nl",
@@ -292,33 +292,33 @@ class TestIsSubdomainAllowedForProject:
 
 class TestIsCustomDomainAllowedForProject:
     def test_approved_domain_passes(self):
-        project_data = {"domains": {"custom-domains": [{"domain": "mijn-app.nl", "status": "approved"}]}}
-        is_allowed, error = is_custom_domain_allowed_for_project("mijn-app.nl", project_data)
+        project_data = {"domains": {"allowed-domains": [{"domain": "mijn-app.nl", "status": "approved"}]}}
+        is_allowed, error = is_domain_allowed_for_project("mijn-app.nl", project_data)
         assert is_allowed is True
         assert error is None
 
     def test_requested_domain_fails(self):
-        project_data = {"domains": {"custom-domains": [{"domain": "mijn-app.nl", "status": "requested"}]}}
-        is_allowed, error = is_custom_domain_allowed_for_project("mijn-app.nl", project_data)
+        project_data = {"domains": {"allowed-domains": [{"domain": "mijn-app.nl", "status": "requested"}]}}
+        is_allowed, error = is_domain_allowed_for_project("mijn-app.nl", project_data)
         assert is_allowed is False
         assert "requested" in error
 
     def test_denied_domain_fails(self):
-        project_data = {"domains": {"custom-domains": [{"domain": "mijn-app.nl", "status": "denied"}]}}
-        is_allowed, error = is_custom_domain_allowed_for_project("mijn-app.nl", project_data)
+        project_data = {"domains": {"allowed-domains": [{"domain": "mijn-app.nl", "status": "denied"}]}}
+        is_allowed, error = is_domain_allowed_for_project("mijn-app.nl", project_data)
         assert is_allowed is False
         assert "denied" in error
 
     def test_unregistered_domain_fails(self):
         project_data = {}
-        is_allowed, error = is_custom_domain_allowed_for_project("mijn-app.nl", project_data)
+        is_allowed, error = is_domain_allowed_for_project("mijn-app.nl", project_data)
         assert is_allowed is False
-        assert "niet geregistreerd" in error
+        assert "niet goedgekeurd" in error
 
     def test_domain_with_history(self):
         project_data = {
             "domains": {
-                "custom-domains": [
+                "allowed-domains": [
                     {
                         "domain": "mijn-app.nl",
                         "status": "approved",
@@ -340,7 +340,7 @@ class TestIsCustomDomainAllowedForProject:
                 ]
             }
         }
-        is_allowed, error = is_custom_domain_allowed_for_project("mijn-app.nl", project_data)
+        is_allowed, error = is_domain_allowed_for_project("mijn-app.nl", project_data)
         assert is_allowed is True
 
 
@@ -363,7 +363,7 @@ class TestDomainsModel:
                     ],
                 },
             ],
-            "custom-domains": [
+            "allowed-domains": [
                 {
                     "domain": "mijn-app.nl",
                     "supports-dots": True,
@@ -388,29 +388,29 @@ class TestDomainsModel:
         assert model.allowed_subdomains[0].subdomains[0].name == "wies"
         assert model.allowed_subdomains[0].subdomains[0].status == "approved"
         assert model.allowed_subdomains[0].subdomains[1].status == "requested"
-        assert len(model.custom_domains) == 1
-        assert model.custom_domains[0].domain == "mijn-app.nl"
-        assert model.custom_domains[0].supports_dots is True
-        assert model.custom_domains[0].status == "approved"
-        assert len(model.custom_domains[0].history) == 1
+        assert len(model.allowed_domains) == 1
+        assert model.allowed_domains[0].domain == "mijn-app.nl"
+        assert model.allowed_domains[0].supports_dots is True
+        assert model.allowed_domains[0].status == "approved"
+        assert len(model.allowed_domains[0].history) == 1
 
     def test_empty_domains_model(self):
         from opi.forms.models.project_file import DomainsModel
 
         model = DomainsModel.model_validate({})
         assert model.allowed_subdomains == []
-        assert model.custom_domains == []
+        assert model.allowed_domains == []
 
     def test_to_yaml_dict(self):
         from opi.forms.models.project_file import DomainsModel
 
         model = DomainsModel(
             allowed_subdomains=[],
-            custom_domains=[],
+            allowed_domains=[],
         )
         d = model.model_dump(by_alias=True, exclude_none=True)
         assert "allowed-subdomains" in d
-        assert "custom-domains" in d
+        assert "allowed-domains" in d
 
     def test_project_file_model_with_domains(self):
         from opi.forms.models.project_file import ProjectFileModel
@@ -428,7 +428,7 @@ class TestDomainsModel:
                         ],
                     },
                 ],
-                "custom-domains": [
+                "allowed-domains": [
                     {"domain": "mijn-app.nl", "status": "approved"},
                 ],
             },
@@ -436,7 +436,7 @@ class TestDomainsModel:
         model = ProjectFileModel.model_validate(data)
         assert model.domains is not None
         assert len(model.domains.allowed_subdomains) == 1
-        assert len(model.domains.custom_domains) == 1
+        assert len(model.domains.allowed_domains) == 1
 
     def test_project_file_model_without_domains(self):
         from opi.forms.models.project_file import ProjectFileModel
@@ -569,7 +569,9 @@ class TestIssuerGeneratorCustomDomain:
 
         yaml_data = {
             "deployments": [{"base-domain": "mijn-app.nl"}],
-            "domains": {"custom-domains": [{"domain": "mijn-app.nl", "issuer": "custom-issuer", "status": "approved"}]},
+            "domains": {
+                "allowed-domains": [{"domain": "mijn-app.nl", "issuer": "custom-issuer", "status": "approved"}]
+            },
         }
         gen = IssuerGenerator(deployment_index=0)
         result = gen.generate(yaml_data)

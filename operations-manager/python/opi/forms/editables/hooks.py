@@ -12,80 +12,65 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-class SubdomainRequestHook:
-    """Creates a subdomain request entry in domains.allowed-subdomains.
+def _resolve_missing_base_domains(yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
+    """Fill in None base-domain values from resolvers before processing.
 
-    Runs at PRE_SAVE. For each deployment that has ``_request-subdomain``
-    checked (transient field, still available at PRE_SAVE), adds the
-    subdomain to the allow-list with ``status: requested`` and a history entry.
+    When the user didn't interact with the base-domain select, the value
+    is None in the wizard state. The resolvers know the cluster default.
+    This mutates the deployment dicts in place so ensure_domain_requests
+    sees the actual domain.
+    """
+    resolvers = context.get("resolvers")
+    if not resolvers:
+        return
+
+    from opi.forms.editables.resolvers import get_effective_value
+
+    for i, dep in enumerate(yaml_data.get("deployments", [])):
+        if isinstance(dep, dict) and not dep.get("base-domain"):
+            resolved = get_effective_value(yaml_data, f"deployments[{i}]/base-domain", resolvers)
+            if resolved:
+                dep["base-domain"] = resolved
+
+
+class SubdomainRequestHook:
+    """Creates subdomain request entries at PRE_SAVE.
+
+    Only runs when the ``_request-subdomain`` transient checkbox is checked.
+    Delegates to ``ensure_domain_requests`` for the actual logic.
     """
 
     order: int = 0
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
-        from datetime import UTC, datetime
-
-        from opi.connectors.subdomain import get_subdomain_status, get_supported_base_domains
-        from opi.core.cluster_config import is_domain_subdomain_restricted
-        from opi.core.config import settings
-        from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
-
-        cluster = settings.CLUSTER_MANAGER
-        domains_section = yaml_data.get("domains")
-
         for dep in yaml_data.get("deployments", []):
-            if not isinstance(dep, dict):
-                continue
-            if not dep.get("_request-subdomain"):
-                continue
+            if isinstance(dep, dict) and dep.get("_request-subdomain"):
+                from opi.connectors.subdomain import ensure_domain_requests
+                from opi.core.config import settings
 
-            subdomain = dep.get("subdomain")
-            domain_format = dep.get("domain-format", "")
+                _resolve_missing_base_domains(yaml_data, context)
+                ensure_domain_requests(yaml_data, settings.CLUSTER_MANAGER)
+                return
 
-            # Resolve base-domain using transient_value_when_none if not explicitly set
-            from opi.forms.editables.resolvers import get_effective_value
 
-            resolvers = context.get("resolvers")
-            dep_index = yaml_data.get("deployments", []).index(dep)
-            base_domain = get_effective_value(yaml_data, f"deployments[{dep_index}]/base-domain", resolvers)
-            template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
+class DomainRequestHook:
+    """Creates domain request entries at PRE_SAVE.
 
-            if not subdomain or not base_domain or "{subdomain}" not in template:
-                continue
+    Only runs when the ``_request-domain`` transient checkbox is checked.
+    Delegates to ``ensure_domain_requests`` for the actual logic.
+    """
 
-            supported = get_supported_base_domains(cluster)
-            if base_domain in supported:
-                if not is_domain_subdomain_restricted(cluster, base_domain):
-                    continue
-            else:
-                continue
+    order: int = 0
 
-            if get_subdomain_status(yaml_data, base_domain, subdomain) is not None:
-                continue
+    async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
+        for dep in yaml_data.get("deployments", []):
+            if isinstance(dep, dict) and dep.get("_request-domain"):
+                from opi.connectors.subdomain import ensure_domain_requests
+                from opi.core.config import settings
 
-            if not domains_section:
-                domains_section = {}
-                yaml_data["domains"] = domains_section
-            allowed_subdomains = domains_section.setdefault("allowed-subdomains", [])
-
-            domain_entry = None
-            for entry in allowed_subdomains:
-                if isinstance(entry, dict) and entry.get("domain") == base_domain:
-                    domain_entry = entry
-                    break
-            if domain_entry is None:
-                domain_entry = {"domain": base_domain, "subdomains": []}
-                allowed_subdomains.append(domain_entry)
-
-            now = datetime.now(UTC).isoformat()
-            domain_entry["subdomains"].append(
-                {
-                    "name": subdomain.lower(),
-                    "status": "requested",
-                    "history": [{"date": now, "status": "requested"}],
-                }
-            )
-            logger.info("Subdomain request created: %s.%s", subdomain, base_domain)
+                _resolve_missing_base_domains(yaml_data, context)
+                ensure_domain_requests(yaml_data, settings.CLUSTER_MANAGER)
+                return
 
 
 class StripTransientsHook:

@@ -44,10 +44,11 @@
     </c-alert>
     {% endif %}
 
+    {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
     <form id="modal-wizard-form"
           autocomplete="off"
           hx-ext="json-enc"
-          hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ section.section_id }}"
+          hx-post="{{ _step_url_prefix }}{{ section.section_id }}"
           hx-target="#edit-section-inner"
           hx-swap="innerHTML">
 
@@ -58,7 +59,7 @@
         <div class="wizard-step__actions" id="edit-section-actions">
             {% if not steps.is_first %}
             <c-button kind="secondary" label="Vorige" showIcon="before" icon="delta-naar-links"
-                      hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ steps.prev }}"
+                      hx-get="{{ _step_url_prefix }}{{ steps.prev }}"
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
             {% else %}
             <c-button type="button" kind="tertiary" label="Annuleren" @click="closeEditModal()" />

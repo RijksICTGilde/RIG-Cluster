@@ -30,16 +30,20 @@ class DomainHistoryEntry(BaseModel):
     message: str | None = None
 
 
-class CustomDomainEntry(BaseModel):
-    """A custom (non-platform) domain approved for use in a project."""
+class AllowedDomainEntry(BaseModel):
+    """A domain approved (or requested) for use in a project.
+
+    Used for ALL non-default domains — both platform and custom.
+    The cluster default domain doesn't need an entry.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
     domain: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
     supports_dots: Annotated[bool, Field(alias="supports-dots")] = False
     issuer: str | None = None
     restricted_subdomains: Annotated[bool, Field(alias="restricted-subdomains")] = False
-    status: str = Field(pattern=r"^(requested|approved|denied)$")
     history: list[DomainHistoryEntry] = Field(default_factory=list)
 
 
@@ -59,12 +63,12 @@ class AllowedSubdomainEntry(BaseModel):
 
 
 class DomainsModel(BaseModel):
-    """Project-level domain configuration: subdomain allow-lists and custom domains."""
+    """Project-level domain configuration: domain and subdomain approval."""
 
     model_config = ConfigDict(populate_by_name=True)
 
+    allowed_domains: list[AllowedDomainEntry] = Field(default_factory=list, alias="allowed-domains")
     allowed_subdomains: list[AllowedSubdomainEntry] = Field(default_factory=list, alias="allowed-subdomains")
-    custom_domains: list[CustomDomainEntry] = Field(default_factory=list, alias="custom-domains")
 
 
 class ProjectUserModel(BaseModel):

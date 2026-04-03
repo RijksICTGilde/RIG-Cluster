@@ -145,6 +145,8 @@ class KeycloakManager:
                 hostname_format=HostnameFormat.from_domain_mode(domain_mode),
                 domain_format=domain_format,
                 expose_on_bare_domain=expose_on_bare_domain,
+                project_data=project_data,
+                cluster=settings.CLUSTER_MANAGER,
             )
             if all_ingress_hosts:
                 logger.info(f"Generated hostnames for components: {all_ingress_hosts}")

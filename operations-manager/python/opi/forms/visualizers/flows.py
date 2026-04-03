@@ -336,4 +336,16 @@ def get_flow(flow_id: str, **context: Any) -> FormFlow:
                 component_count=context.get("component_count"),
             )
 
+    # Admin domain/subdomain approval flow
+    if flow_id == "admin-domain-approval":
+        from opi.forms.visualizers.wizard_sections import build_domain_approval_section
+
+        return FormFlow(
+            flow_id="admin-domain-approval",
+            title="Domein- en subdomeingoedkeuring",
+            mode=FlowMode.WIZARD,
+            show_review=False,
+            sections=[build_domain_approval_section()],
+        )
+
     raise KeyError(f"Unknown flow: {flow_id}")

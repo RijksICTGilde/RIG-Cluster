@@ -624,6 +624,17 @@ class DeploymentSelectOptionsProvider:
         return [{"value": name, "label": name} for name in self.deployment_names]
 
 
+class ApprovalStatusOptionsProvider:
+    """Provides status options for the admin domain/subdomain approval flow."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "skip", "label": "Overslaan"},
+            {"value": "approved", "label": "Goedkeuren"},
+            {"value": "denied", "label": "Afwijzen"},
+        ]
+
+
 # Registry of all available providers
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
@@ -648,6 +659,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
     "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
     "DeploymentSelectOptionsProvider": DeploymentSelectOptionsProvider,
+    "ApprovalStatusOptionsProvider": ApprovalStatusOptionsProvider,
 }
 
 

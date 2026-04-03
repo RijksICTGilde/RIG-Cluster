@@ -14,6 +14,7 @@ from opi.forms.editables.fields.domains import (
     DOMAIN_CONFIG_EDITABLE,
     DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
     DOMAIN_FORMAT_EDITABLE,
+    DOMAIN_REQUEST_DOMAIN_EDITABLE,
     DOMAIN_REQUEST_SUBDOMAIN_EDITABLE,
     DOMAIN_ROOT_COMPONENT_EDITABLE,
     DOMAIN_SUBDOMAIN_EDITABLE,
@@ -72,13 +73,24 @@ DOMAIN_BARE_DOMAIN_COMPONENT = EditableVisualizer(
     attributes={"data-rerender": "true"},
 )
 
+DOMAIN_REQUEST_DOMAIN = EditableVisualizer(
+    editable=DOMAIN_REQUEST_DOMAIN_EDITABLE,
+    widget=WidgetType.CHECKBOX,
+    label="Domein aanvragen",
+    help_text=(
+        "Het gekozen domein is nog niet goedgekeurd voor dit project. "
+        "Vink de checkbox aan om gebruik van het domein aan te vragen. Na goedkeuring door een beheerder "
+        "kan het domein worden gebruikt."
+    ),
+)
+
 DOMAIN_REQUEST_SUBDOMAIN = EditableVisualizer(
     editable=DOMAIN_REQUEST_SUBDOMAIN_EDITABLE,
     widget=WidgetType.CHECKBOX,
     label="Subdomein aanvragen",
     help_text=(
         "Het gekozen subdomein is nog niet goedgekeurd voor dit domein. "
-        "Vink de checkbox aan om het subdomein aan te vragen en verder te gaan. Na goedkeuring door een beheerder "
+        "Vink de checkbox aan om gebruik van het subdomein aan te vragen en verder te gaan. Na goedkeuring door een beheerder "
         "kan het subdomein worden gebruikt."
     ),
 )
@@ -89,6 +101,7 @@ DOMAIN_CONFIG = EditableVisualizer(
     label="Domeinconfiguratie",
     children=[
         DOMAIN_BASE_DOMAIN,
+        DOMAIN_REQUEST_DOMAIN,
         DOMAIN_CUSTOM_BASE_DOMAIN,
         DOMAIN_FORMAT,
         DOMAIN_SUBDOMAIN,

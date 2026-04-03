@@ -116,23 +116,103 @@ def get_subdomain_status(project_data: dict[str, Any], domain: str, subdomain: s
     return None
 
 
-def get_project_custom_domain_config(project_data: dict[str, Any], domain: str) -> dict[str, Any] | None:
-    """Get custom domain configuration from project data.
+def get_project_allowed_domain_config(project_data: dict[str, Any], domain: str) -> dict[str, Any] | None:
+    """Get allowed domain configuration from project data.
+
+    Looks up domain in ``domains.allowed-domains``. Works for both
+    platform and custom domains — the list is unified.
 
     Args:
         project_data: Parsed project YAML data
-        domain: The custom domain to look up (e.g., "mijn-app.nl")
+        domain: The domain to look up (e.g., "rijks.app", "mijn-app.nl")
 
     Returns:
-        Custom domain config dict if found, None otherwise.
+        Domain config dict if found, None otherwise.
     """
     domains_config = project_data.get("domains")
     if not domains_config or not isinstance(domains_config, dict):
         return None
-    for entry in domains_config.get("custom-domains", []):
+    for entry in domains_config.get("allowed-domains", []):
         if isinstance(entry, dict) and entry.get("domain") == domain:
             return entry
     return None
+
+
+# Backward compatibility alias
+get_project_custom_domain_config = get_project_allowed_domain_config
+
+
+def is_deployment_domain_approved(
+    project_data: dict[str, Any],
+    base_domain: str | None,
+    subdomain: str | None,
+    cluster: str,
+) -> bool:
+    """Check if a deployment's domain+subdomain combination is approved for use.
+
+    Unified approval check — no distinction between custom and predefined domains.
+    The only domain that's always allowed without approval is the cluster default.
+
+    Rules:
+    1. Cluster default domain (ingress_postfix) → always True
+    2. Any other domain → must be in the project's domains section with status approved
+    3. If the domain has restricted subdomains → subdomain must also be approved
+
+    Args:
+        project_data: Parsed project YAML data
+        base_domain: The base domain (e.g., "rijks.app", "mijn-app.nl")
+        subdomain: The subdomain (e.g., "wies"), or None if not used
+        cluster: Cluster name for config lookup
+    """
+    from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
+
+    if not base_domain:
+        return True  # No domain specified, using cluster default
+
+    # Check if this is the cluster default domain
+    ingress_postfix = get_ingress_postfix(cluster)
+    cluster_domain = ingress_postfix.lstrip(".")
+    if base_domain == cluster_domain:
+        return True
+
+    # Check domain approval in allowed-domains (applies to ALL non-default domains)
+    domain_config = get_project_allowed_domain_config(project_data, base_domain)
+    if not domain_config:
+        return False  # Domain not in allowed-domains
+    if domain_config.get("status") != "approved":
+        return False  # Domain not approved
+
+    # Domain approved — check subdomain if present and restricted
+    if subdomain:
+        # Check cluster-level restriction
+        supported = get_supported_base_domains(cluster)
+        if base_domain in supported and is_domain_subdomain_restricted(cluster, base_domain):
+            status = get_subdomain_status(project_data, base_domain, subdomain)
+            return status == "approved"
+        # Check domain-level restriction (for custom domains with restricted-subdomains)
+        if domain_config.get("restricted-subdomains", False):
+            status = get_subdomain_status(project_data, base_domain, subdomain)
+            return status == "approved"
+
+    return True
+
+
+def is_domain_format_dot_based(domain_format: str) -> bool:
+    """Check if a domain format uses dot notation between parts.
+
+    Dot-based formats (e.g., ``component.subdomain``) create multi-level
+    hostnames. The format ID itself uses dots vs dashes to indicate this.
+
+    Examples:
+        "component.subdomain" → True
+        "component-subdomain" → False
+        "subdomain" → False (single part)
+        "component-deployment-project" → False
+    """
+    # Format IDs use dots for dot-based, dashes for dash-based
+    # Strip trailing domain part if present in ID
+    parts_before_domain = domain_format.replace(".domain", "")
+    return "." in parts_before_domain
 
 
 def is_subdomain_allowed_for_project(
@@ -188,35 +268,132 @@ def is_subdomain_allowed_for_project(
     return False, (f"Het subdomein '{subdomain}' op '{base_domain}' is afgewezen.")
 
 
-def is_custom_domain_allowed_for_project(
+def is_domain_allowed_for_project(
     domain: str,
     project_data: dict[str, Any],
 ) -> tuple[bool, str | None]:
-    """Check if a custom domain is approved for use in a project.
+    """Check if a domain is approved for use in a project.
 
-    Custom domains must be listed in the project's custom-domains section
-    with status 'approved' to be used in deployments.
+    All non-default domains must be listed in ``domains.allowed-domains``
+    with ``status: approved`` to be used in deployments.
 
     Args:
-        domain: The custom domain to check (e.g., "mijn-app.nl")
+        domain: The domain to check (e.g., "rijks.app", "mijn-app.nl")
         project_data: Parsed project YAML data
 
     Returns:
         Tuple of (is_allowed, error_message). If allowed, error_message is None.
     """
-    custom_config = get_project_custom_domain_config(project_data, domain)
-    if custom_config is None:
+    domain_config = get_project_allowed_domain_config(project_data, domain)
+    if domain_config is None:
         return False, (
-            f"Het domein '{domain}' is niet geregistreerd als eigen domein voor dit project. "
-            f"Voeg het toe aan 'domains.custom-domains' in het projectbestand."
+            f"Het domein '{domain}' is niet goedgekeurd voor dit project. Vraag het domein aan via de wizard."
         )
-    status = custom_config.get("status", "")
+    status = domain_config.get("status", "")
     if status != "approved":
         return False, (
             f"Het domein '{domain}' heeft status '{status}' en kan nog niet worden gebruikt. "
             f"Alleen domeinen met status 'approved' mogen worden ingezet."
         )
     return True, None
+
+
+# Backward compatibility alias
+is_custom_domain_allowed_for_project = is_domain_allowed_for_project
+
+
+def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
+    """Ensure unapproved domains and subdomains have request entries.
+
+    Scans all deployments in the project data. For each deployment using
+    a domain or subdomain that isn't approved, adds a ``status: requested``
+    entry to the project's ``domains`` section.
+
+    Called by both the wizard (via hooks) and the API when processing
+    project YAML. Mutates ``project_data`` in place.
+
+    Args:
+        project_data: Parsed project YAML data (mutated in place)
+        cluster: Cluster name for config lookup
+    """
+    from datetime import UTC, datetime
+
+    from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
+    from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+
+    ingress_postfix = get_ingress_postfix(cluster)
+    cluster_domain = ingress_postfix.lstrip(".")
+
+    for dep in project_data.get("deployments", []):
+        if not isinstance(dep, dict):
+            continue
+
+        base_domain = dep.get("base-domain")
+        subdomain = dep.get("subdomain")
+        domain_format = dep.get("domain-format", "")
+        template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
+
+        if not base_domain or base_domain == "__custom__":
+            continue
+
+        is_cluster_default = base_domain == cluster_domain
+
+        # --- Domain-level request (skip for cluster default) ---
+        if not is_cluster_default:
+            domain_config = get_project_allowed_domain_config(project_data, base_domain)
+            if domain_config is None:
+                domains_section = project_data.setdefault("domains", {})
+                allowed_domains = domains_section.setdefault("allowed-domains", [])
+                now = datetime.now(UTC).isoformat()
+                allowed_domains.append(
+                    {
+                        "domain": base_domain,
+                        "status": "requested",
+                        "history": [{"date": now, "status": "requested"}],
+                    }
+                )
+                logger.info("Domain request created: %s", base_domain)
+
+        # --- Subdomain-level request ---
+        if not subdomain or "{subdomain}" not in template:
+            continue
+
+        # Check if domain restricts subdomains
+        supported = get_supported_base_domains(cluster)
+        is_restricted = False
+        if base_domain in supported:
+            is_restricted = is_domain_subdomain_restricted(cluster, base_domain)
+        else:
+            dc = get_project_allowed_domain_config(project_data, base_domain)
+            is_restricted = bool(dc and dc.get("restricted-subdomains", False))
+
+        if not is_restricted:
+            continue
+
+        if get_subdomain_status(project_data, base_domain, subdomain) is not None:
+            continue
+
+        domains_section = project_data.setdefault("domains", {})
+        allowed_subdomains = domains_section.setdefault("allowed-subdomains", [])
+
+        domain_entry = None
+        for entry in allowed_subdomains:
+            if isinstance(entry, dict) and entry.get("domain") == base_domain:
+                domain_entry = entry
+                break
+        if domain_entry is None:
+            domain_entry = {"domain": base_domain, "subdomains": []}
+            allowed_subdomains.append(domain_entry)
+
+        now = datetime.now(UTC).isoformat()
+        domain_entry["subdomains"].append(
+            {
+                "name": subdomain.lower(),
+                "status": "requested",
+                "history": [{"date": now, "status": "requested"}],
+            }
+        )
+        logger.info("Subdomain request created: %s.%s", subdomain, base_domain)
 
 
 # Sentinel value for bare domain registrations in subdomain_registry.

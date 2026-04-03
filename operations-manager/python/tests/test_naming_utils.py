@@ -62,6 +62,12 @@ from opi.utils.naming import (
     sanitize_kubernetes_name,
 )
 
+_CLUSTER = "local"
+
+
+def _approved(*domains: str) -> dict:
+    return {"domains": {"allowed-domains": [{"domain": d, "status": "approved"} for d in domains]}}
+
 
 class TestGenerateUniqueName:
     """Tests for generate_unique_name function."""
@@ -668,6 +674,8 @@ class TestGetComponentIngressMap:
             subdomain="myapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
+            project_data={},
+            cluster="local",
         )
         assert result == {"prod-frontend": "frontend.myapp.rijks.app"}
 
@@ -680,6 +688,8 @@ class TestGetComponentIngressMap:
             ".kind",
             subdomain="myapp",
             base_domain="custom.nl",
+            project_data={},
+            cluster="local",
         )
         assert result == {"prod-frontend": "myapp.custom.nl"}
 
@@ -690,6 +700,8 @@ class TestGetComponentIngressMap:
             "prod",
             "myapp",
             ".kind",
+            project_data={},
+            cluster="local",
         )
         assert result == {"prod-frontend": "frontend-prod-myapp.kind"}
 
@@ -707,6 +719,8 @@ class TestGetDeploymentHostnames:
             subdomain="myapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert "frontend.myapp.rijks.app" in result
         assert "backend.myapp.rijks.app" in result
@@ -720,6 +734,8 @@ class TestGetDeploymentHostnames:
             "prod",
             "myapp",
             ".kind",
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert len(result) == 2
 
@@ -731,6 +747,8 @@ class TestGetDeploymentHostnames:
             "myapp",
             ".dev.example.com",
             subdomain="myapp",
+            project_data={},
+            cluster=_CLUSTER,
         )
         # In subdomain mode with subdomain != deployment_name, both resolve to same hostname
         assert "myapp.dev.example.com" in result
@@ -997,6 +1015,8 @@ class TestGetDeploymentHostnamesBareDomain:
             base_domain="voorbeeld.nl",
             domain_format="subdomain",
             expose_on_bare_domain="frontend",
+            project_data=_approved("voorbeeld.nl"),
+            cluster=_CLUSTER,
         )
         assert "voorbeeld.nl" in hostnames
         assert "www.voorbeeld.nl" in hostnames
@@ -1012,6 +1032,8 @@ class TestGetDeploymentHostnamesBareDomain:
             base_domain="voorbeeld.nl",
             domain_format="subdomain",
             expose_on_bare_domain=False,
+            project_data=_approved("voorbeeld.nl"),
+            cluster=_CLUSTER,
         )
         assert "voorbeeld.nl" not in hostnames
 
@@ -1026,6 +1048,8 @@ class TestGetDeploymentHostnamesBareDomain:
             base_domain="voorbeeld.nl",
             domain_format="subdomain",
             expose_on_bare_domain="",
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert "voorbeeld.nl" not in hostnames
 
@@ -1040,5 +1064,7 @@ class TestGetDeploymentHostnamesBareDomain:
             domain_format="subdomain",
             subdomain="www",
             expose_on_bare_domain="frontend",
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert hostnames.count("voorbeeld.nl") == 1

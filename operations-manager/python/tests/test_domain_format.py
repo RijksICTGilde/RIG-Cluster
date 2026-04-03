@@ -27,6 +27,16 @@ from opi.utils.naming import (
     resolve_domain_tail,
 )
 
+# Default cluster and pre-approved project data for tests that don't test approval.
+_CLUSTER = "local"
+_NO_APPROVAL = {}  # Cluster default domains don't need approval
+
+
+def _approved(*domains: str) -> dict:
+    """Create project_data with the given domains pre-approved."""
+    return {"domains": {"allowed-domains": [{"domain": d, "status": "approved"} for d in domains]}}
+
+
 # ---------------------------------------------------------------------------
 # resolve_domain_tail
 # ---------------------------------------------------------------------------
@@ -132,6 +142,8 @@ class TestGetComponentIngressMapWithDomainFormat:
             "myapp",
             ".kind",
             domain_format="component-deployment-project",
+            project_data=_NO_APPROVAL,
+            cluster=_CLUSTER,
         )
         assert result == {"poc-frontend": "frontend-poc-myapp.kind"}
 
@@ -144,6 +156,8 @@ class TestGetComponentIngressMapWithDomainFormat:
             subdomain="moza",
             base_domain="rijksapp.dev",
             domain_format="deployment.subdomain",
+            project_data=_approved("rijksapp.dev"),
+            cluster=_CLUSTER,
         )
         assert result == {"poc-frontend": "poc.moza.rijksapp.dev"}
 
@@ -155,6 +169,8 @@ class TestGetComponentIngressMapWithDomainFormat:
             ".kind",
             base_domain="rijksapp.dev",
             domain_format="deployment.project",
+            project_data=_approved("rijksapp.dev"),
+            cluster=_CLUSTER,
         )
         assert result == {"poc-frontend": "poc.myapp.rijksapp.dev"}
 
@@ -165,6 +181,8 @@ class TestGetComponentIngressMapWithDomainFormat:
             "myapp",
             ".kind",
             domain_format="deployment-project",
+            project_data=_NO_APPROVAL,
+            cluster=_CLUSTER,
         )
         assert result == {"poc-frontend": "poc-myapp.kind"}
 
@@ -176,6 +194,8 @@ class TestGetComponentIngressMapWithDomainFormat:
             "myapp",
             ".kind",
             domain_format=None,
+            project_data=_NO_APPROVAL,
+            cluster=_CLUSTER,
         )
         # Legacy: component-deployment-project.cluster
         assert result == {"poc-frontend": "frontend-poc-myapp.kind"}
@@ -191,6 +211,8 @@ class TestGetComponentIngressMapWithDomainFormat:
             base_domain="rijksapp.dev",
             hostname_format=HostnameFormat.DOTS,
             domain_format=None,
+            project_data=_approved("rijksapp.dev"),
+            cluster=_CLUSTER,
         )
         # Legacy nice-url: component.subdomain.base_domain
         assert result == {"poc-frontend": "frontend.moza.rijksapp.dev"}
@@ -212,6 +234,8 @@ class TestGetDeploymentHostnamesWithDomainFormat:
             subdomain="moza",
             base_domain="rijksapp.dev",
             domain_format="component.deployment.subdomain",
+            project_data=_approved("rijksapp.dev"),
+            cluster=_CLUSTER,
         )
         # Each component gets its own hostname, no root
         assert "frontend.poc.moza.rijksapp.dev" in hostnames
@@ -230,6 +254,8 @@ class TestGetDeploymentHostnamesWithDomainFormat:
             base_domain="rijksapp.dev",
             hostname_format=HostnameFormat.DOTS,
             domain_format=None,
+            project_data=_approved("rijksapp.dev"),
+            cluster=_CLUSTER,
         )
         assert "frontend.moza.rijksapp.dev" in hostnames
         assert "moza.rijksapp.dev" in hostnames
@@ -244,6 +270,8 @@ class TestGetDeploymentHostnamesWithDomainFormat:
             subdomain="moza",
             base_domain="rijksapp.dev",
             domain_format="deployment.subdomain",
+            project_data=_approved("rijksapp.dev"),
+            cluster=_CLUSTER,
         )
         # Both components produce poc.moza.rijksapp.dev, deduplicated
         assert hostnames == ["poc.moza.rijksapp.dev"]

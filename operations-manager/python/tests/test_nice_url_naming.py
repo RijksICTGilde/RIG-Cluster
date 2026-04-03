@@ -21,6 +21,8 @@ from opi.utils.naming import (
     get_deployment_hostnames,
 )
 
+_CLUSTER = "local"
+
 
 class TestGenerateNiceUrlHostname:
     """Tests for generate_nice_url_hostname function."""
@@ -96,6 +98,8 @@ class TestGetComponentIngressMapNiceUrl:
             subdomain="mydomain",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert "prod-frontend" in result
         assert result["prod-frontend"] == "frontend.mydomain.rijks.app"
@@ -110,6 +114,8 @@ class TestGetComponentIngressMapNiceUrl:
             subdomain="testapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert "staging-backend" in result
         assert result["staging-backend"] == "backend.testapp.rijks.app"
@@ -121,7 +127,9 @@ class TestGetComponentIngressMapNiceUrl:
             deployment_name="prod",
             project_name="myapp",
             ingress_postfix=".cluster.example.com",
-            hostname_format=HostnameFormat.DASHES,  # Default mode
+            hostname_format=HostnameFormat.DASHES,  # Default mode,
+            project_data={},
+            cluster=_CLUSTER,
         )
         # Should use the default generate_ingress_map behavior
         assert "prod-frontend" in result
@@ -135,6 +143,8 @@ class TestGetComponentIngressMapNiceUrl:
             ingress_postfix=".cluster.example.com",
             subdomain="myapp",
             base_domain="custom.nl",
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert "prod-frontend" in result
         assert result["prod-frontend"] == "myapp.custom.nl"
@@ -153,6 +163,8 @@ class TestGetDeploymentHostnamesNiceUrl:
             subdomain="mydomain",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
+            project_data={},
+            cluster=_CLUSTER,
         )
         # Should have 4 hostnames: 3 components + 1 root
         assert len(result) == 4
@@ -171,6 +183,8 @@ class TestGetDeploymentHostnamesNiceUrl:
             subdomain="testapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert len(result) == 2
         assert "frontend.testapp.rijks.app" in result
