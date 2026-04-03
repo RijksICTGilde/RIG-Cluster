@@ -266,7 +266,11 @@ class TestSubdomainRequestHook:
         }
 
         await hook.execute(yaml_data, {})
-        assert "domains" not in yaml_data
+        # Domain request IS created (unknown.com needs approval),
+        # but no subdomain request (subdomains not restricted on unknown domains)
+        assert "domains" in yaml_data
+        assert "allowed-domains" in yaml_data["domains"]
+        assert "allowed-subdomains" not in yaml_data.get("domains", {})
 
     @pytest.mark.asyncio
     async def test_skips_already_registered_subdomain(self, monkeypatch):

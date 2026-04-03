@@ -4248,6 +4248,8 @@ class ProjectManager:
                 base_domain=base_domain,
                 hostname_format=hostname_format,
                 domain_format=domain_format,
+                project_data=project_data,
+                cluster=settings.CLUSTER_MANAGER,
             )
             hostname = next(iter(ingress_map.values()))
 
@@ -5546,6 +5548,11 @@ class ProjectManager:
 
                         break
 
+                # Ensure unapproved domains/subdomains get request entries
+                from opi.connectors.subdomain import ensure_domain_requests
+
+                ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
+
                 # Save the updated project data
                 await self.save_project_data()
 
@@ -5683,6 +5690,11 @@ class ProjectManager:
 
                 # Add the new deployment to the project data
                 project_data["deployments"].append(new_deployment)
+
+                # Ensure unapproved domains/subdomains get request entries
+                from opi.connectors.subdomain import ensure_domain_requests
+
+                ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
                 # Save the updated project data
                 await self.save_project_data()
