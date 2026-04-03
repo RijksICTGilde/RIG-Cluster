@@ -7,12 +7,16 @@ the wizard creates a single deployment.
 
 from __future__ import annotations
 
-from opi.forms.editables.conditions import SentinelValueCondition, SubdomainNeedsRequestCondition
+from opi.forms.editables.conditions import (
+    DomainNeedsRequestCondition,
+    SentinelValueCondition,
+    SubdomainNeedsRequestCondition,
+)
 from opi.forms.editables.converters import CustomDomainSelectConverter
 from opi.forms.editables.editable import Editable, FormState
 from opi.forms.editables.enforcers import DomainConfigEnforcer
 from opi.forms.editables.generators import IssuerGenerator
-from opi.forms.editables.hooks import SubdomainRequestHook
+from opi.forms.editables.hooks import DomainRequestHook, SubdomainRequestHook
 from opi.forms.editables.resolvers import ClusterDefaultDomain
 from opi.forms.editables.validators import (
     BaseDomainValidator,
@@ -84,6 +88,16 @@ DOMAIN_ISSUER_EDITABLE = Editable(
     remove_when_none=True,
 )
 
+DOMAIN_REQUEST_DOMAIN_EDITABLE = Editable(
+    yaml_path="deployments[*]/_request-domain",
+    transient=True,
+    required=True,
+    show_when=DomainNeedsRequestCondition(),
+    hooks={
+        FormState.PRE_SAVE: DomainRequestHook(),
+    },
+)
+
 DOMAIN_REQUEST_SUBDOMAIN_EDITABLE = Editable(
     yaml_path="deployments[*]/_request-subdomain",
     transient=True,
@@ -100,6 +114,7 @@ DOMAIN_CONFIG_EDITABLE = Editable(
     children=[
         DOMAIN_FORMAT_EDITABLE,
         DOMAIN_BASE_DOMAIN_EDITABLE,
+        DOMAIN_REQUEST_DOMAIN_EDITABLE,
         DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
         DOMAIN_SUBDOMAIN_EDITABLE,
         DOMAIN_REQUEST_SUBDOMAIN_EDITABLE,

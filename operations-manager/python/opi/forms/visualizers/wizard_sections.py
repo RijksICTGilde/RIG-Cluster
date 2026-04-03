@@ -273,6 +273,7 @@ DOMAIN_SECTION = FormSection(
     layout=[
         TemplatePartial(template="wizard/partials/domain_info.html.j2"),
         "deployments[*]/base-domain",
+        "deployments[*]/_request-domain",
         "deployments[*]/base-domain:custom",
         "deployments[*]/domain-format",
         "deployments[*]/subdomain",
@@ -878,6 +879,87 @@ def build_deployment_add_domain_section(deployment_index: int) -> FormSection:
     with URL preview, info partial, root-component, and DomainConfigEnforcer.
     """
     return build_domain_section(deployment_index, edit_mode=True)
+
+
+# ---------------------------------------------------------------------------
+# Admin domain/subdomain approval section
+# ---------------------------------------------------------------------------
+
+
+def _apply_approval_to_project(
+    project_data: dict[str, Any],
+    wizard_data: dict[str, Any],
+) -> None:
+    """Map approval items back into the project's domains structure.
+
+    For each item where status != "skip", updates the status in the
+    correct location and appends a history entry.
+    """
+    from datetime import UTC, datetime
+
+    items = wizard_data.get("_approval_items", [])
+    if not items:
+        return
+
+    admin_email = wizard_data.get("_admin_email", "admin")
+    domains = project_data.setdefault("domains", {})
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        new_status = item.get("status", "skip")
+        if new_status == "skip":
+            continue
+
+        item_type = item.get("type")
+        domain = item.get("domain", "")
+        name = item.get("name", "")
+        message = item.get("message") or None
+
+        history_entry: dict[str, str] = {
+            "date": datetime.now(UTC).isoformat(),
+            "status": new_status,
+        }
+        if admin_email:
+            history_entry["by"] = admin_email
+        if message:
+            history_entry["message"] = message
+
+        if item_type == "subdomain":
+            for entry in domains.get("allowed-subdomains", []):
+                if not isinstance(entry, dict) or entry.get("domain") != domain:
+                    continue
+                for sub in entry.get("subdomains", []):
+                    if isinstance(sub, dict) and sub.get("name") == name:
+                        sub["status"] = new_status
+                        sub.setdefault("history", []).append(history_entry)
+                        break
+
+        elif item_type == "domain":
+            for entry in domains.get("allowed-domains", []):
+                if isinstance(entry, dict) and entry.get("domain") == domain:
+                    entry["status"] = new_status
+                    entry.setdefault("history", []).append(history_entry)
+                    break
+
+
+def build_domain_approval_section() -> FormSection:
+    """Build the admin domain/subdomain approval section.
+
+    Uses the same pattern as backup/restore: no editables, a TemplatePartial
+    for the UI, and raw form data stored directly. The post_merge callback
+    maps the submitted data back to the project YAML.
+    """
+    return FormSection(
+        section_id="domain-approval",
+        title="Domein- en subdomeingoedkeuring",
+        icon="vinkje",
+        description="Keur domein- en subdomeinaanvragen goed of af",
+        editables=[],
+        layout=[TemplatePartial(template="wizard/partials/approval_items.html.j2")],
+        post_save_action="process_project",
+        post_merge=_apply_approval_to_project,
+    )
 
 
 ALL_SECTIONS: list[FormSection] = [

@@ -26,6 +26,7 @@ from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
 from .router_detail_edit import detail_edit_router
 from .router_self_service import check_subdomain_availability_web
+from .router_subdomain_admin import subdomain_admin_router
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
 from .router_wizard import wizard_router
@@ -44,6 +45,7 @@ web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
+web_router.include_router(subdomain_admin_router)
 
 
 @web_router.get("/")
@@ -1340,6 +1342,8 @@ async def project_details(request: Request, project_name: str):
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
                                     domain_format=domain_format,
+                                    project_data=project_data,
+                                    cluster=cluster,
                                 )
 
                                 # Create links for all ingress hostnames
@@ -1391,6 +1395,8 @@ async def project_details(request: Request, project_name: str):
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
                                     domain_format=domain_format,
+                                    project_data=project_data,
+                                    cluster=cluster,
                                 )
 
                                 # Create links for all ingress hostnames
@@ -1726,6 +1732,8 @@ async def project_details(request: Request, project_name: str):
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
                                     domain_format=domain_format,
+                                    project_data=project_data,
+                                    cluster=cluster,
                                 )
 
                                 for ingress_name, hostname in ingress_map.items():
@@ -1775,6 +1783,8 @@ async def project_details(request: Request, project_name: str):
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
                                     domain_format=domain_format,
+                                    project_data=project_data,
+                                    cluster=cluster,
                                 )
 
                                 for ingress_name, hostname in ingress_map.items():
@@ -2283,7 +2293,9 @@ async def _update_keycloak_redirect_uris_for_deployment(
             ingress_postfix=ingress_postfix,
             subdomain=subdomain,
             base_domain=base_domain,
-            domain_mode=domain_mode,
+            domain_format=deployment.get("domain-format"),
+            project_data=project_data,
+            cluster=cluster,
         )
 
         if not all_ingress_hosts:

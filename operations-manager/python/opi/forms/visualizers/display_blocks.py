@@ -141,4 +141,14 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
     if bare_domain_component and domain:
         urls.append({"component": f"{bare_domain_component} (kaal domein)", "url": domain})
 
-    return {"urls": urls, "has_urls": bool(urls)}
+    # Check if domain or subdomain needs approval
+    needs_approval = False
+    from opi.connectors.subdomain import is_deployment_domain_approved
+    from opi.core.config import settings
+
+    cluster = settings.CLUSTER_MANAGER
+    effective_domain = domain if base_domain != "__custom__" else custom_domain
+    if effective_domain and cluster:
+        needs_approval = not is_deployment_domain_approved(yaml_data, effective_domain, subdomain or None, cluster)
+
+    return {"urls": urls, "has_urls": bool(urls), "needs_approval": needs_approval}

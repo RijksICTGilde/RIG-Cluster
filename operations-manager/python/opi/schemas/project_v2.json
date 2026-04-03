@@ -67,9 +67,9 @@
           "type": "array",
           "items": { "$ref": "#/$defs/allowed-subdomain-entry" }
         },
-        "custom-domains": {
+        "allowed-domains": {
           "type": "array",
-          "items": { "$ref": "#/$defs/custom-domain-entry" }
+          "items": { "$ref": "#/$defs/allowed-domain-entry" }
         }
       }
     },
@@ -101,16 +101,16 @@
       }
     },
 
-    "custom-domain-entry": {
+    "allowed-domain-entry": {
       "type": "object",
       "required": ["domain", "status"],
       "additionalProperties": false,
       "properties": {
         "domain": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
         "supports-dots": { "type": "boolean" },
         "issuer": { "type": "string" },
         "restricted-subdomains": { "type": "boolean" },
-        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
         "history": {
           "type": "array",
           "items": { "$ref": "#/$defs/domain-history-entry" }
