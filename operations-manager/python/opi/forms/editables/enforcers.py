@@ -2,6 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.connectors.subdomain import (
+    BARE_DOMAIN_SUBDOMAIN,
+    SubdomainConnector,
+    get_project_allowed_domain_config,
+    get_subdomain_status,
+    get_supported_base_domains,
+    is_domain_allowed_for_project,
+    is_subdomain_allowed_for_project,
+)
+from opi.core import config as opi_config
+from opi.core.cluster_config import get_domain_supports_dots
+from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+
 
 class FieldError(ValueError):
     """Validation error tied to a specific field path.
@@ -104,8 +118,6 @@ def extract_service_names(services: list[Any]) -> list[str]:
 
 def _validate_memory_request_limit(comp_index: int, request_val: str, limit_val: str) -> None:
     """Raise FieldError on the limit field if memory request exceeds the limit."""
-    from opi.services.resource_analyzer import parse_k8s_memory_to_mi
-
     try:
         request_mi = parse_k8s_memory_to_mi(str(request_val))
         limit_mi = parse_k8s_memory_to_mi(str(limit_val))
@@ -194,10 +206,6 @@ class DomainConfigEnforcer:
         self.deployment_index = deployment_index
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
-        from opi.core.cluster_config import get_domain_supports_dots
-        from opi.core.config import settings
-        from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
-
         deployments = value.get("deployments", [])
         if len(deployments) <= self.deployment_index:
             return value
@@ -212,6 +220,9 @@ class DomainConfigEnforcer:
         custom_domain = dep.get("base-domain:custom")
         subdomain = dep.get("subdomain")
 
+        cluster = opi_config.settings.CLUSTER_MANAGER
+        supported = get_supported_base_domains(cluster)
+
         # When base-domain is "__custom__", user selected custom domain input
         # Validate that they actually filled it in
         if base_domain == "__custom__":
@@ -223,9 +234,6 @@ class DomainConfigEnforcer:
             actual_domain = base_domain
         else:
             # Resolve default domain when not explicitly selected
-            from opi.connectors.subdomain import get_supported_base_domains
-
-            supported = get_supported_base_domains(settings.CLUSTER_MANAGER)
             actual_domain = next(iter(supported)) if supported else None
 
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
@@ -234,17 +242,12 @@ class DomainConfigEnforcer:
 
         # Check if domain format (with dots) is compatible with the selected domain
         if actual_domain and "." in domain_format:
-            cluster = settings.CLUSTER_MANAGER
             supports_dots = get_domain_supports_dots(cluster, actual_domain)
             # For custom domains not in cluster config, check project-level config
-            if not supports_dots:
-                from opi.connectors.subdomain import get_project_custom_domain_config, get_supported_base_domains
-
-                supported = get_supported_base_domains(cluster=cluster)
-                if actual_domain.lower() not in supported:
-                    custom_config = get_project_custom_domain_config(value, actual_domain)
-                    if custom_config:
-                        supports_dots = custom_config.get("supports-dots", False)
+            if not supports_dots and actual_domain.lower() not in supported:
+                custom_config = get_project_allowed_domain_config(value, actual_domain)
+                if custom_config:
+                    supports_dots = custom_config.get("supports-dots", False)
             if not supports_dots:
                 raise ValueError(
                     f"Het gekozen URL-formaat ondersteunt geen punten in de domeinnaam. "
@@ -253,23 +256,13 @@ class DomainConfigEnforcer:
                 )
 
         # Check custom domain approval for non-platform domains
-        if actual_domain and base_domain == "__custom__":
-            from opi.connectors.subdomain import (
-                get_supported_base_domains,
-                is_custom_domain_allowed_for_project,
-            )
-
-            supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
-            if actual_domain.lower() not in supported:
-                is_allowed, error_msg = is_custom_domain_allowed_for_project(actual_domain, value)
-                if not is_allowed:
-                    raise ValueError(error_msg)
+        if actual_domain and base_domain == "__custom__" and actual_domain.lower() not in supported:
+            is_allowed, error_msg = is_domain_allowed_for_project(actual_domain, value)
+            if not is_allowed:
+                raise ValueError(error_msg)
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
-            from opi.connectors.subdomain import get_subdomain_status, is_subdomain_allowed_for_project
-
-            cluster = settings.CLUSTER_MANAGER
             subdomain_field = f"deployments[{self.deployment_index}]/subdomain"
             is_allowed, error_msg = is_subdomain_allowed_for_project(subdomain, actual_domain, value, cluster)
             if not is_allowed:
@@ -294,10 +287,6 @@ class DomainConfigEnforcer:
         # Validate bare domain component: only valid with custom domains
         bare_domain_component = dep.get("expose-component-on-bare-domain")
         if bare_domain_component and actual_domain:
-            from opi.connectors.subdomain import get_supported_base_domains
-            from opi.core.config import settings
-
-            supported = get_supported_base_domains(cluster=settings.CLUSTER_MANAGER)
             if actual_domain.lower() in supported:
                 raise ValueError("Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen")
             await self._check_bare_domain_availability(actual_domain, context)
@@ -315,8 +304,6 @@ class DomainConfigEnforcer:
         Skips the check when the current project already owns the registration
         (edit mode).
         """
-        from opi.connectors.subdomain import SubdomainConnector
-
         connector = SubdomainConnector()
         registration = await connector.get_by_subdomain(subdomain.lower(), base_domain.lower())
 
@@ -340,8 +327,6 @@ class DomainConfigEnforcer:
         Skips the check when the current project already owns the registration
         (edit mode).
         """
-        from opi.connectors.subdomain import BARE_DOMAIN_SUBDOMAIN, SubdomainConnector
-
         connector = SubdomainConnector()
         registration = await connector.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain.lower())
 

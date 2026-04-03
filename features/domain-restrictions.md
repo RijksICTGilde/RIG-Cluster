@@ -55,7 +55,7 @@ Custom domains (domains not managed by ZAD, like `mijn-app.nl`) require explicit
 
 ```yaml
 domains:
-  custom-domains:
+  allowed-domains:
     - domain: mijn-app.nl
       supports-dots: true
       issuer: letsencrypt
@@ -114,7 +114,7 @@ The `supports-dots` field controls whether dot-separated domain formats (like `c
 
 2. **Project YAML model** (`project_file.py`): `DomainsModel` with `AllowedSubdomainEntry` and `CustomDomainEntry` Pydantic models.
 
-3. **Validation helpers** (`subdomain.py`): `is_subdomain_allowed_for_project()` and `is_custom_domain_allowed_for_project()` check restrictions against project data.
+3. **Validation helpers** (`subdomain.py`): `is_subdomain_allowed_for_project()` and `is_domain_allowed_for_project()` check restrictions against project data.
 
 4. **Enforcer** (`enforcers.py`): `DomainConfigEnforcer` checks subdomain restrictions and custom domain approval during form submission. It has access to the full project YAML data.
 

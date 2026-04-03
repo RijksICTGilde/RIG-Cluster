@@ -8,12 +8,17 @@ Reuses the editable form framework — no custom form processing.
 from __future__ import annotations
 
 import logging
+from io import StringIO
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from ruamel.yaml import YAML
+from starlette.background import BackgroundTask
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.simple_background import process_project_yaml_background
+from opi.core.task_manager import create_task
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.visualizers.flows import get_flow
@@ -27,8 +32,10 @@ from opi.forms.wizard.session import (
     init_modal_wizard_state,
     save_modal_wizard_state,
 )
+from opi.handlers.project_file_handler import save_project_file
 from opi.services.project_service import get_project_service
 from opi.web.menu import get_menu_items
+from opi.web.router_wizard import _apply_literal_scalars
 
 logger = logging.getLogger(__name__)
 
@@ -299,16 +306,6 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
 async def _do_submit(request: Request, user: dict, project_name: str) -> HTMLResponse:
     """Execute the final approval submission."""
-    from io import StringIO
-
-    from ruamel.yaml import YAML
-    from starlette.background import BackgroundTask
-
-    from opi.core.simple_background import process_project_yaml_background
-    from opi.core.task_manager import create_task
-    from opi.handlers.project_file_handler import save_project_file
-    from opi.web.router_wizard import _apply_literal_scalars
-
     state = get_modal_wizard_state(request)
     if not state:
         raise HTTPException(

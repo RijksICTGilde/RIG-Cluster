@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from opi.forms.editables.editable import apply_virtualize
+from opi.forms.editables.editable import EditableCondition, apply_virtualize
 from opi.forms.editables.path import resolve_path
+from opi.forms.editables.resolvers import build_resolver_map
 from opi.forms.editables.service_path import smart_get_value
 from opi.forms.field import FormField
 from opi.forms.visualizers.providers import get_provider
@@ -194,16 +195,12 @@ def should_render_editable(
     when a converter maps stored values to sentinel display values (e.g.
     ``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` → ``"__custom__"``).
     """
-    from opi.forms.editables.editable import EditableCondition
-
     ed = editable.editable
     depends_on = ed.depends_on
     show_when = ed.show_when
 
     # Callable condition: evaluate against full yaml_data
     if isinstance(show_when, EditableCondition):
-        from opi.forms.editables.resolvers import build_resolver_map
-
         # Provide resolver map so the condition can resolve transient
         # defaults (e.g. base-domain when not explicitly selected)
         if siblings and hasattr(show_when, "set_resolvers"):
