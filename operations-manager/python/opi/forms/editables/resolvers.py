@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from opi.connectors import subdomain as subdomain_connector
+from opi.core import config as opi_config
 from opi.forms.editables.service_path import smart_get_value
 
 if TYPE_CHECKING:
@@ -59,10 +61,7 @@ class ClusterDefaultDomain:
     """
 
     def resolve(self, yaml_data: dict[str, Any]) -> Any:
-        from opi.connectors.subdomain import get_supported_base_domains
-        from opi.core.config import settings
-
-        supported = get_supported_base_domains(settings.CLUSTER_MANAGER)
+        supported = subdomain_connector.get_supported_base_domains(opi_config.settings.CLUSTER_MANAGER)
         if supported:
             return next(iter(supported))
         return None

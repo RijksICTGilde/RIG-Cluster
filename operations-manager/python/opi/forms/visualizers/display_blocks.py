@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.connectors.subdomain import is_deployment_domain_approved
+from opi.core import config as opi_config
+from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_format
 
 
 def _get_default_domain() -> str:
     """Return the ingress postfix domain for the current cluster (the cluster default)."""
-    from opi.core.cluster_config import CLUSTER_CONFIG
-    from opi.core.config import settings
-
-    cluster = settings.CLUSTER_MANAGER
+    cluster = opi_config.settings.CLUSTER_MANAGER
     if cluster and cluster in CLUSTER_CONFIG:
         postfix = CLUSTER_CONFIG[cluster].get("ingress_postfix", "")
         if postfix:
@@ -143,10 +143,7 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
 
     # Check if domain or subdomain needs approval
     needs_approval = False
-    from opi.connectors.subdomain import is_deployment_domain_approved
-    from opi.core.config import settings
-
-    cluster = settings.CLUSTER_MANAGER
+    cluster = opi_config.settings.CLUSTER_MANAGER
     effective_domain = domain if base_domain != "__custom__" else custom_domain
     if effective_domain and cluster:
         needs_approval = not is_deployment_domain_approved(yaml_data, effective_domain, subdomain or None, cluster)

@@ -9,6 +9,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from opi.connectors.subdomain import ensure_domain_requests
+from opi.core import config as opi_config
+from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.editables.resolvers import get_effective_value
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,8 +28,6 @@ def _resolve_missing_base_domains(yaml_data: dict[str, Any], context: dict[str, 
     resolvers = context.get("resolvers")
     if not resolvers:
         return
-
-    from opi.forms.editables.resolvers import get_effective_value
 
     for i, dep in enumerate(yaml_data.get("deployments", [])):
         if isinstance(dep, dict) and not dep.get("base-domain"):
@@ -45,11 +48,8 @@ class SubdomainRequestHook:
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
         for dep in yaml_data.get("deployments", []):
             if isinstance(dep, dict) and dep.get("_request-subdomain"):
-                from opi.connectors.subdomain import ensure_domain_requests
-                from opi.core.config import settings
-
                 _resolve_missing_base_domains(yaml_data, context)
-                ensure_domain_requests(yaml_data, settings.CLUSTER_MANAGER)
+                ensure_domain_requests(yaml_data, opi_config.settings.CLUSTER_MANAGER)
                 return
 
 
@@ -65,11 +65,8 @@ class DomainRequestHook:
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
         for dep in yaml_data.get("deployments", []):
             if isinstance(dep, dict) and dep.get("_request-domain"):
-                from opi.connectors.subdomain import ensure_domain_requests
-                from opi.core.config import settings
-
                 _resolve_missing_base_domains(yaml_data, context)
-                ensure_domain_requests(yaml_data, settings.CLUSTER_MANAGER)
+                ensure_domain_requests(yaml_data, opi_config.settings.CLUSTER_MANAGER)
                 return
 
 
@@ -87,7 +84,5 @@ class StripTransientsHook:
         self._editables = editables
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
-        from opi.forms.editables.processor import EditableFormProcessor
-
         processor = EditableFormProcessor()
         processor.strip_transients_from(yaml_data, self._editables)
