@@ -31,7 +31,7 @@ def _normalize_path_config(path_config: Any, label: str = "unknown") -> list[dic
     - ``list[dict]``: canonical v2.2+ format with ``match`` and optional ``rewrite``
     """
     if isinstance(path_config, str):
-        logger.debug(f"Found single path '{path_config}' for '{label}'")
+        logger.debug("Found single path '%s' for '%s'", path_config, label)
         return [{"match": path_config, "rewrite": None}]
 
     if isinstance(path_config, list):
@@ -42,10 +42,10 @@ def _normalize_path_config(path_config: Any, label: str = "unknown") -> list[dic
             else:
                 result.append({"match": str(p), "rewrite": None})
         if result:
-            logger.debug(f"Found {len(result)} path(s) for '{label}'")
+            logger.debug("Found %d path(s) for '%s'", len(result), label)
             return result
 
-    logger.debug(f"No path found for '{label}', using default '/'")
+    logger.debug("No path found for '%s', using default '/'", label)
     return [{"match": "/", "rewrite": None}]
 
 

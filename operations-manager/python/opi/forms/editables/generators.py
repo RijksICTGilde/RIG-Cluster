@@ -9,8 +9,17 @@ private key depends on the public key).
 from __future__ import annotations
 
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
+
+from opi.connectors.subdomain import (
+    get_project_allowed_domain_config,
+    get_subdomain_status,
+    get_supported_base_domains,
+)
+from opi.core import config as opi_config
+from opi.core.cluster_config import get_domain_issuer, is_domain_subdomain_restricted
+from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +104,6 @@ class IssuerGenerator:
         self.deployment_index = deployment_index
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from opi.core.cluster_config import get_domain_issuer
-        from opi.core.config import settings
-
         deployments = yaml_data.get("deployments", [])
         if len(deployments) <= self.deployment_index:
             return None
@@ -109,16 +115,14 @@ class IssuerGenerator:
         if not base_domain:
             return None
 
-        cluster = settings.CLUSTER_MANAGER
+        cluster = opi_config.settings.CLUSTER_MANAGER
         issuer = get_domain_issuer(cluster, base_domain)
         if issuer:
             return issuer
 
         # Custom domains (not in cluster's supported_domains): check project config first
-        from opi.connectors.subdomain import get_project_custom_domain_config, get_supported_base_domains
-
         if base_domain not in get_supported_base_domains(cluster=cluster):
-            custom_config = get_project_custom_domain_config(yaml_data, base_domain)
+            custom_config = get_project_allowed_domain_config(yaml_data, base_domain)
             if custom_config and custom_config.get("issuer"):
                 return custom_config["issuer"]
             return "letsencrypt"
@@ -173,14 +177,7 @@ class SubdomainRequestGenerator:
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from datetime import datetime
-
-        from opi.connectors.subdomain import get_subdomain_status, get_supported_base_domains
-        from opi.core.cluster_config import is_domain_subdomain_restricted
-        from opi.core.config import settings
-        from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
-
-        cluster = settings.CLUSTER_MANAGER
+        cluster = opi_config.settings.CLUSTER_MANAGER
         domains_section = yaml_data.get("domains")
 
         for dep in yaml_data.get("deployments", []):

@@ -54,6 +54,11 @@ class TestDomainNeedsRequestCondition:
     def test_resolves_default_domain_via_resolvers(self, monkeypatch):
         """When base-domain is None, resolvers provide the default domain."""
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
+        # Ensure resolver returns exactly the cluster default domain
+        monkeypatch.setattr(
+            "opi.connectors.subdomain.get_supported_base_domains",
+            lambda cluster=None: {"sandbox.rijksapp.dev"},
+        )
         condition = DomainNeedsRequestCondition()
 
         yaml_data = {"deployments": [{}]}  # No base-domain

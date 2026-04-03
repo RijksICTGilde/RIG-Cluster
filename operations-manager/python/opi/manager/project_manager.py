@@ -31,7 +31,7 @@ from opi.connectors.git import (
     create_git_repository,
 )
 from opi.connectors.kubectl import KubectlConnector
-from opi.connectors.subdomain import SubdomainConnector
+from opi.connectors.subdomain import SubdomainConnector, ensure_domain_requests
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_ca_certificate_config,
@@ -5549,8 +5549,6 @@ class ProjectManager:
                         break
 
                 # Ensure unapproved domains/subdomains get request entries
-                from opi.connectors.subdomain import ensure_domain_requests
-
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
                 # Save the updated project data
@@ -5692,8 +5690,6 @@ class ProjectManager:
                 project_data["deployments"].append(new_deployment)
 
                 # Ensure unapproved domains/subdomains get request entries
-                from opi.connectors.subdomain import ensure_domain_requests
-
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
                 # Save the updated project data

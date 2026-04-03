@@ -7,10 +7,16 @@ Subdomains are registered per (subdomain, base_domain) pair and associated with 
 
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 
-from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.core.cluster_config import (
+    CLUSTER_CONFIG,
+    get_ingress_postfix,
+    is_domain_subdomain_restricted,
+)
 from opi.core.database_pools import get_database_pool
+from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
 logger = logging.getLogger(__name__)
 # Dedicated audit logger for subdomain operations
@@ -138,10 +144,6 @@ def get_project_allowed_domain_config(project_data: dict[str, Any], domain: str)
     return None
 
 
-# Backward compatibility alias
-get_project_custom_domain_config = get_project_allowed_domain_config
-
-
 def is_deployment_domain_approved(
     project_data: dict[str, Any],
     base_domain: str | None,
@@ -164,8 +166,6 @@ def is_deployment_domain_approved(
         subdomain: The subdomain (e.g., "wies"), or None if not used
         cluster: Cluster name for config lookup
     """
-    from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
-
     if not base_domain:
         return True  # No domain specified, using cluster default
 
@@ -238,8 +238,6 @@ def is_subdomain_allowed_for_project(
     Returns:
         Tuple of (is_allowed, error_message). If allowed, error_message is None.
     """
-    from opi.core.cluster_config import is_domain_subdomain_restricted
-
     # Check if this is a platform domain with restrictions
     supported = get_supported_base_domains(cluster)
     if base_domain in supported:
@@ -247,7 +245,7 @@ def is_subdomain_allowed_for_project(
             return True, None
     else:
         # Custom domain - check project-level restriction
-        custom_config = get_project_custom_domain_config(project_data, base_domain)
+        custom_config = get_project_allowed_domain_config(project_data, base_domain)
         if custom_config and not custom_config.get("restricted-subdomains", False):
             return True, None
         if not custom_config:
@@ -298,10 +296,6 @@ def is_domain_allowed_for_project(
     return True, None
 
 
-# Backward compatibility alias
-is_custom_domain_allowed_for_project = is_domain_allowed_for_project
-
-
 def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
     """Ensure unapproved domains and subdomains have request entries.
 
@@ -316,11 +310,6 @@ def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
         project_data: Parsed project YAML data (mutated in place)
         cluster: Cluster name for config lookup
     """
-    from datetime import UTC, datetime
-
-    from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
-    from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
-
     ingress_postfix = get_ingress_postfix(cluster)
     cluster_domain = ingress_postfix.lstrip(".")
 

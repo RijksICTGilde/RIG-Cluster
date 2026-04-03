@@ -11,6 +11,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.connectors.subdomain import (
+    get_project_allowed_domain_config,
+    get_subdomain_status,
+    get_supported_base_domains,
+)
+from opi.core import config as opi_config
+from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
+from opi.forms.editables.resolvers import get_effective_value
+
 
 class SentinelValueCondition:
     """True when the field value equals a sentinel that indicates deferral.
@@ -53,8 +62,6 @@ class SubdomainNeedsRequestCondition:
         if not isinstance(value, dict):
             return False
 
-        from opi.forms.editables.resolvers import get_effective_value
-
         deployments = value.get("deployments", [])
         if len(deployments) <= self.deployment_index:
             return False
@@ -67,25 +74,18 @@ class SubdomainNeedsRequestCondition:
         if not subdomain or not base_domain or base_domain == "__custom__":
             return False
 
-        from opi.core.cluster_config import is_domain_subdomain_restricted
-        from opi.core.config import settings
-
-        cluster = settings.CLUSTER_MANAGER
-
-        from opi.connectors.subdomain import get_project_custom_domain_config, get_supported_base_domains
+        cluster = opi_config.settings.CLUSTER_MANAGER
 
         supported = get_supported_base_domains(cluster)
         if base_domain in supported:
             if not is_domain_subdomain_restricted(cluster, base_domain):
                 return False
         else:
-            custom_config = get_project_custom_domain_config(value, base_domain)
+            custom_config = get_project_allowed_domain_config(value, base_domain)
             if not custom_config or not custom_config.get("restricted-subdomains", False):
                 return False
 
         # Domain is restricted — check if subdomain is already approved
-        from opi.connectors.subdomain import get_subdomain_status
-
         status = get_subdomain_status(value, base_domain, subdomain)
         return status != "approved"
 
@@ -114,8 +114,6 @@ class DomainNeedsRequestCondition:
         if not isinstance(value, dict):
             return False
 
-        from opi.forms.editables.resolvers import get_effective_value
-
         deployments = value.get("deployments", [])
         if len(deployments) <= self.deployment_index:
             return False
@@ -127,11 +125,7 @@ class DomainNeedsRequestCondition:
         if not base_domain or base_domain == "__custom__":
             return False
 
-        from opi.connectors.subdomain import get_project_allowed_domain_config
-        from opi.core.cluster_config import get_ingress_postfix
-        from opi.core.config import settings
-
-        cluster = settings.CLUSTER_MANAGER
+        cluster = opi_config.settings.CLUSTER_MANAGER
 
         # Cluster default domain is always allowed
         ingress_postfix = get_ingress_postfix(cluster)
