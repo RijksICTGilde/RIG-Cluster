@@ -422,8 +422,8 @@ class TestDomainSectionRendering:
         assert len(DOMAIN_SECTION.editables) == 1
         group = DOMAIN_SECTION.editables[0]
         assert group.widget == WidgetType.GROUP
-        # Group wraps 7 child domain fields (including expose-component-on-bare-domain, request-subdomain)
-        assert len(group.children) == 7
+        # Group wraps 8 child domain fields (including expose-component-on-bare-domain, request-subdomain)
+        assert len(group.children) == 8
 
 
 class TestConditionalVisibility:

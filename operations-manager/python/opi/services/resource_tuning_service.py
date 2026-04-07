@@ -13,7 +13,12 @@ from typing import Any
 
 from opi.connectors.git import GitConnector, create_git_connector_for_project_files
 from opi.connectors.prometheus import get_metrics_connector
-from opi.core.cluster_config import get_max_memory_limit_mi, get_min_memory_limit_mi, get_prefixed_namespace
+from opi.core.cluster_config import (
+    get_max_memory_limit_mi,
+    get_max_memory_request_mi,
+    get_min_memory_limit_mi,
+    get_prefixed_namespace,
+)
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.project_manager import create_project_manager
@@ -287,6 +292,7 @@ async def _analyze_component_resources(
         has_oom_kills=has_oom_kills,
         min_memory_mi=get_min_memory_limit_mi(cluster),
         max_memory_mi=get_max_memory_limit_mi(cluster),
+        max_memory_request_mi=get_max_memory_request_mi(cluster),
     )
 
     if recommendation is None:
@@ -316,8 +322,9 @@ async def _analyze_component_resources(
                         f"({max_memory:.0f}Mi) — manual intervention required"
                     )
                 ratio = current_request_mb / current_limit_mb if current_limit_mb > 0 else 1.0
+                max_request = float(get_max_memory_request_mi(cluster))
                 new_limit = _mb_to_k8s_memory(new_floor)
-                new_request = _mb_to_k8s_memory(new_floor * ratio)
+                new_request = _mb_to_k8s_memory(min(new_floor * ratio, max_request))
                 reason = f"OOM at floor {oom_floor_mb:.0f}Mi — bumping to {new_floor:.0f}Mi ({floor_factor:.1f}x)"
                 logger.info(
                     f"OOM floor {oom_floor_mb:.0f}Mi is too low for {component_ref} "
@@ -332,9 +339,10 @@ async def _analyze_component_resources(
                 if current_limit_mb <= oom_floor_mb:
                     return None
                 new_limit = _mb_to_k8s_memory(oom_floor_mb)
+                max_request = float(get_max_memory_request_mi(cluster))
                 new_request_mb = _k8s_memory_to_mb(new_request)
-                if new_request_mb > oom_floor_mb:
-                    new_request = new_limit
+                if new_request_mb > min(oom_floor_mb, max_request):
+                    new_request = _mb_to_k8s_memory(min(oom_floor_mb, max_request))
                 reason += f" (clamped to OOM floor {new_limit})"
 
     return _ComponentAnalysis(

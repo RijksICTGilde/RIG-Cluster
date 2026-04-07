@@ -244,6 +244,19 @@ class MemoryRangeValidator:
         return []
 
 
+class MemoryRequestRangeValidator(MemoryRangeValidator):
+    """Validates memory requests against the lower request cap."""
+
+    @property
+    def max_mi(self) -> int:
+        if self._max_mi is not None:
+            return self._max_mi
+        from opi.core.cluster_config import get_max_memory_request_mi
+        from opi.core.config import settings
+
+        return get_max_memory_request_mi(settings.CLUSTER_MANAGER)
+
+
 class SubdomainValidator:
     """Validates subdomain format using the canonical validation from subdomain connector."""
 
