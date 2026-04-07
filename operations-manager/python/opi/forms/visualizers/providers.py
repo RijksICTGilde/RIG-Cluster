@@ -262,7 +262,7 @@ def get_memory_steps(max_mi: int | None = None) -> list[tuple[str, str]]:
 
 
 class MemoryOptionsProvider:
-    """Provides memory options for components (shared for request and limit).
+    """Provides memory options for components (used for limit fields).
 
     If *current_value* is set and not in the standard steps, it is inserted
     at the correct sorted position so the dropdown always contains the
@@ -272,8 +272,14 @@ class MemoryOptionsProvider:
     def __init__(self, current_value: str | None = None) -> None:
         self.current_value = current_value
 
+    def _get_max_mi(self) -> int:
+        from opi.core.cluster_config import get_max_memory_limit_mi
+        from opi.core.config import settings
+
+        return get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
+
     def get_options(self) -> list[dict[str, Any]]:
-        steps = get_memory_steps()
+        steps = get_memory_steps(max_mi=self._get_max_mi())
         options = [{"value": v, "label": lbl} for v, lbl in steps]
 
         if self.current_value and not any(o["value"] == self.current_value for o in options):
@@ -297,6 +303,16 @@ class MemoryOptionsProvider:
             options.insert(insert_idx, new_option)
 
         return options
+
+
+class MemoryRequestOptionsProvider(MemoryOptionsProvider):
+    """Provides memory options for request fields (capped lower than limits)."""
+
+    def _get_max_mi(self) -> int:
+        from opi.core.cluster_config import get_max_memory_request_mi
+        from opi.core.config import settings
+
+        return get_max_memory_request_mi(settings.CLUSTER_MANAGER)
 
 
 class DomainModeOptionsProvider:
@@ -644,6 +660,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "CpuRequestOptionsProvider": CpuRequestOptionsProvider,
     "CpuLimitOptionsProvider": CpuLimitOptionsProvider,
     "MemoryOptionsProvider": MemoryOptionsProvider,
+    "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
     "DomainModeOptionsProvider": DomainModeOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,

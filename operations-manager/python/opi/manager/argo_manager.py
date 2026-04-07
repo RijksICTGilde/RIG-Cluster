@@ -854,11 +854,11 @@ class ArgoManager:
                 status_is_fresh = True
                 if refreshed_after:
                     reconciled_at = status_data.get("status", {}).get("reconciledAt", "")
-                    if reconciled_at < refreshed_after:
+                    if reconciled_at <= refreshed_after:
                         status_is_fresh = False
                         logger.debug(
                             f"Infrastructure '{app_name}': status is stale "
-                            f"(reconciledAt={reconciled_at} < refreshed_after={refreshed_after})"
+                            f"(reconciledAt={reconciled_at} <= refreshed_after={refreshed_after})"
                         )
 
                 if status_is_fresh:
@@ -1005,11 +1005,11 @@ class ArgoManager:
                 status_is_fresh = True
                 if refreshed_after:
                     reconciled_at = status_data.get("status", {}).get("reconciledAt", "")
-                    if reconciled_at < refreshed_after:
+                    if reconciled_at <= refreshed_after:
                         status_is_fresh = False
                         logger.debug(
                             f"Application '{app_name}': status is stale "
-                            f"(reconciledAt={reconciled_at} < refreshed_after={refreshed_after}), "
+                            f"(reconciledAt={reconciled_at} <= refreshed_after={refreshed_after}), "
                             f"not evaluating terminal states yet"
                         )
 

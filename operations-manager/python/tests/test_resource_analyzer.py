@@ -291,3 +291,82 @@ class TestComputeMemoryRecommendation:
         limit, request, _ = result
         assert limit == "150Mi"
         assert request == "100Mi"
+
+    def test_request_capped_at_max_memory_request_mi(self):
+        """Request should be capped at max_memory_request_mi while limit can go higher."""
+        # max=2000 -> 2000*1.25+25 = 2525. avg=1500 -> 1500*1.25+25 = 1900.
+        # Request 1900 > 1024 request cap -> capped to 1024.
+        result = compute_memory_recommendation(
+            max_observed_mb=2000,
+            avg_observed_mb=1500,
+            current_limit_mb=4096,
+            current_request_mb=512,
+            buffer_percent=25,
+            threshold_percent=20,
+            max_memory_mi=4096,
+            max_memory_request_mi=1024,
+        )
+        assert result is not None
+        limit, request, _ = result
+        assert limit == "2525Mi"
+        assert request == "1024Mi"
+
+    def test_request_not_capped_when_below_max_request(self):
+        """Request below the request cap should not be affected."""
+        # max=300 -> 300*1.25+25 = 400. avg=200 -> 200*1.25+25 = 275.
+        # 275 < 1024 -> no capping.
+        result = compute_memory_recommendation(
+            max_observed_mb=300,
+            avg_observed_mb=200,
+            current_limit_mb=512,
+            current_request_mb=128,
+            buffer_percent=25,
+            threshold_percent=20,
+            max_memory_mi=4096,
+            max_memory_request_mi=1024,
+        )
+        assert result is not None
+        limit, request, _ = result
+        assert limit == "400Mi"
+        assert request == "275Mi"
+
+    def test_oom_request_capped_at_max_request(self):
+        """OOM bump should not push request above max_memory_request_mi."""
+        # current_limit=2048, OOM factor 1.5x -> oom_minimum=3072.
+        # ratio = 1024/2048 = 0.5. request = 3072*0.5 = 1536, capped to 1024.
+        result = compute_memory_recommendation(
+            max_observed_mb=2048,
+            avg_observed_mb=1024,
+            current_limit_mb=2048,
+            current_request_mb=1024,
+            buffer_percent=25,
+            threshold_percent=20,
+            has_oom_kills=True,
+            max_memory_mi=4096,
+            max_memory_request_mi=1024,
+        )
+        assert result is not None
+        limit, request, reason = result
+        assert limit == "3072Mi"
+        assert request == "1024Mi"
+        assert "OOM kills detected" in reason
+
+    def test_no_collapse_when_request_at_cap_but_limit_higher(self):
+        """Don't collapse request to limit when request is at its cap."""
+        # max=800 -> 800*1.25+25 = 1025. avg=760 -> 760*1.25+25 = 975.
+        # With max_memory_request_mi=1024: request stays at 975 (below cap).
+        # Limit 1025 > 1024 request cap, so no collapse even though gap is <10%.
+        result = compute_memory_recommendation(
+            max_observed_mb=800,
+            avg_observed_mb=760,
+            current_limit_mb=2048,
+            current_request_mb=1024,
+            buffer_percent=25,
+            threshold_percent=20,
+            max_memory_mi=4096,
+            max_memory_request_mi=1024,
+        )
+        assert result is not None
+        limit, request, _ = result
+        assert limit == "1025Mi"
+        assert request == "975Mi"  # NOT collapsed because limit > request cap
