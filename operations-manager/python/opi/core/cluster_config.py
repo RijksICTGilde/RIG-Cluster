@@ -34,6 +34,7 @@ CLUSTER_CONFIG = {
         },
         "min_memory_limit_mi": 25,
         "max_memory_limit_mi": 4096,
+        "max_memory_request_mi": 1024,
         "uses_capsule": False,
         "ca_certificate": {
             "enabled": True,
@@ -79,6 +80,7 @@ CLUSTER_CONFIG = {
         },
         "min_memory_limit_mi": 25,
         "max_memory_limit_mi": 4096,
+        "max_memory_request_mi": 1024,
         "uses_capsule": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -120,6 +122,7 @@ CLUSTER_CONFIG = {
         },
         "min_memory_limit_mi": 25,
         "max_memory_limit_mi": 4096,
+        "max_memory_request_mi": 1024,
         "uses_capsule": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
@@ -612,6 +615,23 @@ def get_max_memory_limit_mi(cluster_name: str) -> int:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("max_memory_limit_mi", 4096)
+
+
+def get_max_memory_request_mi(cluster_name: str) -> int:
+    """
+    Get the maximum memory request in Mi for a specific cluster.
+
+    Memory requests are capped lower than limits. Below this cap, requests
+    and limits scale together. Above it, only limits can increase further.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Maximum memory request in Mi
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("max_memory_request_mi", 1024)
 
 
 def uses_capsule(cluster_name: str) -> bool:

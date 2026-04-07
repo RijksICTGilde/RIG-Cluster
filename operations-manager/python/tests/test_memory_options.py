@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import pytest
 from opi.forms.editables.enforcers import ComponentServicesEnforcer, FieldError
-from opi.forms.editables.validators import MemoryRangeValidator
-from opi.forms.visualizers.providers import MemoryOptionsProvider, get_memory_steps
+from opi.forms.editables.validators import MemoryRangeValidator, MemoryRequestRangeValidator
+from opi.forms.visualizers.providers import (
+    MemoryOptionsProvider,
+    MemoryRequestOptionsProvider,
+    get_memory_steps,
+)
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 
 # ---------------------------------------------------------------------------
@@ -136,6 +140,56 @@ class TestMemoryOptionsProvider:
         options = MemoryOptionsProvider(current_value="384Mi").get_options()
         opt = next(o for o in options if o["value"] == "384Mi")
         assert opt["label"] == "384 MB"
+
+
+# ---------------------------------------------------------------------------
+# MemoryRequestOptionsProvider
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryRequestOptionsProvider:
+    @pytest.fixture(autouse=True)
+    def _patch_cluster(self, monkeypatch):
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "local"})())
+
+    def test_options_capped_at_request_max(self):
+        options = MemoryRequestOptionsProvider().get_options()
+        values = [o["value"] for o in options]
+        assert "1Gi" in values
+        assert "2Gi" not in values
+        assert "4Gi" not in values
+
+    def test_current_value_above_cap_still_injected(self):
+        """Tuner-assigned values above the cap should still appear in the dropdown."""
+        options = MemoryRequestOptionsProvider(current_value="1536Mi").get_options()
+        values = [o["value"] for o in options]
+        assert "1536Mi" in values
+
+
+# ---------------------------------------------------------------------------
+# MemoryRequestRangeValidator
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryRequestRangeValidator:
+    @pytest.fixture(autouse=True)
+    def _patch_cluster(self, monkeypatch):
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "local"})())
+
+    def test_valid_at_request_cap(self):
+        assert MemoryRequestRangeValidator(min_mi=32).validate("1Gi") == []
+
+    def test_above_request_cap_rejected(self):
+        errors = MemoryRequestRangeValidator(min_mi=32).validate("2Gi")
+        assert len(errors) == 1
+        assert "1024" in errors[0]
+
+    def test_below_minimum_rejected(self):
+        errors = MemoryRequestRangeValidator(min_mi=32).validate("16Mi")
+        assert len(errors) == 1
+
+    def test_within_range_valid(self):
+        assert MemoryRequestRangeValidator(min_mi=32).validate("512Mi") == []
 
 
 # ---------------------------------------------------------------------------
