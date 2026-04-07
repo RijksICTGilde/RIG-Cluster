@@ -16,6 +16,7 @@ from ruamel.yaml import YAML
 from opi.connectors.git import GitConnector
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.resource_analyzer import _k8s_memory_to_mb
+from opi.services.schema_migration import migrate_to_latest
 from opi.utils.age import decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.yaml_util import save_yaml_to_path
@@ -185,6 +186,7 @@ class ProjectFileHandler:
         logger.debug("Initializing ProjectFileHandler")
         self._project_data: dict[str, str | list | dict[str, str]] | None = None
         self._full_file_path: str | None = None
+        self._was_migrated: bool = False
 
     def _normalize_age_content(self, age_content: str) -> str:
         """
@@ -296,9 +298,16 @@ class ProjectFileHandler:
             raise Exception("Can only initialize one project file per class")
 
         if not self._project_data:
-            self._project_data = await self._parse_project_file(full_file_path)
+            raw_data = await self._parse_project_file(full_file_path)
+            migrated_data, self._was_migrated = migrate_to_latest(raw_data)
+            self._project_data = migrated_data
             self._full_file_path = full_file_path
         return self._project_data
+
+    @property
+    def was_migrated(self) -> bool:
+        """Whether the last read_project_file call required schema migration."""
+        return self._was_migrated
 
     async def _parse_project_file(self, file_path: str) -> dict[str, str | list | dict[str, str]]:
         """

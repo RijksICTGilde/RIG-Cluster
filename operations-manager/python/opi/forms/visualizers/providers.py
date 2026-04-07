@@ -234,20 +234,21 @@ class CpuLimitOptionsProvider:
 
 
 ALL_MEMORY_STEPS: list[tuple[str, str, int]] = [
-    ("32Mi", "32 MB", 32),
-    ("64Mi", "64 MB", 64),
-    ("96Mi", "96 MB", 96),
-    ("128Mi", "128 MB", 128),
-    ("256Mi", "256 MB", 256),
-    ("512Mi", "512 MB", 512),
-    ("768Mi", "768 MB", 768),
-    ("1Gi", "1 GB", 1024),
-    ("1536Mi", "1.5 GB", 1536),
-    ("2Gi", "2 GB", 2048),
-    ("2560Mi", "2.5 GB", 2560),
-    ("3Gi", "3 GB", 3072),
-    ("3584Mi", "3.5 GB", 3584),
-    ("4Gi", "4 GB", 4096),
+    ("25Mi", "25 Mi", 25),
+    ("32Mi", "32 Mi", 32),
+    ("64Mi", "64 Mi", 64),
+    ("96Mi", "96 Mi", 96),
+    ("128Mi", "128 Mi", 128),
+    ("256Mi", "256 Mi", 256),
+    ("512Mi", "512 Mi", 512),
+    ("768Mi", "768 Mi", 768),
+    ("1Gi", "1 Gi", 1024),
+    ("1536Mi", "1.5 Gi", 1536),
+    ("2Gi", "2 Gi", 2048),
+    ("2560Mi", "2.5 Gi", 2560),
+    ("3Gi", "3 Gi", 3072),
+    ("3584Mi", "3.5 Gi", 3584),
+    ("4Gi", "4 Gi", 4096),
 ]
 
 
@@ -290,7 +291,7 @@ class MemoryOptionsProvider:
             except ValueError:
                 return options
 
-            label = f"{int(current_mi)} MB" if current_mi == int(current_mi) else f"{current_mi:.1f} MB"
+            label = f"{int(current_mi)} Mi" if current_mi == int(current_mi) else f"{current_mi:.1f} Mi"
             new_option = {"value": self.current_value, "label": label}
 
             # Insert at sorted position

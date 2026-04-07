@@ -2112,18 +2112,14 @@ class ProjectManager:
 
             current_yaml = analysis["current_yaml"]
 
-            # Auto-migrate schema if needed
-            from opi.services.schema_migration import migrate_to_latest
-
-            current_yaml, was_migrated = migrate_to_latest(current_yaml)
-            if was_migrated:
+            # read_project_file auto-migrates in memory; persist to disk if needed
+            if self._project_file_handler.was_migrated:
                 project_name = current_yaml.get("name", relative_project_file_path)
                 logger.info(f"Schema migration applied for project '{project_name}', committing changes")
                 save_project_file(project_full_file_path, current_yaml)
                 await git_connector_for_project_files.commit_and_push(
                     f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}"
                 )
-                analysis["current_yaml"] = current_yaml
 
             previous_yaml = analysis["previous_yaml"]
             changes = analysis["changes"]
