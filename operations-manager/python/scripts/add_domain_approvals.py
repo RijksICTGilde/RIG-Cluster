@@ -131,6 +131,7 @@ def add_domain_approvals(project_data: dict, dry_run: bool = False) -> dict[str,
 def load_project(file_path: str) -> dict:
     yaml = YAML()
     yaml.preserve_quotes = True
+    yaml.width = 4096
     with open(file_path) as f:
         return yaml.load(f)
 
@@ -138,6 +139,7 @@ def load_project(file_path: str) -> dict:
 def save_project(file_path: str, project_data: dict) -> None:
     yaml = YAML()
     yaml.preserve_quotes = True
+    yaml.width = 4096
     yaml.default_flow_style = False
     yaml.indent(mapping=2, sequence=4, offset=2)
     yaml.representer.ignore_aliases = lambda *_: True

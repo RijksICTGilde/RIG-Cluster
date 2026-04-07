@@ -13,6 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from opi.services.schema_migration import migrate_to_latest
+
 
 class ProjectUser(BaseModel):
     """Pydantic model for project user."""
@@ -205,6 +207,8 @@ class ProjectService:
             True if project was loaded successfully, False otherwise
         """
         try:
+            project_data, _ = migrate_to_latest(project_data)
+
             project_name = project_data.get("name")
             if not project_name:
                 logger.warning("Project data missing 'name' field")

@@ -552,8 +552,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     state.locked_services = _extract_services(project_data)
     state.populate_virt_mappings(flow.sections)
 
-    # Always include config in template_data so converters can access project keys (e.g. for AGE decryption)
-    state.template_data = {"config": project_data.get("config", {})}
+    # Always include config and domains in template_data so converters and
+    # conditions (e.g. DomainNeedsRequestCondition) can access project-level data.
+    state.template_data = {
+        "config": project_data.get("config", {}),
+        "domains": project_data.get("domains", {}),
+    }
 
     # Store is_new flag so _detect_list_target can distinguish add vs edit
     if flow_id.startswith("modal-edit-component-") and flow_context.get("is_new"):
@@ -581,6 +585,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-", "modal-edit-domain-")):
         components = project_data.get("components", [])
         state.template_data["components"] = components
+
+    # Domain flows need the domains section so approval conditions can check status
+    if flow_id.startswith(("modal-edit-domain-", "modal-add-deployment-", "modal-edit-deployment-")):
+        domains = project_data.get("domains")
+        if domains:
+            state.template_data["domains"] = domains
 
     # Add-deployment flows need existing names for uniqueness validation
     # and original deployment names for clone-from options (excluding the new slot)

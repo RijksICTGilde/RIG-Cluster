@@ -216,7 +216,7 @@ class MemoryRangeValidator:
     When *max_mi* is None the cluster's ``max_memory_limit_mi`` is used.
     """
 
-    def __init__(self, min_mi: int = 32, max_mi: int | None = None) -> None:
+    def __init__(self, min_mi: int = 25, max_mi: int | None = None) -> None:
         self.min_mi = min_mi
         self._max_mi = max_mi
 
