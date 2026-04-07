@@ -4,12 +4,12 @@
 
 | Term | What it is | In the YAML |
 |------|-----------|-------------|
-| **Project** | Your team's boundary — groups everything together | top-level |
+| **Project** | Your team's boundary - groups everything together | top-level |
 | **Service** | A platform-managed feature: database, SSO, web access, storage | `services[]` |
-| **Component** | A slot that describes a deployable part of your app — port, path, resources. No image. | `components[]` |
+| **Component** | A slot that describes a deployable part of your app - port, path, resources. No image. | `components[]` |
 | **Deployment** | A named instance that runs your components with specific images. Could be "production", "pr-844", or "janes-dev". | `deployments[]` |
 
-A **binding** is when a component says `uses-services: [publish-on-web]` — it connects a component to a service.
+A **binding** is when a component says `uses-services: [publish-on-web]` - it connects a component to a service.
 
 ---
 
@@ -19,13 +19,13 @@ A **binding** is when a component says `uses-services: [publish-on-web]` — it 
 graph TD
     subgraph "Project: my-app"
 
-        subgraph "Services — managed by the platform"
+        subgraph "Services - managed by the platform"
             S1["publish-on-web"]
             S2["keycloak"]
             S3["postgresql-database"]
         end
 
-        subgraph "Components — the slots you define"
+        subgraph "Components - the slots you define"
             Frontend["frontend\nport 8080 · path /"]
             API["api\nport 3000 · path /api"]
         end
@@ -76,7 +76,7 @@ users:
 ### 2. Pick Services
 
 Services are platform features that ZAD provisions and manages for you.
-You just say *"I need this"* — the platform does the rest.
+You just say *"I need this"* - the platform does the rest.
 
 ```yaml
 services:
@@ -101,7 +101,7 @@ graph LR
 
 ### 3. Define Components
 
-A component is a **slot** — it describes the shape of a deployable part of your app.
+A component is a **slot** - it describes the shape of a deployable part of your app.
 
 It answers:
 - What **port** does it listen on?
@@ -161,8 +161,8 @@ graph LR
 A deployment fills the component slots with actual Docker images and puts them
 on a cluster with a domain name.
 
-You can have as many deployments as you want — "production", "staging", "pr-844",
-"demo-for-client", "janes-dev" — whatever you need.
+You can have as many deployments as you want - "production", "staging", "pr-844",
+"demo-for-client", "janes-dev" - whatever you need.
 
 ```yaml
 deployments:
@@ -194,11 +194,11 @@ deployments:
 ## Why the Image Lives on the Deployment
 
 The same component runs **different versions** in different deployments.
-The slot stays the same — the image that fills it changes:
+The slot stays the same - the image that fills it changes:
 
 ```mermaid
 graph TD
-    Comp["Component: frontend\nport 8080 · path /\n— the slot —"]
+    Comp["Component: frontend\nport 8080 · path /\nthe slot"]
 
     Comp --> Prod["production\nfrontend:2.1.0\nstable release"]
     Comp --> Stag["staging\nfrontend:2.2.0-rc1\nrelease candidate"]
@@ -240,9 +240,9 @@ graph TD
     end
 ```
 
-- **pr844** only runs component-2 — you don't have to deploy everything
+- **pr844** only runs component-2 - you don't have to deploy everything
 - **component-2** runs a different image version in each deployment
-- The component slots don't change — only what fills them
+- The component slots don't change - only what fills them
 
 ---
 
@@ -253,6 +253,6 @@ graph TD
 | Where do I define ports, paths, resources?  | In the **component**                                            |
 | Where do I pick a database or SSO?          | In **services**, then bind them to a component via uses-services |
 | Where do I set the Docker image?            | In the **deployment**, under `components → image`               |
-| Can I have multiple deployments?            | Yes — production, staging, PR preview, anything                 |
-| Can a deployment skip a component?          | Yes — only include the ones you need                            |
-| Can two deployments use different images?   | Yes — that's the whole point                                    |
+| Can I have multiple deployments?            | Yes - production, staging, PR preview, anything                 |
+| Can a deployment skip a component?          | Yes - only include the ones you need                            |
+| Can two deployments use different images?   | Yes - that's the whole point                                    |
