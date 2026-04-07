@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 LATEST_SCHEMA_VERSION = 2.2
 
+# NOTE: Domain restriction changes (task-1) introduced:
+# - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
+# - domains.custom-domains renamed to domains.allowed-domains
+# No migration needed yet — all existing projects predate the domain restriction feature.
+# When migrating existing projects, add a v2.2→v2.3 migration that converts the old formats.
+
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
     ServiceType.PERSISTENT_STORAGE.value: "persistent",
