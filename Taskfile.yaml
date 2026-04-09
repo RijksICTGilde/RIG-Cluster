@@ -1872,6 +1872,15 @@ tasks:
       - task: sandbox:sync
       # Phase 4: Bootstrap ArgoCD + Operations Manager (images pulled from GHCR)
       - task: prepare-argocd-operator
+      - |
+        kubectl create -f bootstrap/crd/elastic/crds.yaml
+        kubectl apply -f infrastructure/bootstrap/infrastructure/elastic/controller/operator.yaml
+               
+        kustomize build infrastructure/bootstrap/infrastructure/elastic/controller/overlays/sandboxed-local | kubectl apply -f -
+      # hierna kan je inloggen op https://kibana.sandbox.rijksapp.dev met username elastic voor password zie volgende regel
+      # kubectl get secret elasticsearch-es-elastic-user -o=jsonpath='{.data.elastic}' | base64 --decode; echo
+
+
       - task: bootstrap-argo-system
         vars:
           KEY_FILE: security/sandbox-key.txt
@@ -2205,7 +2214,7 @@ tasks:
           grep -v '^[[:space:]]*#' "{{.ENV_FILE}}" | grep -v '^[[:space:]]*$' | while IFS='=' read -r key value; do
             value=$(echo "$value" | sed 's/^["'\'']//' | sed 's/["'\'']$//')
             # Replace the empty value in the template with the actual value
-            sed -i '' "s|$key: \"\"|$key: \"$value\"|" "$SECRET_FILE"
+            sed "s|$key: \"\"|$key: \"$value\"|" "$SECRET_FILE" > "$SECRET_FILE.tmp" && mv "$SECRET_FILE.tmp" "$SECRET_FILE"
             echo "  Set: $key"
           done
         else

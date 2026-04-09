@@ -96,6 +96,14 @@ class ServiceDefinition:
     """
 
 
+class ElasticVariables(Enum):
+    ENCODED_API_KEY = VariableDefinition(
+        name="ENCODED_API_KEY",
+        description="Encoded API key for Elasticsearch",
+        source="direct",
+    )
+
+
 class DatabaseVariables(Enum):
     """Database service variable definitions - single source of truth."""
 
@@ -354,6 +362,16 @@ class ServiceAdapter:
             scope="component",
             variables=[var.value for var in WebVariables],
         ),
+
+        ServiceType.ELASTIC: ServiceDefinition(
+            name="Elasticsearch",
+            description="Elasticsearch service voor opslag van gegevens",
+            icon="wereldbol",
+            color="hemelblauw",
+            scope="component",
+            variables=[var.value for var in ElasticVariables],
+        ),
+
         ServiceType.KEYCLOAK: ServiceDefinition(
             name="Keycloak Authentication",
             description="Configureerbare Keycloak authenticatie met ondersteuning voor SSO en lokale gebruikers",

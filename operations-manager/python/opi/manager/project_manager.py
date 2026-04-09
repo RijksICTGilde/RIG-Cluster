@@ -54,6 +54,7 @@ from opi.handlers.project_file_handler import (
     save_project_file,
 )
 from opi.handlers.sops import SopsHandler
+from opi.manager.elastic_manager import ElasticManager
 from opi.manager.revision_manager import RevisionManager
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.project_service import ProjectUser, get_project_service
@@ -223,6 +224,7 @@ class ProjectManager:
         self._bootstrap_manager = BootstrapManager(self)
         self._delete_project_manager = DeleteProjectManager(self)
         self._pvc_manager = PVCManager(self)
+        self._elastic_manager = ElasticManager(self)
 
     async def __aenter__(self) -> "ProjectManager":
         return self
@@ -1732,6 +1734,9 @@ class ProjectManager:
 
                 # Map the database image to its registry secret
                 image_pull_secrets_map[database_image] = registry_secret_name
+
+            # Mick probably niet hier
+
 
             cluster_manifest = render_template(
                 "postgresql-cluster.yaml.jinja",
@@ -3768,6 +3773,8 @@ class ProjectManager:
                     await self._keycloak_manager.create_resources_for_deployment(project_data, deployment)
                     await self._redis_manager.create_resources_for_deployment(project_data, deployment)
 
+            # Mick: hier moet volgens mij de apm server resource worden gemaakt, maar doe ik hier dan ook de secret generation?
+
             # Generate application manifests (including PVC) BEFORE setting clone status.
             # PVC clone relies on clone-from.status.completed being false to include dataSource.
             await self._process_application_manifests(deployment_name)
@@ -4402,6 +4409,7 @@ class ProjectManager:
             # Generate timestamp for pod annotation to force restart when secrets change
             generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+            # Mick
             variables = {
                 "name": unique_name,
                 "namespace": namespace,
@@ -4837,6 +4845,10 @@ class ProjectManager:
             # Create PVC manifests for persistent storage using PVCManager
             persistent_storage = self._project_file_handler.get_persistent_storage(processed_storage_configs)
 
+
+
+            self._project_file_handler.get
+
             if persistent_storage:
                 logger.info(f"Creating {len(persistent_storage)} PVC manifests for component: {component_name}")
 
@@ -5208,6 +5220,48 @@ class ProjectManager:
                     logger.warning(
                         f"Component {component_name} uses MinIO but no object storage credentials found in deployment {deployment_name}"
                     )
+
+            # if component_uses_apm:
+            #     doe een curl post naar de shared apm server om een api key te generaten
+            #
+            # """
+            # curl -u elastic:password -X POST http://elasticsearch:9200/_security/api_key -H "Content-Type: application/json" -d '
+            # {
+            #   "name": "customer-a-apm-key",
+            #   "role_descriptors": {
+            #     "customer-a-apm-role": {
+            #       "indices": [
+            #         {
+            #           "names": ["apm-customer-a-*"],
+            #           "privileges": ["create_doc"]
+            #         }
+            #       ]
+            #     }
+            #   }
+            # }'
+            #
+            # """
+            #     met dit antwoord maak je een nieuw kubernetes secret:
+            #
+            # """
+            # curl -u elastic:password -X POST http://elasticsearch:9200/_security/api_key -H "Content-Type: application/json" -d '
+            #     {
+            #       "name": "customer-a-apm-key",
+            #       "role_descriptors": {
+            #         "customer-a-apm-role": {
+            #           "indices": [
+            #             {
+            #               "names": ["apm-customer-a-*"],
+            #               "privileges": ["create_doc"]
+            #             }
+            #           ]
+            #         }
+            #       }
+            #     }'
+            # """
+            # Voeg vervolgens een reference naar dit secret toe aan de env vars van het project, hoe dan ook bij andere services gebeurt
+
+
 
             # Create Redis secret if component uses Redis cache service
             if component_uses_redis:
