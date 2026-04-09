@@ -23,6 +23,17 @@ spec:
   owner: keycloak
 
 ---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: operations-manager-db
+  namespace: rig-system
+spec:
+  cluster:
+    name: rig-db
+  name: operations_manager
+  owner: postgres
+---
 #apiVersion: postgresql.cnpg.io/v1
 #kind: Database
 #metadata:

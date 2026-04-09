@@ -1,0 +1,65 @@
+apiVersion: apm.k8s.elastic.co/v1
+kind: ApmServer
+metadata:
+  name: apm-server-{username}
+  namespace: rig-system
+spec:
+  version: 9.3.2
+  count: 1
+  elasticsearchRef:
+    name: elasticsearch
+  kibanaRef:
+    name: kibana
+  config:
+    output.elasticsearch:
+      username: "elastic"
+      password: "{elastic_password}"
+      indices:
+        - index: "traces-apm-{username}"
+          when.contains:
+            data_stream.type: "traces"
+        - index: "metrics-apm-{username}"
+          when.contains:
+            data_stream.type: "metrics"
+        - index: "logs-apm-{username}"
+          when.contains:
+            data_stream.type: "logs"
+    apm-server:
+      auth.secret_token: "{token}"
+      host: "0.0.0.0:8200"
+      data_streams.namespace: "{username}"
+  http:
+    service:
+      spec:
+        type: ClusterIP
+    tls:
+      selfSignedCertificate:
+        disabled: true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: apm-server-{username}-token
+  namespace: rig-system
+stringData:
+  secret-token: "{token}"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: apm-server-{username}-ingress
+  namespace: rig-system
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+  - host: {username}-apm.sandbox.rijksapp.dev
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: apm-server-{username}-apm-http
+            port:
+              number: 8200

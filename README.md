@@ -83,3 +83,16 @@ task sandbox:destroy                  # Tear down sandbox
 ## Secret Management
 
 Secrets are managed with SOPS and AGE encryption. Templates in the infrastructure overlays use `@secret-gen:random:XX` annotations for automatic password generation. The sandbox uses a per-setup AGE key (`security/sandbox-key.txt`), while shared secrets (TLS certificates) use a developer AGE key distributed out-of-band.
+
+### APM Setup & Testing 
+
+1. Create a new APM user with their own dedicated APM Server, unique Secret Token, and isolated Kibana space.
+    `python3 provision_apm_user.py testprojectname`
+   This will deploy a new Kubernetes ApmServer resource named `apm-server-<username>` and provide a unique URL (e.g., `http://testprojectname-apm.sandbox.rijksapp.dev`) and Secret Token.
+ 
+2.
+   One-liner to run in an isolated environment:
+   ```bash
+   python3 -m venv venv && ./venv/bin/pip install elastic-apm && ELASTIC_APM_SERVER_URL=[url, see output from above] ELASTIC_APM_SECRET_TOKEN=[token, see output from above] ./venv/bin/python3 test_apm_lib.py
+   ```
+   User can then go to https://kibana.sandbox.rijksapp.dev/login and login with their username and password to see their data
