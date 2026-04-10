@@ -62,4 +62,4 @@ jobs:
           uv sync --all-groups
           uv pip install pip
       - name: License check
-        run: uv run liccheck
+        run: uv run liccheck -s pyproject.toml
