@@ -1,0 +1,29 @@
+{# Deployment Actions Section - quick actions per deployment #}
+{% if user_role in ["admin", "owner"] and project.deployments %}
+    {% for deployment in project.deployments %}
+    <div class="deployment-section" id="deployment-actions-{{ deployment.name }}"
+         {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
+    <c-card outline="true" padding="lg" backgroundColor="wit">
+        <c-layout-flow gap="md">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="instellingen" size="xl" color="hemelblauw" />Acties</c-heading>
+            <c-layout-row gap="sm">
+                <c-button
+                    label="Images bewerken"
+                    kind="secondary"
+                    size="sm"
+                    showIcon="before"
+                    icon="bewerken"
+                    @click="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Images bewerken - {{ deployment.name }}')" />
+                <c-button
+                    label="Deployment herverwerken"
+                    kind="secondary"
+                    size="sm"
+                    showIcon="before"
+                    icon="refresh"
+                    @click="showDangerConfirmation('deployment-refresh', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt herverwerken? Dit synchroniseert de manifesten voor deze deployment.')" />
+            </c-layout-row>
+        </c-layout-flow>
+    </c-card>
+    </div>
+    {% endfor %}
+{% endif %}

@@ -76,6 +76,7 @@ class ComponentFormModel(BaseModel):
         ),
     ] = Field(default=None, ge=1, le=65535)
 
+    # TODO: clarify purpose of image on top-level components — see features/component-image-field-clarification.md
     image: Annotated[
         str,
         FormMeta(
@@ -112,7 +113,7 @@ class ComponentFormModel(BaseModel):
             label="component.memory_limit",
             description="component.memory_limit.description",
             widget="select",
-            options_provider="MemoryLimitOptionsProvider",
+            options_provider="MemoryOptionsProvider",
         ),
     ] = Field(default=None)
 

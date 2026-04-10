@@ -1,6 +1,6 @@
 /* Wizard CSS - extracted from wizard_page.html.j2 and roos.py */
 
-/* Helper text spacing — stack description + help_text vertically */
+/* Helper text spacing - stack description + help_text vertically */
 .rvo-form-field__helper-group {
     display: flex;
     flex-direction: column;
@@ -121,6 +121,21 @@ a.wizard-steps__link:hover .wizard-steps__label {
     background: #007BC7;
     border-radius: 2px;
     transition: width 0.3s ease;
+}
+
+/* Edit modal wizard steps override */
+.edit-wizard-steps {
+    margin: 0 0 1rem 0;
+    padding: 0 1.5rem;
+}
+.edit-step-indicator {
+    border-bottom: 1px solid #E0E0E0;
+    padding-bottom: 0.5rem;
+}
+.edit-step-right-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
 }
 
 /* Wizard Step Content */
@@ -392,3 +407,8 @@ c-fieldset c-fieldset {
 .service-help-modal__body li {
     margin-bottom: 0.25rem;
 }
+
+/* CodeMirror KV editor wrapper */
+.cm-kv-wrapper { border: 1px solid #ccc; border-radius: 4px; min-height: 7.5rem; }
+.cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid #007BC7; }
+.kv-editor--error .cm-kv-wrapper { border-color: #d52b1e; }

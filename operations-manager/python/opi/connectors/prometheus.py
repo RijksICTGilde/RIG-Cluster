@@ -6,6 +6,7 @@ cluster and application metrics.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from typing import Any
 
@@ -44,7 +45,7 @@ class PrometheusConnector:
     def __init__(self) -> None:
         """Initialize the Prometheus connector.
 
-        Creates the HTTP client but does not test the connection — PrometheusConnect
+        Creates the HTTP client but does not test the connection - PrometheusConnect
         is a stateless HTTP client so there is no persistent connection to verify.
         Each query is an independent HTTP request that succeeds or raises on its own.
         """
@@ -66,14 +67,14 @@ class PrometheusConnector:
     def reconnect(self) -> bool:
         """Kept for backward compatibility with startup code. Always returns True.
 
-        There is no persistent connection — PrometheusConnect is a stateless HTTP
+        There is no persistent connection - PrometheusConnect is a stateless HTTP
         client. Queries will succeed or fail on their own.
         """
         PrometheusConnector.is_connected = True
         return True
 
     def _ensure_connected(self) -> None:
-        """Kept for backward compatibility. No-op — there is no connection to check."""
+        """Kept for backward compatibility. No-op - there is no connection to check."""
 
     def get_cpu_usage_by_namespace(self, namespace: str | None = None) -> list[dict[str, Any]]:
         """
@@ -461,15 +462,14 @@ class PrometheusConnector:
         Returns:
             Dictionary mapping component names to their metrics
         """
-        result: dict[str, dict[str, float | None]] = {}
+        pod_prefixes = {name: generate_unique_name(deployment_name, name) for name in components}
 
-        for component_name in components:
-            # Pod names follow pattern: {deployment_name}-{component_name}-{hash}-{hash}
-            # Use generate_unique_name to construct the Kubernetes resource name
-            pod_prefix = generate_unique_name(deployment_name, component_name)
-            result[component_name] = self.get_component_metrics(namespace, pod_prefix, time_range)
-
-        return result
+        with ThreadPoolExecutor(max_workers=len(pod_prefixes)) as executor:
+            futures = {
+                name: executor.submit(self.get_component_metrics, namespace, prefix, time_range)
+                for name, prefix in pod_prefixes.items()
+            }
+            return {name: future.result() for name, future in futures.items()}
 
     def get_component_metrics_timeseries(
         self, namespace: str, pod_prefix: str, duration_minutes: int = 60, step_minutes: int = 5
@@ -723,7 +723,7 @@ class PrometheusConnector:
 
         return result
 
-    def get_deployment_component_metrics_timeseries(
+    async def get_deployment_component_metrics_timeseries(
         self,
         namespace: str,
         components: list[str],
@@ -744,19 +744,18 @@ class PrometheusConnector:
         Returns:
             Dictionary mapping component names to their time-series metrics
         """
-        result: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        pod_prefixes = {name: generate_unique_name(deployment_name, name) for name in components}
 
-        for component_name in components:
-            # Pod names follow pattern: {deployment_name}-{component_name}-{hash}-{hash}
-            # Use generate_unique_name to construct the Kubernetes resource name
-            pod_prefix = generate_unique_name(deployment_name, component_name)
-            result[component_name] = self.get_component_metrics_timeseries(
-                namespace, pod_prefix, duration_minutes, step_minutes
-            )
+        with ThreadPoolExecutor(max_workers=len(pod_prefixes)) as executor:
+            futures = {
+                name: executor.submit(
+                    self.get_component_metrics_timeseries, namespace, prefix, duration_minutes, step_minutes
+                )
+                for name, prefix in pod_prefixes.items()
+            }
+            return {name: future.result() for name, future in futures.items()}
 
-        return result
-
-    def get_pvc_storage_by_namespace(
+    async def get_pvc_storage_by_namespace(
         self, namespace: str, duration_minutes: int = 60, step_minutes: int = 5
     ) -> dict[str, dict[str, Any]]:
         """
@@ -845,7 +844,7 @@ class PrometheusConnector:
 
         return result
 
-    def discover_workloads_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
+    async def discover_workloads_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
         """
         Discover workloads (deployments/statefulsets) in a namespace via Prometheus metrics.
 
@@ -975,7 +974,7 @@ class PrometheusConnector:
 
         return pod_name
 
-    def get_discovered_workload_metrics_timeseries(
+    async def get_discovered_workload_metrics_timeseries(
         self,
         namespace: str,
         workloads: list[dict[str, Any]],
@@ -997,19 +996,16 @@ class PrometheusConnector:
         Returns:
             Dictionary mapping workload names to their time-series metrics
         """
-        result: dict[str, dict[str, Any]] = {}
+        names = [w.get("name", "") for w in workloads if w.get("name")]
 
-        for workload in workloads:
-            workload_name = workload.get("name", "")
-            if not workload_name:
-                continue
-
-            # Use workload name as pod prefix for metrics queries
-            result[workload_name] = self.get_component_metrics_timeseries(
-                namespace, workload_name, duration_minutes, step_minutes
-            )
-
-        return result
+        with ThreadPoolExecutor(max_workers=len(names) or 1) as executor:
+            futures = {
+                name: executor.submit(
+                    self.get_component_metrics_timeseries, namespace, name, duration_minutes, step_minutes
+                )
+                for name in names
+            }
+            return {name: future.result() for name, future in futures.items()}
 
 
 def create_prometheus_connector() -> PrometheusConnector:
@@ -1023,7 +1019,7 @@ def create_prometheus_connector() -> PrometheusConnector:
     return PrometheusConnector()
 
 
-def get_metrics_connector() -> Any:
+async def get_metrics_connector() -> Any:
     """
     Get the appropriate metrics connector based on configuration.
 
@@ -1047,7 +1043,7 @@ def get_metrics_connector() -> Any:
         from opi.connectors.grafana_prometheus import create_grafana_prometheus_connector
 
         logger.info("Using Grafana-based metrics connector (METRICS_BACKEND=grafana)")
-        return create_grafana_prometheus_connector()
+        return await create_grafana_prometheus_connector()
     else:
         logger.info("Using direct Prometheus connector (METRICS_BACKEND=prometheus)")
         return create_prometheus_connector()

@@ -15,6 +15,7 @@ from jinja_roos_components import setup_components
 from jinja_roos_components.extension import ComponentExtension
 from starlette.requests import Request
 
+from opi.core.config import BUILD_DATE, VERSION
 from opi.core.i18n import get_current_translation, get_requested_language
 
 # Dutch month names
@@ -132,6 +133,8 @@ setup_components(
 
 # Add global variables that components might need
 templates.env.globals["roos_assets_base_url"] = "/static/roos/dist/"
+templates.env.globals["version"] = VERSION
+templates.env.globals["build_date"] = BUILD_DATE
 
 # Register custom filters
 templates.env.filters["service_name"] = get_service_name
@@ -142,7 +145,7 @@ templates.env.filters["dutch_date"] = format_dutch_date
 # preprocess only runs at template compile time, so runtime strings need this filter.
 _component_ext = templates.env.extensions.get("jinja_roos_components.extension.ComponentExtension")
 if not isinstance(_component_ext, ComponentExtension):
-    raise TypeError("ComponentExtension not registered — setup_components must run first")
+    raise TypeError("ComponentExtension not registered - setup_components must run first")
 
 
 def _process_components(html: str) -> markupsafe.Markup:

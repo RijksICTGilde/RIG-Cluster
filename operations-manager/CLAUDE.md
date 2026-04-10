@@ -1,265 +1,180 @@
 # CLAUDE.md - Operations Manager (OPI)
 
-This file provides guidance to Claude Code when working with the Operations Manager (OPI) codebase - a GitOps Operations and Project Infrastructure system that provides self-service Kubernetes environments.
+Guidance for working with the Operations Manager codebase - a FastAPI application that provides self-service Kubernetes environments through GitOps.
 
-## Core Identity & Interaction Guidelines
+## Working Directory
 
-**[CORE IDENTITY]** You are a collaborative Principal Engineer on the operations team, functioning as both a thoughtful implementer and constructive critic. Your primary directive is to engage in iterative, test-driven development while maintaining unwavering commitment to clean, maintainable infrastructure-as-code.
+Python source code is at `operations-manager/python/`. Run all commands from there.
 
-**CRITICAL EVALUATION PROTOCOL**: When asked for changes, do not agree unless you are certain the request is sound. As a Principal Engineer, you must:
-- Carefully assess if the change is truly required for the operations/infrastructure domain
-- Analyze potential impact on system architecture, performance, security, and maintainability
-- Consider alternative approaches that might achieve the same goal with less operational risk
-- Question assumptions and probe for underlying business needs
-- Suggest simpler solutions or incremental approaches when appropriate
-- Only proceed with implementation after thorough evaluation and explicit agreement on approach
+```bash
+cd operations-manager/python
+uv sync                    # Install dependencies
+uv run pytest tests/ -q    # Run tests
+uv run ruff check . --fix  # Lint
+uv run ruff format .       # Format
+uv run pyright             # Type check
+```
 
-### Planning and Confirmation Requirements
-
-- **Always Wait for Confirmation**: When asked to perform a task, ALWAYS present your plan of action and WAIT for explicit user confirmation before proceeding with implementation
-- **Create Numbered Todo Lists**: When creating task lists, number them and ask for confirmation
-- **Explain Commands**: When executing commands, explain what they do and their impact on the infrastructure
-
-## Project Architecture Overview
-
-The Operations Manager (OPI) is a FastAPI-based system that provides self-service Kubernetes environments through GitOps principles. It's designed for RIG projects in ODC-Noord that need Kubernetes platforms for POC, Pilot, or Production environments.
-
-### Core Components Architecture
+## Module Architecture
 
 ```
 opi/
-├── api/              # FastAPI REST API endpoints
-├── connectors/       # External system integrations
-├── core/            # Configuration and startup logic
-├── generation/      # Manifest generation from templates
-├── handlers/        # Request processing and business logic
-├── manager/         # Project lifecycle management (the "worker")
-├── utils/           # Cryptography and utility functions
-└── server.py        # FastAPI application entry point
+|-- server.py              # FastAPI entry point, lifespan management
+|
+|-- api/                   # REST API endpoints
+|   |-- router.py          #   Main API router
+|   |-- v2/router.py       #   V2 API router
+|   |-- auth.py            #   Authentication endpoints
+|   |-- backup.py          #   Backup/restore endpoints
+|   |-- logs.py            #   Log streaming endpoints
+|   |-- metrics.py         #   Metrics endpoints
+|   |-- task.py            #   Async task endpoints
+|   +-- image.py           #   Image management endpoints
+|
+|-- web/                   # Web UI routes (Jinja2 HTML)
+|   |-- router.py          #   Main web router
+|   |-- project_form.py    #   Project creation form
+|   |-- wizard.py          #   Multi-step wizard
+|   |-- detail_edit.py     #   Project detail editing
+|   |-- self_service.py    #   Self-service portal
+|   +-- metrics_explorer.py #  Prometheus metrics UI
+|
+|-- manager/               # Business logic orchestration
+|   |-- project_manager.py #   Primary orchestrator (large file)
+|   |-- argo_manager.py    #   ArgoCD application lifecycle
+|   |-- database_manager.py #  PostgreSQL schema/user management
+|   |-- keycloak_manager.py #  Realm/client/user management
+|   |-- minio_manager.py   #  Bucket provisioning
+|   |-- backup_manager.py  #  PVC backup operations
+|   |-- clone_manager.py   #  Database/bucket cloning
+|   +-- delete_project_manager.py # Project teardown
+|
+|-- connectors/            # External system integrations
+|   |-- git.py             #   Git operations (clone, push, SSH)
+|   |-- kubectl.py         #   Kubernetes operations
+|   |-- keycloak.py        #   Keycloak API client
+|   |-- argo.py            #   ArgoCD API client
+|   |-- postgres.py        #   PostgreSQL connections
+|   |-- minio_connector.py #   MinIO/S3 operations
+|   |-- kopia.py           #   Backup tool integration
+|   |-- prometheus.py      #   Metrics collection
+|   |-- skopeo.py          #   Container image inspection
+|   |-- chisel.py          #   Reverse tunnel service
+|   +-- subdomain.py       #   DNS/subdomain management
+|
+|-- core/                  # Application bootstrap and config
+|   |-- config.py          #   Settings (env vars, cluster config)
+|   |-- startup.py         #   Initialization tasks
+|   |-- database_pools.py  #   AsyncPG connection pool management
+|   |-- git_monitor.py     #   Git file change watcher
+|   |-- metrics.py         #   Prometheus metrics definitions
+|   |-- tracing.py         #   OpenTelemetry setup
+|   +-- auth_decorators.py #   Authentication/authorization decorators
+|
+|-- generation/            # Kubernetes manifest generation
+|   +-- manifests.py       #   Jinja2 template rendering
+|
+|-- forms/                 # Dynamic form framework
+|   |-- converters.py      #   Form data conversion
+|   |-- fields.py          #   Field definitions
+|   +-- validation.py      #   Form validation logic
+|
+|-- services/              # Business logic services
+|   |-- project_service.py #   Project CRUD operations
+|   |-- resource_analyzer.py #  Resource usage analysis
+|   |-- schema_migration.py #  Database schema migrations
+|   +-- oom_watcher.py     #   OOM kill detection for auto-tuning
+|
+|-- handlers/              # Request processing
+|   |-- project_file_handler.py # Project file CRUD
+|   |-- configuration_handler.py # Config management
+|   +-- sops.py            #   SOPS-specific handling
+|
+|-- middleware/            # HTTP middleware
+|   |-- authorization.py   #   RBAC and user isolation
+|   |-- csrf.py            #   CSRF protection
+|   +-- session.py         #   Session handling
+|
+|-- utils/                 # Utility functions
+|   |-- age.py             #   AGE encryption/decryption
+|   |-- sops.py            #   SOPS file operations
+|   |-- naming.py          #   Naming conventions (large file)
+|   |-- secrets.py         #   Secret generation/management
+|   +-- env_vars.py        #   Environment variable handling
+|
+|-- templates/             # Jinja2 HTML templates for web UI
+|-- jobs/                  # Background job scheduling
+|-- migrations/            # Alembic database migrations
+|-- locale/                # i18n translations
+|-- configs/               # Configuration presets
++-- bootstrap/             # Keycloak bootstrap during cluster init
 ```
 
-### Key Architectural Principles
+Manifest templates (Jinja2 for K8s YAML generation) are at: `operations-manager/python/manifests/*.yaml.jinja`
 
-1. **Connector Pattern**: All operations outside the project scope (git, keycloak, database, kubectl, ArgoCD) use dedicated connector classes
-2. **Project Manager as Worker**: The `project_manager.py` serves as the primary worker that orchestrates deployment steps
-3. **Cryptographic Security**: Uses `age.py` for AGE encryption operations and `sops.py` for SOPS operations
-4. **Template-Driven Generation**: Kubernetes manifests generated from Jinja2 templates in `manifests/` directory
-5. **GitOps Workflow**: Supports both ArgoCD deployment and direct kubectl application
+## Key Design Patterns
 
-## Component Responsibilities
+1. **Connector Pattern**: ALL external system calls go through connector classes. Never call `subprocess`, `kubectl`, or external APIs directly outside connectors.
+2. **Project Manager as Orchestrator**: `project_manager.py` coordinates multi-step deployments by calling managers and connectors in sequence.
+3. **Distributed Model**: Each OPI instance manages only its `CLUSTER_MANAGER` cluster. Use `get_deployments(cluster_filter=True)` (default) for filtering.
+4. **Dual Cryptography**: AGE (`utils/age.py`) for runtime encryption, SOPS (`utils/sops.py`) for file-based secret management.
+5. **Template-Driven Generation**: Jinja2 templates in `manifests/` produce K8s resources.
+6. **GitOps First**: Primary deployment via ArgoCD, with direct `kubectl` fallback.
 
-### Connectors (`opi/connectors/`)
-**Purpose**: Handle all external system integrations using the connector pattern
+## Logs and Debugging
 
-**Key Files**:
-- `git.py` - Git repository operations (clone, push, pull, SSH handling)
-- `keycloak.py` - Keycloak authentication and realm management
-- `kubectl.py` - Kubernetes cluster operations (apply, delete, get resources)
-- `argo.py` - ArgoCD application lifecycle management
+OPI runs as a Kubernetes pod. There are **no local log files** to check.
 
-**When to Use**: Any operation that touches external systems must go through appropriate connectors. Never implement direct external calls outside connectors.
-
-### Project Manager (`opi/manager/project_manager.py`)
-**Purpose**: Primary worker orchestrating deployment steps and project lifecycle
-
-**Responsibilities**:
-- Project file processing and validation
-- Orchestrating connector calls in proper sequence
-- Managing deployment workflows (create, update, delete)
-- Handling rollbacks and error recovery
-- Environment variable generation and secret management
-
-**When to Use**: For any multi-step operations involving project deployments, updates, or lifecycle management.
-
-### Cryptographic Utilities
-
-#### AGE Operations (`opi/utils/age.py`)
-**Purpose**: Handle AGE encryption/decryption for secrets and sensitive data
-
-**Key Functions**:
-- `encrypt_age_content()` - Encrypt content with AGE public key
-- `decrypt_age_content()` - Decrypt AGE-encrypted content
-- `decrypt_password_smart()` - Smart password decryption with prefix support
-- `parse_password_with_prefix()` - Parse passwords with prefixes (age:, base64+age:, plain:)
-
-**When to Use**: For all AGE-related cryptographic operations, password handling, and sensitive data encryption.
-
-#### SOPS Operations (`opi/utils/sops.py`)
-**Purpose**: Handle SOPS-specific operations including key management and file encryption
-
-**Key Functions**:
-- `encrypt_sops_file()` - Encrypt files with SOPS
-- `decrypt_sops_file()` - Decrypt SOPS-encrypted files
-- `generate_sops_key_pair()` - Generate new SOPS AGE key pairs
-- `encrypt_to_sops_files()` - Batch encrypt `.to-sops.yaml` files to `.sops.yaml`
-
-**When to Use**: For SOPS file operations, key pair generation, and batch encryption workflows.
-
-### Handlers (`opi/handlers/`)
-**Purpose**: Business logic and request processing
-
-- `configuration_handler.py` - Configuration management and validation
-- `project_file_handler.py` - Project file CRUD operations
-- `sops.py` - SOPS-specific handling logic
-
-### Generation (`opi/generation/`)
-**Purpose**: Generate Kubernetes manifests from templates
-
-- `manifests.py` - Template rendering and manifest generation using Jinja2 templates from `manifests/` directory
-
-## Development Guidelines
-
-### Code Style Requirements
-- **Modern Type Hints**: Use lowercase types (`dict`, `list`, `tuple`) instead of uppercase
-- **Union Types**: Use `|` symbol for union types instead of `Optional` or `Union`
-  - `name: str | None` instead of `Optional[str]`
-  - `data: dict[str, any]` instead of `Dict[str, Any]`
-- **Type Annotations**: Always include proper type annotations for function parameters and return types
-- **Explicit Error Handling**: Use specific exception types, avoid generic `except Exception`
-- **No Exception Catching in Methods**: When creating new methods, do not catch exceptions - let them bubble up to the caller for proper error handling and debugging
-- **No Emojis**: Never use emojis in code, comments, or log messages
-
-### Security Requirements
-- **Secret Management**: All secrets must use AGE encryption or SOPS encryption
-- **No Plain Text Secrets**: Never commit plain text secrets to repository
-- **Connector Isolation**: External system access only through connectors
-- **Input Validation**: Validate all external inputs and user data
-
-### Testing Strategy
 ```bash
-# Run all tests
-pytest
+# Sandbox (rig-system namespace)
+kubectl logs -n rig-system deployment/operations-manager -f
+kubectl logs -n rig-system deployment/operations-manager -f --previous  # after crash
 
-# Run with coverage
-coverage run -m pytest
-coverage report
+# Production ODCN (rig-prd-operations namespace)
+kubectl logs -n rig-prd-operations deployment/operations-manager -f
 
-# Run functional tests
-python functional_tests/run_all.py
+# Local dev with docker-compose
+docker compose -f docker-compose.dev.yaml logs -f
 
-# Linting
-ruff check .
-ruff format .
-
-# Type checking
-pyright
+# Hot-reload dev with Skaffold - API at localhost:9595
+task sandbox:skaffold-dev
 ```
 
-### Project Workflow Patterns
+### Namespace Context
 
-#### Creating New Projects
-```python
-# 1. Use project manager for orchestration
-project_manager = ProjectManager()
+| Environment | OPI Namespace | User Namespaces |
+|---|---|---|
+| Sandbox | `rig-system` | `rig-{project}` |
+| Production | `rig-prd-operations` | `rig-prd-{project}` |
 
-# 2. Process through connectors in sequence
-git_connector = create_git_connector_for_project_files()
-kubectl_connector = KubectlConnector()
-argo_connector = create_argo_connector()
+Always specify the correct namespace when debugging. Do not assume `rig-system` - check the environment.
 
-# 3. Handle encryption through utils
-encrypted_secret = await encrypt_age_content(secret, public_key)
-```
+## Code Style
 
-#### Handling External Operations
-```python
-# ❌ WRONG: Direct external calls
-subprocess.run(['kubectl', 'apply', '-f', 'manifest.yaml'])
+- **Modern type hints**: `dict`, `list`, `str | None` (not `Optional`, `Dict`, `List`)
+- **Type annotations**: Always on function parameters and return types
+- **Error handling**: Specific exceptions, no generic `except Exception`. In new methods, let exceptions bubble up.
+- **No emojis** in code, comments, or log messages
+- **Frontend**: Jinja2 + jinja-roos-components. Check `references/jinja_roos_copied.md`
 
-# ✅ CORRECT: Use connectors
-kubectl_connector = KubectlConnector()
-result = await kubectl_connector.apply_manifest(manifest_path)
-```
+## Dependencies
 
-#### Secret Management Patterns
-```python
-# For AGE operations
-from opi.utils.age import decrypt_password_smart, encrypt_age_content
+- **Framework**: FastAPI, Uvicorn, Starlette
+- **Database**: SQLAlchemy 2.0, AsyncPG, Alembic
+- **Auth**: python-keycloak, authlib
+- **UI**: Jinja2, jinja-roos-components (private package)
+- **Async**: aiohttp, httpx, async-lru
+- **Monitoring**: OpenTelemetry, Prometheus
+- **Testing**: pytest, pytest-asyncio, playwright (E2E), vcrpy, freezegun
+- **Package manager**: `uv`
 
-# For SOPS operations
-from opi.utils.sops import encrypt_sops_file, decrypt_sops_file
-```
+## Testing
 
-## Important File Locations
-
-### Configuration
-- `opi/core/config.py` - Application settings and environment configuration
-- `opi/core/cluster_config.py` - Kubernetes cluster-specific configuration
-
-### Templates
-- `manifests/*.yaml.jinja` - Kubernetes manifest templates for resource generation
-
-### Testing
-- `tests/` - Unit tests
-- `functional_tests/` - Integration and functional tests
-
-## Command Guidelines
-
-### Development Commands
 ```bash
-# Install dependencies
-uv sync
-
-# Run development server
-uv run python -m opi
-
-# Run tests with coverage
-uv run coverage run -m pytest
-uv run coverage report
-
-# Linting and formatting
-uv run ruff check .
-uv run ruff format .
-
-# Type checking
-uv run pyright
+uv run pytest tests/ -q                    # All unit tests
+uv run pytest tests/forms/ -q              # Form tests only
+uv run pytest tests/ -k "test_name" -q     # Specific test
+uv run python functional_tests/run_all.py  # Integration tests
 ```
 
-### Operational Commands
-```bash
-# SOPS operations
-sops --encrypt --in-place secret.yaml
-sops --decrypt secret.yaml
-
-# Age operations (handled via age.py utilities)
-# kubectl operations (handled via kubectl connector)
-```
-
-## Architecture Decision Records
-
-1. **Connector Pattern**: All external integrations go through dedicated connector classes to maintain separation of concerns and enable easier testing/mocking
-
-2. **Project Manager as Worker**: Single orchestration point for complex multi-step operations to ensure consistency and error handling
-
-3. **Dual Cryptography Approach**: AGE for runtime encryption/decryption, SOPS for file-based secret management in GitOps workflows
-
-4. **Template-Based Generation**: Jinja2 templates for Kubernetes manifests to enable customization while maintaining consistency
-
-5. **GitOps First**: Primary deployment method through ArgoCD with fallback to direct kubectl for specific scenarios
-
-## Troubleshooting Common Issues
-
-### Encryption/Decryption Issues
-- Check AGE key configuration in settings
-- Verify SOPS key availability for file operations
-- Use debug logging in age.py and sops.py utilities
-
-### Connector Failures
-- Verify external system connectivity (git, kubectl, ArgoCD)
-- Check authentication credentials and permissions
-- Review connector-specific error handling
-
-### Deployment Issues
-- Verify Kubernetes cluster connectivity
-- Check namespace permissions and resource limits
-- Review ArgoCD application status and sync policies
-
----
-
-## Important Reminders
-
-- **Always use connectors for external operations** - never bypass the connector pattern
-- **Use age.py for AGE operations and sops.py for SOPS operations** - maintain separation of cryptographic concerns
-- **Project manager is the worker** - orchestrate complex operations through the project manager
-- **Follow GitOps principles** - prefer declarative configurations and ArgoCD deployments
-- **Security first** - encrypt all secrets, validate inputs, use type hints for safety
+Note: Some test collection errors are pre-existing due to jinja-roos-components import chain issues in non-form tests.

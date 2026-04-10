@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from opi.forms.editables.converters import (
     ContainerImageConverter,
-    EnsureListConverter,
     IntegerConverter,
     KeyValueConverter,
+    ServiceListConverter,
 )
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
     AllowedValuesValidator,
     ComponentNameValidator,
     ContainerImageValidator,
+    KeyValueValidator,
+    MemoryRangeValidator,
+    MemoryRequestRangeValidator,
     PathValidator,
 )
 
@@ -26,6 +29,7 @@ COMPONENT_NAME_EDITABLE = Editable(
     required=True,
 )
 
+# TODO: clarify purpose of image on top-level components — see features/component-image-field-clarification.md
 COMPONENT_IMAGE_EDITABLE = Editable(
     yaml_path="components[*]/image",
     validator=ContainerImageValidator(),
@@ -55,86 +59,158 @@ COMPONENT_PORTS_OUTBOUND_EDITABLE = Editable(
 )
 
 COMPONENT_RESOURCES_CPU_REQUEST_EDITABLE = Editable(
-    yaml_path="components[*]/resources/cpu/request",
+    yaml_path="components[*]/resources/requests/cpu",
     values_provider="CpuRequestOptionsProvider",
     validator=AllowedValuesValidator(["50m", "100m", "250m", "500m"]),
     default="50m",
 )
 
 COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE = Editable(
-    yaml_path="components[*]/resources/cpu/limit",
+    yaml_path="components[*]/resources/limits/cpu",
     values_provider="CpuLimitOptionsProvider",
     validator=AllowedValuesValidator(["500m", "1"]),
     default="1",
 )
 
 COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE = Editable(
-    yaml_path="components[*]/resources/memory/request",
+    yaml_path="components[*]/resources/requests/memory",
     values_provider="MemoryRequestOptionsProvider",
-    validator=AllowedValuesValidator(["256Mi", "512Mi"]),
+    validator=MemoryRequestRangeValidator(min_mi=25),
     default="256Mi",
 )
 
 COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE = Editable(
-    yaml_path="components[*]/resources/memory/limit",
-    values_provider="MemoryLimitOptionsProvider",
-    validator=AllowedValuesValidator(["512Mi", "768Mi", "1Gi"]),
+    yaml_path="components[*]/resources/limits/memory",
+    values_provider="MemoryOptionsProvider",
+    validator=MemoryRangeValidator(min_mi=25),
     default="512Mi",
 )
 
-COMPONENT_USES_SERVICES_EDITABLE = Editable(
-    yaml_path="components[*]/uses-services",
-    converter=EnsureListConverter(),
+COMPONENT_SERVICES_EDITABLE = Editable(
+    yaml_path="components[*]/services",
+    converter=ServiceListConverter(),
     values_provider="FilteredServiceOptionsProvider",
-    default="__all__",
+)
+
+COMPONENT_PATH_MATCH_EDITABLE = Editable(
+    yaml_path="components[*]/path[*]/match",
+    default="/",
+    validator=PathValidator(),
+    required=True,
+)
+
+COMPONENT_PATH_REWRITE_EDITABLE = Editable(
+    yaml_path="components[*]/path[*]/rewrite",
+    validator=PathValidator(),
+    remove_when_none=True,
 )
 
 COMPONENT_PATH_EDITABLE = Editable(
     yaml_path="components[*]/path",
-    default="/",
-    validator=PathValidator(),
-)
-
-COMPONENT_REWRITE_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/rewrite-path",
-    validator=PathValidator(),
+    default=[{"match": "/"}],
+    min_items=1,
+    children=[
+        COMPONENT_PATH_MATCH_EDITABLE,
+        COMPONENT_PATH_REWRITE_EDITABLE,
+    ],
 )
 
 COMPONENT_ALIASES_EDITABLE = Editable(
     yaml_path="components[*]/aliases",
     converter=KeyValueConverter(fmt="env"),
+    validator=KeyValueValidator(),
+    remove_when_none=True,
 )
 
 COMPONENT_USER_ENV_VARS_EDITABLE = Editable(
     yaml_path="components[*]/user-env-vars",
-    converter=KeyValueConverter(fmt="env"),
+    converter=KeyValueConverter(fmt="env", write_as="string"),
+    validator=KeyValueValidator(),
+    remove_when_none=True,
 )
 
-STORAGE_NAME_EDITABLE = Editable(
-    yaml_path="components[*]/storage[*]/name",
+PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/name",
     required=True,
+    default="data",
 )
 
-STORAGE_TYPE_EDITABLE = Editable(
-    yaml_path="components[*]/storage[*]/type",
-    values_provider="StorageTypeOptionsProvider",
-)
-
-STORAGE_SIZE_EDITABLE = Editable(
-    yaml_path="components[*]/storage[*]/size",
+PERSISTENT_STORAGE_SIZE_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/size",
     values_provider="StorageSizeOptionsProvider",
+    default="100Mi",
 )
 
-STORAGE_MOUNT_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/storage[*]/mount-path",
+PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config[*]/mount-path",
+    validator=PathValidator(),
     required=True,
+    default="/data",
 )
 
-COMPONENT_STORAGE_SEQUENCE_EDITABLE = Editable(
-    yaml_path="components[*]/storage",
-    depends_on="services",
-    show_when={"contains_any": ["persistent-storage", "temp-storage"]},
-    children=[STORAGE_NAME_EDITABLE, STORAGE_TYPE_EDITABLE, STORAGE_SIZE_EDITABLE, STORAGE_MOUNT_PATH_EDITABLE],
+PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
+    yaml_path="components[*]/services{persistent-storage}/config",
+    depends_on="components[*]/services",
+    show_when={"contains": "persistent-storage"},
+    virtualize=("services", "_services-config"),
+    min_items=1,
+    children=[
+        PERSISTENT_STORAGE_NAME_EDITABLE,
+        PERSISTENT_STORAGE_SIZE_EDITABLE,
+        PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
+    ],
+)
+
+TEMP_STORAGE_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config[*]/name",
+    required=True,
+    default="tmp",
+)
+
+TEMP_STORAGE_SIZE_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config[*]/size",
+    values_provider="StorageSizeOptionsProvider",
+    default="100Mi",
+)
+
+TEMP_STORAGE_MOUNT_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config[*]/mount-path",
+    validator=PathValidator(),
+    required=True,
+    default="/tmp",
+)
+
+TEMP_STORAGE_SEQUENCE_EDITABLE = Editable(
+    yaml_path="components[*]/services{temp-storage}/config",
+    depends_on="components[*]/services",
+    show_when={"contains": "temp-storage"},
+    virtualize=("services", "_services-config"),
+    min_items=1,
+    children=[
+        TEMP_STORAGE_NAME_EDITABLE,
+        TEMP_STORAGE_SIZE_EDITABLE,
+        TEMP_STORAGE_MOUNT_PATH_EDITABLE,
+    ],
+)
+
+METRICS_PORT_EDITABLE = Editable(
+    yaml_path="components[*]/services{metrics-scraper}/port",
+    converter=IntegerConverter(),
+    required=True,
+    default=8080,
+    depends_on="components[*]/services",
+    show_when={"contains": "metrics-scraper"},
+    virtualize=("services", "_services-config"),
+)
+
+METRICS_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/services{metrics-scraper}/path",
+    default="/metrics",
+    validator=PathValidator(),
+    required=True,
+    depends_on="components[*]/services",
+    show_when={"contains": "metrics-scraper"},
+    virtualize=("services", "_services-config"),
 )
 
 COMPONENTS_SEQUENCE_EDITABLE = Editable(
@@ -149,11 +225,13 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
         COMPONENT_PORTS_INBOUND_EDITABLE,
         COMPONENT_PORTS_OUTBOUND_EDITABLE,
-        COMPONENT_USES_SERVICES_EDITABLE,
+        COMPONENT_SERVICES_EDITABLE,
         COMPONENT_PATH_EDITABLE,
-        COMPONENT_REWRITE_PATH_EDITABLE,
         COMPONENT_ALIASES_EDITABLE,
         COMPONENT_USER_ENV_VARS_EDITABLE,
-        COMPONENT_STORAGE_SEQUENCE_EDITABLE,
+        PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
+        TEMP_STORAGE_SEQUENCE_EDITABLE,
+        METRICS_PORT_EDITABLE,
+        METRICS_PATH_EDITABLE,
     ],
 )

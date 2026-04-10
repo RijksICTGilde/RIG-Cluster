@@ -23,15 +23,45 @@ spec:
         fsGroup: 999
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: init-aclfile
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - |
+          if [ ! -s /data/users.acl ]; then
+            echo "user default on >$REDIS_PASSWORD ~* &* +@all" > /data/users.acl
+            echo "Initialized ACL file with default user"
+          else
+            echo "ACL file already exists, skipping initialization"
+          fi
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin-credentials
+              key: REDIS_PASSWORD
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
       containers:
       - name: redis
         image: redis:7-alpine
         command:
         - redis-server
-        - --requirepass
-        - $(REDIS_PASSWORD)
         - --appendonly
         - "yes"
+        - --aclfile
+        - /data/users.acl
         ports:
         - containerPort: 6379
           name: redis

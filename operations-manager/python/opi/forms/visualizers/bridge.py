@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.editables.editable import EditableCondition, apply_virtualize
 from opi.forms.editables.path import resolve_path
+from opi.forms.editables.resolvers import build_resolver_map
 from opi.forms.editables.service_path import smart_get_value
 from opi.forms.field import FormField
 from opi.forms.visualizers.providers import get_provider
@@ -20,6 +22,8 @@ def editable_to_form_field(
     index: int | None = None,
     edit_mode: bool = False,
     provider_context: dict[str, Any] | None = None,
+    parent_virtualize: tuple[str, str] | None = None,
+    warnings: dict[str, list[str]] | None = None,
 ) -> FormField:
     """Convert an EditableVisualizer + YAML data into a FormField.
 
@@ -51,21 +55,41 @@ def editable_to_form_field(
 
     # --- Shared logic ---
 
-    # 1. Resolve the path
-    concrete_path = resolve_path(yaml_path, index)
+    # 1. Resolve the path (real for data access, virtual for form names)
+    real_path = resolve_path(yaml_path, index)
+    virt = ed.virtualize or parent_virtualize
+    form_path = apply_virtualize(real_path, virt) if virt else real_path
 
-    # 2. Extract value from YAML (fall back to default)
-    raw_value = smart_get_value(yaml_data, concrete_path)
+    # 2. Extract value from YAML using the real path (fall back to default)
+    raw_value = smart_get_value(yaml_data, real_path)
     if raw_value is None and default is not None:
         raw_value = default
 
     # 3. Apply converter for display
+    # For editable widgets, use read() to convert YAML → form-compatible value
+    # (e.g. dict → string for select dropdowns). Fall back to view() for
+    # read-only display or converters that don't implement read().
     display_value = raw_value
     if converter:
-        display_value = converter.view(raw_value)
+        if hasattr(converter, "read") and widget in ("select", "text", "textarea", "radio"):
+            display_value = converter.read(raw_value)
+        else:
+            try:
+                display_value = converter.view(raw_value, yaml_data=yaml_data)
+            except TypeError:
+                display_value = converter.view(raw_value)
 
-    # 4. Resolve options
-    options = _resolve_options(options_provider_name, provider_context)
+    # 3b. Auto-detect KV format from stored value so the toggle matches
+    if converter and hasattr(converter, "detect_format") and raw_value is not None:
+        detected_fmt = converter.detect_format(raw_value)
+        attributes = dict(attributes or {})
+        attributes["kv_format"] = detected_fmt
+
+    # 4. Resolve options (pass current value so providers can include tuner-set values)
+    option_context = dict(provider_context or {})
+    if raw_value is not None:
+        option_context.setdefault("current_value", str(raw_value))
+    options = _resolve_options(options_provider_name, option_context)
 
     # 5. Build HTMX attrs dict
     htmx_attrs: dict[str, str] = {}
@@ -85,10 +109,10 @@ def editable_to_form_field(
         readonly = True
         description = f"Vereist door: {_service_display_name(locked_by_service)}"
 
-    # 8. Build FormField
+    # 8. Build FormField (use form_path for name/path, look up errors by real_path)
     return FormField(
-        name=concrete_path,
-        path=concrete_path,
+        name=form_path,
+        path=form_path,
         schema_type=str,
         widget_type=widget,
         label=label,
@@ -97,7 +121,8 @@ def editable_to_form_field(
         placeholder=placeholder,
         value=display_value,
         options=options or None,
-        errors=(errors or {}).get(concrete_path, []),
+        errors=(errors or {}).get(real_path, []),
+        warnings=(warnings or {}).get(real_path, []),
         readonly=readonly,
         readonly_on_edit=readonly_on_edit_flag,
         min_items=min_items,
@@ -108,35 +133,22 @@ def editable_to_form_field(
         help_text=help_text,
         help_template=help_template,
         examples=examples,
+        virtualize=virt,
     )
 
 
-def should_render_editable(
-    editable: EditableVisualizer,
-    yaml_data: dict[str, Any],
-    index: int | None = None,
-) -> bool:
-    """Check if an editable should be rendered based on its dependencies.
+def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool:
+    """Evaluate a ``show_when`` condition against a dependency value.
 
-    Implements 3 dependency patterns:
+    Returns True when the condition is met (or when *show_when* is None,
+    in which case truthiness of *dep_value* decides).
 
-    1. No depends_on -> always render (True)
-    2. depends_on set, no show_when -> render if dependency value is truthy
-    3. depends_on + show_when -> evaluate conditions:
-       - {"contains": "value"} -> dep_value is list and "value" in dep_value
-       - {"contains_any": [...]} -> dep_value is list and any match
-       - {"field": ["val1", "val2"]} -> dep_value in ["val1", "val2"]
-       - {"field": "value"} -> dep_value == "value"
+    Supported operators:
+    - ``{"contains": "value"}`` - dep_value is a list containing "value"
+    - ``{"contains_any": [...]}`` - dep_value is a list containing any value
+    - ``{"field": "value"}`` - dep_value equals "value"
+    - ``{"field": ["v1", "v2"]}`` - dep_value is in the list
     """
-    ed = editable.editable
-    depends_on = ed.depends_on
-    show_when = ed.show_when
-
-    if not depends_on:
-        return True
-
-    dep_value = smart_get_value(yaml_data, depends_on)
-
     if show_when is None:
         return bool(dep_value)
 
@@ -163,6 +175,57 @@ def should_render_editable(
     return True
 
 
+def should_render_editable(
+    editable: EditableVisualizer,
+    yaml_data: dict[str, Any],
+    index: int | None = None,
+    siblings: list[EditableVisualizer] | None = None,
+) -> bool:
+    """Check if an editable should be rendered based on its dependencies.
+
+    Implements 4 dependency patterns:
+
+    1. show_when is an EditableCondition -> evaluate against yaml_data (no depends_on needed)
+    2. No depends_on -> always render (True)
+    3. depends_on set, no show_when -> render if dependency value is truthy
+    4. depends_on + show_when dict -> evaluate conditions (see ``evaluate_show_when``)
+
+    When *siblings* is provided, the dependency value is passed through the
+    dependency field's converter (if any) before comparison.  This is needed
+    when a converter maps stored values to sentinel display values (e.g.
+    ``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` → ``"__custom__"``).
+    """
+    ed = editable.editable
+    depends_on = ed.depends_on
+    show_when = ed.show_when
+
+    # Callable condition: evaluate against full yaml_data
+    if isinstance(show_when, EditableCondition):
+        # Provide resolver map so the condition can resolve transient
+        # defaults (e.g. base-domain when not explicitly selected)
+        if siblings and hasattr(show_when, "set_resolvers"):
+            show_when.set_resolvers(build_resolver_map(siblings))
+        return show_when.check(yaml_data)
+
+    if not depends_on:
+        return True
+
+    # Resolve [*] wildcard in depends_on when rendering inside a sequence
+    if index is not None and "[*]" in depends_on:
+        depends_on = depends_on.replace("[*]", f"[{index}]", 1)
+
+    dep_value = smart_get_value(yaml_data, depends_on)
+
+    # Apply the dependency field's converter so show_when compares against
+    # the display value (e.g. "__custom__") rather than the raw stored value.
+    if siblings and show_when and dep_value is not None:
+        dep_converter = _find_converter_for_path(siblings, depends_on)
+        if dep_converter and hasattr(dep_converter, "view"):
+            dep_value = dep_converter.view(dep_value)
+
+    return evaluate_show_when(dep_value, show_when)
+
+
 def resolve_options_for_editable(
     editable: EditableVisualizer,
     context: dict[str, Any] | None = None,
@@ -177,6 +240,22 @@ def resolve_options_for_editable(
 # ---------------------------------------------------------------------------
 
 
+def _find_converter_for_path(
+    siblings: list[EditableVisualizer],
+    yaml_path: str,
+) -> Any | None:
+    """Find the converter for the editable whose yaml_path matches *yaml_path*."""
+    for sib in siblings:
+        if sib.editable.yaml_path == yaml_path:
+            return sib.editable.converter
+        # Recurse into groups
+        if sib.children:
+            result = _find_converter_for_path(sib.children, yaml_path)
+            if result is not None:
+                return result
+    return None
+
+
 def _resolve_options(
     provider_name: str | None,
     context: dict[str, Any] | None,
@@ -187,6 +266,10 @@ def _resolve_options(
 
     kwargs = _filter_provider_kwargs(provider_name, context or {})
     try:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.debug(f"_resolve_options: provider={provider_name!r}, filtered_kwargs={kwargs}")
         provider = get_provider(provider_name, **kwargs)
         return provider.get_options()
     except KeyError:

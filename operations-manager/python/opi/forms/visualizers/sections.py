@@ -30,3 +30,11 @@ class FormSection:
     is_readonly: bool = False
     summary_fn: Callable[[dict[str, Any]], str] | None = None
     enforcer: EditableEnforcer | None = None
+    post_save_action: str = "save_only"  # "save_only" or "process_project"
+    post_merge: Callable[[dict[str, Any], dict[str, Any]], None] | None = None
+    """Optional hook called after the section data is merged into the project.
+
+    Receives ``(project_data, wizard_data)`` and mutates ``project_data``
+    in place.  Used for cross-list side effects like distributing a new
+    component reference to selected deployments.
+    """

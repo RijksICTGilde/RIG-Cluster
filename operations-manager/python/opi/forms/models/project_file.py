@@ -8,7 +8,7 @@ editing of project configurations.
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from opi.forms.layout import (
     ButtonGroup,
@@ -19,6 +19,56 @@ from opi.forms.layout import (
     Submit,
 )
 from opi.forms.schema import FormMeta
+
+
+class DomainHistoryEntry(BaseModel):
+    """Single audit trail entry for a domain/subdomain status change."""
+
+    date: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    by: str | None = None
+    message: str | None = None
+
+
+class AllowedDomainEntry(BaseModel):
+    """A domain approved (or requested) for use in a project.
+
+    Used for ALL non-default domains — both platform and custom.
+    The cluster default domain doesn't need an entry.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    domain: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    supports_dots: Annotated[bool, Field(alias="supports-dots")] = False
+    issuer: str | None = None
+    restricted_subdomains: Annotated[bool, Field(alias="restricted-subdomains")] = False
+    history: list[DomainHistoryEntry] = Field(default_factory=list)
+
+
+class AllowedSubdomainDetail(BaseModel):
+    """Individual subdomain with approval status."""
+
+    name: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    history: list[DomainHistoryEntry] = Field(default_factory=list)
+
+
+class AllowedSubdomainEntry(BaseModel):
+    """Allowed subdomains for a specific platform domain."""
+
+    domain: str
+    subdomains: list[AllowedSubdomainDetail] = Field(default_factory=list)
+
+
+class DomainsModel(BaseModel):
+    """Project-level domain configuration: domain and subdomain approval."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    allowed_domains: list[AllowedDomainEntry] = Field(default_factory=list, alias="allowed-domains")
+    allowed_subdomains: list[AllowedSubdomainEntry] = Field(default_factory=list, alias="allowed-subdomains")
 
 
 class ProjectUserModel(BaseModel):
@@ -90,7 +140,7 @@ class ResourcesModel(BaseModel):
             label="component.memory_limit",
             description="component.memory_limit.description",
             widget="select",
-            options_provider="MemoryLimitOptionsProvider",
+            options_provider="MemoryOptionsProvider",
         ),
     ] = Field(default="256Mi")
 
@@ -146,15 +196,15 @@ class ComponentModel(BaseModel):
         ),
     ] = Field(default_factory=ResourcesModel)
 
-    uses_services: Annotated[
+    services: Annotated[
         list[str],
         FormMeta(
-            label="component.uses_services",
-            description="component.uses_services.description",
+            label="component.services",
+            description="component.services.description",
             widget="checkbox-group",
             options_provider="ServiceOptionsProvider",
         ),
-    ] = Field(default_factory=list, alias="uses-services")
+    ] = Field(default_factory=list)
 
     uses_components: Annotated[
         list[str],
@@ -175,6 +225,8 @@ class ComponentModel(BaseModel):
         ),
     ] = Field(default=None)
 
+    model_config = ConfigDict(populate_by_name=True)
+
     user_env_vars: Annotated[
         str | None,
         FormMeta(
@@ -184,9 +236,6 @@ class ComponentModel(BaseModel):
             placeholder="KEY=value",
         ),
     ] = Field(default=None, alias="user-env-vars")
-
-    class Config:
-        populate_by_name = True
 
 
 class DeploymentComponentModel(BaseModel):
@@ -288,6 +337,16 @@ class DeploymentModel(BaseModel):
             widget="textarea",
         ),
     ] = Field(default=None)
+
+    data_retention_period: Annotated[
+        str | None,
+        FormMeta(
+            label="deployment.data_retention_period",
+            description="deployment.data_retention_period.description",
+            widget="text",
+            placeholder="0h",
+        ),
+    ] = Field(default=None, alias="data-retention-period")
 
 
 class RepositoryModel(BaseModel):
@@ -473,8 +532,10 @@ class ProjectFileModel(BaseModel):
         ),
     ] = Field(default_factory=list)
 
-    class Config:
-        populate_by_name = True
+    # Domain restrictions (not editable via forms — managed manually or by admin)
+    domains: DomainsModel | None = Field(default=None)
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
     def validate_admin_user_exists(self) -> "ProjectFileModel":
@@ -613,7 +674,7 @@ def get_project_file_form_layout() -> Fieldset:
                                         Column("resources.memory", width=6),
                                     ]
                                 ),
-                                "uses_services",
+                                "services",
                                 "aliases",
                             ],
                         ),

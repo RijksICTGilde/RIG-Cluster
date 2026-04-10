@@ -53,6 +53,9 @@ spec:
               mountPath: /etc/prometheus
             - name: storage
               mountPath: /prometheus
+            - name: metrics-auth
+              mountPath: /etc/prometheus/secrets/metrics-auth
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /-/healthy
@@ -72,3 +75,6 @@ spec:
         - name: storage
           persistentVolumeClaim:
             claimName: prometheus-storage
+        - name: metrics-auth
+          secret:
+            secretName: prometheus-metrics-auth

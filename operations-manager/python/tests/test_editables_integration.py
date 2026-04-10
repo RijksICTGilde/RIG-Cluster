@@ -241,7 +241,7 @@ class TestClearHiddenDependsOn:
         yaml_data = {"toggle": False, "dependent-field": "should-be-cleared"}
         processor = EditableFormProcessor()
         processor.clear_hidden_depends_on(editables, yaml_data)
-        assert yaml_data["dependent-field"] is None
+        assert "dependent-field" not in yaml_data
 
     def test_keeps_when_dependency_on(self):
         from opi.forms.editables.processor import EditableFormProcessor
@@ -270,18 +270,18 @@ class TestClearHiddenDependsOn:
 class TestEnforcerIntegration:
     """Test enforcers work with real data."""
 
-    def test_admin_required_enforcer(self):
+    async def test_admin_required_enforcer(self):
         enforcer = AdminRequiredEnforcer()
         users_with_admin = [
             {"email": "admin@example.nl", "role": "admin"},
             {"email": "dev@example.nl", "role": "developer"},
         ]
-        result = enforcer.enforce(users_with_admin, {})
+        result = await enforcer.enforce(users_with_admin, {})
         assert result == users_with_admin
 
         users_no_admin = [{"email": "dev@example.nl", "role": "developer"}]
         with pytest.raises(ValueError, match="administrator"):
-            enforcer.enforce(users_no_admin, {})
+            await enforcer.enforce(users_no_admin, {})
 
 
 class TestFormSectionComposition:

@@ -66,6 +66,16 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% endif %}
 {% endmacro %}
 
+{# --- Warning helpers --- #}
+
+{% macro render_warnings(warnings) %}
+{% if warnings %}
+{% for warning in warnings %}
+<c-alert kind="warning">{{ warning }}</c-alert>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
 {# --- Value formatting --- #}
 
 {% macro format_value(value) %}

@@ -1,7 +1,7 @@
 """
 Resource analyzer for computing memory recommendations based on observed usage.
 
-Pure logic module with no I/O — all data is passed in as arguments.
+Pure logic module with no I/O - all data is passed in as arguments.
 """
 
 import logging
@@ -26,9 +26,8 @@ class ResourceRecommendation:
     reason: str
 
 
-def _k8s_memory_to_mb(value: str) -> float:
-    """
-    Convert a Kubernetes memory string to megabytes.
+def parse_k8s_memory_to_mi(value: str) -> float:
+    """Convert a Kubernetes memory string to MiB (mebibytes).
 
     Supports: Mi, Gi, M, G, Ki, and plain bytes.
 
@@ -36,7 +35,10 @@ def _k8s_memory_to_mb(value: str) -> float:
         value: Kubernetes memory string (e.g., "512Mi", "1Gi", "536870912")
 
     Returns:
-        Value in megabytes
+        Value in MiB
+
+    Raises:
+        ValueError: If the value cannot be parsed or uses an unknown unit.
     """
     value = value.strip()
     match = re.match(r"^(\d+(?:\.\d+)?)\s*([A-Za-z]*)$", value)
@@ -59,6 +61,15 @@ def _k8s_memory_to_mb(value: str) -> float:
         raise ValueError(f"Unknown memory unit: {unit}")
 
     return num * multipliers[unit]
+
+
+def _k8s_memory_to_mb(value: str) -> float:
+    """Convert a Kubernetes memory string to megabytes.
+
+    Alias for :func:`parse_k8s_memory_to_mi` (MiB and MB are used
+    interchangeably in this codebase since all values are binary).
+    """
+    return parse_k8s_memory_to_mi(value)
 
 
 def _mb_to_k8s_memory(mb: float) -> str:
@@ -88,6 +99,8 @@ def compute_memory_recommendation(
     threshold_percent: int = 20,
     has_oom_kills: bool = False,
     min_memory_mi: int = 25,
+    max_memory_mi: int = 4096,
+    max_memory_request_mi: int | None = None,
 ) -> tuple[str, str, str] | None:
     """
     Compute a memory recommendation based on observed usage.
@@ -104,11 +117,15 @@ def compute_memory_recommendation(
         threshold_percent: Only recommend if change exceeds this percentage
         has_oom_kills: Whether OOM kills were detected (forces increase)
         min_memory_mi: Minimum memory value in Mi enforced by the container runtime
+        max_memory_mi: Maximum memory limit in Mi
+        max_memory_request_mi: Maximum memory request in Mi (defaults to max_memory_mi)
 
     Returns:
         Tuple of (recommended_limit, recommended_request, reason) as K8s strings,
         or None if no change is needed (within threshold)
     """
+    if max_memory_request_mi is None:
+        max_memory_request_mi = max_memory_mi
     buffer_factor = 1 + buffer_percent / 100
     recommended_limit_mb = max_observed_mb * buffer_factor
     recommended_request_mb = avg_observed_mb * buffer_factor
@@ -120,18 +137,49 @@ def compute_memory_recommendation(
         recommended_request_mb += 25
 
     # If OOM kills detected, the actual need is higher than what we observed
-    # (pod was killed before reaching true peak). Ensure we at least 1.5x
-    # the current limit or use observed + buffer, whichever is higher.
+    # (pod was killed before reaching true peak).  Use a sliding bump factor:
+    # small pods get a larger multiplier because 1.5x of e.g. 25Mi is still
+    # too small to survive boot, while large pods only need a modest increase.
     if has_oom_kills:
-        oom_minimum = current_limit_mb * 1.5
-        recommended_limit_mb = max(recommended_limit_mb, oom_minimum)
+        if current_limit_mb < 64:
+            oom_factor = 3.0
+        elif current_limit_mb < 256:
+            oom_factor = 2.0
+        else:
+            oom_factor = 1.5
+        oom_minimum = current_limit_mb * oom_factor
+        if oom_minimum > recommended_limit_mb:
+            # OOM bump is driving the limit — scale request proportionally
+            # to maintain the original request/limit ratio, so the gap
+            # doesn't become unreasonably large.
+            ratio = current_request_mb / current_limit_mb if current_limit_mb > 0 else 1.0
+            recommended_request_mb = max(recommended_request_mb, oom_minimum * ratio)
+            recommended_limit_mb = oom_minimum
 
     # Enforce cluster minimum
     recommended_limit_mb = max(recommended_limit_mb, float(min_memory_mi))
     recommended_request_mb = max(recommended_request_mb, float(min_memory_mi))
 
+    # Enforce maximum: auto-tuning should not set limits above this.
+    # If the pod needs more, manual intervention is required.
+    if recommended_limit_mb > max_memory_mi:
+        recommended_limit_mb = float(max_memory_mi)
+
+    # Cap requests separately — requests have a lower ceiling than limits.
+    # Below the request cap, requests and limits scale together.
+    # Above it, only limits keep climbing (up to max_memory_mi).
+    recommended_request_mb = min(recommended_request_mb, float(max_memory_request_mi))
+
     # Request should never exceed limit
     recommended_request_mb = min(recommended_request_mb, recommended_limit_mb)
+
+    # Collapse request to limit when both are below the request cap
+    # and the gap is < 10% — a tiny difference adds no value.
+    # Don't collapse when request is at its cap but limit is higher.
+    if recommended_limit_mb > 0 and recommended_limit_mb <= max_memory_request_mi:
+        gap_ratio = (recommended_limit_mb - recommended_request_mb) / recommended_limit_mb
+        if gap_ratio < 0.10:
+            recommended_request_mb = recommended_limit_mb
 
     # Check if the change is significant enough
     if not has_oom_kills:
@@ -154,7 +202,7 @@ def compute_memory_recommendation(
         reason = (
             f"OOM kills detected. Limit: max {max_observed_mb:.0f}Mi "
             f"+ {buffer_percent}%{limit_extra} = {recommended_limit_mb:.0f}Mi "
-            f"(OOM safety min {current_limit_mb * 1.5:.0f}Mi). "
+            f"(OOM safety min {oom_minimum:.0f}Mi, {oom_factor:.1f}x). "
             f"Request: avg {avg_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} = {recommended_request_mb:.0f}Mi"
         )
     else:

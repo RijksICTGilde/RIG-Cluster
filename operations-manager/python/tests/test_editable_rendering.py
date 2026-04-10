@@ -27,7 +27,7 @@ SAMPLE_YAML = {
                 "cpu": {"request": "50m", "limit": "1"},
                 "memory": {"request": "256Mi", "limit": "1Gi"},
             },
-            "uses-services": ["publish-on-web"],
+            "services": ["publish-on-web"],
             "aliases": {"APP_NAME": "frontend"},
         },
     ],
@@ -184,21 +184,34 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 13 children: storage sequence hidden because no storage services selected
-        assert len(first_item.children) == 13
+        # 12 children: storage sequences hidden (no storage services),
+        # path (with nested match/rewrite) always visible
+        assert len(first_item.children) == 12
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
         editables = get_all_project_editables()
-        yaml_with_storage = {**SAMPLE_YAML, "services": [*SAMPLE_YAML["services"], "persistent-storage"]}
+        # Add persistent-storage to both project-level and component-level services,
+        # since storage sequence visibility depends on components[*]/services.
+        yaml_with_storage = {
+            **SAMPLE_YAML,
+            "services": [*SAMPLE_YAML["services"], "persistent-storage"],
+            "components": [
+                {
+                    **SAMPLE_YAML["components"][0],
+                    "services": [*SAMPLE_YAML["components"][0]["services"], "persistent-storage"],
+                },
+            ],
+        }
         fields = renderer._build_fields_from_editables(
             editables=editables,
             yaml_data=yaml_with_storage,
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 14 children: storage sequence visible because persistent-storage is enabled
-        assert len(first_item.children) == 14
+        # 13 children: storage sequence visible (persistent-storage enabled),
+        # path (with nested match/rewrite) always visible
+        assert len(first_item.children) == 13
 
 
 class TestNestedSequenceRendering:
@@ -242,7 +255,7 @@ class TestNestedSequenceRendering:
         nested_seq = nested_seqs[0]
         first_comp = nested_seq.children[0]
         assert first_comp.widget_type == "sequence_item"
-        assert len(first_comp.children) == 3  # reference, image, pullPolicy
+        assert len(first_comp.children) == 4  # reference, image, pullPolicy, user-env-vars
 
 
 class TestDisplayCardRendering:
@@ -379,7 +392,7 @@ SAMPLE_YAML_WITH_DOMAIN = {
     "deployments": [
         {
             **SAMPLE_YAML["deployments"][0],
-            "domain-mode": "nice-url",
+            "domain-format": "component-deployment-project",
             "subdomain": "mijnapp",
             "base-domain": "rijksapp.nl",
             "root-component": "frontend",
@@ -399,12 +412,18 @@ class TestDomainSectionRendering:
             yaml_data=SAMPLE_YAML_WITH_DOMAIN,
             layout=DOMAIN_SECTION.layout,
         )
-        assert "Domeinmodus" in html
+        assert "URL-formaat" in html
 
-    def test_domain_section_has_four_editables(self):
+    def test_domain_section_has_group_editable_with_six_children(self):
+        from opi.forms.editables.editable import WidgetType
         from opi.forms.visualizers.wizard_sections import DOMAIN_SECTION
 
-        assert len(DOMAIN_SECTION.editables) == 4
+        # Section has one group parent editable
+        assert len(DOMAIN_SECTION.editables) == 1
+        group = DOMAIN_SECTION.editables[0]
+        assert group.widget == WidgetType.GROUP
+        # Group wraps 8 child domain fields (including expose-component-on-bare-domain, request-subdomain)
+        assert len(group.children) == 8
 
 
 class TestConditionalVisibility:
@@ -426,7 +445,62 @@ class TestConditionalVisibility:
         )
         assert "conditional-field" not in fields
 
-    def test_visible_editable_in_fields(self):
+
+class TestTextareaValueRendering:
+    """Verify the textarea widget renders the stored value correctly."""
+
+    def test_identity_section_textarea_contains_description(self):
+        """The description textarea must contain the value from yaml_data."""
+        from opi.forms.visualizers.wizard_sections import IDENTITY_SECTION
+
+        yaml_data = {
+            "display-name": "Mijn Project",
+            "description": "Dit is de omschrijving",
+            "clusters": ["sandboxed-local"],
+        }
+        renderer = _create_renderer()
+        html = renderer.render_fields_from_editables(
+            editables=IDENTITY_SECTION.editables,
+            yaml_data=yaml_data,
+            layout=IDENTITY_SECTION.layout,
+        )
+        assert "Mijn Project" in html, "display-name should be in rendered HTML"
+        assert "Dit is de omschrijving" in html, f"description value should be in rendered HTML, got:\n{html}"
+
+    def test_textarea_field_has_value(self):
+        """The description FormField must have the value populated."""
+        from opi.forms.visualizers.wizard_sections import IDENTITY_SECTION
+
+        yaml_data = {
+            "display-name": "Test",
+            "description": "Mijn omschrijving",
+            "clusters": ["sandboxed-local"],
+        }
+        renderer = _create_renderer()
+        fields = renderer._build_fields_from_editables(
+            editables=IDENTITY_SECTION.editables,
+            yaml_data=yaml_data,
+        )
+        desc_field = fields["description"]
+        assert desc_field.widget_type == "textarea"
+        assert desc_field.value == "Mijn omschrijving", f"Expected 'Mijn omschrijving', got {desc_field.value!r}"
+
+    def test_textarea_renders_value_in_tag_content(self):
+        """The c-textarea-field tag must contain the value as inner text."""
+        editable = EditableVisualizer(
+            editable=Editable(yaml_path="description"),
+            widget=WidgetType.TEXTAREA,
+            label="Omschrijving",
+        )
+        yaml_data = {"description": "Hallo wereld"}
+        renderer = _create_renderer()
+        html = renderer.render_fields_from_editables(
+            editables=[editable],
+            yaml_data=yaml_data,
+            layout=["description"],
+        )
+        assert ">Hallo wereld</c-textarea-field>" in html, f"Expected value between textarea tags, got:\n{html}"
+
         """An editable whose dependency is satisfied should be included."""
         renderer = _create_renderer()
         editable = EditableVisualizer(

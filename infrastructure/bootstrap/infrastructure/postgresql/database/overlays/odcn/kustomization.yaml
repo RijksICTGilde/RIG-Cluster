@@ -13,6 +13,12 @@ patches:
       - op: replace
         path: /spec/storage/storageClass
         value: ocs-storagecluster-ceph-rbd
+      - op: replace
+        path: /spec/storage/size
+        value: 20Gi
+      - op: add
+        path: /spec/storage/resizeInUseVolumes
+        value: true
       - op: add
         path: /spec/enablePDB
         value: false

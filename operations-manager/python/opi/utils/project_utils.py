@@ -58,43 +58,35 @@ def validate_component_paths(component_paths: list[str], domain_mode: str) -> No
         )
 
 
-def validate_root_component(components_with_root: list[tuple[str, bool, int | None]], domain_mode: str) -> None:
+def validate_root_component(
+    root_component_name: str | None,
+    deployment_component_names: list[str],
+    domain_mode: str,
+) -> None:
     """
-    Validate root component constraints.
-
-    In nice-url mode, at most one component can be the root, and it must have a port.
+    Validate root-component constraints on a deployment.
 
     Args:
-        components_with_root: List of (name, is_root, port) tuples for all components in the deployment
+        root_component_name: Value of ``root-component`` on the deployment, or None
+        deployment_component_names: Names of components referenced by this deployment
         domain_mode: The deployment's domain mode
 
     Raises:
-        ValueError: If root component constraints are violated
+        ComponentValidationError: If root component constraints are violated
     """
-    root_components = [(name, port) for name, is_root, port in components_with_root if is_root]
-
-    if not root_components:
+    if not root_component_name:
         return
 
     if domain_mode != "nice-url":
-        root_names = [name for name, _ in root_components]
         raise ComponentValidationError(
-            f"Root component flag is only valid in nice-url domain mode, "
-            f"but domain mode is '{domain_mode}'. Components marked as root: {', '.join(root_names)}"
+            f"root-component is only valid in nice-url domain mode, "
+            f"but domain mode is '{domain_mode}'. root-component: {root_component_name}"
         )
 
-    if len(root_components) > 1:
-        root_names = [name for name, _ in root_components]
+    if root_component_name not in deployment_component_names:
         raise ComponentValidationError(
-            f"In nice-url mode, only one component can be marked as root. "
-            f"Found {len(root_components)} root components: {', '.join(root_names)}"
-        )
-
-    root_name, root_port = root_components[0]
-    if root_port is None:
-        raise ComponentValidationError(
-            f"Component '{root_name}' is marked as root but has no port specified. "
-            f"Root component must have a port for web publishing."
+            f"root-component '{root_component_name}' is not a component in this deployment. "
+            f"Valid components: {', '.join(deployment_component_names)}"
         )
 
 
@@ -134,7 +126,6 @@ async def build_component_config(
     memory_limit: str | None = None,
     env_vars: str | None = None,
     aliases: str | None = None,
-    root: bool = False,
     public_key: str | None = None,
     default_port: int | None = None,
 ) -> dict[str, Any]:
@@ -149,39 +140,29 @@ async def build_component_config(
         component_type: Component type (e.g., "single", "frontend", "backend")
         port: Inbound port (None for background workers)
         path: Ingress path (e.g., "/", "/api")
-        services: Component's uses-services list as strings
+        services: Component's services list as strings
         cpu_limit: CPU limit (e.g., "1", "500m")
         memory_limit: Memory limit (e.g., "256Mi", "1Gi")
         env_vars: Environment variables in KEY=value format (will be encrypted)
         aliases: YAML string of alias definitions
-        root: Whether this is the root component (nice-url mode)
         public_key: AGE public key for encrypting env vars
         default_port: Default port if none specified (e.g., 8080 for project creation)
 
     Returns:
         Component configuration dictionary
     """
-    # Parse component-level services
-    component_services = ServiceAdapter.parse_services_from_strings(services)
-
     inbound_ports = [port] if port else ([default_port] if default_port else [])
+    # Build services list in v2 format (mixed string/dict)
+    services_list = ServiceAdapter.build_component_service_entries(services)
+
     component_config: dict[str, Any] = {
         "name": name,
         "type": component_type,
         "ports": {"inbound": inbound_ports, "outbound": [80, 443]},
         "path": path,
-        "uses-services": [service.value for service in component_services],
+        "services": services_list,
         "uses-components": [],
     }
-
-    # Add root flag for nice-url mode
-    if root:
-        component_config["root"] = True
-
-    # Add storage configurations from services
-    storage_configs = ServiceAdapter.create_storage_configs(component_services)
-    if storage_configs:
-        component_config["storage"] = storage_configs
 
     # Add resource limits if specified
     if cpu_limit or memory_limit:
@@ -290,10 +271,12 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     # Repository password from settings (supports plain:, age:, base64+age: prefixes)
     repo_password = settings.PROJECT_REPO_PASSWORD
 
+    # Parse project-level services using the service adapter
+    project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])
+
     # Build components list from form data
     components_list = []
-    has_explicit_components = bool(project_data.components)
-    if has_explicit_components:
+    if project_data.components:
         for idx, comp in enumerate(project_data.components):
             try:
                 component_config = await build_component_config(
@@ -306,7 +289,6 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
                     memory_limit=comp.memory_limit,
                     env_vars=comp.env_vars,
                     aliases=comp.aliases,
-                    root=comp.root,
                     public_key=public_key,
                     default_port=8080,
                 )
@@ -316,12 +298,14 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
             components_list.append(component_config)
     else:
         # Default component if none specified
-        # Services and storage will be added by add_services_to_project() below
-        fallback_component_config = {
+        # Create fallback component with project-level services (v2 format)
+        fallback_services_list = ServiceAdapter.build_component_service_entries([svc.value for svc in project_services])
+
+        fallback_component_config: dict[str, Any] = {
             "name": "main",
             "type": "deployment",
             "ports": {"inbound": [8080], "outbound": [80, 443]},
-            "uses-services": [],
+            "services": fallback_services_list,
             "uses-components": [],
         }
 
@@ -362,8 +346,16 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         # Add external domain configuration if specified
         if hasattr(project_data, "base_domain") and project_data.base_domain:
             deployment_config["base-domain"] = project_data.base_domain
+        if hasattr(project_data, "domain_format") and project_data.domain_format:
+            deployment_config["domain-format"] = project_data.domain_format
         if hasattr(project_data, "issuer") and project_data.issuer:
             deployment_config["issuer"] = project_data.issuer
+
+        # Set root-component on deployment if any component is marked as root
+        for idx, comp in enumerate(project_data.components):
+            if comp.root:
+                deployment_config["root-component"] = f"component-{idx + 1}"
+                break
 
         deployments_list.append(deployment_config)
     else:
@@ -393,6 +385,8 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         # Add external domain configuration if specified
         if hasattr(project_data, "base_domain") and project_data.base_domain:
             deployment_config["base-domain"] = project_data.base_domain
+        if hasattr(project_data, "domain_format") and project_data.domain_format:
+            deployment_config["domain-format"] = project_data.domain_format
         if hasattr(project_data, "issuer") and project_data.issuer:
             deployment_config["issuer"] = project_data.issuer
 
@@ -410,12 +404,15 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         config_section["contact-email"] = project_data.contact_email
 
     # Create project structure
+    from opi.services.schema_migration import LATEST_SCHEMA_VERSION
+
     project_config = {
+        "schema-version": LATEST_SCHEMA_VERSION,
         "name": project_data.project_name,
         "display-name": project_data.display_name,
         "description": project_data.project_description or "Project created via self-service portal",
         "clusters": [project_data.cluster],
-        "services": [],  # Populated by add_services_to_project() below
+        "services": [service.value for service in project_services],  # Project-level services
         "config": config_section,
         "repositories": [
             {
@@ -430,16 +427,6 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         "components": components_list,
         "deployments": deployments_list,
     }
-
-    # Add project-level services using the shared service logic.
-    # For the default component case, also update its uses-services and storage.
-    service_names = project_data.services or []
-    if service_names:
-        ServiceAdapter.add_services_to_project(
-            project_config,
-            service_names=service_names,
-            component_names=["main"] if not has_explicit_components else None,
-        )
 
     # Add users if provided
     if project_data.user_email and project_data.user_role:

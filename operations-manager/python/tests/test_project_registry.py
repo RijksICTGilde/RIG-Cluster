@@ -72,13 +72,13 @@ class TestSequenceEditables:
     def test_components_sequence_has_children(self):
         assert str(COMPONENTS_SEQUENCE.widget) == "sequence"
         assert COMPONENTS_SEQUENCE.children is not None
-        assert len(COMPONENTS_SEQUENCE.children) == 14
+        assert len(COMPONENTS_SEQUENCE.children) == 16
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):
         assert str(DEPLOYMENTS_SEQUENCE.widget) == "sequence"
         assert DEPLOYMENTS_SEQUENCE.children is not None
-        assert len(DEPLOYMENTS_SEQUENCE.children) == 8
+        assert len(DEPLOYMENTS_SEQUENCE.children) == 10
 
     def test_deployments_has_nested_components_sequence(self):
         children = DEPLOYMENTS_SEQUENCE.children or []
@@ -86,7 +86,7 @@ class TestSequenceEditables:
         assert len(nested_seq) == 1
         assert nested_seq[0].editable.yaml_path == "deployments[*]/components"
         assert nested_seq[0].children is not None
-        assert len(nested_seq[0].children) == 3
+        assert len(nested_seq[0].children) == 4
 
 
 class TestReadonlyEditables:

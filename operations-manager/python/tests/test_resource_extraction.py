@@ -310,3 +310,199 @@ class TestSetComponentResources:
         project_data = {"components": [{"name": "api"}]}
         result = self.handler.set_component_resources(project_data, "nonexistent", {"limits_memory": "1024Mi"})
         assert result is False
+
+
+class TestSetDeploymentComponentResources:
+    """Tests for ProjectFileHandler.set_deployment_component_resources."""
+
+    def setup_method(self):
+        self.handler = ProjectFileHandler()
+
+    def test_set_resources_new(self):
+        project_data = {
+            "deployments": [
+                {
+                    "name": "production",
+                    "components": [{"reference": "api", "image": "nginx:latest"}],
+                }
+            ]
+        }
+        result = self.handler.set_deployment_component_resources(
+            project_data, "production", "api", {"limits_memory": "1024Mi", "requests_memory": "256Mi"}
+        )
+        assert result is True
+        comp = project_data["deployments"][0]["components"][0]
+        assert comp["resources"]["limits"]["memory"] == "1024Mi"
+        assert comp["resources"]["requests"]["memory"] == "256Mi"
+
+    def test_set_resources_update_existing(self):
+        project_data = {
+            "deployments": [
+                {
+                    "name": "production",
+                    "components": [
+                        {
+                            "reference": "api",
+                            "resources": {
+                                "requests": {"memory": "128Mi", "cpu": "50m"},
+                                "limits": {"memory": "512Mi", "cpu": "1000m"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        result = self.handler.set_deployment_component_resources(
+            project_data, "production", "api", {"limits_memory": "1024Mi"}
+        )
+        assert result is True
+        comp = project_data["deployments"][0]["components"][0]
+        assert comp["resources"]["limits"]["memory"] == "1024Mi"
+        assert comp["resources"]["limits"]["cpu"] == "1000m"
+
+    def test_nonexistent_deployment(self):
+        project_data = {"deployments": [{"name": "staging", "components": []}]}
+        result = self.handler.set_deployment_component_resources(
+            project_data, "production", "api", {"limits_memory": "1024Mi"}
+        )
+        assert result is False
+
+    def test_nonexistent_component(self):
+        project_data = {"deployments": [{"name": "production", "components": [{"reference": "other"}]}]}
+        result = self.handler.set_deployment_component_resources(
+            project_data, "production", "api", {"limits_memory": "1024Mi"}
+        )
+        assert result is False
+
+    def test_does_not_modify_component_definition(self):
+        """Verify that setting resources at deployment level leaves component definition untouched."""
+        project_data = {
+            "components": [
+                {
+                    "name": "api",
+                    "resources": {
+                        "requests": {"memory": "128Mi"},
+                        "limits": {"memory": "512Mi"},
+                    },
+                }
+            ],
+            "deployments": [
+                {
+                    "name": "production",
+                    "components": [{"reference": "api"}],
+                }
+            ],
+        }
+        self.handler.set_deployment_component_resources(project_data, "production", "api", {"limits_memory": "2048Mi"})
+        # Component definition should be unchanged
+        assert project_data["components"][0]["resources"]["limits"]["memory"] == "512Mi"
+        # Deployment component should have the new value
+        assert project_data["deployments"][0]["components"][0]["resources"]["limits"]["memory"] == "2048Mi"
+
+
+class TestExtractDeploymentComponentDisabled:
+    """Tests for ProjectFileHandler.extract_deployment_component_disabled."""
+
+    def setup_method(self):
+        self.handler = ProjectFileHandler()
+
+    def test_not_disabled_by_default(self):
+        project_data = {
+            "components": [{"name": "api"}],
+            "deployments": [{"name": "production", "components": [{"reference": "api"}]}],
+        }
+        disabled, reason = self.handler.extract_deployment_component_disabled(project_data, "production", "api")
+        assert disabled is False
+        assert reason == ""
+
+    def test_disabled_at_deployment_level(self):
+        project_data = {
+            "components": [{"name": "api"}],
+            "deployments": [
+                {
+                    "name": "production",
+                    "components": [
+                        {
+                            "reference": "api",
+                            "disabled": True,
+                            "disabled-reason": "OOMKilled",
+                        }
+                    ],
+                }
+            ],
+        }
+        disabled, reason = self.handler.extract_deployment_component_disabled(project_data, "production", "api")
+        assert disabled is True
+        assert reason == "OOMKilled"
+
+    def test_falls_back_to_component_definition(self):
+        project_data = {
+            "components": [{"name": "api", "disabled": True, "disabled-reason": "globally disabled"}],
+            "deployments": [{"name": "production", "components": [{"reference": "api"}]}],
+        }
+        disabled, reason = self.handler.extract_deployment_component_disabled(project_data, "production", "api")
+        assert disabled is True
+        assert reason == "globally disabled"
+
+    def test_deployment_level_overrides_definition(self):
+        """Deployment-level disabled=false should override component-definition disabled=true."""
+        project_data = {
+            "components": [{"name": "api", "disabled": True, "disabled-reason": "globally disabled"}],
+            "deployments": [
+                {
+                    "name": "production",
+                    "components": [{"reference": "api", "disabled": False}],
+                }
+            ],
+        }
+        disabled, reason = self.handler.extract_deployment_component_disabled(project_data, "production", "api")
+        assert disabled is False
+
+
+class TestSetDeploymentComponentDisabled:
+    """Tests for ProjectFileHandler.set_deployment_component_disabled."""
+
+    def setup_method(self):
+        self.handler = ProjectFileHandler()
+
+    def test_set_disabled(self):
+        project_data = {"deployments": [{"name": "production", "components": [{"reference": "api"}]}]}
+        result = self.handler.set_deployment_component_disabled(
+            project_data, "production", "api", True, "CrashLoopBackOff"
+        )
+        assert result is True
+        comp = project_data["deployments"][0]["components"][0]
+        assert comp["disabled"] is True
+        assert comp["disabled-reason"] == "CrashLoopBackOff"
+
+    def test_set_enabled_removes_reason(self):
+        project_data = {
+            "deployments": [
+                {
+                    "name": "production",
+                    "components": [{"reference": "api", "disabled": True, "disabled-reason": "broken"}],
+                }
+            ]
+        }
+        result = self.handler.set_deployment_component_disabled(project_data, "production", "api", False, "")
+        assert result is True
+        comp = project_data["deployments"][0]["components"][0]
+        assert comp["disabled"] is False
+        assert "disabled-reason" not in comp
+
+    def test_nonexistent_deployment(self):
+        project_data = {"deployments": [{"name": "staging", "components": []}]}
+        result = self.handler.set_deployment_component_disabled(project_data, "production", "api", True, "broken")
+        assert result is False
+
+    def test_does_not_modify_component_definition(self):
+        """Verify that setting disabled at deployment level leaves component definition untouched."""
+        project_data = {
+            "components": [{"name": "api"}],
+            "deployments": [{"name": "production", "components": [{"reference": "api"}]}],
+        }
+        self.handler.set_deployment_component_disabled(project_data, "production", "api", True, "OOMKilled")
+        # Component definition should not have disabled
+        assert "disabled" not in project_data["components"][0]
+        # Deployment component should be disabled
+        assert project_data["deployments"][0]["components"][0]["disabled"] is True

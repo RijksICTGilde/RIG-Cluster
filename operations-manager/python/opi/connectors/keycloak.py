@@ -437,6 +437,17 @@ class KeycloakConnector:
                 else:
                     raise
 
+            # Create public client for keycloak-js / browser-based OIDC flows
+            public_client_id = f"{client_id}-public"
+            await self._ensure_public_client(
+                public_client_id=public_client_id,
+                name=f"{project_name} - {deployment_name} (public)",
+                description=f"Public OIDC client for browser-based auth in deployment {deployment_name}",
+                redirect_uris=redirect_uris,
+                web_origins=web_origins,
+                realm_name=realm_name,
+            )
+
             # Switch back to master
             self.admin.change_current_realm("master")
 
@@ -446,6 +457,7 @@ class KeycloakConnector:
             result = {
                 "client_id": client_id,
                 "client_secret": client_secret,
+                "public_client_id": public_client_id,
                 "discovery_url": discovery_url,
                 "base_url": self.keycloak_url,
                 "realm": realm_name,
@@ -456,8 +468,9 @@ class KeycloakConnector:
                 "updated": updated,
             }
 
-            # Assign custom client scope to the newly created client
+            # Assign custom client scope to both clients
             await self._assign_custom_scope_to_client(client_id, realm_name)
+            await self._assign_custom_scope_to_client(public_client_id, realm_name)
 
             return result
 
@@ -466,6 +479,56 @@ class KeycloakConnector:
             # Switch back to master
             self.admin.change_current_realm("master")
             raise
+
+    async def _ensure_public_client(
+        self,
+        public_client_id: str,
+        name: str,
+        description: str,
+        redirect_uris: list[str],
+        web_origins: list[str],
+        realm_name: str,
+    ) -> None:
+        """Create or update a public OIDC client for browser-based flows (keycloak-js)."""
+        public_client_data = {
+            "clientId": public_client_id,
+            "name": name,
+            "description": description,
+            "protocol": "openid-connect",
+            "enabled": True,
+            "publicClient": True,
+            "redirectUris": redirect_uris,
+            "webOrigins": web_origins,
+            "standardFlowEnabled": True,
+            "implicitFlowEnabled": False,
+            "directAccessGrantsEnabled": False,
+            "serviceAccountsEnabled": False,
+            "frontchannelLogout": True,
+            "attributes": {
+                "pkce.code.challenge.method": "S256",
+            },
+        }
+
+        self.admin.change_current_realm(realm_name)
+        try:
+            self.admin.create_client(payload=public_client_data)
+            logger.info(f"Created public client '{public_client_id}'")
+        except KeycloakPostError as e:
+            if "409" in str(e) or "Conflict" in str(e):
+                logger.info(f"Public client '{public_client_id}' already exists, checking redirect URIs")
+                existing = await self.find_client_by_client_id(public_client_id, realm_name)
+                if existing:
+                    existing_uris = set(existing.get("redirectUris", []))
+                    existing_origins = set(existing.get("webOrigins", []))
+                    if existing_uris != set(redirect_uris) or existing_origins != set(web_origins):
+                        self.admin.change_current_realm(realm_name)
+                        self.admin.update_client(
+                            client_id=existing["id"],
+                            payload={"redirectUris": redirect_uris, "webOrigins": web_origins},
+                        )
+                        logger.info(f"Updated redirect URIs for public client '{public_client_id}'")
+            else:
+                raise
 
     async def delete_deployment_client(self, deployment_name: str, project_name: str, realm_name: str) -> bool:
         """
@@ -501,10 +564,20 @@ class KeycloakConnector:
             # Delete the client using its internal ID
             self.admin.delete_client(client_id=target_client["id"])
 
+            logger.info(f"Successfully deleted client '{client_id}' for deployment '{deployment_name}'")
+
+            # Also delete the public client (used for keycloak-js / browser-based OIDC flows)
+            public_client_id = f"{client_id}-public"
+            public_client = await self.find_client_by_client_id(public_client_id, realm_name)
+            if public_client:
+                self.admin.change_current_realm(realm_name)
+                self.admin.delete_client(client_id=public_client["id"])
+                logger.info(f"Successfully deleted public client '{public_client_id}'")
+            else:
+                logger.debug(f"Public client '{public_client_id}' not found in realm '{realm_name}', skipping")
+
             # Switch back to master
             self.admin.change_current_realm("master")
-
-            logger.info(f"Successfully deleted client '{client_id}' for deployment '{deployment_name}'")
             return True
 
         except KeycloakError as e:

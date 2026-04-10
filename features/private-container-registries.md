@@ -276,7 +276,7 @@ The `url` field is used as the key in `.dockerconfigjson` auth entries. Docker/c
 
 ## Security Best Practices
 
-1. Always encrypt passwords with AGE (never commit plain text) — use `plain:` prefix only for local/sandbox development
+1. Always encrypt passwords with AGE (never commit plain text) - use `plain:` prefix only for local/sandbox development
 2. Use `secretName` when credentials are managed externally (avoids storing them in the project YAML)
 3. Use service accounts with minimal permissions (read-only)
 4. Rotate credentials regularly

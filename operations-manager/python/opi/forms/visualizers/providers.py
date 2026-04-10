@@ -5,7 +5,7 @@ This module provides the OptionsProvider protocol and concrete implementations
 for populating select/radio fields with dynamic data from OPI's domain.
 """
 
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.services.services import ServiceAdapter
@@ -233,27 +233,87 @@ class CpuLimitOptionsProvider:
         ]
 
 
-class MemoryRequestOptionsProvider:
-    """Provides memory request options for components."""
+ALL_MEMORY_STEPS: list[tuple[str, str, int]] = [
+    ("25Mi", "25 Mi", 25),
+    ("32Mi", "32 Mi", 32),
+    ("64Mi", "64 Mi", 64),
+    ("96Mi", "96 Mi", 96),
+    ("128Mi", "128 Mi", 128),
+    ("256Mi", "256 Mi", 256),
+    ("512Mi", "512 Mi", 512),
+    ("768Mi", "768 Mi", 768),
+    ("1Gi", "1 Gi", 1024),
+    ("1536Mi", "1.5 Gi", 1536),
+    ("2Gi", "2 Gi", 2048),
+    ("2560Mi", "2.5 Gi", 2560),
+    ("3Gi", "3 Gi", 3072),
+    ("3584Mi", "3.5 Gi", 3584),
+    ("4Gi", "4 Gi", 4096),
+]
+
+
+def get_memory_steps(max_mi: int | None = None) -> list[tuple[str, str]]:
+    """Return memory steps up to the cluster's max_memory_limit_mi."""
+    if max_mi is None:
+        from opi.core.cluster_config import get_max_memory_limit_mi
+        from opi.core.config import settings
+
+        max_mi = get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
+    return [(v, lbl) for v, lbl, mi in ALL_MEMORY_STEPS if mi <= max_mi]
+
+
+class MemoryOptionsProvider:
+    """Provides memory options for components (used for limit fields).
+
+    If *current_value* is set and not in the standard steps, it is inserted
+    at the correct sorted position so the dropdown always contains the
+    value currently stored in the project file (e.g. tuner-assigned values).
+    """
+
+    def __init__(self, current_value: str | None = None) -> None:
+        self.current_value = current_value
+
+    def _get_max_mi(self) -> int:
+        from opi.core.cluster_config import get_max_memory_limit_mi
+        from opi.core.config import settings
+
+        return get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available memory request options."""
-        return [
-            {"value": "256Mi", "label": "256 MB"},
-            {"value": "512Mi", "label": "512 MB"},
-        ]
+        steps = get_memory_steps(max_mi=self._get_max_mi())
+        options = [{"value": v, "label": lbl} for v, lbl in steps]
+
+        if self.current_value and not any(o["value"] == self.current_value for o in options):
+            from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+
+            try:
+                current_mi = parse_k8s_memory_to_mi(self.current_value)
+            except ValueError:
+                return options
+
+            label = f"{int(current_mi)} Mi" if current_mi == int(current_mi) else f"{current_mi:.1f} Mi"
+            new_option = {"value": self.current_value, "label": label}
+
+            # Insert at sorted position
+            step_mis = [parse_k8s_memory_to_mi(v) for v, _ in steps]
+            insert_idx = len(options)
+            for i, step_mi in enumerate(step_mis):
+                if current_mi < step_mi:
+                    insert_idx = i
+                    break
+            options.insert(insert_idx, new_option)
+
+        return options
 
 
-class MemoryLimitOptionsProvider:
-    """Provides memory limit options for components."""
+class MemoryRequestOptionsProvider(MemoryOptionsProvider):
+    """Provides memory options for request fields (capped lower than limits)."""
 
-    def get_options(self) -> list[dict[str, Any]]:
-        """Get available memory limit options."""
-        return [
-            {"value": "512Mi", "label": "512 MB"},
-            {"value": "768Mi", "label": "768 MB"},
-            {"value": "1Gi", "label": "1 GB"},
-        ]
+    def _get_max_mi(self) -> int:
+        from opi.core.cluster_config import get_max_memory_request_mi
+        from opi.core.config import settings
+
+        return get_max_memory_request_mi(settings.CLUSTER_MANAGER)
 
 
 class DomainModeOptionsProvider:
@@ -355,6 +415,7 @@ class BaseDomainOptionsProvider:
         return [
             {"value": "", "label": "Standaard (clusternaam)"},
             {"value": "rijksapp.nl", "label": "rijksapp.nl"},
+            {"value": "__custom__", "label": "Eigen domein..."},
         ]
 
 
@@ -369,22 +430,37 @@ class ClusterBaseDomainOptionsProvider:
         self.cluster = cluster
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get base domain options, optionally filtered by cluster."""
-        if not self.cluster or self.cluster not in CLUSTER_CONFIG:
-            all_domains: set[str] = set()
-            for config in CLUSTER_CONFIG.values():
-                for d in config.get("nice_url", {}).get("supported_domains", []):
-                    all_domains.add(d)
-            return [{"value": d, "label": d} for d in sorted(all_domains)]
-        domains = CLUSTER_CONFIG[self.cluster].get("nice_url", {}).get("supported_domains", [])
-        return [{"value": d, "label": d} for d in domains]
+        """Get base domain options, filtered by cluster.
+
+        When no cluster is explicitly provided, falls back to the
+        CLUSTER_MANAGER setting (the cluster this OPI instance manages).
+        """
+        from opi.core.config import settings
+
+        def _extract_domain(entry: str | dict[str, Any]) -> str:
+            return entry["domain"] if isinstance(entry, dict) else entry
+
+        cluster = self.cluster or settings.CLUSTER_MANAGER
+        if cluster and cluster in CLUSTER_CONFIG:
+            postfix = CLUSTER_CONFIG[cluster].get("ingress_postfix", "")
+            default_label = f"Cluster standaard ({postfix.lstrip('.')})" if postfix else "Cluster standaard"
+            options: list[dict[str, Any]] = [{"value": "", "label": default_label}]
+
+            raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
+            domains = [_extract_domain(d) for d in raw]
+            options.extend({"value": d, "label": d} for d in domains)
+            options.append({"value": "__custom__", "label": "Eigen domein..."})
+            return options
+
+        # Fallback: no matching cluster config - return empty with custom option
+        return [{"value": "", "label": "Cluster standaard"}, {"value": "__custom__", "label": "Eigen domein..."}]
 
 
 class FilteredServiceOptionsProvider:
     """
     Provides service options filtered to project-level enabled services.
 
-    Used by component `uses-services` checkbox group. Only shows services
+    Used by component `services` checkbox group. Only shows services
     that the project has enabled (cross-part dependency).
     """
 
@@ -417,12 +493,64 @@ class ComponentReferenceOptionsProvider:
     Used by deployment component reference selects (cross-part dependency).
     """
 
-    def __init__(self, component_names: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        component_names: list[str] | None = None,
+        include_empty: bool = False,
+        empty_label: str = "Geen root component",
+        exclude_references: list[str] | None = None,
+    ) -> None:
         self.component_names = component_names or []
+        self.include_empty = include_empty
+        self.empty_label = empty_label
+        self.exclude_references = set(exclude_references or [])
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get component name options."""
-        return [{"value": name, "label": name} for name in self.component_names]
+        """Get component name options, excluding already-used references."""
+        options: list[dict[str, Any]] = []
+        if self.include_empty:
+            options.append({"value": "", "label": self.empty_label})
+        options.extend(
+            {"value": name, "label": name} for name in self.component_names if name not in self.exclude_references
+        )
+        return options
+
+
+class RootComponentOptionsProvider(ComponentReferenceOptionsProvider):
+    """ComponentReferenceOptionsProvider with an empty 'no root' option."""
+
+    def __init__(self, component_names: list[str] | None = None) -> None:
+        super().__init__(component_names=component_names, include_empty=True)
+
+
+class BareDomainComponentOptionsProvider(ComponentReferenceOptionsProvider):
+    """ComponentReferenceOptionsProvider for bare domain component selection.
+
+    Shows component names with an empty 'not on bare domain' option.
+    """
+
+    def __init__(self, component_names: list[str] | None = None) -> None:
+        super().__init__(
+            component_names=component_names,
+            include_empty=True,
+            empty_label="Niet bereikbaar op kaal domein",
+        )
+
+
+class DeploymentCloneFromOptionsProvider:
+    """Provides existing deployment names as clone-from options.
+
+    Used when adding a new deployment to select a source deployment
+    to clone data (databases, storage) from.
+    """
+
+    def __init__(self, deployment_names: list[str] | None = None) -> None:
+        self.deployment_names = deployment_names or []
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = [{"value": "", "label": "Niet klonen"}]
+        options.extend({"value": name, "label": name} for name in self.deployment_names)
+        return options
 
 
 class RepositoryOptionsProvider:
@@ -440,6 +568,90 @@ class RepositoryOptionsProvider:
         return [{"value": name, "label": name} for name in self.repository_names]
 
 
+class DomainFormatOptionsProvider:
+    """Provides domain-format template options filtered by base_domain capabilities.
+
+    Always shows dash-separated formats. When the selected base_domain supports
+    dot-separated hostnames, the dot variants are shown as well.
+    Options are sorted alphabetically by value.
+    """
+
+    _DASH_FORMATS: ClassVar[list[str]] = [
+        "component-deployment-project",
+        "component-deployment-subdomain",
+        "component-subdomain",
+        "deployment-project",
+        "deployment-subdomain",
+        "subdomain",
+    ]
+
+    _DOT_FORMATS: ClassVar[list[str]] = [
+        "component.deployment.project",
+        "component.deployment.subdomain",
+        "component.subdomain",
+        "deployment.project",
+        "deployment.subdomain",
+    ]
+
+    def __init__(self, base_domain: str | None = None, cluster: str | None = None) -> None:
+        self.base_domain = base_domain
+        self.cluster = cluster
+
+    def get_options(self) -> list[dict[str, Any]]:
+        import logging
+
+        from opi.core.cluster_config import get_domain_supports_dots
+        from opi.core.config import settings
+
+        logger = logging.getLogger(__name__)
+        cluster = self.cluster or settings.CLUSTER_MANAGER
+        supports_dots = False
+
+        logger.debug(f"DomainFormatOptionsProvider.get_options(): base_domain={self.base_domain!r}, cluster={cluster}")
+
+        if self.base_domain == "__custom__":
+            supports_dots = True
+            logger.debug("Custom domain selected, supports_dots=True")
+        elif self.base_domain and cluster:
+            supports_dots = get_domain_supports_dots(cluster, self.base_domain)
+            logger.debug(f"Domain {self.base_domain!r} supports_dots={supports_dots}")
+        else:
+            logger.debug(f"base_domain={self.base_domain!r}, cluster={cluster}, no supports_dots check")
+
+        format_ids = list(self._DASH_FORMATS)
+        if supports_dots:
+            format_ids.extend(self._DOT_FORMATS)
+
+        format_ids.sort()
+        logger.debug(f"DomainFormatOptionsProvider returning {len(format_ids)} formats: {format_ids}")
+        return [{"value": f, "label": f"{f}.domein"} for f in format_ids]
+
+
+class DeploymentSelectOptionsProvider:
+    """Provides deployment names as checkbox options.
+
+    Used when adding a component to select which deployments should
+    receive a reference to the new component.
+    """
+
+    def __init__(self, deployment_names: list[str] | None = None) -> None:
+        self.deployment_names = deployment_names or []
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [{"value": name, "label": name} for name in self.deployment_names]
+
+
+class ApprovalStatusOptionsProvider:
+    """Provides status options for the admin domain/subdomain approval flow."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "skip", "label": "Overslaan"},
+            {"value": "approved", "label": "Goedkeuren"},
+            {"value": "denied", "label": "Afwijzen"},
+        ]
+
+
 # Registry of all available providers
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
@@ -448,8 +660,8 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "UserRoleOptionsProvider": UserRoleOptionsProvider,
     "CpuRequestOptionsProvider": CpuRequestOptionsProvider,
     "CpuLimitOptionsProvider": CpuLimitOptionsProvider,
+    "MemoryOptionsProvider": MemoryOptionsProvider,
     "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
-    "MemoryLimitOptionsProvider": MemoryLimitOptionsProvider,
     "DomainModeOptionsProvider": DomainModeOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
@@ -459,7 +671,13 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
+    "DeploymentCloneFromOptionsProvider": DeploymentCloneFromOptionsProvider,
+    "RootComponentOptionsProvider": RootComponentOptionsProvider,
+    "BareDomainComponentOptionsProvider": BareDomainComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
+    "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
+    "DeploymentSelectOptionsProvider": DeploymentSelectOptionsProvider,
+    "ApprovalStatusOptionsProvider": ApprovalStatusOptionsProvider,
 }
 
 

@@ -67,12 +67,32 @@ class ServiceDefinition:
     """Service requirements using path syntax.
 
     Each entry is a yaml_path that must exist in the form data:
-    - ``services/keycloak`` — the keycloak service must be selected
-    - ``services/keycloak/config/restrict-access`` — this config
+    - ``services/keycloak`` - the keycloak service must be selected
+    - ``services/keycloak/config/restrict-access`` - this config
       path must be present
 
     Used for both UI behavior (auto-select, lock) and submit-time
     validation.
+    """
+    cleanup_strategy: str = "none"
+    """How server-side resources are cleaned up when the service is removed.
+
+    - ``"none"``      - no server-side resources to clean up (e.g. storage PVCs,
+                         ingress config).  This is the default.
+    - ``"immediate"``  - ephemeral / easily recreatable resources are deleted
+                         right away (e.g. Redis ACL users, Keycloak clients).
+    - ``"deferred"``   - persistent data resources are marked for deferred
+                         deletion so they can be recovered (e.g. databases,
+                         MinIO buckets).
+    """
+    backup_label: str | None = None
+    """Short label used to identify this service in backup/restore flows.
+
+    When set, this service is considered backupable.  Multiple service types
+    can share the same label (e.g. ``POSTGRESQL_DATABASE`` and
+    ``NAMESPACE_POSTGRESQL_DATABASE`` both use ``"database"``).
+    The label is used as the ``resource_type`` value in backup runs and
+    as the form field value in the backup wizard.
     """
 
 
@@ -144,6 +164,12 @@ class KeycloakVariables(Enum):
         description="OAuth2/OIDC client geheim voor authenticatie",
         source="secret",
         secret_key="client_secret",
+    )
+    PUBLIC_CLIENT_ID = VariableDefinition(
+        name="OIDC_PUBLIC_CLIENT_ID",
+        description="Public OAuth2/OIDC client identificatie voor browser-based authenticatie (keycloak-js)",
+        source="secret",
+        secret_key="public_client_id",
     )
     DISCOVERY_URL = VariableDefinition(
         name="OIDC_DISCOVERY_URL",
@@ -271,12 +297,41 @@ class RedisVariables(Enum):
     )
 
 
+class MetricsScraperVariables(Enum):
+    """Metrics scraper service variable definitions."""
+
+    AUTH_TOKEN = VariableDefinition(
+        name="METRICS_AUTH_TOKEN",
+        description="Bearer token that Prometheus sends when scraping /metrics. Validate this to restrict access.",
+        source="secret",
+        secret_key="token",
+        aliases=["PROMETHEUS_METRICS_AUTH_TOKEN"],
+    )
+
+
+class PlatformVariables(Enum):
+    """Platform-provided variable definitions - always available in every deployment."""
+
+    DEPLOYMENT_NAME = VariableDefinition(
+        name="DEPLOYMENT_NAME",
+        description="Naam van het huidige deployment",
+        source="secret",
+        secret_key="deployment_name",
+    )
+    COMPONENT_NAME = VariableDefinition(
+        name="COMPONENT_NAME",
+        description="Naam van het huidige component",
+        source="secret",
+        secret_key="component_name",
+    )
+
+
 class WebVariables(Enum):
     """Web publishing service variable definitions - single source of truth."""
 
     PUBLIC_HOST = VariableDefinition(
         name="PUBLIC_HOST",
-        description="De publieke hostname/URL waar deze component bereikbaar zal zijn",
+        description="De publieke hostname/URL waar een component bereikbaar zal zijn",
         source="direct",
     )
 
@@ -308,6 +363,7 @@ class ServiceAdapter:
             secret_class="KeycloakSecret",
             variables=[var.value for var in KeycloakVariables],
             requires=["services/publish-on-web"],
+            cleanup_strategy="immediate",
         ),
         ServiceType.PERSISTENT_STORAGE: ServiceDefinition(
             name="Permanente opslag",
@@ -315,8 +371,10 @@ class ServiceAdapter:
             icon="server",
             color="grijs-600",
             scope="component",
+            backup_label="pvc",
             storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
             variables=[var.value for var in StorageVariables if var.value.name == "DATA_PATH"],
+            cleanup_strategy="deferred",
         ),
         ServiceType.TEMP_STORAGE: ServiceDefinition(
             name="Tijdelijke schijfruimte",
@@ -335,6 +393,8 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
+            cleanup_strategy="deferred",
+            backup_label="database",
         ),
         ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ServiceDefinition(
             name="Namespace PostgreSQL Database",
@@ -345,6 +405,8 @@ class ServiceAdapter:
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
             hidden=True,
+            cleanup_strategy="deferred",
+            backup_label="database",
         ),
         ServiceType.MINIO_STORAGE: ServiceDefinition(
             name="MinIO Object Storage",
@@ -354,6 +416,8 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="MinIOSecret",
             variables=[var.value for var in MinIOVariables],
+            cleanup_strategy="deferred",
+            backup_label="minio",
         ),
         ServiceType.REDIS: ServiceDefinition(
             name="Redis Cache",
@@ -363,6 +427,7 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
+            cleanup_strategy="immediate",
         ),
         ServiceType.NAMESPACE_REDIS: ServiceDefinition(
             name="Namespace Redis Cache",
@@ -372,6 +437,17 @@ class ServiceAdapter:
             scope="deployment",
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
+            hidden=True,
+            cleanup_strategy="immediate",
+        ),
+        ServiceType.PLATFORM: ServiceDefinition(
+            name="Platform",
+            description="Automatisch beschikbare platform variabelen",
+            icon="info",
+            color="grijs-600",
+            scope="component",
+            secret_class="PlatformSecret",
+            variables=[var.value for var in PlatformVariables],
             hidden=True,
         ),
         ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
@@ -387,6 +463,14 @@ class ServiceAdapter:
                 "services/keycloak",
                 "services/keycloak/config/restrict-access",
             ],
+        ),
+        ServiceType.METRICS_SCRAPER: ServiceDefinition(
+            name="Prometheus Metrics Scraper",
+            description="Zorgt dat prometheus scraping op het component wordt ingeschakeld",
+            icon="grafiek",
+            color="hemelblauw",
+            scope="component",
+            variables=[v.value for v in MetricsScraperVariables],
         ),
     }
 
@@ -468,6 +552,45 @@ class ServiceAdapter:
         return [service for service in services if cls.is_deployment_service(service)]
 
     @classmethod
+    def get_backupable_labels(cls) -> list[dict[str, str]]:
+        """Get unique backup labels with display metadata from backupable services.
+
+        Returns a list of dicts with keys: label, name, color - one per unique
+        backup_label.  Order is stable (follows SERVICE_DEFINITIONS insertion order).
+        """
+        seen: set[str] = set()
+        result: list[dict[str, str]] = []
+        for definition in cls.SERVICE_DEFINITIONS.values():
+            if definition.backup_label and definition.backup_label not in seen:
+                seen.add(definition.backup_label)
+                result.append(
+                    {
+                        "label": definition.backup_label,
+                        "name": definition.name,
+                        "color": definition.color,
+                    }
+                )
+        return result
+
+    @classmethod
+    def get_service_types_for_backup_label(cls, backup_label: str) -> list[str]:
+        """Get all service type values that share the given backup_label."""
+        return [
+            svc_type.value
+            for svc_type, definition in cls.SERVICE_DEFINITIONS.items()
+            if definition.backup_label == backup_label
+        ]
+
+    @classmethod
+    def get_cleanable_service_types(cls) -> list[ServiceType]:
+        """Get all service types that have server-side resources requiring cleanup."""
+        return [
+            svc_type
+            for svc_type, definition in cls.SERVICE_DEFINITIONS.items()
+            if definition.cleanup_strategy != "none"
+        ]
+
+    @classmethod
     def get_storage_services(cls, services: list[ServiceType]) -> list[ServiceType]:
         """Filter services to only include storage services."""
         storage_services = [ServiceType.PERSISTENT_STORAGE, ServiceType.TEMP_STORAGE]
@@ -482,6 +605,35 @@ class ServiceAdapter:
             if storage_config:
                 storage_configs.append(storage_config)
         return storage_configs
+
+    @classmethod
+    def build_component_service_entries(cls, service_names: list[str]) -> list[str | dict[str, Any]]:
+        """Build a component-level services list with storage configs embedded.
+
+        Converts a flat list of service name strings into the v2 mixed format
+        where storage services carry their config inline::
+
+            ["publish-on-web", {"persistent-storage": {"config": [...]}}]
+        """
+        parsed = cls.parse_services_from_strings(service_names)
+        storage_configs = cls.create_storage_configs(parsed)
+
+        storage_by_svc: dict[str, list[dict[str, Any]]] = {}
+        for cfg in storage_configs:
+            svc_name = (
+                ServiceType.PERSISTENT_STORAGE.value
+                if cfg.get("type") == "persistent"
+                else ServiceType.TEMP_STORAGE.value
+            )
+            storage_by_svc.setdefault(svc_name, []).append({k: v for k, v in cfg.items() if k != "type"})
+
+        entries: list[str | dict[str, Any]] = []
+        for svc in parsed:
+            if svc.value in storage_by_svc:
+                entries.append({svc.value: {"config": storage_by_svc[svc.value]}})
+            else:
+                entries.append(svc.value)
+        return entries
 
     @classmethod
     def extract_service_names_from_project_services(cls, project_services: list[str | dict]) -> list[str]:
@@ -660,14 +812,14 @@ class ServiceAdapter:
         """
         Add one or more services (and their dependencies) to a project's configuration.
 
-        Pure data-manipulation logic — no I/O or git operations.
+        Pure data-manipulation logic - no I/O or git operations.
 
         Args:
             project_data: The mutable project configuration dict.
             service_names: Services to add (e.g. ``["postgresql-database"]``).
-            component_names: Optional component names whose ``uses-services``
-                should also be updated. If *None* or empty the services are only
-                added at the project level.
+            component_names: Optional component names whose ``services``
+                list should also be updated. If *None* or empty the services
+                are only added at the project level.
 
         Returns:
             Result dict with keys ``services_added``, ``services_skipped``,
@@ -710,35 +862,26 @@ class ServiceAdapter:
             project_data["services"] = []
         project_data["services"].extend(services_added)
 
-        # Optionally update component uses-services
+        # Optionally update component services
         if component_names:
-            # Pre-compute storage configs once for all components
-            parsed_services = cls.parse_services_from_strings(all_service_names)
-            storage_configs = cls.create_storage_configs(parsed_services)
+            # Build new entries in v2 mixed format
+            new_entries = cls.build_component_service_entries(all_service_names)
 
             for comp_name in component_names:
                 comp = existing_components[comp_name]
-                comp_services = comp.get("uses-services", [])
-                comp_updated = False
+                existing_comp_services: list[str | dict[str, Any]] = comp.get("services", [])
+                existing_comp_svc_names = set(cls.extract_service_names_from_project_services(existing_comp_services))
 
-                for svc in all_service_names:
-                    if svc not in comp_services:
-                        comp_services.append(svc)
-                        comp_updated = True
+                entries_to_add = [
+                    entry
+                    for entry in new_entries
+                    if (entry if isinstance(entry, str) else next(iter(entry))) not in existing_comp_svc_names
+                ]
 
-                if comp_updated:
-                    comp["uses-services"] = comp_services
+                if entries_to_add:
+                    existing_comp_services.extend(entries_to_add)
+                    comp["services"] = existing_comp_services
                     components_updated.append(comp_name)
-
-                    # Add storage configs for storage services
-                    if storage_configs:
-                        existing_storage = comp.get("storage", [])
-                        existing_storage_names = {s.get("name") for s in existing_storage}
-                        for sc in storage_configs:
-                            if sc.get("name") not in existing_storage_names:
-                                existing_storage.append(sc)
-                        if existing_storage:
-                            comp["storage"] = existing_storage
 
         return {
             "services_added": services_added,

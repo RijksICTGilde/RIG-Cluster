@@ -9,7 +9,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 # Functions imported locally in functions to avoid potential circular imports
@@ -21,7 +21,7 @@ from opi.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """Task status enumeration."""
 
     PENDING = "pending"
@@ -57,6 +57,7 @@ class ProjectInfo:
     namespace: str | None = None
     web_addresses: dict[str, str] | None = None  # component_name -> web_address
     completed_at: datetime | None = None  # when project reached terminal status
+    error: str | None = None
 
 
 # Simple in-memory storage for projects only
@@ -107,6 +108,13 @@ class TaskProgressManager:
         self.update_current_step(name)
         return subtask_id
 
+    def update_task(self, task_id: str, message: str) -> None:
+        """Update a task's name/description."""
+        if task_id in self.tasks:
+            self.tasks[task_id].name = message
+            logger.info(f"Project {self.project_id}: Updated task: {message} ({task_id})")
+            self.update_current_step(message)
+
     def complete_task(self, task_id: str) -> None:
         """Mark a task as completed."""
         if task_id in self.tasks:
@@ -137,6 +145,7 @@ class TaskProgressManager:
         """Mark the entire project as failed."""
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.FAILED
+            _projects[self.project_id].error = error
             _projects[self.project_id].completed_at = datetime.now(tz=UTC)
 
     def set_namespace(self, namespace: str) -> None:
@@ -542,6 +551,27 @@ async def monitor_argocd_deployment(task_id: str, project_name: str, progress_ma
     logger.info(f"Completed initial ArgoCD monitoring for project {project_name}")
 
 
+# Kubernetes event reasons that indicate unrecoverable deployment failures.
+_UNRECOVERABLE_EVENT_REASONS = {"ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
+
+
+def _detect_unrecoverable_error(events: list[dict[str, str]]) -> str | None:
+    """Check namespace events for unrecoverable deployment errors.
+
+    Returns a human-readable error message if an unrecoverable error is
+    found, or None if everything looks recoverable.
+    """
+    for event in events:
+        if event.get("type") != "Warning":
+            continue
+        reason = event.get("reason", "")
+        if reason in _UNRECOVERABLE_EVENT_REASONS:
+            message = event.get("message", reason)
+            obj = event.get("object", "")
+            return f"{obj}: {message}" if obj else message
+    return None
+
+
 async def _monitor_project_progress(project_id: str) -> None:
     """
     Background monitoring for a project to collect logs, events, and deployment status.
@@ -553,7 +583,7 @@ async def _monitor_project_progress(project_id: str) -> None:
 
     kubectl = KubectlConnector()
     monitoring_interval = 10  # seconds
-    max_monitoring_time = 900  # 15 minutes max
+    max_monitoring_time = 300  # 5 minutes max
     start_time = time.time()
 
     logger.debug(f"Started monitoring project {project_id}")
@@ -581,6 +611,14 @@ async def _monitor_project_progress(project_id: str) -> None:
                 if events:
                     logger.debug(f"Project {project_id}: Retrieved {len(events)} events")
                     project.events = events
+
+                    # Check for unrecoverable errors in events
+                    unrecoverable = _detect_unrecoverable_error(events)
+                    if unrecoverable:
+                        logger.warning(f"Project {project_id}: Unrecoverable error detected: {unrecoverable}")
+                        project.status = TaskStatus.FAILED
+                        update_progress(project_id, -1, f"Deployment mislukt: {unrecoverable}")
+                        break
 
                 # Collect pod logs from recent deployments
                 deployment_logs = []
@@ -640,7 +678,7 @@ async def _monitor_project_applications_continuously(
     kubectl = KubectlConnector()
 
     monitoring_interval = 10  # seconds
-    max_monitoring_time = 1800  # 30 minutes max continuous monitoring
+    max_monitoring_time = 300  # 5 minutes max
     start_time = time.time()
 
     # Track deployment completion
@@ -720,7 +758,7 @@ async def _monitor_project_applications_continuously(
 
                             if sync_status != "Synced":
                                 all_synced = False
-                            if health_status not in ["Healthy"]:
+                            if health_status != "Healthy":
                                 all_healthy = False
 
                     except Exception as e:

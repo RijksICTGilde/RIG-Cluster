@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../sandboxed-local
+
+patches:
+  - target:
+      kind: Deployment
+      name: operations-manager
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+  - path: ../sandboxed-local/patches/enable-debug.yaml
+    target:
+      kind: Deployment
+      name: operations-manager

@@ -1,0 +1,30 @@
+{# ArgoCD Deployment Status Section - overview of ALL deployments #}
+{% if argocd_available and project.deployments %}
+<c-card id="deployment-status" outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <div>
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="server" size="xl" color="hemelblauw" />Deployment Status</c-heading>
+            <p class="rvo-text--subtle">ArgoCD synchronisatie en health status per deployment</p>
+        </div>
+
+        {% set _dep_count = project.deployments|length %}
+        {% set _grid_cols = "one" if _dep_count == 1 else ("two" if _dep_count == 2 else ("three" if _dep_count == 3 else "four")) %}
+        <c-grid columns="{{ _grid_cols }}" gap="md">
+            {% for deployment in project.deployments %}
+            {% set _argocd_card_id_prefix = deployment.name %}
+            {% include "project-details/_argocd-deployment-card.html.j2" %}
+            {% endfor %}
+        </c-grid>
+    </c-layout-flow>
+</c-card>
+{% elif not argocd_available and project.deployments %}
+<c-card outline="true" padding="lg" backgroundColor="grijs-050">
+    <c-layout-row gap="md" verticalSpacing="center">
+        <c-icon icon="info" size="lg" color="grijs-500" />
+        <div>
+            <strong>Deployment status niet beschikbaar</strong>
+            <p class="rvo-text--sm rvo-text--subtle">ArgoCD is niet verbonden. Deployment status wordt getoond wanneer ArgoCD beschikbaar is.</p>
+        </div>
+    </c-layout-row>
+</c-card>
+{% endif %}

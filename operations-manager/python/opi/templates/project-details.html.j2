@@ -5,6 +5,8 @@
 
   Comprehensive project details page showing all project information
   including services, components, deployments, and configuration.
+
+  Sections are split into separate include files under project-details/.
 #}
 
 {% block page_title %}{{ project.display_name }} - Project Details{% endblock %}
@@ -12,1734 +14,59 @@
 {% block content %}
 <c-layout-flow gap="xl">
 
-    {# Page Header #}
-    <div>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--rvo-space-md);">
-            <div>
-                <c-heading type="h1" textContent="{{ project.display_name }}" />
-                <p class="rvo-text--lg">{{ project.description }}</p>
-                <div style="margin-top: var(--rvo-space-sm);">
-                    <span class="project-badge">{{ project.name }}</span>
-                </div>
-            </div>
-            <div style="display: flex; gap: var(--rvo-space-md);">
-                <c-button
-                    label="Terug naar overzicht"
-                    kind="secondary"
-                    size="md"
-                    showIcon="before"
-                    icon="terug"
-                    @click="window.location.href='/projects'" />
-                {% if user_role in ["admin", "owner"] %}
-                    <c-button
-                        label="Project beheren"
-                        kind="primary"
-                        size="md"
-                        showIcon="before"
-                        icon="instellingen" />
-                {% endif %}
-            </div>
+    {% include "project-details/section-header.html.j2" %}
+
+    {# Tab Navigation #}
+    <c-tabs>
+        <c-tab-item label="Project" href="#" selected="true" @click="switchTab('project', event)" />
+        <c-tab-item label="Deployments" href="#" @click="switchTab('deployments', event)" />
+    </c-tabs>
+
+    {# ==================== PROJECT TAB ==================== #}
+    <c-layout-flow id="tab-project" gap="lg">
+        {% include "project-details/section-actions.html.j2" %}
+        {% include "project-details/section-deployment-status.html.j2" %}
+        {% include "project-details/section-team.html.j2" %}
+        {% include "project-details/section-config.html.j2" %}
+        {% include "project-details/section-keycloak.html.j2" %}
+        {% include "project-details/section-services.html.j2" %}
+        {% include "project-details/section-components.html.j2" %}
+        {% include "project-details/section-helm-charts.html.j2" %}
+        {% include "project-details/section-helmfile.html.j2" %}
+        {% include "project-details/section-repositories.html.j2" %}
+        {% include "project-details/section-danger-zone.html.j2" %}
+    </c-layout-flow>
+
+    {# ==================== DEPLOYMENTS TAB ==================== #}
+    <c-layout-flow id="tab-deployments" gap="lg" style="display: none;">
+        {# Deployment Selector #}
+        {% if project.deployments|length > 1 %}
+        <div class="deployment-global-selector">
+            <label for="global-deployment-selector"><strong>Deployment:</strong></label>
+            <select id="global-deployment-selector" class="deployment-select" onchange="switchDeployment(this.value)">
+                {% for deployment in project.deployments %}
+                <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+                {% endfor %}
+            </select>
         </div>
-    </div>
-
-    {# Metrics Section #}
-    {% set deployments_on_current_cluster = project.deployments | selectattr('cluster', 'equalto', current_cluster) | list %}
-    {% if prometheus_available and deployments_on_current_cluster %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="grafiek" size="xl" color="groen" />Resource Metrics</c-heading>
-                    <p class="rvo-text--subtle">Resource usage per component (laatste uur, 5 min intervallen)</p>
-                </div>
-                {% if deployments_on_current_cluster|length > 1 %}
-                <div>
-                    <select id="deployment-selector" class="deployment-select" onchange="showDeploymentMetrics(this.value)">
-                        {% for deployment in deployments_on_current_cluster %}
-                        <option value="{{ deployment.name }}">{{ deployment.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                {% endif %}
-            </div>
-
-            {% for deployment in deployments_on_current_cluster %}
-            <div id="metrics-{{ deployment.name }}" class="deployment-metrics-section" {% if not loop.first %}style="display: none;"{% endif %}>
-                {% if deployment.components %}
-                <div class="metrics-grid">
-                    {% for component in deployment.components %}
-                    {% set component_name = component.reference %}
-                    {% set metrics = deployment_metrics_timeseries.get(deployment.name, {}).get(component_name, {}) %}
-                    <c-card class="metrics-component-card" padding="lg" backgroundColor="grijs-050" outline="true">
-                        <c-layout-flow gap="md">
-                            <div class="metrics-component-header">
-                                <c-icon icon="puzzel" size="md" color="donkerblauw" />
-                                <c-heading type="h4" textContent="{{ component_name }}" />
-                            </div>
-
-                            <div class="charts-container">
-                                {# CPU Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">CPU (millicores){% if metrics.cpu_limit %} - Limit: {{ metrics.cpu_limit|int }}m{% endif %}</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="cpu-chart-{{ deployment.name }}-{{ component_name }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.cpu_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.cpu | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='{{ metrics.cpu_limit | default("null") }}'
-                                                data-color="#39870c"></canvas>
-                                    </div>
-                                    {% if metrics.cpu %}
-                                    <div class="chart-current">Current: {{ "%.1f"|format(metrics.cpu[-1].value) }}m{% if metrics.cpu_limit %} / {{ metrics.cpu_limit|int }}m ({{ "%.0f"|format(metrics.cpu[-1].value / metrics.cpu_limit * 100) }}%){% endif %}</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Memory Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">Memory (MB){% if metrics.memory_limit %} - Limit: {{ metrics.memory_limit|int }} MB{% endif %}</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="mem-chart-{{ deployment.name }}-{{ component_name }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.memory_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.memory | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='{{ metrics.memory_limit | default("null") }}'
-                                                data-color="#007bc7"></canvas>
-                                    </div>
-                                    {% if metrics.memory %}
-                                    <div class="chart-current">Current: {{ "%.0f"|format(metrics.memory[-1].value) }} MB{% if metrics.memory_limit %} / {{ metrics.memory_limit|int }} MB ({{ "%.0f"|format(metrics.memory[-1].value / metrics.memory_limit * 100) }}%){% endif %}</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Requests Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">HTTP Requests (req/min)</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="req-chart-{{ deployment.name }}-{{ component_name }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.requests_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.requests | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='null'
-                                                data-color="#e17000"></canvas>
-                                    </div>
-                                    {% if metrics.requests %}
-                                    <div class="chart-current">Current: {{ "%.1f"|format(metrics.requests[-1].value) }} req/min</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No HTTP metrics</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Network In Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">Network In (KB/s)</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="net-in-chart-{{ deployment.name }}-{{ component_name }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.network_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.network_in | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='null'
-                                                data-color="#154273"></canvas>
-                                    </div>
-                                    {% if metrics.network_in %}
-                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.network_in[-1].value) }} KB/s</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Network Out Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">Network Out (KB/s)</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="net-out-chart-{{ deployment.name }}-{{ component_name }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.network_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.network_out | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='null'
-                                                data-color="#8fcae7"></canvas>
-                                    </div>
-                                    {% if metrics.network_out %}
-                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.network_out[-1].value) }} KB/s</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Disk Read Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">Disk Read (KB/s)</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="disk-read-chart-{{ deployment.name }}-{{ component_name }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.disk_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.disk_read | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='null'
-                                                data-color="#673327"></canvas>
-                                    </div>
-                                    {% if metrics.disk_read %}
-                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.disk_read[-1].value) }} KB/s</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Disk Write Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">Disk Write (KB/s)</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="disk-write-chart-{{ deployment.name }}-{{ component_name }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.disk_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.disk_write | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='null'
-                                                data-color="#c9742f"></canvas>
-                                    </div>
-                                    {% if metrics.disk_write %}
-                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.disk_write[-1].value) }} KB/s</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </c-layout-flow>
-                    </c-card>
-                    {% endfor %}
-                </div>
-                {% elif discovered_workloads.get(deployment.name) %}
-                {# Helm-based deployment: show discovered workloads #}
-                <div class="metrics-grid">
-                    {% for workload in discovered_workloads.get(deployment.name, []) %}
-                    {% set workload_name = workload.name %}
-                    {% set metrics = deployment_metrics_timeseries.get(deployment.name, {}).get(workload_name, {}) %}
-                    <c-card class="metrics-component-card" padding="lg" backgroundColor="grijs-050" outline="true">
-                        <c-layout-flow gap="md">
-                            <div class="metrics-component-header">
-                                <c-icon icon="applicatie" size="md" color="donkerblauw" />
-                                <c-heading type="h4" textContent="{{ workload_name }}" />
-                                <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-left: 8px;">{{ workload.pod_count }} pod{% if workload.pod_count != 1 %}s{% endif %}</span>
-                            </div>
-
-                            <div class="charts-container">
-                                {# CPU Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">CPU (millicores){% if metrics.cpu_limit %} - Limit: {{ metrics.cpu_limit|int }}m{% endif %}</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="cpu-chart-{{ deployment.name }}-{{ workload_name | replace('.', '-') | replace(':', '-') }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.cpu_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.cpu | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='{{ metrics.cpu_limit | default("null") }}'
-                                                data-color="#39870c"></canvas>
-                                    </div>
-                                    {% if metrics.cpu %}
-                                    <div class="chart-current">Current: {{ "%.1f"|format(metrics.cpu[-1].value) }}m{% if metrics.cpu_limit %} / {{ metrics.cpu_limit|int }}m ({{ "%.0f"|format(metrics.cpu[-1].value / metrics.cpu_limit * 100) }}%){% endif %}</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Memory Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">Memory (MB){% if metrics.memory_limit %} - Limit: {{ metrics.memory_limit|int }} MB{% endif %}</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="mem-chart-{{ deployment.name }}-{{ workload_name | replace('.', '-') | replace(':', '-') }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.memory_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.memory | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='{{ metrics.memory_limit | default("null") }}'
-                                                data-color="#007bc7"></canvas>
-                                    </div>
-                                    {% if metrics.memory %}
-                                    <div class="chart-current">Current: {{ "%.0f"|format(metrics.memory[-1].value) }} MB{% if metrics.memory_limit %} / {{ metrics.memory_limit|int }} MB ({{ "%.0f"|format(metrics.memory[-1].value / metrics.memory_limit * 100) }}%){% endif %}</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Network In Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">Network In (KB/s)</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="net-in-chart-{{ deployment.name }}-{{ workload_name | replace('.', '-') | replace(':', '-') }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.network_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.network_in | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='null'
-                                                data-color="#154273"></canvas>
-                                    </div>
-                                    {% if metrics.network_in %}
-                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.network_in[-1].value) }} KB/s</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-
-                                {# Network Out Chart #}
-                                <div class="chart-item">
-                                    <div class="chart-label">Network Out (KB/s)</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="net-out-chart-{{ deployment.name }}-{{ workload_name | replace('.', '-') | replace(':', '-') }}"
-                                                class="metrics-chart"
-                                                data-timestamps='{{ metrics.network_timestamps | default([]) | tojson }}'
-                                                data-values='{{ metrics.network_out | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='null'
-                                                data-color="#01689b"></canvas>
-                                    </div>
-                                    {% if metrics.network_out %}
-                                    <div class="chart-current">Current: {{ "%.2f"|format(metrics.network_out[-1].value) }} KB/s</div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No data</div>
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </c-layout-flow>
-                    </c-card>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="empty-state">
-                    <c-icon icon="info" size="lg" color="grijs-050" />
-                    <p class="rvo-text--md">Geen components in deze deployment</p>
-                </div>
-                {% endif %}
-
-                {# PVC Storage Section - Deployment Level #}
-                {% set pvc_storage = deployment_pvc_storage.get(deployment.name, {}) %}
-                {% if pvc_storage %}
-                <div class="pvc-storage-section" style="margin-top: 24px;">
-                    <div class="pvc-storage-header" style="margin-bottom: 16px;">
-                        <c-heading type="h4"><c-icon icon="database" size="md" color="donkerblauw" />Persistent Storage</c-heading>
-                        <p class="rvo-text--subtle rvo-text--sm">PVC disk usage (laatste uur)</p>
-                    </div>
-                    <div class="metrics-grid">
-                        {% for pvc_name, pvc_data in pvc_storage.items() %}
-                        <c-card class="metrics-component-card" padding="lg" backgroundColor="grijs-050" outline="true">
-                            <c-layout-flow gap="md">
-                                <div class="metrics-component-header">
-                                    <c-icon icon="database" size="md" color="donkerblauw" />
-                                    <c-heading type="h5" textContent="{{ pvc_name }}" />
-                                </div>
-                                <div class="chart-item">
-                                    <div class="chart-label">Storage Usage (GB) - Capacity: {{ "%.1f"|format(pvc_data.capacity_gb) }} GB</div>
-                                    <div class="chart-wrapper">
-                                        <canvas id="pvc-chart-{{ deployment.name }}-{{ pvc_name | replace('.', '-') | replace(':', '-') }}"
-                                                class="metrics-chart pvc-storage-chart"
-                                                data-timestamps='{{ pvc_data["timestamps"] | default([]) | tojson }}'
-                                                data-values='{{ pvc_data["values"] | default([]) | map(attribute="value") | list | tojson }}'
-                                                data-limit='{{ pvc_data.capacity_gb | default("null") }}'
-                                                data-warning='{{ pvc_data.warning_threshold_gb | default("null") }}'
-                                                data-critical='{{ pvc_data.critical_threshold_gb | default("null") }}'
-                                                data-color="#6a1b9a"></canvas>
-                                    </div>
-                                    {% if pvc_data["values"] %}
-                                    {% set current_used = pvc_data["values"][-1].value %}
-                                    {% set usage_percent = (current_used / pvc_data.capacity_gb * 100) if pvc_data.capacity_gb else 0 %}
-                                    <div class="chart-current {% if usage_percent >= 90 %}critical{% elif usage_percent >= 80 %}warning{% endif %}">
-                                        Current: {{ "%.2f"|format(current_used) }} GB / {{ "%.1f"|format(pvc_data.capacity_gb) }} GB ({{ "%.0f"|format(usage_percent) }}%)
-                                    </div>
-                                    {% else %}
-                                    <div class="chart-current no-data">No PVC data</div>
-                                    {% endif %}
-                                </div>
-                            </c-layout-flow>
-                        </c-card>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </c-layout-flow>
-    </c-card>
-    {% elif prometheus_available and project.deployments and not deployments_on_current_cluster %}
-    <c-card outline="true" padding="lg" backgroundColor="grijs-050">
-        <c-layout-row gap="md" verticalSpacing="center">
-            <c-icon icon="info" size="lg" color="grijs-500" />
-            <div>
-                <strong>Metrics niet beschikbaar</strong>
-                <p class="rvo-text--sm rvo-text--subtle">Geen deployments op cluster {{ current_cluster }}. Resource metrics zijn alleen beschikbaar voor deployments op het huidige cluster.</p>
-            </div>
-        </c-layout-row>
-    </c-card>
-    {% elif not prometheus_available %}
-    <c-card outline="true" padding="lg" backgroundColor="grijs-050">
-        <c-layout-row gap="md" verticalSpacing="center">
-            <c-icon icon="info" size="lg" color="grijs-500" />
-            <div>
-                <strong>Metrics niet beschikbaar</strong>
-                <p class="rvo-text--sm rvo-text--subtle">Prometheus is niet verbonden. Resource metrics worden getoond wanneer Prometheus beschikbaar is.</p>
-            </div>
-        </c-layout-row>
-    </c-card>
-    {% endif %}
-
-    {# ArgoCD Deployment Status Section #}
-    {% if argocd_available and project.deployments %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <div>
-                <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="server" size="xl" color="hemelblauw" />Deployment Status</c-heading>
-                <p class="rvo-text--subtle">ArgoCD synchronisatie en health status per deployment</p>
-            </div>
-
-            <c-grid columns="two" gap="lg">
-                {% for deployment in project.deployments %}
-                {% set status = argocd_status.get(deployment.name, {}) %}
-                {% set health = status.get('health', 'Unknown') %}
-                {% set sync = status.get('sync', 'Unknown') %}
-                {% set errors = status.get('errors', []) %}
-                {% set has_errors = errors|length > 0 %}
-
-                <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-hemelblauw);">
-                    <c-layout-flow gap="md">
-                        {# Deployment Header #}
-                        <c-layout-row gap="sm" verticalSpacing="center">
-                            <c-icon icon="applicatie" size="md" color="donkerblauw" />
-                            <c-heading type="h4" textContent="{{ deployment.name }}" />
-                            <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.cluster }}</span>
-                        </c-layout-row>
-
-                        {% if deployment.cluster != current_cluster %}
-                        {# Deployment is on a different cluster - show info message #}
-                        <div style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--rvo-color-grijs-100); border: 1px solid var(--rvo-color-grijs-300); border-radius: 4px;">
-                            <c-icon icon="info" size="md" color="grijs-600" />
-                            <div>
-                                <span class="rvo-text--sm">Deze deployment draait op cluster <strong>{{ deployment.cluster }}</strong>.</span>
-                                <br />
-                                <span class="rvo-text--sm rvo-text--subtle">ArgoCD status is alleen beschikbaar vanaf de Operations Manager van dat cluster.</span>
-                            </div>
-                        </div>
-                        {% else %}
-                        {# Deployment is on current cluster - show ArgoCD status #}
-                        {# Status Badges Row #}
-                        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                            {# Health Badge #}
-                            {% set health_bg = '#c8e6c9' if health == 'Healthy' else ('#bbdefb' if health == 'Progressing' else ('#ffe0b2' if health == 'Degraded' else '#ffcdd2')) %}
-                            {% set health_color = '#1b5e20' if health == 'Healthy' else ('#0d47a1' if health == 'Progressing' else ('#e65100' if health == 'Degraded' else '#b71c1c')) %}
-                            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: {{ health_bg }}; color: {{ health_color }};">
-                                {% if health == 'Healthy' %}
-                                <c-icon icon="vinkje" size="sm" />
-                                {% elif health == 'Progressing' %}
-                                <c-icon icon="klok" size="sm" />
-                                {% elif health == 'Degraded' %}
-                                <c-icon icon="waarschuwing" size="sm" />
-                                {% else %}
-                                <c-icon icon="foutmelding" size="sm" />
-                                {% endif %}
-                                {{ health }}
-                            </span>
-
-                            {# Sync Badge #}
-                            {% set sync_bg = '#c8e6c9' if sync == 'Synced' else ('#ffe0b2' if sync == 'OutOfSync' else 'var(--rvo-color-grijs-200)') %}
-                            {% set sync_color = '#1b5e20' if sync == 'Synced' else ('#e65100' if sync == 'OutOfSync' else 'var(--rvo-color-grijs-700)') %}
-                            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: {{ sync_bg }}; color: {{ sync_color }};">
-                                {% if sync == 'Synced' %}
-                                <c-icon icon="vinkje" size="sm" />
-                                {% elif sync == 'OutOfSync' %}
-                                <c-icon icon="waarschuwing" size="sm" />
-                                {% else %}
-                                <c-icon icon="info" size="sm" />
-                                {% endif %}
-                                {{ sync }}
-                            </span>
-
-                            {# Revision Badge (if available) #}
-                            {% if status.get('revision') %}
-                            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 4px; font-size: 0.75rem; font-family: monospace; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700);">
-                                <c-icon icon="document-blanco" size="sm" />
-                                {{ status.revision }}
-                            </span>
-                            {% endif %}
-                        </div>
-
-                        {# Last Sync Time #}
-                        {% if status.get('last_sync') %}
-                        <c-layout-row gap="xs" verticalSpacing="center">
-                            <c-icon icon="klok" size="sm" color="grijs-600" />
-                            <span class="rvo-text--sm rvo-text--subtle">Laatste sync: {{ status.last_sync[:19]|replace('T', ' ') }} UTC</span>
-                        </c-layout-row>
-                        {% endif %}
-
-                        {# View Logs Button #}
-                        {% if deployment.components %}
-                        <div style="margin-top: var(--rvo-space-sm);">
-                            <button type="button" class="log-viewer-btn"
-                                    onclick='openLogViewer({{ project.name | tojson }}, {{ deployment.name | tojson }}, {{ deployment.components[0].reference | tojson }}, {{ deployment.components | tojson }})'
-                                    title="Bekijk live logs voor deze deployment">
-                                <c-icon icon="document-blanco" size="sm" />
-                                <span>View Logs</span>
-                            </button>
-                        </div>
-                        {% endif %}
-
-                        {# Operation Status (if running or failed) #}
-                        {% if status.get('operation_phase') and status.operation_phase not in ['Succeeded', None] %}
-                        {% set op_bg = '#e3f2fd' if status.operation_phase == 'Running' else '#ffebee' %}
-                        {% set op_color = '#1565c0' if status.operation_phase == 'Running' else '#c62828' %}
-                        <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 4px; font-size: 0.875rem; background: {{ op_bg }}; color: {{ op_color }};">
-                            <c-icon icon="{% if status.operation_phase == 'Running' %}klok{% elif status.operation_phase == 'Failed' %}foutmelding{% else %}info{% endif %}" size="sm" />
-                            <span>Operatie: {{ status.operation_phase }}</span>
-                            {% if status.get('operation_message') %}
-                            <span class="rvo-text--sm"> - {{ status.operation_message[:100] }}{% if status.operation_message|length > 100 %}...{% endif %}</span>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-
-                        {# Errors Section (Expandable) #}
-                        {% if has_errors %}
-                        <div>
-                            <button type="button" onclick="toggleArgoErrors('{{ deployment.name }}')" aria-expanded="false"
-                                    style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; background: #ffebee; border: 1px solid #ef9a9a; border-radius: 4px; cursor: pointer; font-size: 0.875rem; color: #c62828; text-align: left;">
-                                <c-icon icon="waarschuwing" size="sm" color="rood" />
-                                <span>{{ errors|length }} {% if errors|length == 1 %}probleem{% else %}problemen{% endif %} gevonden</span>
-                                <c-icon icon="delta-omlaag" size="sm" style="margin-left: auto;" />
-                            </button>
-                            <div id="argocd-errors-{{ deployment.name }}" style="display: none; margin-top: 8px; padding: 8px; background: #fff5f5; border: 1px solid #ffcdd2; border-radius: 4px;">
-                                {% for error in errors %}
-                                <div style="padding: 8px; {% if not loop.last %}border-bottom: 1px solid #ffcdd2;{% endif %}">
-                                    <c-layout-row gap="xs" verticalSpacing="center">
-                                        <c-icon icon="foutmelding" size="sm" color="rood" />
-                                        <strong style="font-size: 0.875rem;">{{ error.resource }}</strong>
-                                    </c-layout-row>
-                                    <p style="font-size: 0.8rem; color: var(--rvo-color-grijs-700); margin: 4px 0 0 24px; word-break: break-word;">{{ error.message }}</p>
-                                </div>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        {% endif %}
-                        {% endif %}
-                    </c-layout-flow>
-                </c-card>
-                {% endfor %}
-            </c-grid>
-        </c-layout-flow>
-    </c-card>
-    {% elif not argocd_available and project.deployments %}
-    <c-card outline="true" padding="lg" backgroundColor="grijs-050">
-        <c-layout-row gap="md" verticalSpacing="center">
-            <c-icon icon="info" size="lg" color="grijs-500" />
-            <div>
-                <strong>Deployment status niet beschikbaar</strong>
-                <p class="rvo-text--sm rvo-text--subtle">ArgoCD is niet verbonden. Deployment status wordt getoond wanneer ArgoCD beschikbaar is.</p>
-            </div>
-        </c-layout-row>
-    </c-card>
-    {% endif %}
-
-    {# Backups Section - Show backups per deployment for current cluster #}
-    {% if backups_available and project.deployments %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <div>
-                <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
-                <p class="rvo-text--subtle">Beschikbare backups per deployment (alleen voor cluster: {{ current_cluster }})</p>
-            </div>
-
-            {% set ns = namespace(has_backups=false) %}
-            {% for deployment in project.deployments %}
-                {% if deployment.cluster == current_cluster and deployment_backups.get(deployment.name) %}
-                    {% set ns.has_backups = true %}
-                {% endif %}
-            {% endfor %}
-
-            {% if ns.has_backups %}
-            <c-grid columns="one" gap="lg">
-                {% for deployment in project.deployments %}
-                {% if deployment.cluster == current_cluster %}
-                {% set backups = deployment_backups.get(deployment.name, []) %}
-
-                <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-groen);">
-                    <c-layout-flow gap="md">
-                        {# Deployment Header #}
-                        <c-layout-row gap="sm" verticalSpacing="center">
-                            <c-icon icon="applicatie" size="md" color="donkerblauw" />
-                            <c-heading type="h4" textContent="{{ deployment.name }}" />
-                            <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.namespace }}</span>
-                        </c-layout-row>
-
-                        {% if backups %}
-                        {# Group backups by backup_run_id for visual distinction #}
-                        {% set backup_runs = {} %}
-                        {% for backup in backups %}
-                            {% set run_id = backup.backup_run_id or 'unknown' %}
-                            {% if run_id not in backup_runs %}
-                                {% set _ = backup_runs.update({run_id: []}) %}
-                            {% endif %}
-                            {% set _ = backup_runs[run_id].append(backup) %}
-                        {% endfor %}
-                        {% set run_colors = ['var(--rvo-color-wit)', 'var(--rvo-color-grijs-100)'] %}
-                        <div style="overflow-x: auto;">
-                            <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
-                                <thead>
-                                    <tr style="border-bottom: 2px solid var(--rvo-color-grijs-300);">
-                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Backup Run</th>
-                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Type</th>
-                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Component</th>
-                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Storage</th>
-                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Gen</th>
-                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Timestamp</th>
-                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Grootte</th>
-                                        <th style="text-align: left; padding: 8px 12px; font-weight: 600; color: var(--rvo-color-grijs-700);">Snapshot ID</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% set color_idx = namespace(val=0) %}
-                                    {% for run_id, run_backups in backup_runs.items() | sort(reverse=true) %}
-                                    {% set row_bg = run_colors[color_idx.val % 2] %}
-                                    {% for backup in run_backups %}
-                                    <tr style="border-bottom: 1px solid var(--rvo-color-grijs-200); background: {{ row_bg }};">
-                                        <td style="padding: 8px 12px;">
-                                            {% if run_id != 'unknown' %}
-                                                <code style="font-family: monospace; font-size: 0.75rem; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw); padding: 2px 6px; border-radius: 4px; cursor: help;" title="{{ run_backups | length }} item(s) in deze backup run">{{ run_id }}</code>
-                                            {% else %}
-                                                <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">-</span>
-                                            {% endif %}
-                                        </td>
-                                        <td style="padding: 8px 12px;">
-                                            {% if backup.resource_type == 'pvc' %}
-                                                <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw);">
-                                                    PVC
-                                                </span>
-                                            {% elif backup.resource_type == 'database' %}
-                                                <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-grasgroen-200); color: var(--rvo-color-grasgroen-800);">
-                                                    DB
-                                                </span>
-                                            {% elif backup.resource_type == 'bucket' %}
-                                                <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-oranje-200); color: var(--rvo-color-oranje-800);">
-                                                    Bucket
-                                                </span>
-                                            {% else %}
-                                                <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">{{ backup.resource_type or '-' }}</span>
-                                            {% endif %}
-                                        </td>
-                                        <td style="padding: 8px 12px;">
-                                            <span style="display: inline-flex; align-items: center; gap: 4px;">
-                                                <c-icon icon="document-blanco" size="sm" color="grijs-600" />
-                                                {{ backup.component_name or '-' }}
-                                            </span>
-                                        </td>
-                                        <td style="padding: 8px 12px;">
-                                            {{ backup.storage_name or '-' }}
-                                        </td>
-                                        <td style="padding: 8px 12px;">
-                                            {% if backup.generation is not none %}
-                                                <span style="display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; background: var(--rvo-color-grijs-200); border-radius: 4px; font-weight: 500;">v{{ backup.generation }}</span>
-                                            {% else %}
-                                                <span style="color: var(--rvo-color-grijs-500);">-</span>
-                                            {% endif %}
-                                        </td>
-                                        <td style="padding: 8px 12px;">
-                                            <span style="color: var(--rvo-color-grijs-700);">{{ backup.timestamp | dutch_date }}</span>
-                                        </td>
-                                        <td style="padding: 8px 12px;">
-                                            {% if backup.size_bytes is not none %}
-                                                {% if backup.size_bytes == 0 %}
-                                                    <span style="color: var(--rvo-color-grijs-500);">0 B (leeg)</span>
-                                                {% else %}
-                                                    {% set size_mb = (backup.size_bytes / 1048576) | round(2) %}
-                                                    {% if size_mb >= 1024 %}
-                                                        {{ (size_mb / 1024) | round(2) }} GB
-                                                    {% elif size_mb >= 1 %}
-                                                        {{ size_mb }} MB
-                                                    {% else %}
-                                                        {{ (backup.size_bytes / 1024) | round(2) }} KB
-                                                    {% endif %}
-                                                {% endif %}
-                                            {% else %}
-                                                <span style="color: var(--rvo-color-grijs-500);">-</span>
-                                            {% endif %}
-                                        </td>
-                                        <td style="padding: 8px 12px;">
-                                            {% set tags_display = [] %}
-                                            {% if backup.tags %}
-                                                {% for key, value in backup.tags.items() %}
-                                                    {% set _ = tags_display.append(key ~ ': ' ~ value) %}
-                                                {% endfor %}
-                                            {% endif %}
-                                            <code style="font-family: monospace; font-size: 0.7rem; background: var(--rvo-color-grijs-100); padding: 2px 6px; border-radius: 4px; cursor: pointer; user-select: all;" title="Click to select, PVC: {{ backup.pvc_name }}&#10;{% if backup.tags %}Tags:&#10;{{ tags_display | join('&#10;') }}{% endif %}">{{ backup.snapshot_id }}</code>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                    {% set color_idx.val = color_idx.val + 1 %}
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                        <p class="rvo-text--sm rvo-text--subtle" style="margin-top: 8px;">
-                            {% set known_runs = backup_runs.keys() | reject('equalto', 'unknown') | list %}
-                            {% if known_runs | length > 0 %}
-                                {{ known_runs | length }} backup run(s), {{ backups|length }} snapshot(s) totaal
-                            {% else %}
-                                {{ backups|length }} backup(s) gevonden
-                            {% endif %}
-                        </p>
-                        {% else %}
-                        <p class="rvo-text--md rvo-text--subtle">
-                            <c-icon icon="info" size="sm" color="grijs-500" />
-                            Geen backups gevonden voor deze deployment
-                        </p>
-                        {% endif %}
-                    </c-layout-flow>
-                </c-card>
-                {% endif %}
-                {% endfor %}
-            </c-grid>
-            {% else %}
-            <c-card padding="md" outline="true" backgroundColor="grijs-050">
-                <c-layout-row gap="md" verticalSpacing="center">
-                    <c-icon icon="info" size="md" color="grijs-500" />
-                    <p class="rvo-text--md">Geen backups beschikbaar voor deployments op cluster {{ current_cluster }}</p>
-                </c-layout-row>
-            </c-card>
-            {% endif %}
-        </c-layout-flow>
-    </c-card>
-    {% elif not backups_available and project.deployments %}
-    <c-card outline="true" padding="lg" backgroundColor="grijs-050">
-        <c-layout-row gap="md" verticalSpacing="center">
-            <c-icon icon="info" size="lg" color="grijs-500" />
-            <div>
-                <strong>Backups niet beschikbaar</strong>
-                <p class="rvo-text--sm rvo-text--subtle">De backup service is niet verbonden. Backup informatie wordt getoond wanneer de service beschikbaar is.</p>
-            </div>
-        </c-layout-row>
-    </c-card>
-    {% endif %}
-
-    {# Team Section #}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw" />Team & Toegang</c-heading>
-            <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>
-
-            <c-grid columns="three" gap="md">
-                {% for user in project.users %}
-                <c-card padding="md" outline="true" backgroundColor="grijs-050">
-                    <c-layout-row gap="md" verticalSpacing="center">
-                        <div style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--rvo-color-hemelblauw); color: white; font-weight: 600; font-size: 1.125rem;">
-                            {{ user.email[:2]|upper }}
-                        </div>
-                        <c-layout-flow gap="xs">
-                            <div style="font-weight: 500; color: var(--rvo-color-grijs-900);">{{ user.email }}</div>
-                            <div style="font-size: 0.875rem; color: var(--rvo-color-grijs-700); text-transform: capitalize;">{{ user.role|title }}</div>
-                        </c-layout-flow>
-                    </c-layout-row>
-                </c-card>
-                {% endfor %}
-            </c-grid>
-        </c-layout-flow>
-    </c-card>
-
-    {# Configuration Section #}
-    {% if user_role in ["admin", "owner"] %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="instellingen" size="xl" color="donkerblauw" />Configuratie & Secrets</c-heading>
-            <p class="rvo-text--subtle">Project configuratie en gevoelige informatie</p>
-
-            <div class="config-section">
-                {# Project Name - always show #}
-                <div class="config-item">
-                    <div class="config-label">
-                        <c-icon icon="publicatie" size="md" color="hemelblauw" />
-                        <strong>Project Naam</strong>
-                    </div>
-                    <div class="config-value config-value--inline">
-                        <code class="config-code">{{ project.name }}</code>
-                        <c-button
-                            kind="tertiary"
-                            size="sm"
-                            showIcon="before"
-                            icon="document-blanco"
-                            class="copy-btn"
-                            aria-label="Kopieer project naam"
-                            @click="copyToClipboard('.config-code', event, '.config-item')">
-                            <span class="copy-btn__label">Kopieer</span>
-                            <span class="copy-btn__copied">Gekopieerd!</span>
-                        </c-button>
-                    </div>
-                </div>
-
-                {% if project.config %}
-
-                {# API Key Section #}
-                {% if project.config.get('api-key') %}
-                <div class="config-item">
-                    <div class="config-label">
-                        <c-icon icon="sleutel" size="md" color="rood" />
-                        <strong>API Key</strong>
-                    </div>
-                    <div class="config-value">
-                        <c-secret-field value="{{ project.config['api-key'] }}" />
-                    </div>
-                </div>
-                {% endif %}
-
-                {# Age Public Key #}
-                {% if project.config.get('age-public-key') %}
-                <div class="config-item">
-                    <div class="config-label">
-                        <c-icon icon="beveiligingsscan" size="md" color="groen" />
-                        <strong>Age Public Key</strong>
-                    </div>
-                    <div class="config-value config-value--inline">
-                        <code class="config-code">{{ project.config['age-public-key'] }}</code>
-                        <c-button
-                            kind="tertiary"
-                            size="sm"
-                            showIcon="before"
-                            icon="document-blanco"
-                            class="copy-btn"
-                            aria-label="Kopieer Age Public Key"
-                            @click="copyToClipboard('.config-code', event, '.config-item')">
-                            <span class="copy-btn__label">Kopieer</span>
-                            <span class="copy-btn__copied">Gekopieerd!</span>
-                        </c-button>
-                    </div>
-                </div>
-                {% endif %}
-
-                {# Age Private Key #}
-                {% if project.config.get('age-private-key') %}
-                <div class="config-item">
-                    <div class="config-label">
-                        <c-icon icon="beveiligingsscan" size="md" color="rood" />
-                        <strong>Age Private Key</strong>
-                    </div>
-                    <div class="config-value">
-                        <c-secret-field value="{{ project.config['age-private-key'] }}" />
-                    </div>
-                </div>
-                {% endif %}
-
-                {% else %}
-                <div class="empty-state">
-                    <c-icon icon="info" size="lg" color="grijs-050" />
-                    <p class="rvo-text--md">Geen configuratie beschikbaar</p>
-                </div>
-                {% endif %}
-            </div>
-        </c-layout-flow>
-    </c-card>
-    {% endif %}
-
-    {# Keycloak Section #}
-    {% if user_role in ["admin", "owner"] and project.config and project.config.get('keycloak') %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="beveiligingsscan" size="xl" color="hemelblauw" />Keycloak</c-heading>
-            <p class="rvo-text--subtle">Keycloak realm configuratie en admin toegang</p>
-
-            <div class="config-section">
-                {% for kc_config in project.config.keycloak %}
-                {% if not loop.first %}
-                <div style="margin-top: var(--rvo-space-lg); padding-top: var(--rvo-space-lg); border-top: 1px solid var(--rvo-color-grijs-200);"></div>
-                {% endif %}
-                <c-heading type="h3" style="margin-bottom: var(--rvo-space-md);"><c-icon icon="beveiligingsscan" size="md" color="hemelblauw" />Realm: {{ kc_config.realm }}</c-heading>
-                <div class="config-item">
-                    <div class="config-label">
-                        <c-icon icon="server" size="md" color="hemelblauw" />
-                        <strong>Admin Console</strong>
-                    </div>
-                    <div class="config-value config-value--inline">
-                        <code class="config-code">{{ kc_config.host }}</code>
-                        <c-button
-                            kind="tertiary"
-                            size="sm"
-                            showIcon="before"
-                            icon="document-blanco"
-                            class="copy-btn"
-                            aria-label="Kopieer host"
-                            @click="copyToClipboard('.config-code', event, '.config-item')">
-                            <span class="copy-btn__label">Kopieer</span>
-                            <span class="copy-btn__copied">Gekopieerd!</span>
-                        </c-button>
-                    </div>
-                    <c-button
-                        label="Open Admin Console"
-                        kind="secondary"
-                        size="sm"
-                        showIcon="after"
-                        icon="externe-link"
-                        @click="window.open('{{ kc_config.host }}/admin/master/console/#/{{ kc_config.realm }}', '_blank')" />
-                </div>
-                <div class="config-item">
-                    <div class="config-label">
-                        <c-icon icon="applicatie" size="md" color="grijs-600" />
-                        <strong>Realm</strong>
-                    </div>
-                    <div class="config-value config-value--inline">
-                        <code class="config-code">{{ kc_config.realm }}</code>
-                        <c-button
-                            kind="tertiary"
-                            size="sm"
-                            showIcon="before"
-                            icon="document-blanco"
-                            class="copy-btn"
-                            aria-label="Kopieer realm"
-                            @click="copyToClipboard('.config-code', event, '.config-item')">
-                            <span class="copy-btn__label">Kopieer</span>
-                            <span class="copy-btn__copied">Gekopieerd!</span>
-                        </c-button>
-                    </div>
-                </div>
-                <div class="config-item">
-                    <div class="config-label">
-                        <c-icon icon="user" size="md" color="grijs-600" />
-                        <strong>Admin Gebruikersnaam</strong>
-                    </div>
-                    <div class="config-value config-value--inline">
-                        <code class="config-code">{{ kc_config.username }}</code>
-                        <c-button
-                            kind="tertiary"
-                            size="sm"
-                            showIcon="before"
-                            icon="document-blanco"
-                            class="copy-btn"
-                            aria-label="Kopieer gebruikersnaam"
-                            @click="copyToClipboard('.config-code', event, '.config-item')">
-                            <span class="copy-btn__label">Kopieer</span>
-                            <span class="copy-btn__copied">Gekopieerd!</span>
-                        </c-button>
-                    </div>
-                </div>
-                <div class="config-item">
-                    <div class="config-label">
-                        <c-icon icon="sleutel" size="md" color="rood" />
-                        <strong>Admin Wachtwoord</strong>
-                    </div>
-                    <div class="config-value">
-                        <c-secret-field value="{{ kc_config.password }}" />
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </c-layout-flow>
-    </c-card>
-    {% endif %}
-
-    {# Services Section #}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Services & Integraties</c-heading>
-            <p class="rvo-text--subtle">Geactiveerde services voor dit project</p>
-
-            {% if project.services %}
-            <div class="services-grid">
-                {% for service in project.services %}
-                <c-card class="service-detail-card" padding="lg" background="color" backgroundColor="wit" outline="true">
-                    <c-layout-flow gap="md">
-                        <div class="service-header">
-                            {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
-                            <c-icon icon="{{ service_def.icon }}" size="xl" color="{{ service_def.color }}"></c-icon>
-                            <div>
-                                <c-heading type="h3" textContent="{{ service_def.name }}" />
-                                <div class="service-scope">{{ service_def.scope|title }} scope</div>
-                            </div>
-                        </div>
-                        <p class="rvo-text--sm">{{ service_def.description }}</p>
-                    </c-layout-flow>
-                </c-card>
-                {% endfor %}
-            </div>
-            {% else %}
-            <div class="empty-state">
-                <c-icon icon="info" size="lg" color="grijs-050" />
-                <p class="rvo-text--md">Geen services geconfigureerd</p>
-            </div>
-            {% endif %}
-        </c-layout-flow>
-    </c-card>
-
-    {# Deployments Section #}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="server" size="xl" color="oranje" />Deployments</c-heading>
-            <p class="rvo-text--subtle">Applicatie deployments per omgeving</p>
-
-            {% if project.deployments %}
-            <div class="deployments-section">
-                {% for deployment in project.deployments %}
-                <c-card class="deployment-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
-                    <c-layout-flow gap="md">
-                        <div class="deployment-header">
-                            <div>
-                                <c-heading type="h3" textContent="{{ deployment.name }}" />
-                                <div class="deployment-meta">
-                                    <span class="cluster-badge">{{ deployment.cluster|title }}</span>
-                                    <span class="namespace-badge">{{ deployment.namespace }}</span>
-                                    {% if deployment.get('clone-from') %}
-                                        <span class="clone-badge">Cloned from {{ deployment['clone-from'] }}</span>
-                                    {% endif %}
-                                    {% if deployment.get('domain-mode') == 'nice-url' and deployment.get('subdomain') and deployment.get('base-domain') %}
-                                        <span class="domain-badge" title="Nice URL">{{ deployment['subdomain'] }}.{{ deployment['base-domain'] }}</span>
-                                    {% endif %}
-                                </div>
-                            </div>
-                            <div class="deployment-actions">
-                                {% if user_role in ['admin', 'owner'] %}
-                                <button type="button" class="rvo-button rvo-button--tertiary rvo-button--sm"
-                                    data-deployment="{{ deployment.name }}"
-                                    data-cluster="{{ deployment.cluster }}"
-                                    data-domain-mode="{{ deployment.get('domain-mode', '') }}"
-                                    data-subdomain="{{ deployment.get('subdomain', '') }}"
-                                    data-base-domain="{{ deployment.get('base-domain', '') }}"
-                                    data-components='{{ deployment.get('components', []) | tojson }}'
-                                    onclick="openDomainSettingsFromButton(this)">
-                                    <c-icon icon="bewerken" size="sm" />Domein instellingen
-                                </button>
-                                {% endif %}
-                                <div class="deployment-status">
-                                    <div class="status-badge status-running">
-                                        <c-icon icon="applicatie" size="sm" />
-                                        <span>Running</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {# Components in this deployment #}
-                        {% if deployment.components %}
-                        <div class="deployment-components">
-                            <c-heading type="h4" textContent="Components" />
-                            <div class="component-list">
-                                {% for component in deployment.components %}
-                                <div class="component-item">
-                                    <c-icon icon="puzzel" size="md" color="donkerblauw" />
-                                    <div class="component-details">
-                                        <div class="component-name">{{ component.reference }}</div>
-                                        <div class="component-image">{{ component.image }}</div>
-                                    </div>
-                                </div>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        {% endif %}
-
-                        {# Helm Charts in this deployment #}
-                        {% if deployment.get('helm-charts') %}
-                        <div class="deployment-helm-charts" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                            <c-heading type="h4"><c-icon icon="applicatie" size="md" color="groen" />Helm Charts</c-heading>
-                            <c-layout-flow gap="md">
-                                {% for helm_chart in deployment.get('helm-charts', []) %}
-                                <c-card padding="md" backgroundColor="wit" outline="true">
-                                    <c-layout-flow gap="sm">
-                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
-                                            <c-icon icon="applicatie" size="sm" color="groen" />
-                                            <strong>{{ helm_chart.reference }}</strong>
-                                        </div>
-                                        {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping %}
-                                        <div class="helm-values-section">
-                                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
-                                                <c-icon icon="sleutel" size="sm" color="hemelblauw" />
-                                                <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
-                                                <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
-                                            </div>
-                                            <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" />
-                                        </div>
-                                        {% endif %}
-                                    </c-layout-flow>
-                                </c-card>
-                                {% endfor %}
-                            </c-layout-flow>
-                        </div>
-                        {% endif %}
-
-                        {# Helmfile in this deployment #}
-                        {% if deployment.get('helmfile') %}
-                        <div class="deployment-helmfile" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                            <c-heading type="h4"><c-icon icon="applicatie" size="md" color="oranje" />Helmfile</c-heading>
-                            <c-layout-flow gap="md">
-                                {% for helmfile in deployment.get('helmfile', []) %}
-                                <c-card padding="md" backgroundColor="wit" outline="true">
-                                    <c-layout-flow gap="sm">
-                                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
-                                            <c-icon icon="applicatie" size="sm" color="oranje" />
-                                            <strong>{{ helmfile.reference }}</strong>
-                                        </div>
-                                        {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping %}
-                                        <div class="helm-values-section">
-                                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
-                                                <c-icon icon="sleutel" size="sm" color="hemelblauw" />
-                                                <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
-                                                <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
-                                            </div>
-                                            <c-secret-field
-                                                value="{{ helmfile['helm-values'] | tojson(indent=2) }}"
-                                                valueType="json"
-                                                contentWidth="lg" />
-                                        </div>
-                                        {% endif %}
-                                    </c-layout-flow>
-                                </c-card>
-                                {% endfor %}
-                            </c-layout-flow>
-                        </div>
-                        {% endif %}
-
-                        {# Public ingress links for this deployment #}
-                        {% if deployment.ingress_links %}
-                        <c-layout-flow gap="sm">
-                            <c-heading type="h4"><c-icon icon="externe-link" size="md" color="hemelblauw" />Publieke links</c-heading>
-                            <c-layout-row gap="sm">
-                                {% for link in deployment.ingress_links %}
-                                <c-button
-                                    label="{{ link.component_name }}"
-                                    kind="secondary"
-                                    size="sm"
-                                    showIcon="after"
-                                    icon="externe-link"
-                                    @click="window.open('{{ link.url }}', '_blank')" />
-                                {% endfor %}
-                            </c-layout-row>
-                        </c-layout-flow>
-                        {% endif %}
-
-                        {# Deployment Configuration Variables #}
-                        {% if deployment.configuration %}
-                        <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                            <c-heading type="h4" textContent="Configuratie Variabelen" />
-                            <c-layout-flow gap="md">
-                                {% set variables = deployment.configuration.get('variables', {}) %}
-                                {% if variables %}
-                                    {% for key, value in variables.items() %}
-                                    <c-card padding="sm" backgroundColor="wit" outline="true">
-                                        <c-layout-flow gap="xs">
-                                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
-                                                <c-icon icon="sleutel" size="sm" color="grijs-600" />
-                                                <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
-                                            </div>
-                                            <div style="margin-left: var(--rvo-space-lg);">
-                                                <c-secret-field value="{{ value }}" />
-                                            </div>
-                                        </c-layout-flow>
-                                    </c-card>
-                                    {% endfor %}
-
-                                    {% set metadata = deployment.configuration.get('metadata', {}) %}
-                                    {% if metadata.get('updated_on') %}
-                                    <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-sm); border-top: 1px solid var(--rvo-color-grijs-100);">
-                                        <small class="rvo-text--xs" style="display: flex; align-items: center; gap: var(--rvo-space-xs); color: var(--rvo-color-grijs-500);">
-                                            <c-icon icon="info" size="sm" color="grijs-500" />
-                                            Laatste update: {{ metadata.updated_on }}
-                                        </small>
-                                    </div>
-                                    {% endif %}
-                                {% else %}
-                                <div class="empty-state">
-                                    <c-icon icon="info" size="lg" color="grijs-050" />
-                                    <p class="rvo-text--md">Geen configuratie variabelen beschikbaar</p>
-                                </div>
-                                {% endif %}
-                            </c-layout-flow>
-                        </div>
-                        {% endif %}
-
-                        {# User Configuration Variables for components in this deployment #}
-                        {% set deployment_components = deployment.components %}
-                        {% if deployment_components %}
-                        {% set has_user_vars = false %}
-                        {% for component in deployment_components %}
-                            {% for project_component in project.components %}
-                                {% if project_component.name == component.reference and project_component.get('user-env-vars') %}
-                                    {% set has_user_vars = true %}
-                                {% endif %}
-                            {% endfor %}
-                        {% endfor %}
-
-                        {% if has_user_vars %}
-                        <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                            <c-heading type="h4" style="margin-bottom: 0;"><c-icon icon="user" size="md" color="donkerblauw" />Gebruikers configuratie</c-heading>
-                            <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor deze deployment</p>
-
-                            <c-layout-flow gap="md">
-                                {% for component in deployment_components %}
-                                {% for project_component in project.components %}
-                                {% if project_component.name == component.reference and project_component.get('user-env-vars') %}
-                                <c-card padding="sm" backgroundColor="grijs-050" outline="true">
-                                    <c-layout-flow gap="md">
-                                        <c-layout-row gap="sm">
-                                            <c-icon icon="puzzel" size="sm" color="donkerblauw" />
-                                            <c-heading type="h5" textContent="Component: {{ component.reference }}" />
-                                        </c-layout-row>
-
-                                        <c-layout-flow gap="sm">
-                                            {% for key, value in project_component['user-env-vars'].items() %}
-                                            <c-card padding="sm" backgroundColor="wit" outline="true">
-                                                <c-layout-flow gap="xs">
-                                                    <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
-                                                        <c-icon icon="sleutel" size="sm" color="grijs-600" />
-                                                        <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
-                                                    </div>
-                                                    <div style="margin-left: var(--rvo-space-lg);">
-                                                        <c-secret-field value="{{ value }}" />
-                                                    </div>
-                                                </c-layout-flow>
-                                            </c-card>
-                                            {% endfor %}
-                                        </c-layout-flow>
-                                    </c-layout-flow>
-                                </c-card>
-                                {% endif %}
-                                {% endfor %}
-                                {% endfor %}
-                            </c-layout-flow>
-                        </div>
-                        {% endif %}
-                        {% endif %}
-                    </c-layout-flow>
-                </c-card>
-                {% endfor %}
-            </div>
-            {% else %}
-            <div class="empty-state">
-                <c-icon icon="info" size="lg" color="grijs-050" />
-                <p class="rvo-text--md">Geen deployments geconfigureerd</p>
-            </div>
-            {% endif %}
-        </c-layout-flow>
-    </c-card>
-
-
-    {# Components Section #}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
-            <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
-
-            {% if project.components %}
-            <div class="components-section">
-                {% for component in project.components %}
-                <c-card class="component-card" padding="lg" background="color" backgroundColor="wit" outline="true">
-                    <c-layout-flow gap="md">
-                        <div class="component-header">
-                            <c-icon icon="puzzel" size="lg" color="donkerblauw" />
-                            <div>
-                                <c-heading type="h3" textContent="{{ component.name }}" />
-                                <div class="component-type">{{ component.type|title }}</div>
-                            </div>
-                        </div>
-
-                        <div class="component-specs">
-                            {% if component.ports %}
-                            <div class="spec-item">
-                                <strong>Poorten:</strong>
-                                {% if component.ports.inbound %}Inbound: {{ component.ports.inbound|join(", ") }}{% endif %}
-                                {% if component.ports.outbound %}{% if component.ports.inbound %} | {% endif %}Outbound: {{ component.ports.outbound|join(", ") }}{% endif %}
-                            </div>
-                            {% endif %}
-
-                            {% if component.resources %}
-                            <div class="spec-item">
-                                <strong>Resources:</strong>
-                                {% if component.resources.cpu %}CPU: {{ component.resources.cpu }}{% endif %}
-                                {% if component.resources.memory %}{% if component.resources.cpu %} | {% endif %}Memory: {{ component.resources.memory }}{% endif %}
-                            </div>
-                            {% endif %}
-
-                            {% if component['uses-services'] %}
-                            <div class="spec-item">
-                                <strong>Services:</strong> {{ component['uses-services']|join(", ")|replace("-", " ")|title }}
-                            </div>
-                            {% endif %}
-                        </div>
-
-                        {# Public ingress links for this component #}
-                        {% if component.ingress_links %}
-                        <c-layout-flow gap="sm">
-                            <c-heading type="h5"><c-icon icon="externe-link" size="sm" color="hemelblauw" />Publieke links</c-heading>
-                            <c-layout-row gap="sm">
-                                {% for link in component.ingress_links %}
-                                <c-button
-                                    label="{{ link.deployment_name }} ({{ link.cluster }})"
-                                    kind="secondary"
-                                    size="sm"
-                                    showIcon="after"
-                                    icon="externe-link"
-                                    @click="window.open('{{ link.url }}', '_blank')" />
-                                {% endfor %}
-                            </c-layout-row>
-                        </c-layout-flow>
-                        {% endif %}
-
-                        {# User Environment Variables indicator for this component #}
-                        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
-                        <div class="env-vars-indicator">
-                            <c-icon icon="sleutel" size="sm" color="hemelblauw" />
-                            <span>{{ component['user-env-vars']|length }} omgevingsvariabele{% if component['user-env-vars']|length != 1 %}n{% endif %}</span>
-                            <span class="rvo-text--subtle">(zie Omgevingsvariabelen sectie)</span>
-                        </div>
-                        {% endif %}
-                    </c-layout-flow>
-                </c-card>
-                {% endfor %}
-            </div>
-            {% else %}
-            <div class="empty-state">
-                <c-icon icon="info" size="lg" color="grijs-050" />
-                <p class="rvo-text--md">Geen componenten geconfigureerd</p>
-            </div>
-            {% endif %}
-        </c-layout-flow>
-    </c-card>
-
-    {# Helm Charts Section (Base level) #}
-    {% if project.helm_charts %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="groen" />Helm Charts</c-heading>
-            <p class="rvo-text--subtle">Helm chart definities op project niveau</p>
-
-            <div class="helm-charts-section">
-                {% for helm_chart in project.helm_charts %}
-                <c-card class="helm-chart-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
-                    <c-layout-flow gap="md">
-                        <div class="helm-chart-header">
-                            <c-icon icon="applicatie" size="lg" color="groen" />
-                            <div>
-                                <c-heading type="h3" textContent="{{ helm_chart.name }}" />
-                                {% if helm_chart.get('repository') %}
-                                <div class="rvo-text--sm rvo-text--subtle">{{ helm_chart.repository }}</div>
-                                {% endif %}
-                            </div>
-                        </div>
-
-                        <div class="helm-chart-specs">
-                            {% if helm_chart.get('chart') %}
-                            <div class="spec-item"><strong>Chart:</strong> {{ helm_chart.chart }}</div>
-                            {% endif %}
-                            {% if helm_chart.get('version') %}
-                            <div class="spec-item"><strong>Version:</strong> {{ helm_chart.version }}</div>
-                            {% endif %}
-                        </div>
-
-                        {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping and helm_chart['helm-values']|length > 0 %}
-                        <div class="helm-values-section" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
-                                <c-icon icon="sleutel" size="sm" color="hemelblauw" />
-                                <span class="rvo-text--sm" style="font-weight: 600;">Helm Values (Base)</span>
-                                <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
-                            </div>
-                            <c-secret-field
-                                value="{{ helm_chart['helm-values'] | tojson(indent=2) }}"
-                                valueType="json"
-                                contentWidth="lg" />
-                        </div>
-                        {% endif %}
-                    </c-layout-flow>
-                </c-card>
-                {% endfor %}
-            </div>
-        </c-layout-flow>
-    </c-card>
-    {% endif %}
-
-    {# Helmfile Section (Base level) #}
-    {% if project.helmfile %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="oranje" />Helmfile</c-heading>
-            <p class="rvo-text--subtle">Helmfile definities op project niveau</p>
-
-            <div class="helmfile-section">
-                {% for helmfile in project.helmfile %}
-                <c-card class="helmfile-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
-                    <c-layout-flow gap="md">
-                        <div class="helmfile-header">
-                            <c-icon icon="applicatie" size="lg" color="oranje" />
-                            <div>
-                                <c-heading type="h3" textContent="{{ helmfile.name }}" />
-                                {% if helmfile.get('repository') %}
-                                <div class="rvo-text--sm rvo-text--subtle">{{ helmfile.repository }}</div>
-                                {% endif %}
-                            </div>
-                        </div>
-
-                        <div class="helmfile-specs">
-                            {% if helmfile.get('path') %}
-                            <div class="spec-item"><strong>Path:</strong> {{ helmfile.path }}</div>
-                            {% endif %}
-                            {% if helmfile.get('branch') %}
-                            <div class="spec-item"><strong>Branch:</strong> {{ helmfile.branch }}</div>
-                            {% endif %}
-                        </div>
-
-                        {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values']|length > 0 %}
-                        <div class="helm-values-section" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                            <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
-                                <c-icon icon="sleutel" size="sm" color="hemelblauw" />
-                                <span class="rvo-text--sm" style="font-weight: 600;">Helm Values (Base)</span>
-                                <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
-                            </div>
-                            <c-secret-field
-                                value="{{ helmfile['helm-values'] | tojson(indent=2) }}"
-                                valueType="json"
-                                contentWidth="lg" />
-                        </div>
-                        {% endif %}
-                    </c-layout-flow>
-                </c-card>
-                {% endfor %}
-            </div>
-        </c-layout-flow>
-    </c-card>
-    {% endif %}
-
-    {# Environment Variables Overview Section #}
-    {% set ns = namespace(has_any_env_vars=false, has_component_env_vars=false, has_deployment_env_vars=false) %}
-    {% for component in project.components %}
-        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
-            {% set ns.has_any_env_vars = true %}
-            {% set ns.has_component_env_vars = true %}
         {% endif %}
-    {% endfor %}
-    {% for deployment in project.deployments %}
-        {% for dep_component in deployment.components %}
-            {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
-                {% set ns.has_any_env_vars = true %}
-                {% set ns.has_deployment_env_vars = true %}
-            {% endif %}
-        {% endfor %}
-    {% endfor %}
 
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="sleutel" size="xl" color="hemelblauw" />Omgevingsvariabelen</c-heading>
-            <p class="rvo-text--subtle">Overzicht van alle gebruiker-gedefinieerde omgevingsvariabelen per scope</p>
-
-            {% if ns.has_any_env_vars %}
-            <c-layout-flow gap="xl">
-
-                {# Component-level Environment Variables #}
-                {% if ns.has_component_env_vars %}
-                <div class="env-vars-scope-section">
-                    <c-layout-flow gap="md">
-                        <div class="env-vars-scope-header">
-                            <c-icon icon="puzzel" size="lg" color="donkerblauw" />
-                            <div>
-                                <c-heading type="h3" textContent="Component niveau" />
-                                <p class="rvo-text--sm rvo-text--subtle">Standaard variabelen per component (gelden voor alle deployments)</p>
-                            </div>
-                        </div>
-
-                        {% for component in project.components %}
-                        {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
-                        <c-card padding="md" backgroundColor="grijs-050" outline="true">
-                            <c-layout-flow gap="sm">
-                                <div class="env-vars-component-header">
-                                    <c-icon icon="puzzel" size="md" color="donkerblauw" />
-                                    <strong>{{ component.name }}</strong>
-                                    <span class="env-vars-count-badge">{{ component['user-env-vars']|length }} variabele{% if component['user-env-vars']|length != 1 %}n{% endif %}</span>
-                                </div>
-
-                                <div class="env-vars-list">
-                                    {% for key, value in component['user-env-vars'].items() %}
-                                    <div class="env-var-item">
-                                        <div class="env-var-key">
-                                            <c-icon icon="sleutel" size="sm" color="grijs-600" />
-                                            <code>{{ key }}</code>
-                                        </div>
-                                        <div class="env-var-value">
-                                            <c-secret-field value="{{ value }}" />
-                                        </div>
-                                    </div>
-                                    {% endfor %}
-                                </div>
-                            </c-layout-flow>
-                        </c-card>
-                        {% endif %}
-                        {% endfor %}
-                    </c-layout-flow>
-                </div>
-                {% endif %}
-
-                {# Deployment-specific Environment Variables #}
-                {% if ns.has_deployment_env_vars %}
-                <div class="env-vars-scope-section">
-                    <c-layout-flow gap="md">
-                        <div class="env-vars-scope-header">
-                            <c-icon icon="server" size="lg" color="oranje" />
-                            <div>
-                                <c-heading type="h3" textContent="Deployment niveau" />
-                                <p class="rvo-text--sm rvo-text--subtle">Deployment-specifieke variabelen (overschrijven component niveau)</p>
-                            </div>
-                        </div>
-
-                        {% for deployment in project.deployments %}
-                        {% set dep_ns = namespace(has_env_vars=false) %}
-                        {% for dep_component in deployment.components %}
-                            {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
-                                {% set dep_ns.has_env_vars = true %}
-                            {% endif %}
-                        {% endfor %}
-
-                        {% if dep_ns.has_env_vars %}
-                        <c-card padding="md" backgroundColor="grijs-050" outline="true">
-                            <c-layout-flow gap="md">
-                                <div class="env-vars-deployment-header">
-                                    <c-icon icon="server" size="md" color="oranje" />
-                                    <strong>{{ deployment.name }}</strong>
-                                    <span class="cluster-badge">{{ deployment.cluster|title }}</span>
-                                </div>
-
-                                {% for dep_component in deployment.components %}
-                                {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
-                                <c-card padding="sm" backgroundColor="wit" outline="true">
-                                    <c-layout-flow gap="sm">
-                                        <div class="env-vars-component-header">
-                                            <c-icon icon="puzzel" size="sm" color="donkerblauw" />
-                                            <span>{{ dep_component.reference }}</span>
-                                            <span class="env-vars-count-badge">{{ dep_component['user-env-vars']|length }} variabele{% if dep_component['user-env-vars']|length != 1 %}n{% endif %}</span>
-                                        </div>
-
-                                        <div class="env-vars-list">
-                                            {% for key, value in dep_component['user-env-vars'].items() %}
-                                            <div class="env-var-item">
-                                                <div class="env-var-key">
-                                                    <c-icon icon="sleutel" size="sm" color="grijs-600" />
-                                                    <code>{{ key }}</code>
-                                                </div>
-                                                <div class="env-var-value">
-                                                    <c-secret-field value="{{ value }}" />
-                                                </div>
-                                            </div>
-                                            {% endfor %}
-                                        </div>
-                                    </c-layout-flow>
-                                </c-card>
-                                {% endif %}
-                                {% endfor %}
-                            </c-layout-flow>
-                        </c-card>
-                        {% endif %}
-                        {% endfor %}
-                    </c-layout-flow>
-                </div>
-                {% endif %}
-
-            </c-layout-flow>
-            {% else %}
-            <div class="empty-state">
-                <c-icon icon="info" size="lg" color="grijs-050" />
-                <p class="rvo-text--md">Geen omgevingsvariabelen geconfigureerd</p>
-            </div>
-            {% endif %}
-        </c-layout-flow>
-    </c-card>
-
-    {# Repositories Section #}
-    {% if project.repositories %}
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="lg">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="computercode" size="xl" color="oranje" />Git Repositories</c-heading>
-            <p class="rvo-text--subtle">Gekoppelde code repositories</p>
-
-            <div class="repositories-section">
-                {% for repo in project.repositories %}
-                <c-card class="repository-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
-                    <c-layout-flow gap="md">
-                        <div class="repo-header">
-                            <c-icon icon="computercode" size="lg" color="oranje" />
-                            <div>
-                                <c-heading type="h3" textContent="{{ repo.name }}" />
-                                <div class="repo-url">{{ repo.url }}</div>
-                            </div>
-                        </div>
-
-                        <div class="repo-details">
-                            <div class="repo-item"><strong>Branch:</strong> {{ repo.branch }}</div>
-                            <div class="repo-item"><strong>Path:</strong> {{ repo.path }}</div>
-                            <div class="repo-item"><strong>Username:</strong> {{ repo.username }}</div>
-                        </div>
-                    </c-layout-flow>
-                </c-card>
-                {% endfor %}
-            </div>
-        </c-layout-flow>
-    </c-card>
-    {% endif %}
+        {% include "project-details/section-deployment-actions.html.j2" %}
+        {% include "project-details/section-deployment-argocd.html.j2" %}
+        {% include "project-details/section-metrics.html.j2" %}
+        {% include "project-details/section-deployments.html.j2" %}
+        {% include "project-details/section-backups.html.j2" %}
+        {% include "project-details/section-env-vars.html.j2" %}
+    </c-layout-flow>
 
 </c-layout-flow>
 
-{# Domain Settings Modal #}
-<div id="domain-settings-backdrop" class="domain-settings-backdrop" onclick="handleBackdropClick()"></div>
-<div id="domain-settings-modal" class="domain-settings-modal" role="dialog" aria-modal="true" aria-labelledby="domain-settings-title">
-    <div class="domain-settings-header">
-        <c-heading type="h2" id="domain-settings-title"><c-icon icon="bewerken" size="lg" color="donkerblauw" />Domein Instellingen</c-heading>
-        <span id="domain-settings-deployment-name" class="domain-modal-deployment-badge"></span>
-        <button type="button" class="domain-modal-close-btn" onclick="closeDomainSettingsModal()" title="Sluiten">
-            <c-icon icon="kruis" size="md" />
-        </button>
-    </div>
-
-    <form id="domain-settings-form" autocomplete="off" onsubmit="submitDomainSettings(event)">
-        <input type="hidden" id="domain-settings-deployment" name="deployment-name" />
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-
-        <c-layout-flow gap="lg">
-            {# Domain Mode Select #}
-            <div class="form-field">
-                <label for="edit-domain-mode" class="form-label">URL Modus</label>
-                <select id="edit-domain-mode" name="domain-mode" class="form-select" onchange="handleDomainModeChange()">
-                    <option value="component-specific">Component-specifiek (standaard) — bijv. frontend.mijnproject-staging.odcn.nl</option>
-                    <option value="deployment-name">Deployment-naam — bijv. staging.mijnproject.odcn.nl</option>
-                    <option value="nice-url">Eigen subdomein — bijv. frontend.mijnapp.rijks.app (root: mijnapp.rijks.app)</option>
-                    <option value="custom">Aangepast subdomein — bijv. custom-subdomain.odcn.nl</option>
-                </select>
-                <p class="form-help">Bepaalt hoe URLs worden gegenereerd voor deze deployment</p>
-            </div>
-
-            {# Nice-URL Container (shown when nice-url selected) #}
-            <div id="edit-nice-url-container" style="display: none;">
-                <c-layout-flow gap="md">
-                    {# Base Domain Select #}
-                    <div class="form-field">
-                        <label for="edit-base-domain" class="form-label">Base Domain</label>
-                        <select id="edit-base-domain" name="base-domain" class="form-select">
-                            <option value="">Selecteer een base domain...</option>
-                        </select>
-                        <p class="form-help">Beschikbare domeinen zijn afhankelijk van het cluster</p>
-                    </div>
-
-                    {# Subdomain Input #}
-                    <div class="form-field">
-                        <label for="edit-subdomain" class="form-label">Subdomein</label>
-                        <div class="subdomain-input-container">
-                            <input type="text" id="edit-subdomain" name="subdomain" class="form-input"
-                                   placeholder="mijn-app" pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]"
-                                   oninput="checkSubdomainAvailabilityDebounced()" />
-                            <span class="subdomain-suffix" id="subdomain-suffix">.rijks.app</span>
-                        </div>
-                        <div id="edit-subdomain-availability" class="subdomain-availability"></div>
-                        <p class="form-help">Alleen kleine letters, cijfers en koppeltekens. Mag niet beginnen of eindigen met een koppelteken.</p>
-                    </div>
-                </c-layout-flow>
-            </div>
-
-            {# Custom URL Container (shown when custom selected) #}
-            <div id="edit-custom-url-container" style="display: none;">
-                <div class="form-field">
-                    <label for="edit-custom-subdomain" class="form-label">Aangepast Subdomein</label>
-                    <input type="text" id="edit-custom-subdomain" name="custom-subdomain" class="form-input"
-                           placeholder="custom-subdomain" />
-                    <p class="form-help">Voer een aangepast subdomein in</p>
-                </div>
-            </div>
-
-            {# Root Component Select (for nice-url mode) #}
-            <div id="edit-root-component-container" style="display: none;">
-                <div class="form-field">
-                    <label for="edit-root-component" class="form-label">Root Component</label>
-                    <select id="edit-root-component" name="root-component" class="form-select">
-                        <option value="">Geen (alle componenten op eigen pad)</option>
-                    </select>
-                    <p class="form-help">De root component wordt beschikbaar op het basis-pad (/) in plaats van /component-naam</p>
-                </div>
-            </div>
-
-            {# Current URL Preview #}
-            <div id="url-preview-container" class="url-preview-box" style="display: none;">
-                <div class="url-preview-label">Voorbeeld URL:</div>
-                <div id="url-preview" class="url-preview-value">-</div>
-            </div>
-
-            {# Error/Success Messages - placed before form actions for visibility #}
-            <div id="domain-settings-message" class="domain-settings-message" style="display: none;"></div>
-
-            {# Form Actions #}
-            <div class="form-actions">
-                <c-button type="button" label="Annuleren" kind="tertiary" @click="closeDomainSettingsModal()" />
-                <c-button type="submit" label="Opslaan" kind="primary" id="domain-settings-submit" />
-            </div>
-        </c-layout-flow>
-    </form>
-</div>
-
-{# Log Viewer Slide-Out Panel #}
-<div id="log-viewer-backdrop" class="log-viewer-backdrop" onclick="closeLogViewer()"></div>
-<div id="log-viewer-panel" class="log-viewer-panel">
-    <div class="log-viewer-header">
-        <div class="log-viewer-title">
-            <c-icon icon="document-blanco" size="lg" color="wit" />
-            <div>
-                <h3 id="log-viewer-heading">Logs</h3>
-                <div class="log-viewer-subtitle">
-                    <span id="log-viewer-deployment"></span>
-                    <select id="log-component-selector" class="log-component-select" onchange="switchLogComponent(this.value)">
-                    </select>
-                </div>
-            </div>
-        </div>
-        <div class="log-viewer-controls">
-            <button type="button" class="log-control-btn" id="log-pause-btn" onclick="toggleLogPause()" title="Pause/Resume">
-                <c-icon icon="wachtend-persoon" size="sm" id="log-pause-icon" />
-            </button>
-            <button type="button" class="log-control-btn" onclick="clearLogs()" title="Clear">
-                <c-icon icon="verwijderen" size="sm" />
-            </button>
-            <button type="button" class="log-control-btn" onclick="copyLogs()" title="Copy">
-                <c-icon icon="document-blanco" size="sm" />
-            </button>
-            <button type="button" class="log-control-btn" onclick="downloadLogs()" title="Download">
-                <c-icon icon="downloaden" size="sm" />
-            </button>
-            <button type="button" class="log-close-btn" onclick="closeLogViewer()" title="Close">
-                <c-icon icon="kruis" size="md" />
-            </button>
-        </div>
-    </div>
-    <div class="log-viewer-toolbar">
-        <div class="log-search-container">
-            <c-icon icon="zoek" size="sm" color="grijs-500" />
-            <input type="text" id="log-search-input" class="log-search-input" placeholder="Search logs..." oninput="filterLogs()" />
-            <span id="log-search-count" class="log-search-count"></span>
-            <button type="button" class="log-search-clear" id="log-search-clear" onclick="clearSearch()" title="Clear search">
-                <c-icon icon="kruis" size="sm" />
-            </button>
-        </div>
-        <div class="log-toolbar-divider"></div>
-        <div class="log-level-filters">
-            <label class="log-level-filter">
-                <input type="checkbox" id="filter-error" checked onchange="filterLogs()" />
-                <span class="log-level-badge log-level-error">Error</span>
-            </label>
-            <label class="log-level-filter">
-                <input type="checkbox" id="filter-warn" checked onchange="filterLogs()" />
-                <span class="log-level-badge log-level-warn">Warn</span>
-            </label>
-            <label class="log-level-filter">
-                <input type="checkbox" id="filter-info" checked onchange="filterLogs()" />
-                <span class="log-level-badge log-level-info">Info</span>
-            </label>
-            <label class="log-level-filter">
-                <input type="checkbox" id="filter-debug" checked onchange="filterLogs()" />
-                <span class="log-level-badge log-level-debug">Debug</span>
-            </label>
-        </div>
-        <div class="log-toolbar-divider"></div>
-        <label class="log-wrap-toggle" title="Toggle word wrap">
-            <input type="checkbox" id="log-word-wrap" onchange="toggleWordWrap()" />
-            <span class="log-wrap-label">Wrap</span>
-        </label>
-    </div>
-    <div class="log-viewer-status" id="log-viewer-status">
-        <span class="log-status-indicator" id="log-status-indicator"></span>
-        <span id="log-status-text">Connecting...</span>
-        <span id="log-line-count" class="log-line-count"></span>
-    </div>
-    <div class="log-viewer-content" id="log-viewer-content">
-        <div class="log-empty-state" id="log-empty-state">
-            <c-icon icon="document-blanco" size="xl" color="grijs-500" />
-            <p>Connecting to log stream...</p>
-        </div>
-    </div>
-</div>
+{% include "project-details/modals.html.j2" %}
 {% endblock %}
 
 {% block additional_styles %}
+<link rel="stylesheet" href="/static/css/wizard.css">
+<link rel="stylesheet" href="/static/css/modal.css">
 <style>
     /* Project Badge */
     .project-badge {
@@ -1799,6 +126,12 @@
     .deployment-select:focus {
         outline: 2px solid var(--rvo-color-hemelblauw);
         outline-offset: 2px;
+    }
+
+    .deployment-global-selector {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-md);
     }
 
     .metrics-grid {
@@ -1884,13 +217,6 @@
         background-color: #ffebee;
         padding: 2px 8px;
         border-radius: 4px;
-    }
-
-    /* Services Grid */
-    .services-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: var(--rvo-space-lg);
     }
 
     .service-detail-card {
@@ -1993,13 +319,6 @@
         font-family: monospace;
     }
 
-
-    /* Components Section */
-    .components-section {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-        gap: var(--rvo-space-lg);
-    }
 
     .component-card {
         border-left: 4px solid var(--rvo-color-paars);
@@ -2152,29 +471,13 @@
         display: inline-block;
     }
 
-    /* Copy button label toggle */
-    .copy-btn__copied {
-        display: none;
-    }
-
-    .copy-btn__label {
-        display: inline;
-    }
-
+    /* Copy button copied state */
     .copy-btn.is-copied {
         color: var(--rvo-color-groen) !important;
     }
 
     .copy-btn.is-copied .rvo-icon {
         color: var(--rvo-color-groen) !important;
-    }
-
-    .copy-btn.is-copied .copy-btn__label {
-        display: none;
-    }
-
-    .copy-btn.is-copied .copy-btn__copied {
-        display: inline;
     }
 
     /* Environment Variables Section */
@@ -2287,6 +590,17 @@
         color: var(--rvo-color-grijs-600);
     }
 
+    /* Backup Table */
+    .backup-table th,
+    .backup-table td {
+        padding: 8px 12px;
+        text-align: left;
+    }
+    .backup-table th {
+        font-weight: 600;
+        color: var(--rvo-color-grijs-700);
+    }
+
     /* Responsive Design */
     @media (max-width: 768px) {
         .overview-grid {
@@ -2294,14 +608,6 @@
         }
 
         /* .team-grid responsive styles handled by c-grid component */
-
-        .services-grid {
-            grid-template-columns: 1fr;
-        }
-
-        .components-section {
-            grid-template-columns: 1fr;
-        }
 
         .deployment-header {
             flex-direction: column;
@@ -2384,7 +690,6 @@
         flex-direction: column;
         transform: translateX(100%);
         transition: transform 0.3s ease-out;
-        box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
     }
 
     .log-viewer-panel.is-open {
@@ -2806,201 +1111,6 @@
         font-size: 0.75rem;
     }
 
-    /* Domain Settings Modal Styles */
-    .domain-settings-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.5);
-        z-index: 999;
-        display: none;
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-
-    .domain-settings-backdrop.is-open {
-        display: block;
-        opacity: 1;
-    }
-
-    .domain-settings-modal {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%) scale(0.95);
-        background: var(--rvo-color-wit);
-        border-radius: var(--rvo-border-radius-lg);
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-        width: 90%;
-        max-width: 560px;
-        max-height: 90vh;
-        overflow-y: auto;
-        z-index: 1000;
-        display: none;
-        opacity: 0;
-        transition: opacity 0.3s ease, transform 0.3s ease;
-        padding: var(--rvo-space-xl);
-    }
-
-    .domain-settings-modal.is-open {
-        display: block;
-        opacity: 1;
-        transform: translate(-50%, -50%) scale(1);
-    }
-
-    .domain-settings-header {
-        display: flex;
-        align-items: center;
-        gap: var(--rvo-space-md);
-        margin-bottom: var(--rvo-space-xl);
-        padding-bottom: var(--rvo-space-md);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .domain-modal-deployment-badge {
-        background: var(--rvo-color-hemelblauw-100);
-        color: var(--rvo-color-hemelblauw-700);
-        padding: var(--rvo-space-xs) var(--rvo-space-sm);
-        border-radius: var(--rvo-border-radius-sm);
-        font-size: var(--rvo-text-sm);
-        font-weight: 600;
-    }
-
-    .domain-modal-close-btn {
-        margin-left: auto;
-        background: transparent;
-        border: none;
-        cursor: pointer;
-        padding: var(--rvo-space-xs);
-        border-radius: var(--rvo-border-radius-sm);
-        transition: background-color 0.2s ease;
-    }
-
-    .domain-modal-close-btn:hover {
-        background: var(--rvo-color-grijs-100);
-    }
-
-    .form-field {
-        display: flex;
-        flex-direction: column;
-        gap: var(--rvo-space-xs);
-    }
-
-    .form-label {
-        font-weight: 600;
-        color: var(--rvo-color-grijs-800);
-        font-size: var(--rvo-text-sm);
-    }
-
-    .form-select, .form-input {
-        width: 100%;
-        padding: var(--rvo-space-sm) var(--rvo-space-md);
-        border: 1px solid var(--rvo-color-grijs-300);
-        border-radius: var(--rvo-border-radius-sm);
-        font-size: var(--rvo-text-md);
-        background: var(--rvo-color-wit);
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .form-select:focus, .form-input:focus {
-        outline: none;
-        border-color: var(--rvo-color-hemelblauw);
-        box-shadow: 0 0 0 3px rgba(0, 136, 206, 0.1);
-    }
-
-    .form-help {
-        font-size: var(--rvo-text-sm);
-        color: var(--rvo-color-grijs-500);
-        margin: 0;
-    }
-
-    .subdomain-input-container {
-        display: flex;
-        align-items: center;
-    }
-
-    .subdomain-input-container .form-input {
-        border-radius: var(--rvo-border-radius-sm) 0 0 var(--rvo-border-radius-sm);
-        border-right: none;
-    }
-
-    .subdomain-suffix {
-        background: var(--rvo-color-grijs-100);
-        border: 1px solid var(--rvo-color-grijs-300);
-        border-left: none;
-        padding: var(--rvo-space-sm) var(--rvo-space-md);
-        border-radius: 0 var(--rvo-border-radius-sm) var(--rvo-border-radius-sm) 0;
-        color: var(--rvo-color-grijs-600);
-        font-size: var(--rvo-text-md);
-        white-space: nowrap;
-    }
-
-    .subdomain-availability {
-        min-height: 24px;
-        font-size: var(--rvo-text-sm);
-        padding-top: var(--rvo-space-xs);
-    }
-
-    .subdomain-availability.available {
-        color: var(--rvo-color-groen-700);
-    }
-
-    .subdomain-availability.unavailable {
-        color: var(--rvo-color-rood-700);
-    }
-
-    .subdomain-availability.checking {
-        color: var(--rvo-color-grijs-500);
-    }
-
-    .url-preview-box {
-        background: var(--rvo-color-grijs-050);
-        border: 1px solid var(--rvo-color-grijs-200);
-        border-radius: var(--rvo-border-radius-sm);
-        padding: var(--rvo-space-md);
-    }
-
-    .url-preview-label {
-        font-size: var(--rvo-text-sm);
-        color: var(--rvo-color-grijs-600);
-        margin-bottom: var(--rvo-space-xs);
-    }
-
-    .url-preview-value {
-        font-family: monospace;
-        font-size: var(--rvo-text-md);
-        color: var(--rvo-color-hemelblauw-700);
-        word-break: break-all;
-    }
-
-    .form-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: var(--rvo-space-md);
-        padding-top: var(--rvo-space-lg);
-        border-top: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .domain-settings-message {
-        padding: var(--rvo-space-md);
-        border-radius: var(--rvo-border-radius-sm);
-        font-size: var(--rvo-text-sm);
-    }
-
-    .domain-settings-message.success {
-        background: var(--rvo-color-groen-100);
-        color: var(--rvo-color-groen-800);
-        border: 1px solid var(--rvo-color-groen-300);
-    }
-
-    .domain-settings-message.error {
-        background: var(--rvo-color-rood-100);
-        color: var(--rvo-color-rood-800);
-        border: 1px solid var(--rvo-color-rood-300);
-    }
-
     .domain-badge {
         background: var(--rvo-color-hemelblauw-100);
         color: var(--rvo-color-hemelblauw-700);
@@ -3017,447 +1127,84 @@
     }
 </style>
 
+<script src="/static/js/codemirror-bundle.js"></script>
+<script src="/static/js/codemirror-kv.js"></script>
+<script src="/static/js/wizard.js"></script>
 <script>
     /**
-     * Domain Settings Modal Functions
+     * Switch between tabs (Project / Deployments)
      */
-    const clusterBaseDomains = {{ cluster_base_domains | tojson }};
-    const projectName = {{ project.name | tojson }};
-    let currentDeploymentName = null;
-    let currentDeploymentCluster = null;
-    let currentDeploymentComponents = [];
-    let subdomainCheckTimeout = null;
-    let originalDomainMode = null;  // Track original mode to detect nice-url -> other transitions
-    let originalSubdomain = null;   // Track original subdomain for confirmation message
+    function switchTab(tabName, event) {
+        if (event) event.preventDefault();
 
-    /**
-     * Helper to open domain settings from button with data attributes
-     */
-    function openDomainSettingsFromButton(button) {
-        const deployment = button.dataset.deployment;
-        const cluster = button.dataset.cluster;
-        const domainMode = button.dataset.domainMode || '';
-        const subdomain = button.dataset.subdomain || '';
-        const baseDomain = button.dataset.baseDomain || '';
-        const components = JSON.parse(button.dataset.components || '[]');
-        openDomainSettingsModal(deployment, cluster, domainMode, subdomain, baseDomain, components);
-    }
+        // Hide all tab content
+        document.getElementById('tab-project').style.display = 'none';
+        document.getElementById('tab-deployments').style.display = 'none';
 
-    /**
-     * Open the domain settings modal
-     */
-    function openDomainSettingsModal(deploymentName, cluster, domainMode, subdomain, baseDomain, components) {
-        currentDeploymentName = deploymentName;
-        currentDeploymentCluster = cluster;
-        currentDeploymentComponents = components || [];
+        // Show selected tab
+        document.getElementById('tab-' + tabName).style.display = '';
 
-        // Store original values to detect destructive changes (switching away from nice-url)
-        originalDomainMode = domainMode || 'component-specific';
-        originalSubdomain = subdomain || null;
-
-        // Set deployment name in modal
-        document.getElementById('domain-settings-deployment-name').textContent = deploymentName;
-        document.getElementById('domain-settings-deployment').value = deploymentName;
-
-        // Set current values
-        const modeSelect = document.getElementById('edit-domain-mode');
-        modeSelect.value = domainMode || 'component-specific';
-
-        // Populate base domain options for this cluster
-        populateBaseDomainOptions(cluster);
-
-        // Set subdomain and base domain
-        document.getElementById('edit-subdomain').value = subdomain || '';
-        if (baseDomain) {
-            document.getElementById('edit-base-domain').value = baseDomain;
-            updateSubdomainSuffix();
-        }
-
-        // Populate root component options
-        populateRootComponentOptions(components);
-
-        // Find and set current root component
-        const rootComp = components.find(c => c.root === true);
-        if (rootComp) {
-            document.getElementById('edit-root-component').value = rootComp.reference;
-        }
-
-        // Show/hide appropriate containers
-        handleDomainModeChange();
-
-        // Clear any previous messages
-        hideMessage();
-
-        // Show modal
-        document.getElementById('domain-settings-backdrop').classList.add('is-open');
-        document.getElementById('domain-settings-modal').classList.add('is-open');
-        document.body.style.overflow = 'hidden';
-    }
-
-    /**
-     * Track if form submission is in progress (to prevent backdrop close)
-     */
-    let isSubmitting = false;
-
-    /**
-     * Close the domain settings modal
-     */
-    function closeDomainSettingsModal() {
-        // Don't close if submission is in progress
-        if (isSubmitting) {
-            return;
-        }
-        document.getElementById('domain-settings-backdrop').classList.remove('is-open');
-        document.getElementById('domain-settings-modal').classList.remove('is-open');
-        document.body.style.overflow = '';
-        currentDeploymentName = null;
-        currentDeploymentCluster = null;
-        currentDeploymentComponents = [];
-        originalDomainMode = null;
-        originalSubdomain = null;
-    }
-
-    /**
-     * Handle backdrop click - only close if not submitting
-     */
-    function handleBackdropClick() {
-        if (!isSubmitting) {
-            closeDomainSettingsModal();
-        }
-    }
-
-    /**
-     * Handle escape key to close modal
-     */
-    function handleEscapeKey(event) {
-        if (event.key === 'Escape' && !isSubmitting) {
-            const modal = document.getElementById('domain-settings-modal');
-            if (modal.classList.contains('is-open')) {
-                closeDomainSettingsModal();
-            }
-        }
-    }
-
-    // Add escape key listener
-    document.addEventListener('keydown', handleEscapeKey);
-
-    /**
-     * Populate base domain select options based on cluster
-     */
-    function populateBaseDomainOptions(cluster) {
-        const select = document.getElementById('edit-base-domain');
-        select.innerHTML = '<option value="">Selecteer een base domain...</option>';
-
-        const domains = clusterBaseDomains[cluster] || [];
-        domains.forEach(domainInfo => {
-            const option = document.createElement('option');
-            option.value = domainInfo.value;
-            option.textContent = domainInfo.label;
-            select.appendChild(option);
-        });
-    }
-
-    /**
-     * Populate root component select options
-     */
-    function populateRootComponentOptions(components) {
-        const select = document.getElementById('edit-root-component');
-        select.innerHTML = '<option value="">Geen (alle componenten op eigen pad)</option>';
-
-        components.forEach(comp => {
-            if (comp.reference) {
-                const option = document.createElement('option');
-                option.value = comp.reference;
-                option.textContent = comp.reference;
-                select.appendChild(option);
-            }
-        });
-    }
-
-    /**
-     * Handle domain mode change - show/hide appropriate containers
-     */
-    function handleDomainModeChange() {
-        const mode = document.getElementById('edit-domain-mode').value;
-        const niceUrlContainer = document.getElementById('edit-nice-url-container');
-        const customContainer = document.getElementById('edit-custom-url-container');
-        const rootComponentContainer = document.getElementById('edit-root-component-container');
-        const urlPreviewContainer = document.getElementById('url-preview-container');
-
-        // Hide all containers first
-        niceUrlContainer.style.display = 'none';
-        customContainer.style.display = 'none';
-        rootComponentContainer.style.display = 'none';
-        urlPreviewContainer.style.display = 'none';
-
-        if (mode === 'nice-url') {
-            niceUrlContainer.style.display = 'block';
-            rootComponentContainer.style.display = 'block';
-            urlPreviewContainer.style.display = 'block';
-            updateUrlPreview();
-        } else if (mode === 'custom') {
-            customContainer.style.display = 'block';
-            // Clear root component when not in nice-url mode
-            document.getElementById('edit-root-component').value = '';
+        // Update URL hash to preserve tab state across reloads
+        if (tabName === 'deployments') {
+            var gs = document.getElementById('global-deployment-selector');
+            var depName = gs ? gs.value : '';
+            location.hash = depName ? 'deployments/' + depName : 'deployments';
         } else {
-            // Clear root component when not in nice-url mode
-            document.getElementById('edit-root-component').value = '';
-        }
-    }
-
-    /**
-     * Update the subdomain suffix based on selected base domain
-     */
-    function updateSubdomainSuffix() {
-        const baseDomain = document.getElementById('edit-base-domain').value;
-        const suffix = document.getElementById('subdomain-suffix');
-        suffix.textContent = baseDomain ? '.' + baseDomain : '.example.com';
-        updateUrlPreview();
-    }
-
-    /**
-     * Update URL preview
-     */
-    function updateUrlPreview() {
-        const subdomain = document.getElementById('edit-subdomain').value.trim();
-        const baseDomain = document.getElementById('edit-base-domain').value;
-        const preview = document.getElementById('url-preview');
-
-        if (subdomain && baseDomain) {
-            preview.textContent = 'https://' + subdomain + '.' + baseDomain + '/';
-        } else {
-            preview.textContent = '-';
-        }
-    }
-
-    // Error code to Dutch message mapping (for robust translation)
-    // NOTE: All "not available" codes use the same generic message to prevent enumeration attacks
-    const errorCodeTranslations = {
-        'SUBDOMAIN_EMPTY': 'Subdomein mag niet leeg zijn',
-        'SUBDOMAIN_TOO_SHORT': 'Subdomein is te kort',
-        'SUBDOMAIN_TOO_LONG': 'Maximaal 63 tekens toegestaan',
-        'SUBDOMAIN_INVALID_START': 'Mag niet beginnen met een streepje',
-        'SUBDOMAIN_INVALID_END': 'Mag niet eindigen met een streepje',
-        'SUBDOMAIN_INVALID_CHARS': 'Alleen kleine letters, cijfers en streepjes toegestaan',
-        'SUBDOMAIN_NOT_AVAILABLE': 'Subdomein niet beschikbaar',  // Generic for both reserved and taken
-        'SUBDOMAIN_RESERVED': 'Subdomein niet beschikbaar',  // Legacy - same as NOT_AVAILABLE
-        'SUBDOMAIN_INVALID': 'Ongeldig subdomein formaat',
-        'SUBDOMAIN_TAKEN': 'Subdomein niet beschikbaar',  // Same as NOT_AVAILABLE
-        'INVALID_BASE_DOMAIN': 'Ongeldig base domain',
-        'UNKNOWN_ERROR': 'Onbekende fout'
-    };
-
-    function getErrorMessage(errorCode, fallbackMessage) {
-        return errorCodeTranslations[errorCode] || fallbackMessage || errorCodeTranslations['UNKNOWN_ERROR'];
-    }
-
-    /**
-     * Check subdomain availability (debounced)
-     */
-    function checkSubdomainAvailabilityDebounced() {
-        updateUrlPreview();
-
-        if (subdomainCheckTimeout) {
-            clearTimeout(subdomainCheckTimeout);
+            location.hash = tabName;
         }
 
-        const subdomain = document.getElementById('edit-subdomain').value.trim();
-        const baseDomain = document.getElementById('edit-base-domain').value;
-        const availabilityDiv = document.getElementById('edit-subdomain-availability');
-
-        if (!subdomain || !baseDomain) {
-            availabilityDiv.textContent = '';
-            availabilityDiv.className = 'subdomain-availability';
-            return;
-        }
-
-        // Show typing indicator immediately (U2 fix)
-        availabilityDiv.textContent = 'Wachten op typen...';
-        availabilityDiv.className = 'subdomain-availability typing';
-
-        subdomainCheckTimeout = setTimeout(() => {
-            availabilityDiv.textContent = 'Controleren...';
-            availabilityDiv.className = 'subdomain-availability checking';
-            checkSubdomainAvailability(subdomain, baseDomain);
-        }, 500);
-    }
-
-    /**
-     * Sanitize text to prevent XSS when inserting into DOM
-     */
-    function sanitizeText(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    /**
-     * Set availability message with icon (XSS-safe)
-     */
-    function setAvailabilityMessage(element, icon, color, message, className) {
-        // Clear existing content
-        element.innerHTML = '';
-        // Create icon element safely
-        const iconEl = document.createElement('c-icon');
-        iconEl.setAttribute('icon', icon);
-        iconEl.setAttribute('size', 'sm');
-        iconEl.setAttribute('color', color);
-        element.appendChild(iconEl);
-        // Add text safely
-        element.appendChild(document.createTextNode(' ' + message));
-        element.className = 'subdomain-availability ' + className;
-    }
-
-    /**
-     * Check subdomain availability via SSO-protected endpoint
-     */
-    async function checkSubdomainAvailability(subdomain, baseDomain) {
-        const availabilityDiv = document.getElementById('edit-subdomain-availability');
-
-        try {
-            // Use SSO-protected web endpoint
-            const response = await fetch(`/subdomains/check?subdomain=${encodeURIComponent(subdomain)}&base_domain=${encodeURIComponent(baseDomain)}`);
-            const data = await response.json();
-
-            if (data.validation_error) {
-                // Use error_code for translation, fallback to sanitized validation_error
-                const errorMessage = getErrorMessage(data.error_code, sanitizeText(data.validation_error));
-                setAvailabilityMessage(availabilityDiv, 'kruis', 'rood', errorMessage, 'unavailable');
-                return;
-            }
-
-            if (data.available) {
-                setAvailabilityMessage(availabilityDiv, 'vinkje', 'groen', 'Beschikbaar', 'available');
-            } else {
-                // Check if owned by this deployment
-                const settingsResponse = await fetch(`/projects/${projectName}/deployments/${currentDeploymentName}/domain-settings`);
-                const settingsData = await settingsResponse.json();
-
-                if (settingsData.subdomain === subdomain.toLowerCase() && settingsData.base_domain === baseDomain.toLowerCase()) {
-                    setAvailabilityMessage(availabilityDiv, 'vinkje', 'groen', 'Beschikbaar (huidige configuratie)', 'available');
-                } else {
-                    // Generic message - don't reveal whether taken or reserved
-                    setAvailabilityMessage(availabilityDiv, 'kruis', 'rood', 'Niet beschikbaar', 'unavailable');
-                }
-            }
-        } catch (error) {
-            availabilityDiv.textContent = 'Kon beschikbaarheid niet controleren';
-            availabilityDiv.className = 'subdomain-availability error';
-        }
-    }
-
-    /**
-     * Submit domain settings form
-     */
-    async function submitDomainSettings(event) {
-        event.preventDefault();
-
-        // Prevent double submission and backdrop close during submit
-        if (isSubmitting) {
-            return;
-        }
-
-        const formData = new FormData(document.getElementById('domain-settings-form'));
-        const domainMode = formData.get('domain-mode');
-
-        // Check if switching away from nice-url mode (destructive action: subdomain registration will be deleted)
-        if (originalDomainMode === 'nice-url' && domainMode !== 'nice-url') {
-            const subdomainDisplay = originalSubdomain ? `'${originalSubdomain}'` : 'het subdomein';
-            const confirmed = confirm(
-                `Let op: U wisselt van 'Eigen subdomein' naar een andere URL modus.\n\n` +
-                `Dit zal de subdomein-registratie van ${subdomainDisplay} permanent verwijderen.\n` +
-                `Een ander project zou dit subdomein daarna kunnen claimen.\n\n` +
-                `Weet u zeker dat u wilt doorgaan?`
-            );
-            if (!confirmed) {
-                return;
-            }
-        }
-
-        isSubmitting = true;
-
-        const submitBtn = document.getElementById('domain-settings-submit');
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Opslaan...';
-
-        // For custom mode, use custom-subdomain as subdomain
-        if (domainMode === 'custom') {
-            const customSubdomain = formData.get('custom-subdomain');
-            formData.set('subdomain', customSubdomain);
-        }
-
-        try {
-            const response = await fetch(`/projects/${projectName}/deployments/${currentDeploymentName}/domain-settings`, {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (response.ok && data.success) {
-                showMessage('Domein instellingen succesvol bijgewerkt. Pagina wordt opnieuw geladen...', 'success');
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1500);
-                // Keep isSubmitting true since we're reloading
-            } else {
-                showMessage(data.detail || 'Er is een fout opgetreden bij het opslaan', 'error');
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Opslaan';
-                isSubmitting = false;
-            }
-        } catch (error) {
-            showMessage('Er is een fout opgetreden: ' + error.message, 'error');
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Opslaan';
-            isSubmitting = false;
-        }
-    }
-
-    /**
-     * Show message in modal
-     */
-    function showMessage(message, type) {
-        const messageDiv = document.getElementById('domain-settings-message');
-        messageDiv.textContent = message;
-        messageDiv.className = 'domain-settings-message ' + type;
-        messageDiv.style.display = 'block';
-    }
-
-    /**
-     * Hide message in modal
-     */
-    function hideMessage() {
-        const messageDiv = document.getElementById('domain-settings-message');
-        messageDiv.style.display = 'none';
-        messageDiv.textContent = '';
-        messageDiv.className = 'domain-settings-message';
-    }
-
-    // Add event listener for base domain change
-    document.addEventListener('DOMContentLoaded', function() {
-        const baseDomainSelect = document.getElementById('edit-base-domain');
-        if (baseDomainSelect) {
-            baseDomainSelect.addEventListener('change', function() {
-                updateSubdomainSuffix();
-                checkSubdomainAvailabilityDebounced();
+        // Update rendered tab active state (c-tab-item renders as <li> with <a> inside)
+        var tabsList = document.querySelector('[data-roos-component="tabs"]') ||
+                       document.querySelector('.rvo-tabs');
+        if (tabsList) {
+            tabsList.querySelectorAll('.rvo-tabs__item-link').forEach(function(link) {
+                link.classList.remove('rvo-tabs__item-link--active');
+                link.setAttribute('aria-selected', 'false');
             });
         }
-    });
+        // Activate the clicked tab link - find by tab name when restoring from hash
+        if (event && event.target) {
+            var link = event.target.closest('.rvo-tabs__item-link') || event.target;
+            link.classList.add('rvo-tabs__item-link--active');
+            link.setAttribute('aria-selected', 'true');
+        } else if (tabsList) {
+            var links = tabsList.querySelectorAll('.rvo-tabs__item-link');
+            var tabIndex = tabName === 'deployments' ? 1 : 0;
+            if (links[tabIndex]) {
+                links[tabIndex].classList.add('rvo-tabs__item-link--active');
+                links[tabIndex].setAttribute('aria-selected', 'true');
+            }
+        }
+    }
 
     /**
-     * Switch between deployment metrics sections
+     * Switch between deployment sections across all panels
      */
-    function showDeploymentMetrics(deploymentName) {
-        // Hide all deployment metrics sections
-        document.querySelectorAll('.deployment-metrics-section').forEach(section => {
+    function switchDeployment(deploymentName) {
+        // Hide all deployment sections
+        document.querySelectorAll('.deployment-section').forEach(section => {
             section.style.display = 'none';
         });
-        // Show the selected deployment's metrics
-        const selectedSection = document.getElementById('metrics-' + deploymentName);
-        if (selectedSection) {
-            selectedSection.style.display = 'block';
+        // Show sections matching this deployment
+        ['deployment-actions-', 'deployment-', 'argocd-', 'backups-'].forEach(prefix => {
+            const el = document.getElementById(prefix + deploymentName);
+            if (el) el.style.display = '';
+        });
+
+        // HTMX: load metrics for selected deployment
+        var metricsEl = document.getElementById('metrics-content');
+        if (metricsEl && typeof htmx !== 'undefined') {
+            var projectName = metricsEl.dataset.projectName;
+            htmx.ajax('GET', '/projects/details/' + projectName + '/metrics/' + deploymentName, {
+                target: '#metrics-content',
+                swap: 'innerHTML'
+            });
         }
+
+        // Sync global selector and URL hash
+        const gs = document.getElementById('global-deployment-selector');
+        if (gs) gs.value = deploymentName;
+        location.hash = 'deployments/' + deploymentName;
     }
 
     /**
@@ -3996,6 +1743,235 @@
                 searchInput.select();
             }
         });
+    })();
+
+    /* ---------------------------------------------------------------
+     * Edit Section Modal - server-driven wizard via HTMX
+     * --------------------------------------------------------------- */
+    let isEditSubmitting = false;
+
+    function openEditModal(flowId, title) {
+        isEditSubmitting = false;
+
+        // Set title text (icon is already in the DOM via Jinja preprocessing)
+        document.getElementById('edit-section-title-text').textContent = title;
+
+        // Hide error
+        var errorEl = document.getElementById('edit-section-error');
+        errorEl.style.display = 'none';
+
+        // Show loading state
+        var innerEl = document.getElementById('edit-section-inner');
+        innerEl.innerHTML =
+            '<div class="edit-section-content">' +
+                '<div class="edit-section-loading"><p>Laden...</p></div>' +
+            '</div>';
+
+        // Show modal
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        // Fetch first step from server-driven modal wizard
+        fetch('/projects/{{ project.name }}/modal-wizard/' + flowId, {
+            credentials: 'same-origin',
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van het formulier');
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            // Activate HTMX on the new server-rendered content
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
+            // Initialize wizard widgets (service cards, KV editors) in the new content
+            if (typeof initWizardWidgets === 'function') initWizardWidgets(innerEl);
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    }
+
+    function closeEditModal() {
+        isEditSubmitting = false;
+        document.getElementById('edit-section-backdrop').classList.remove('is-open');
+        document.getElementById('edit-section-modal').classList.remove('is-open');
+        document.body.style.overflow = '';
+    }
+
+    function closeEditModalAndReload() {
+        isEditSubmitting = false;
+        document.getElementById('edit-section-backdrop').classList.remove('is-open');
+        document.getElementById('edit-section-modal').classList.remove('is-open');
+        document.body.style.overflow = '';
+        window.location.reload();
+    }
+
+    function handleEditBackdropClick() {
+        if (!isEditSubmitting) {
+            closeEditModal();
+        }
+    }
+
+    /* -- HTMX integration: detect progress view and track submit state -- */
+
+    document.addEventListener('htmx:afterSwap', function(evt) {
+        var progressView = evt.detail.target.querySelector('.edit-progress-view');
+        if (progressView) {
+            isEditSubmitting = true;
+        }
+        var progressActions = evt.detail.target.querySelector('.edit-progress-actions');
+        if (progressActions) {
+            isEditSubmitting = false;
+        }
+    });
+
+    // Initialize KV editors after settle (DOM fully ready, attributes processed)
+    document.addEventListener('htmx:afterSettle', function(evt) {
+        if (typeof initKvEditors === 'function') initKvEditors(evt.detail.target);
+    });
+
+    // Escape key closes edit modal
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && !isEditSubmitting) {
+            var modal = document.getElementById('edit-section-modal');
+            if (modal.classList.contains('is-open')) {
+                closeEditModal();
+            }
+            var dangerModal = document.getElementById('danger-confirm-modal');
+            if (dangerModal && dangerModal.classList.contains('is-open')) {
+                hideDangerConfirmation();
+            }
+        }
+    });
+
+    /* -------------------------------------------------------------------
+     * Danger Zone - delete confirmation
+     * ------------------------------------------------------------------- */
+    var dangerActionType = '';
+    var dangerActionTarget = '';
+
+    function showDangerConfirmation(actionType, target, message) {
+        dangerActionType = actionType;
+        dangerActionTarget = target;
+
+        var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen', refresh: 'Project herverwerken', 'deployment-refresh': 'Deployment herverwerken' };
+        var title = titles[actionType] || 'Verwijderen';
+        document.getElementById('danger-confirm-title').textContent = title;
+        document.getElementById('danger-confirm-message').textContent = message;
+        document.getElementById('danger-confirm-error').style.display = 'none';
+        document.getElementById('danger-confirm-progress').style.display = 'none';
+        document.getElementById('danger-confirm-actions').style.display = '';
+
+        var isRefresh = actionType === 'refresh' || actionType === 'deployment-refresh';
+        document.getElementById('danger-confirm-btn-delete').style.display = isRefresh ? 'none' : '';
+        document.getElementById('danger-confirm-btn-refresh').style.display = isRefresh ? '' : 'none';
+        document.getElementById('danger-confirm-progress-text').textContent = isRefresh ? 'Bezig met herverwerken...' : 'Bezig met verwijderen...';
+
+        // Set the correct refresh URL based on action type
+        var refreshBtn = document.getElementById('danger-refresh-btn');
+        if (refreshBtn) {
+            var refreshUrl = actionType === 'deployment-refresh'
+                ? '/projects/{{ project.name }}/refresh/' + encodeURIComponent(target)
+                : '/projects/{{ project.name }}/refresh';
+            refreshBtn.setAttribute('hx-post', refreshUrl);
+            htmx.process(refreshBtn);
+        }
+
+        document.getElementById('danger-confirm-backdrop').classList.add('is-open');
+        document.getElementById('danger-confirm-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function hideDangerConfirmation() {
+        // Clear body to stop any htmx polling
+        document.getElementById('danger-confirm-body').innerHTML = '';
+        document.getElementById('danger-confirm-backdrop').classList.remove('is-open');
+        document.getElementById('danger-confirm-modal').classList.remove('is-open');
+        document.body.style.overflow = '';
+    }
+
+    async function executeDangerAction() {
+        var errorEl = document.getElementById('danger-confirm-error');
+        var progressEl = document.getElementById('danger-confirm-progress');
+        var actionsEl = document.getElementById('danger-confirm-actions');
+
+        errorEl.style.display = 'none';
+        progressEl.style.display = '';
+        actionsEl.style.display = 'none';
+
+        var url;
+        if (dangerActionType === 'project') {
+            url = '/projects/delete/' + encodeURIComponent('{{ project.name }}');
+        } else if (dangerActionType === 'deployment') {
+            url = '/projects/' + encodeURIComponent('{{ project.name }}') +
+                  '/delete-deployment/' + encodeURIComponent(dangerActionTarget);
+        } else if (dangerActionType === 'component') {
+            url = '/projects/' + encodeURIComponent('{{ project.name }}') +
+                  '/delete-component/' + encodeURIComponent(dangerActionTarget);
+        }
+
+        try {
+            var response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin'
+            });
+
+            var result = await response.json();
+
+            if (response.ok && result.success) {
+                if (dangerActionType === 'project') {
+                    window.location.href = '/projects';
+                } else {
+                    window.location.reload();
+                }
+            } else {
+                progressEl.style.display = 'none';
+                actionsEl.style.display = '';
+                errorEl.textContent = result.error || result.message || 'Onbekende fout';
+                errorEl.style.display = '';
+            }
+        } catch (err) {
+            progressEl.style.display = 'none';
+            actionsEl.style.display = '';
+            errorEl.textContent = 'Netwerkfout: ' + err.message;
+            errorEl.style.display = '';
+        }
+    }
+
+    /**
+     * Copy value to clipboard
+     */
+    function copyToClipboard(valueSelector, event, containerSelector) {
+        var container = event.target.closest(containerSelector);
+        if (!container) return;
+        var codeEl = container.querySelector(valueSelector);
+        if (!codeEl) return;
+
+        navigator.clipboard.writeText(codeEl.textContent.trim()).then(function() {
+            var btn = event.target.closest('.copy-btn');
+            if (btn) {
+                btn.setAttribute('label', 'Gekopieerd!');
+                btn.classList.add('is-copied');
+                setTimeout(function() {
+                    btn.setAttribute('label', 'Kopieer');
+                    btn.classList.remove('is-copied');
+                }, 2000);
+            }
+        });
+    }
+
+    // Restore tab and deployment state from URL hash on page load
+    (function() {
+        var hash = location.hash.replace('#', '');
+        if (hash.startsWith('deployments')) {
+            switchTab('deployments');
+            var parts = hash.split('/');
+            if (parts.length > 1) {
+                switchDeployment(parts[1]);
+            }
+        }
     })();
 </script>
 {% endblock %}

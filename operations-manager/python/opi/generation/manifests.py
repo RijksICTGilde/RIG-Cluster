@@ -402,7 +402,7 @@ class ManifestGenerator:
                 kustomization_data["namespace"] = prefixed_namespace
 
             # Set resources to regular files
-            kustomization_data["resources"] = regular_files if regular_files else []
+            kustomization_data["resources"] = regular_files or []
 
             # Handle generators for SOPS files
             if sops_files:

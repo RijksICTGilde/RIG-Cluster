@@ -13,6 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from opi.services.schema_migration import migrate_to_latest
+
 
 class ProjectUser(BaseModel):
     """Pydantic model for project user."""
@@ -169,6 +171,15 @@ class ProjectService:
         """
         return self._projects.copy()
 
+    def replace_all_projects(self, projects: dict[str, "Project"]) -> None:
+        """Atomically replace all project mappings.
+
+        This avoids the race condition of clear-then-rebuild, where concurrent
+        requests would see an empty or partially populated cache.
+        """
+        self._projects = projects
+        logger.debug("Replaced all project mappings (%d projects)", len(projects))
+
     def clear_all_projects(self) -> None:
         """Clear all project mappings. Primarily for testing."""
         self._projects.clear()
@@ -196,6 +207,8 @@ class ProjectService:
             True if project was loaded successfully, False otherwise
         """
         try:
+            project_data, _ = migrate_to_latest(project_data)
+
             project_name = project_data.get("name")
             if not project_name:
                 logger.warning("Project data missing 'name' field")
@@ -219,7 +232,7 @@ class ProjectService:
                     if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
                 )
 
-            success = self.register(project_name, str(api_key), filename, users if users else None, data=project_data)
+            success = self.register(project_name, str(api_key), filename, users or None, data=project_data)
 
             if success:
                 logger.debug(f"Loaded project from project data: {project_name} (file: {filename})")

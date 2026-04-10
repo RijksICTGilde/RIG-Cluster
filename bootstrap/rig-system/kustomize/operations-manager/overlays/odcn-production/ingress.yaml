@@ -7,6 +7,7 @@ metadata:
 #    haproxy.router.openshift.io/ip_whitelist: 147.181.0.0/16 # ODCN VPN only
     haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
     haproxy.router.openshift.io/timeout: "600s"
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000;includeSubDomains;preload"
 spec:
   rules:
     - host: operations-manager.rig.prd1.gn2.quattro.rijksapps.nl

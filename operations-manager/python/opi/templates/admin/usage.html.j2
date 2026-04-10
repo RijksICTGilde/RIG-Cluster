@@ -1,0 +1,63 @@
+{% extends "base.html.j2" %}
+
+{% block page_title %}Gebruik & Kosten - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+
+    <div>
+        <c-heading type="h1" textContent="Gebruik & Kosten" />
+        <c-paragraph content="Overzicht van geheugengebruik en kosten per maand." />
+    </div>
+
+    {% if not has_billing_datasource %}
+    <c-alert kind="warning" heading="Billing datasource niet geconfigureerd"
+             content="Stel GRAFANA_BILLING_DATASOURCE_UID in om gebruik op te halen." />
+    {% endif %}
+
+    {# Filters #}
+    <c-card outline="true" padding="md" backgroundColor="wit" background="color">
+        <form method="get" action="/admin/usage">
+            <c-layout-flow gap="md">
+                <c-grid columns="four">
+                    <c-select-field id="namespace" name="namespace" label="Namespace"
+                                    options='{{ namespace_options | tojson }}' value="{{ selected_namespace }}" />
+                    <c-text-input-field id="price" name="price" label="Prijs per GiB (&euro;)" type="number"
+                                        value="{{ price_per_gib }}" />
+                    <c-text-input-field id="year" name="year" label="Jaar" type="number"
+                                        value="{{ year }}" />
+                    <div style="display: flex; align-items: flex-end;">
+                        <c-button label="Toepassen" kind="primary" size="md" type="submit" />
+                    </div>
+                </c-grid>
+            </c-layout-flow>
+        </form>
+    </c-card>
+
+    {# Usage Table #}
+    <c-table description="Geheugengebruik en kosten {{ year }}">
+        <c-thead>
+            <c-tr>
+                <c-th scope="col">Maand</c-th>
+                <c-th scope="col">Gebruik (GiB)</c-th>
+                <c-th scope="col">Kosten (&euro;)</c-th>
+            </c-tr>
+        </c-thead>
+        <c-tbody>
+            {% for month in month_data %}
+            <c-tr>
+                <c-td>{{ month.name }} {{ month.year }}</c-td>
+                <c-td>{{ month.gib }}</c-td>
+                <c-td>&euro; {{ month.cost }}</c-td>
+            </c-tr>
+            {% endfor %}
+            <c-tr>
+                <c-td><strong>Totaal</strong></c-td>
+                <c-td><strong>{{ total_gib }}</strong></c-td>
+                <c-td><strong>&euro; {{ total_cost }}</strong></c-td>
+            </c-tr>
+        </c-tbody>
+    </c-table>
+
+</c-layout-flow>
+{% endblock %}

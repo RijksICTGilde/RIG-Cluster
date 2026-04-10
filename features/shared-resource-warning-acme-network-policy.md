@@ -1,8 +1,10 @@
 # Shared Resource Warning: ACME HTTP Network Policy
 
-## What It Is
+## Status: Resolved
 
-ArgoCD reports a `SharedResourceWarning` when the same Kubernetes resource is managed by multiple ArgoCD Applications. In the Operations Manager context, this occurs with the `acme-http-network-policy` NetworkPolicy (and the `issuer-letsencrypt-*` Issuer) when a project has multiple deployments that share the same namespace.
+## What It Was
+
+ArgoCD reported a `SharedResourceWarning` when the same Kubernetes resource was managed by multiple ArgoCD Applications. This occurred with the `acme-http-network-policy` NetworkPolicy and `issuer-letsencrypt-*` Issuer when a project had multiple deployments sharing the same namespace.
 
 Example warning:
 ```
@@ -10,106 +12,38 @@ SharedResourceWarning
 NetworkPolicy/acme-http-network-policy is part of applications rig-prd-operations/wies-pr-164 and wies-staging2
 ```
 
-## Why It Occurs
+## Root Cause
 
-The Operations Manager generates a Let's Encrypt Issuer and an ACME HTTP NetworkPolicy **per deployment** when the deployment has `issuer: letsencrypt` (or `letsencrypt-staging`) and a `base-domain` configured. These resources are generated with fixed names based on their purpose, not the deployment name:
+The naming functions `generate_network_policy_name` and `generate_issuer_name` produced fixed names based only on purpose/domain, not the deployment. When multiple deployments in the same project shared a namespace and both used Let's Encrypt, they generated identical resources with the same name, causing ArgoCD to see two Applications claiming the same resource.
 
-- `acme-http-network-policy` (name from `generate_network_policy_name("acme-http")`)
-- `issuer-letsencrypt-rijksapp-nl` (name from `generate_issuer_name(base_domain, issuer_config)`)
+## Solution: Deployment-Scoped Resource Names
 
-The namespace is derived from the project, not the deployment. So when multiple deployments in the same project share a namespace and both use Let's Encrypt, they each generate identical resources with the same name in the same namespace.
-
-### Example: Project `wies`
-
-```yaml
-# Project file (simplified)
-deployments:
-- name: staging2
-  base-domain: rijksapp.nl
-  issuer: letsencrypt
-  namespace: wies          # <-- same namespace
-  cluster: odcn-production
-
-- name: pr-164
-  base-domain: rijksapp.nl
-  issuer: letsencrypt
-  namespace: wies          # <-- same namespace
-  cluster: odcn-production
-```
-
-Both deployments generate:
-- `rig-prd-wies/acme-http-network-policy` (identical NetworkPolicy)
-- `rig-prd-wies/issuer-letsencrypt-rijksapp-nl` (identical Issuer)
-
-ArgoCD sees two Applications both claiming ownership of the same resource, triggering the warning.
-
-### Code Paths
-
-The generation happens in three places in `project_manager.py`:
-1. **Helmfile deployments** (~line 2832): Creates network policy alongside the Let's Encrypt Issuer
-2. **Kustomize deployments** (~line 3220): Same pattern for kustomize-based projects
-3. **Component deployments** (~line 4530): Same pattern for component-based projects
-
-Each uses the same naming functions from `opi/utils/naming.py`:
-- `generate_network_policy_name("acme-http")` always returns `acme-http-network-policy`
-- `generate_issuer_name(base_domain, issuer_config)` returns the same name for the same domain/issuer combo
-
-## Impact
-
-- **Functional impact: None.** The resources are identical, so whichever Application syncs last produces the same result.
-- **Operational risk: Low but real.** If one deployment is deleted, ArgoCD may remove the shared resources, breaking TLS certificate issuance for the remaining deployment(s) until the next sync.
-- **Warning noise:** The warning clutters the ArgoCD UI and may mask more important issues.
-
-## Possible Solutions
-
-### Option A: Namespace-Level Shared Resources (Recommended)
-
-Generate namespace-scoped resources (Issuer, ACME NetworkPolicy) once per namespace instead of per deployment. Track which namespaces have already been processed during a project sync and skip duplicate generation.
-
-**Approach:**
-- Maintain a set of `(namespace, base_domain, issuer_config)` tuples during project processing
-- On first encounter, generate the Issuer and NetworkPolicy
-- On subsequent encounters with the same tuple, skip generation
-- Assign the shared resources to the first deployment's ArgoCD Application
-
-**Pros:** Minimal code change, eliminates the warning entirely
-**Cons:** Creates an implicit dependency — deleting the "first" deployment removes shared resources
-
-### Option B: Deployment-Scoped Resource Names
-
-Make the resource names unique per deployment by including the deployment name:
+Resource names now include the deployment name to ensure uniqueness per deployment:
 
 ```
-acme-http-network-policy-staging2
-acme-http-network-policy-pr-164
+# Before (shared, caused warnings)
+acme-http-network-policy
+issuer-letsencrypt-rijksapp-nl
+
+# After (scoped per deployment)
+acme-http-staging2-network-policy
+acme-http-pr-164-network-policy
 issuer-letsencrypt-rijksapp-nl-staging2
 issuer-letsencrypt-rijksapp-nl-pr-164
 ```
 
-**Pros:** Each Application owns its own resources, no sharing conflicts
-**Cons:** Creates duplicate Issuers in the same namespace (functionally wasteful but harmless), duplicate NetworkPolicies (also harmless)
+Each ArgoCD Application now owns its own resources. Deleting a deployment cleanly removes only its resources without affecting other deployments in the same namespace.
 
-### Option C: Separate Infrastructure Application per Namespace
+### Changed Files
 
-Create a dedicated ArgoCD Application per namespace that owns shared infrastructure resources (Issuers, NetworkPolicies, PVCs). Deployment Applications only contain deployment-specific resources.
+| File | Change |
+|------|--------|
+| `opi/utils/naming.py` | Added optional `deployment_name` parameter to `generate_network_policy_name`, `generate_network_policy_manifest_name`, `generate_issuer_name`, `generate_issuer_secret_name`, `generate_issuer_manifest_name` |
+| `opi/manager/project_manager.py` | Pass `deployment_name` at all three code paths (helm-charts, helmfile/kustomize, components) for both resource generation and issuer references |
 
-**Approach:**
-- Generate a `{project}-{namespace}-infra` directory with shared resources
-- Create an ArgoCD Application for this directory
-- Deployment directories only contain secrets, kustomization, and deployment-specific manifests
+### Impact
 
-**Pros:** Clean separation of concerns, most architecturally sound
-**Cons:** Significant refactoring of the manifest generation pipeline, adds an extra ArgoCD Application per namespace
-
-### Option D: ArgoCD Resource Tracking Annotation
-
-Use ArgoCD's `argocd.argoproj.io/managed-by` annotation or resource exclusion to tell ArgoCD that certain resources are shared and should not trigger warnings.
-
-**Pros:** No changes to resource generation
-**Cons:** Masks the underlying issue rather than fixing it, requires careful annotation management
-
-## Recommendation
-
-**Option A** is the pragmatic choice — it's the smallest change that fully resolves the warning. The generation code already has precedent for deduplication (see `created_issuers` set in the component deployment path at ~line 4490).
-
-For a longer-term architecture improvement, **Option C** would provide the cleanest separation, but the effort is significantly higher and the current impact is low.
+- **No functional change** to TLS certificate issuance or ACME challenge handling
+- **Eliminates SharedResourceWarning** in ArgoCD for shared-namespace projects
+- **Cleaner deletion**: removing a deployment no longer risks removing resources needed by sibling deployments
+- **Backward compatibility**: existing deployments will get new resource names on next sync; old resources will be pruned by ArgoCD

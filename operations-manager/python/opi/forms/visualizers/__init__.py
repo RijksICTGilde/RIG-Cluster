@@ -1,4 +1,4 @@
-"""Visualizer layer — UI bindings for Editable definitions."""
+"""Visualizer layer - UI bindings for Editable definitions."""
 
 from __future__ import annotations
 

@@ -133,6 +133,18 @@ tasks:
           echo "✅ Prometheus CRD already exists in the cluster."
         fi
 
+        # Check if cert-manager Issuer CRD exists
+        if ! kubectl get crd issuers.cert-manager.io &>/dev/null; then
+          echo "⚠️  WARNING: cert-manager Issuer CRD not found in the cluster."
+          echo "⚠️  Applying fake cert-manager CRD so Issuer resources can be created."
+
+          kubectl apply -f bootstrap/crd/cert-manager/fake-cert-manager.yaml
+
+          echo "✅ Fake cert-manager CRD applied successfully."
+        else
+          echo "✅ cert-manager Issuer CRD already exists in the cluster."
+        fi
+
         # Download the operator source
         echo "Downloading ArgoCD Operator source code..."
         curl -sL "https://github.com/argoproj-labs/argocd-operator/archive/refs/tags/{{.VERSION}}.tar.gz" -o $TEMP_DIR/argocd-operator.tar.gz
@@ -1156,6 +1168,18 @@ tasks:
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
+  publish-hello-world-seventies:
+    desc: "Build and publish the hello-world-seventies image to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/hello-world-seventies
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: hello-world-seventies
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          PLATFORMS: linux/amd64,linux/arm64
+
   build-postgresql-image:
     desc: "Build and load PostgreSQL image with dictionary files into kind cluster"
     cmds:
@@ -1193,6 +1217,18 @@ tasks:
           PLATFORMS: linux/amd64,linux/arm64
           CACHE_IMAGE: ghcr.io/minbzk/base-images/rig-backup:cache
           BUILDER_NAME: rig-backup-builder
+
+  security-audit:
+    desc: "Run pip-audit to check Python dependencies for known vulnerabilities"
+    dir: operations-manager/python
+    cmds:
+      - uv run pip-audit --strict --desc
+
+  security-scan-image:
+    desc: "Scan operations-manager Docker image for vulnerabilities with Trivy"
+    cmds:
+      - docker build -t opi:scan -f operations-manager/Dockerfile .
+      - trivy image --severity HIGH,CRITICAL opi:scan
 
   # Internal shared task for secret generation
   _generate-secrets-shared:
@@ -1699,6 +1735,24 @@ tasks:
       - uv run pytest tests/ -v
     silent: false
 
+  test-e2e:
+    desc: "Run Playwright E2E browser tests (local app server, no sandbox needed)"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
+    silent: false
+
+  test-e2e-sandbox:
+    desc: "Run E2E browser tests against running sandbox cluster"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      - >-
+        E2E_BASE_URL=${E2E_BASE_URL:-https://zad.sandbox.rijksapp.dev}
+        uv run pytest tests/e2e/ -m "e2e and sandbox" -v --timeout=300
+    silent: false
+
   test-coverage:
     desc: "Run tests with coverage report"
     dir: operations-manager/python
@@ -1825,6 +1879,8 @@ tasks:
       # Phase 5: Wait for everything to be deployed and ready
       - task: sandbox:wait-ready
       - |
+        kubectl config set-context --current --namespace=rig-system
+      - |
         echo ""
         echo "========================================="
         echo "Sandboxed local cluster setup complete!"
@@ -1844,8 +1900,12 @@ tasks:
           echo "Cluster rig-sandbox already exists"
           exit 0
         fi
-        kind create cluster --name rig-sandbox --config sandboxed-local/kind-config.yaml
-        echo "Cluster rig-sandbox created successfully"
+        read -p "HTTP port for ingress [80]: " http_port
+        export KIND_HTTP_PORT="${http_port:-80}"
+        read -p "HTTPS port for ingress [443]: " https_port
+        export KIND_HTTPS_PORT="${https_port:-443}"
+        envsubst < sandboxed-local/kind-config.yaml | kind create cluster --name rig-sandbox --config -
+        echo "Cluster rig-sandbox created successfully (HTTP port: ${KIND_HTTP_PORT}, HTTPS port: ${KIND_HTTPS_PORT})"
     silent: true
 
   sandbox:install-csi-snapshot:
@@ -2145,7 +2205,7 @@ tasks:
           grep -v '^[[:space:]]*#' "{{.ENV_FILE}}" | grep -v '^[[:space:]]*$' | while IFS='=' read -r key value; do
             value=$(echo "$value" | sed 's/^["'\'']//' | sed 's/["'\'']$//')
             # Replace the empty value in the template with the actual value
-            sed -i '' "s|$key: \"\"|$key: \"$value\"|" "$SECRET_FILE"
+            sed "s|$key: \"\"|$key: \"$value\"|" "$SECRET_FILE" > "$SECRET_FILE.tmp" && mv "$SECRET_FILE.tmp" "$SECRET_FILE"
             echo "  Set: $key"
           done
         else
@@ -2450,6 +2510,10 @@ tasks:
         # Clone the repo (use HTTPS to avoid credential stripping on HTTP->HTTPS redirect)
         git clone "$FORGEJO_REPO" "$TEMP_DIR" 2>/dev/null || {
           echo "Could not clone via ingress, trying in-cluster port-forward..."
+          # Forgejo pod may have restarted after init-forgejo (OOM, liveness probe),
+          # so wait for it to be Ready before attempting port-forward
+          echo "Waiting for Forgejo pod to be ready..."
+          kubectl wait --for=condition=Ready pod/forgejo-0 -n rig-system --timeout=120s
           # Fallback: use kubectl port-forward
           kubectl port-forward -n rig-system svc/forgejo 3000:3000 &
           PF_PID=$!
@@ -2482,6 +2546,84 @@ tasks:
 
         echo "Infrastructure sync complete"
     silent: true
+
+  sandbox:import-project:
+    desc: "Import production project files into sandbox Forgejo (re-encrypts secrets, transforms cluster config)"
+    cmds:
+      - |
+        if [ -z "{{.CLI_ARGS}}" ]; then
+          echo "Usage: task sandbox:import-project -- <project-name> [project-name...]"
+          echo ""
+          echo "Examples:"
+          echo "  task sandbox:import-project -- amt-dev"
+          echo "  task sandbox:import-project -- amt-dev wies regel-k4c"
+          echo ""
+          echo "Available projects:"
+          ls "{{.IMPORT_SOURCE_DIR}}" 2>/dev/null | sed 's/.yaml$//' | column
+          exit 1
+        fi
+
+        OUTPUT_DIR=$(mktemp -d)
+
+        # Run migration script
+        echo "Transforming project files..."
+        cd operations-manager/python
+        uv run python -m scripts.migrate_project_to_sandbox \
+          --source-dir "{{.IMPORT_SOURCE_DIR}}" \
+          --output-dir "$OUTPUT_DIR" \
+          {{.CLI_ARGS}}
+
+        if [ $? -ne 0 ]; then
+          echo "Migration script failed"
+          rm -rf "$OUTPUT_DIR"
+          exit 1
+        fi
+
+        # Check if any files were produced
+        if [ -z "$(ls -A "$OUTPUT_DIR" 2>/dev/null)" ]; then
+          echo "No output files produced"
+          rm -rf "$OUTPUT_DIR"
+          exit 1
+        fi
+
+        # Clone zad-projects from Forgejo and push transformed files
+        echo ""
+        echo "Pushing to Forgejo zad-projects..."
+        FORGEJO_REPO="https://rig-admin:admin1234@forgejo.sandbox.rijksapp.dev/rig-admin/zad-projects.git"
+        CLONE_DIR=$(mktemp -d)
+
+        git clone "$FORGEJO_REPO" "$CLONE_DIR" 2>/dev/null || {
+          echo "Failed to clone from Forgejo. Is the sandbox running and forgejo.sandbox.rijksapp.dev reachable?"
+          rm -rf "$OUTPUT_DIR" "$CLONE_DIR"
+          exit 1
+        }
+
+        # Ensure projects/ directory exists in the repo
+        mkdir -p "$CLONE_DIR/projects"
+
+        # Copy transformed files
+        cp "$OUTPUT_DIR"/*.yaml "$CLONE_DIR/projects/"
+
+        # Commit and push
+        cd "$CLONE_DIR"
+        git add -A
+        git diff --cached --quiet || {
+          IMPORTED=$(ls "$OUTPUT_DIR" | sed 's/.yaml$//' | tr '\n' ', ' | sed 's/,$//')
+          git -c user.name="sandbox-import" -c user.email="import@sandbox" \
+            commit -m "Import production projects: $IMPORTED"
+          git push origin main
+          echo "Pushed to Forgejo: $IMPORTED"
+        }
+        cd -
+
+        # Clean up
+        rm -rf "$OUTPUT_DIR" "$CLONE_DIR"
+
+        echo ""
+        echo "Import complete. Trigger a project refresh in OPI to process the changes."
+    silent: true
+    vars:
+      IMPORT_SOURCE_DIR: '{{.IMPORT_SOURCE_DIR | default "/Users/robbertuittenbroek/IdeaProjects/rig-cluster-test-git-repositories/rig-cluster-projects-github/projects"}}'
 
   sandbox:update-dns:
     desc: "Configure dnsmasq to resolve *.sandbox.rijksapp.dev to 127.0.0.1"
@@ -2561,6 +2703,9 @@ tasks:
       - |
         echo "Updating operations-manager deployment..."
         SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local --load-restrictor LoadRestrictionsNone | kubectl apply -f -
+        kubectl set env deployment/operations-manager -n {{.RIG_NAMESPACE}} \
+          ZAD_VERSION="$(git describe --tags --always)" \
+          ZAD_BUILD_DATE="$(date +%Y-%m-%d)"
         kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo "Operations manager updated successfully"
     silent: true
@@ -2570,6 +2715,13 @@ tasks:
     cmds:
       - echo "Starting Skaffold in hot-reload mode (sandboxed-local)..."
       - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local.yaml
+
+  sandbox:skaffold-debug:
+    desc: "Start Skaffold in debug mode for sandbox development (debugpy on port 5678)"
+    cmds:
+      - echo "Starting Skaffold in debug mode (sandboxed-local)..."
+      - 'echo "Attach IntelliJ debugger: Run → Debug Remote Debug - Operations Manager (localhost:5678)"'
+      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local-debug.yaml
 
   sandbox:build-cmp-image:
     desc: "Build CMP kustomize-sops image and load into Kind (no ArgoCD restart)"

@@ -4,6 +4,12 @@
 
 ## Sandbox Setup
 
+### Forgejo pod restart causing sandbox:sync failure (fixed)
+
+The `sandbox:sync` task could fail with `unable to forward port because pod is not running. Current status=Pending` when the Forgejo pod restarted between `sandbox:init-forgejo` and `sandbox:sync`. The init step (creating admin user and 4 repositories) can cause memory pressure or liveness probe failure, causing the pod to restart. The port-forward fallback in `sandbox:sync` had no wait logic, so it would immediately fail if the pod wasn't Running.
+
+**Fix:** Added `kubectl wait --for=condition=Ready` before the port-forward attempt, giving the pod up to 120s to become Ready again.
+
 ### GHCR egress limit causing ArgoCD repo server timeout
 
 During setup, the ArgoCD repo server rollout can time out if GitHub Container Registry returns a `503 Egress is over the account limit` error when pulling `ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest`. This happens because the image uses the `latest` tag with `imagePullPolicy: Always`, so Kubernetes attempts a fresh pull even when the image is already cached on the node.
@@ -23,7 +29,7 @@ task sandbox:setup
 
 ### ArgoCD operator CRD deletion timeout
 
-The `prepare-argocd-operator` task uses `kubectl replace --force` to apply the ArgoCD operator, which deletes and recreates the CRD. When ArgoCD resources already exist in the cluster (e.g. from a previous partial setup), the CRD deletion blocks on finalizers — the ArgoCD CR has an `argoproj.io/finalizer` that can't be processed because the operator itself is being replaced. This creates a deadlock that hangs indefinitely or fails with `context deadline exceeded`.
+The `prepare-argocd-operator` task uses `kubectl replace --force` to apply the ArgoCD operator, which deletes and recreates the CRD. When ArgoCD resources already exist in the cluster (e.g. from a previous partial setup), the CRD deletion blocks on finalizers - the ArgoCD CR has an `argoproj.io/finalizer` that can't be processed because the operator itself is being replaced. This creates a deadlock that hangs indefinitely or fails with `context deadline exceeded`.
 
 **Workaround:** In a separate terminal, remove the finalizer to unblock the deletion:
 
