@@ -96,6 +96,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
             app.state.task_service = task_service
 
+            from opi.services.oom_watcher import set_task_service
+
+            set_task_service(task_service)
+
             _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
             # Register handlers (imported locally to avoid circular imports)
@@ -144,6 +148,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             pool = get_database_pool("main")
             task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
             app.state.task_service = task_service
+
+            from opi.services.oom_watcher import set_task_service
+
+            set_task_service(task_service)
             logger.info("Task service initialized (worker disabled)")
         except Exception as e:
             logger.warning(f"Failed to initialize task service: {e}")

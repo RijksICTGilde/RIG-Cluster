@@ -1193,7 +1193,7 @@
 
         // HTMX: load metrics for selected deployment
         var metricsEl = document.getElementById('metrics-content');
-        if (metricsEl) {
+        if (metricsEl && typeof htmx !== 'undefined') {
             var projectName = metricsEl.dataset.projectName;
             htmx.ajax('GET', '/projects/details/' + projectName + '/metrics/' + deploymentName, {
                 target: '#metrics-content',

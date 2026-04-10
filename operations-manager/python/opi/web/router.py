@@ -109,19 +109,17 @@ async def project_progress_page(request: Request, task_id: str):
     """
     Show the project creation progress page.
 
-    This page displays real-time progress of the background task
-    and automatically redirects when complete.
+    Reads task state from the V2 async task service (database-backed).
     """
     try:
-        from opi.core.task_manager import get_task
+        from opi.core.task_helpers import get_task_service
 
-        # Get project info
-        project = get_task(task_id)
+        task_service = get_task_service(request)
+        task = await task_service.get_task(task_id)
         user = get_current_user(request)
         templates = get_templates()
 
-        if not project:
-            # Task not found - completed and cleaned up, or never existed
+        if not task:
             return templates.TemplateResponse(
                 "project-progress-done.html.j2",
                 {
@@ -132,17 +130,27 @@ async def project_progress_page(request: Request, task_id: str):
                 },
             )
 
+        project_name = task.get("project_name", "")
+        status = task.get("status", "pending")
+        if status in ("pending", "claimed", "running"):
+            template_status = "running"
+        elif status == "completed":
+            result = task.get("result")
+            template_status = "failed" if isinstance(result, dict) and result.get("status") == "failed" else "completed"
+        else:
+            template_status = "failed"
+
         return templates.TemplateResponse(
             "project-progress.html.j2",
             {
                 "request": request,
-                "title": f"Creating Project: {project.project_name}",
+                "title": f"Creating Project: {project_name}",
                 "menu_items": get_menu_items(user),
                 "task_id": task_id,
-                "project_name": project.project_name,
-                "initial_progress": 0,  # We'll show progress via tasks now
-                "initial_step": project.current_step,
-                "initial_status": project.status.value,
+                "project_name": project_name,
+                "initial_progress": task.get("progress_percent", 0),
+                "initial_step": task.get("current_step") or "Verwerking gestart...",
+                "initial_status": template_status,
             },
         )
 
@@ -160,75 +168,29 @@ async def get_task_status(request: Request, task_id: str):
     Get current task status and progress.
 
     This endpoint is used for polling by the progress page JavaScript.
-    Reads task state from the in-memory TaskProgressManager.
-
-    TODO: Migrate to database-backed AsyncTaskService once TaskProgressManager
-    writes to the database instead of in-memory. See features/futures/
-    migrate-task-progress-to-database.md
+    Reads task state from the V2 async task service (database-backed).
     """
     from fastapi.responses import JSONResponse
 
-    from opi.core.task_manager import TaskStatus, _project_managers, _projects
+    from opi.core.task_helpers import get_task_service
 
-    project = _projects.get(task_id)
-    if project is None:
+    task_service = get_task_service(request)
+    task = await task_service.get_task(task_id)
+
+    if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task_manager = _project_managers.get(task_id)
-
-    # Build subtask hierarchy from the in-memory task manager
-    task_hierarchy: list[dict] = []
-    progress = 0
-
-    if task_manager:
-        main_tasks = []
-        subtasks_by_parent: dict[str, list] = {}
-
-        for task in task_manager.tasks.values():
-            if task.parent_id is None:
-                main_tasks.append(task)
-            else:
-                subtasks_by_parent.setdefault(task.parent_id, []).append(task)
-
-        for main_task in main_tasks:
-            task_data: dict[str, Any] = {
-                "id": main_task.id,
-                "name": main_task.name,
-                "status": main_task.status.value,
-                "error": main_task.error,
-                "subtasks": [
-                    {
-                        "id": subtask.id,
-                        "name": subtask.name,
-                        "status": subtask.status.value,
-                        "error": subtask.error,
-                    }
-                    for subtask in subtasks_by_parent.get(main_task.id, [])
-                ],
-            }
-            task_hierarchy.append(task_data)
-
-        total = len(task_manager.tasks)
-        completed = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
-        progress = int((completed / total * 100) if total > 0 else 0)
-
+    context = _v2_task_to_template_context(task, task.get("project_name", ""))
     response_data: dict[str, Any] = {
         "task_id": task_id,
-        "status": project.status.value,
-        "current_step": project.current_step or "Starting...",
-        "project_name": project.project_name,
-        "progress": progress,
-        "tasks": task_hierarchy,
+        "status": context["status"],
+        "current_step": context["current_step"],
+        "project_name": context["project_name"],
+        "progress": context["progress"],
+        "tasks": context["tasks"],
     }
-
-    if project.logs:
-        response_data["logs"] = project.logs[-50:]
-
-    if project.events:
-        response_data["events"] = project.events[-20:]
-
-    if project.web_addresses:
-        response_data["web_addresses"] = project.web_addresses
+    if context["error"]:
+        response_data["error"] = context["error"]
 
     return JSONResponse(content=response_data)
 
@@ -517,13 +479,12 @@ async def delete_component_web(request: Request, project_name: str, component_na
         project_service.load_project_from_data(project_data, project.filename)
         logger.info(f"Component '{component_name}' removed from '{project_name}', triggering reprocessing")
 
-        # Trigger background reprocessing to update K8s manifests
+        # Trigger reprocessing via V2 async task
         from io import StringIO
 
         from ruamel.yaml import YAML
 
-        from opi.core.simple_background import process_project_yaml_background
-        from opi.core.task_manager import create_task
+        from opi.core.task_helpers import create_async_task
 
         yaml_instance = YAML()
         yaml_instance.preserve_quotes = True
@@ -532,19 +493,18 @@ async def delete_component_web(request: Request, project_name: str, component_na
         yaml_instance.dump(project_data, yaml_output)
         yaml_content = yaml_output.getvalue()
 
-        display_name = project_data.get("display-name", project_name)
-        task_id = create_task(display_name)
+        await create_async_task(
+            request=request,
+            task_type="create_project",
+            project_name=project_name,
+            payload={"project_name": project_name, "yaml_content": yaml_content},
+            max_attempts=1,
+        )
 
-        from starlette.background import BackgroundTask
-
-        background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
-
-        response = JSONResponse(
+        return JSONResponse(
             content={"success": True, "message": f"Component '{component_name}' succesvol verwijderd"},
             status_code=200,
-            background=background,
         )
-        return response
 
     except HTTPException:
         raise
@@ -558,17 +518,9 @@ async def delete_component_web(request: Request, project_name: str, component_na
 @web_router.post("/projects/{project_name}/refresh", response_class=HTMLResponse)
 @requires_sso
 async def refresh_project_web(request: Request, project_name: str) -> HTMLResponse:
-    """Reprocess a project from Git via web interface.
-
-    Kicks off a background task that detects changes in the project file,
-    creates new deployments, removes deleted ones, and reconciles services.
-    Returns a task progress fragment with HTMX polling.
-    """
-    from opi.core.simple_background import refresh_project_background
-    from opi.core.task_manager import create_task, update_progress
+    """Reprocess a project from Git via web interface."""
     from opi.services.project_service import get_project_service
 
-    templates = get_templates()
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
 
@@ -590,44 +542,22 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
     if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
 
-    task_id = create_task(project_name)
-    update_progress(task_id, 0, "Project herverwerken gestart...")
-
-    task = asyncio.create_task(
-        refresh_project_background(task_id, project_name, f"projects/{project.filename}"),
-        name=f"refresh-{project_name}",
+    return await _create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        task_type="refresh_project",
+        payload={"project_name": project_name, "force_clone": False},
+        current_step="Project herverwerken gestart...",
+        success_message="Project succesvol herverwerkt!",
     )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-    context = {
-        "task_id": task_id,
-        "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
-        "progress": 0,
-        "current_step": "Project herverwerken gestart...",
-        "tasks": [],
-        "status": "running",
-        "success_message": "Project succesvol herverwerkt!",
-        "on_complete": "location.reload()",
-    }
-
-    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-
-    return HTMLResponse(content=rendered)
 
 
 @web_router.post("/projects/{project_name}/refresh/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
 async def refresh_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Reprocess a single deployment from Git via web interface."""
-    from opi.core.simple_background import refresh_project_background
-    from opi.core.task_manager import create_task, update_progress
     from opi.services.project_service import get_project_service
 
-    templates = get_templates()
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
 
@@ -649,35 +579,19 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
     if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
 
-    task_id = create_task(project_name)
-    update_progress(task_id, 0, f"Deployment '{deployment_name}' herverwerken gestart...")
-
-    task = asyncio.create_task(
-        refresh_project_background(
-            task_id, project_name, f"projects/{project.filename}", deployment_name=deployment_name
-        ),
-        name=f"refresh-{project_name}-{deployment_name}",
+    return await _create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        task_type="refresh_deployment",
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "force_clone": False,
+        },
+        deployment_name=deployment_name,
+        current_step=f"Deployment '{deployment_name}' herverwerken gestart...",
+        success_message=f"Deployment '{deployment_name}' succesvol herverwerkt!",
     )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-    context = {
-        "task_id": task_id,
-        "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
-        "progress": 0,
-        "current_step": f"Deployment '{deployment_name}' herverwerken gestart...",
-        "tasks": [],
-        "status": "running",
-        "success_message": f"Deployment '{deployment_name}' succesvol herverwerkt!",
-        "on_complete": "location.reload()",
-    }
-
-    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-
-    return HTMLResponse(content=rendered)
 
 
 @web_router.get("/test-architecture", response_class=HTMLResponse)
@@ -1511,8 +1425,8 @@ async def project_details(request: Request, project_name: str):
                                         if base_ns and dep_cluster:
                                             k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
                                             kubectl = KubectlConnector()
-                                            events = await kubectl.get_namespace_events(k8s_ns, limit=30)
-                                            for event in events:
+                                            raw_events = await kubectl.get_namespace_events(k8s_ns, limit=30)
+                                            for event in raw_events:
                                                 obj = event.get("object", "unknown")
                                                 reason = event.get("reason", "")
                                                 msg = event.get("message", "")
@@ -1562,6 +1476,10 @@ async def project_details(request: Request, project_name: str):
                                 last_sync = status.get("reconciledAt")
 
                             from datetime import datetime
+
+                            from opi.services.event_interpreter import interpret_argocd_errors
+
+                            errors = interpret_argocd_errors(errors, deployment_name=deployment_name)
 
                             now = datetime.now(UTC)
                             for error in errors:
@@ -3083,7 +3001,7 @@ async def deployment_memory_check(
     # so kubectl (which checks both reason and exit code) is more reliable.
     try:
         from opi.core.cluster_config import get_prefixed_namespace
-        from opi.services.oom_watcher import detect_oom_kills
+        from opi.services.oom_watcher import check_pod_health
         from opi.services.resource_tuning_service import MemoryCheckResult, get_project_data
         from opi.utils.naming import generate_unique_name
 
@@ -3104,8 +3022,8 @@ async def deployment_memory_check(
                 if not comp_ref or comp_ref in oom_warned_components:
                     continue
                 unique_name = generate_unique_name(deployment_name, comp_ref)
-                oom_kills = await detect_oom_kills(namespace, [unique_name])
-                if oom_kills:
+                health = await check_pod_health(namespace, unique_name)
+                if health.oom_detected:
                     # Extract current limit from project data for display
                     from opi.handlers.project_file_handler import ProjectFileHandler
 
@@ -3141,62 +3059,159 @@ async def deployment_memory_check(
     )
 
 
-@web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
-@requires_sso
-async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
-    """Generic task progress fragment for HTMX polling."""
-    from typing import Any
+async def _create_task_and_render_progress(
+    request: Request,
+    project_name: str,
+    task_type: str,
+    payload: dict,
+    current_step: str,
+    success_message: str,
+    deployment_name: str | None = None,
+) -> HTMLResponse:
+    """Create a V2 async task and return a rendered progress fragment.
 
-    from opi.core.task_manager import TaskStatus, _project_managers, _projects
+    Shared helper for all web UI endpoints that trigger async processing.
+    Creates the task via the V2 task service and returns an HTML fragment
+    with HTMX polling for progress updates.
+    """
+    from opi.core.task_helpers import create_async_task
 
     templates = get_templates()
 
-    if task_id not in _projects:
-        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
-
-    project = _projects[task_id]
-    task_manager = _project_managers.get(task_id)
-
-    task_hierarchy: list[dict[str, Any]] = []
-    progress = 0
-
-    if task_manager:
-        main_tasks = []
-        subtasks_by_parent: dict[str, list] = {}
-
-        for task in task_manager.tasks.values():
-            if task.parent_id is None:
-                main_tasks.append(task)
-            else:
-                subtasks_by_parent.setdefault(task.parent_id, []).append(task)
-
-        for main_task in main_tasks:
-            task_data: dict[str, Any] = {
-                "name": main_task.name,
-                "status": main_task.status.value,
-                "subtasks": [],
-            }
-            if main_task.id in subtasks_by_parent:
-                for subtask in subtasks_by_parent[main_task.id]:
-                    task_data["subtasks"].append({"name": subtask.name, "status": subtask.status.value})
-            task_hierarchy.append(task_data)
-
-        total = len(task_manager.tasks)
-        completed = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
-        progress = int((completed / total * 100) if total > 0 else 0)
+    task = await create_async_task(
+        request=request,
+        task_type=task_type,
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload=payload,
+        max_attempts=1,
+    )
+    task_id = str(task["task_id"])
 
     context = {
         "task_id": task_id,
         "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
-        "progress": progress,
-        "current_step": project.current_step or "Verwerking gestart...",
-        "tasks": task_hierarchy,
-        "status": project.status.value,
-        "error": getattr(project, "error", None),
+        "progress": 0,
+        "current_step": current_step,
+        "tasks": [],
+        "status": "running",
+        "success_message": success_message,
         "on_complete": "location.reload()",
     }
 
     rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    return HTMLResponse(content=rendered)
+
+
+def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
+    """Map a V2 async task dict to the template context expected by progress fragments.
+
+    Shared by all progress polling endpoints (inline, modal, JSON).
+    """
+    db_status = task.get("status", "pending")
+    if db_status in ("pending", "claimed", "running"):
+        template_status = "running"
+    elif db_status == "completed":
+        result = task.get("result")
+        template_status = "failed" if isinstance(result, dict) and result.get("status") == "failed" else "completed"
+    else:
+        template_status = "failed"
+
+    subtasks = task.get("subtasks") or []
+    task_hierarchy = _build_task_hierarchy(subtasks)
+
+    error = task.get("error_message")
+    component_failures = None
+    result = task.get("result")
+    if isinstance(result, dict):
+        processing = result.get("processing")
+        if isinstance(processing, dict):
+            component_failures = processing.get("component_failures")
+            if not error:
+                error = processing.get("error")
+
+    return {
+        "progress": task.get("progress_percent", 0),
+        "current_step": task.get("current_step") or "Verwerking gestart...",
+        "tasks": task_hierarchy,
+        "status": template_status,
+        "error": error,
+        "component_failures": component_failures,
+        "project_name": project_name,
+    }
+
+
+def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
+    """Convert flat V2 subtask list to nested task hierarchy for the template."""
+    main_tasks = []
+    children: dict[str, list] = {}
+    for st in subtasks:
+        entry = {"name": st.get("name", ""), "status": st.get("status", "pending")}
+        parent = st.get("parent_id")
+        if parent:
+            children.setdefault(parent, []).append(entry)
+        else:
+            task_entry = {**entry, "id": st.get("id", ""), "subtasks": []}
+            main_tasks.append(task_entry)
+    for mt in main_tasks:
+        mt["subtasks"] = children.get(mt["id"], [])
+    return main_tasks
+
+
+@web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
+@requires_sso
+async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
+    """Generic task progress fragment for HTMX polling.
+
+    Reads task state from the V2 async task service (database-backed)
+    and renders an HTML fragment for HTMX polling.
+    """
+    from opi.core.task_helpers import get_task_service
+
+    templates = get_templates()
+    task_service = get_task_service(request)
+    task = await task_service.get_task(task_id)
+
+    if task is None:
+        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
+
+    context = _v2_task_to_template_context(task, project_name)
+    context["task_id"] = task_id
+    context["progress_url"] = f"/projects/{project_name}/task-progress/{task_id}"
+    context["on_complete"] = "location.reload()"
+
+    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    return HTMLResponse(content=rendered)
+
+
+@web_router.get("/projects/{project_name}/task-errors/{task_id}", response_class=HTMLResponse)
+@requires_sso
+async def task_errors_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
+    """Render just the component failure alerts for a task.
+
+    Used by the full progress page to load error details via HTMX
+    without duplicating the failure rendering logic in JavaScript.
+    """
+    from opi.core.task_helpers import get_task_service
+
+    templates = get_templates()
+    task_service = get_task_service(request)
+    task = await task_service.get_task(task_id)
+
+    if task is None:
+        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
+
+    context = _v2_task_to_template_context(task, project_name)
+
+    rendered = templates.get_template("partials/_component_failures.html.j2").render(context)
     process_components = templates.env.filters.get("process_components")
     if process_components:
         rendered = str(process_components(rendered))

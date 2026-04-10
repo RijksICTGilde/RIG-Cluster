@@ -146,12 +146,25 @@
                 {% for error in errors %}
                 <div style="padding: 8px; {% if not loop.last %}border-bottom: 1px solid #ffcdd2;{% endif %}">
                     <c-layout-row gap="xs" verticalSpacing="center">
+                        {% if error.get('severity') == 'informational' %}
+                        <c-icon icon="info" size="sm" color="grijs-600" />
+                        {% else %}
                         <c-icon icon="foutmelding" size="sm" color="rood" />
-                        <strong style="font-size: 0.875rem;">{{ error.resource }}</strong>
+                        {% endif %}
+                        <strong style="font-size: 0.875rem;">{{ error.resource }}{% if error.get('count') and error.count|int > 1 %} <span class="rvo-text--xs rvo-text--subtle">({{ error.count }}x)</span>{% endif %}</strong>
                     </c-layout-row>
                     <p style="font-size: 0.8rem; color: var(--rvo-color-grijs-700); margin: 4px 0 0 24px; word-break: break-word;">{{ error.message }}</p>
+                    {% if error.get('suggestion') %}
+                    <p style="font-size: 0.8rem; color: var(--rvo-color-hemelblauw-750); margin: 2px 0 0 24px; word-break: break-word;">{{ error.suggestion }}</p>
+                    {% endif %}
+                    {% if error.get('original_message') %}
+                    <details style="margin: 4px 0 0 24px;">
+                        <summary class="rvo-text--xs rvo-text--subtle" style="cursor: pointer;">Origineel bericht</summary>
+                        <p class="rvo-text--xs rvo-text--subtle" style="margin-top: 2px; word-break: break-word;">{{ error.original_message }}</p>
+                    </details>
+                    {% endif %}
                     {% if error.get('age') %}
-                    <c-p class="rvo-text--xs rvo-text--subtle">{{ error.age }}</c-p>
+                    <p class="rvo-text--xs rvo-text--subtle" style="margin: 2px 0 0 24px;">{{ error.age }}</p>
                     {% endif %}
                 </div>
                 {% endfor %}

@@ -24,6 +24,7 @@ async def create_async_task(
     project_name: str,
     deployment_name: str | None = None,
     payload: dict | None = None,
+    max_attempts: int | None = None,
 ) -> dict:
     """Create an async task, routing through federation when available.
 
@@ -64,6 +65,7 @@ async def create_async_task(
         deployment_name=deployment_name,
         cluster=settings.CLUSTER_MANAGER,
         payload=payload or {},
+        max_attempts=max_attempts,
     )
 
 

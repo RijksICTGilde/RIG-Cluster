@@ -1914,15 +1914,10 @@ async def _start_project_creation(
     from io import StringIO
 
     from ruamel.yaml import YAML
-    from starlette.background import BackgroundTask
-
-    from opi.core.task_manager import create_task
 
     project_name = data.get("name", "")
     if not project_name:
         raise HTTPException(status_code=400, detail="Projectnaam is verplicht")
-
-    display_name = data.get("display-name", project_name)
 
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
@@ -1935,19 +1930,25 @@ async def _start_project_creation(
     yaml_instance.dump(data, yaml_output)
     yaml_content = yaml_output.getvalue()
 
-    # Create background task and start processing
-    task_id = create_task(display_name)
-
-    from opi.core.simple_background import process_project_yaml_background
+    # Create V2 async task — the task worker handles git commit + processing
+    from opi.core.task_helpers import create_async_task
 
     clear_wizard_state(request)
-    logger.info("Starting background project creation for %s (task=%s)", project_name, task_id)
+
+    task = await create_async_task(
+        request=request,
+        task_type="create_project",
+        project_name=project_name,
+        payload={"project_name": project_name, "yaml_content": yaml_content},
+        max_attempts=1,
+    )
+    task_id = str(task["task_id"])
+    logger.info("Created V2 project creation task for %s (task=%s)", project_name, task_id)
 
     # Use HX-Redirect so HTMX does a full-page navigation instead of
     # swapping the progress page into the wizard frame.
     response = HTMLResponse(content="", status_code=200)
     response.headers["HX-Redirect"] = f"/projects/progress/{task_id}"
-    response.background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
     return response
 
 

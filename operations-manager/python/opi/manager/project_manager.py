@@ -197,6 +197,9 @@ class ProjectManager:
         # Last processing error message (set when process_project fails)
         self._processing_error: str | None = None
 
+        # Per-component failure details (set when DeploymentHealthError is caught)
+        self._component_failures: list[dict[str, Any]] | None = None
+
         # Change context from YAML diff (populated by process_project_changes)
         # Structure: {"previous_yaml": {...}, "current_yaml": {...}, "changes": {"added": {}, "changed": {}, "deleted": {}}}
         self._project_changes: dict[str, Any] | None = None
@@ -380,6 +383,31 @@ class ProjectManager:
         or None if processing succeeded.
         """
         return self._processing_error
+
+    def get_component_failures(self) -> list[dict[str, Any]] | None:
+        """Get per-component failure details from the most recent deployment sync."""
+        return self._component_failures
+
+    async def _queue_refresh_task(self, task_service: Any, project_name: str, deployment_name: str) -> None:
+        """Queue a refresh_deployment task via the task queue."""
+        if task_service:
+            await task_service.create_task(
+                task_type="refresh_deployment",
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=settings.CLUSTER_MANAGER,
+                payload={
+                    "project_name": project_name,
+                    "deployment_name": deployment_name,
+                    "force_clone": False,
+                },
+            )
+        else:
+            logger.warning(
+                "Task service not available, cannot queue refresh for %s/%s",
+                project_name,
+                deployment_name,
+            )
 
     def get_processing_exception(self) -> Exception | None:
         """Get the original exception from the most recent processing failure."""
@@ -2248,7 +2276,11 @@ class ProjectManager:
             sync_failures: list[str] = []
 
             if deployments and project_name:
-                from opi.services.oom_watcher import OOMDetectedError, create_oom_progressing_callback
+                from opi.services.oom_watcher import (
+                    DeploymentHealthError,
+                    create_health_check_callback,
+                    disable_components_for_image_pull,
+                )
                 from opi.services.resource_tuning_service import tune_deployment_resources
                 from opi.utils.naming import generate_unique_name
 
@@ -2285,17 +2317,27 @@ class ProjectManager:
                     cluster = deployment.get("cluster", "")
                     namespace = get_prefixed_namespace(cluster, base_namespace) if base_namespace and cluster else ""
 
-                    # Build OOM detection callback for this deployment
+                    # Build health check callback for this deployment
                     oom_callback = None
                     if namespace:
+                        components = deployment.get("components", [])
                         component_names = [
                             generate_unique_name(dep_name, comp.get("reference", ""))
-                            for comp in deployment.get("components", [])
+                            for comp in components
                             if comp.get("reference")
                         ]
+                        component_refs = {
+                            generate_unique_name(dep_name, comp.get("reference", "")): comp.get("reference", "")
+                            for comp in components
+                            if comp.get("reference")
+                        }
                         if component_names:
-                            oom_callback = create_oom_progressing_callback(
-                                project_name, dep_name, namespace, component_names
+                            oom_callback = create_health_check_callback(
+                                project_name,
+                                dep_name,
+                                namespace,
+                                component_names,
+                                component_refs=component_refs,
                             )
 
                     try:
@@ -2310,66 +2352,106 @@ class ProjectManager:
                             on_progressing=oom_callback,
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
-                    except OOMDetectedError as e:
+                    except DeploymentHealthError as e:
                         logger.warning(
-                            "OOM detected during sync of '%s': %s — tuning and queuing refresh",
+                            "Pod health issues during sync of '%s': %s",
                             app_name,
                             e,
                         )
-                        if progress_manager and argo_task:
-                            progress_manager.update_task(
-                                argo_task,
-                                f"OOM detected for {app_name}, tuning resources...",
+
+                        # Store per-component failure details for the task result,
+                        # enriched with user-friendly title/suggestion from the event interpreter.
+                        from opi.services.event_interpreter import _interpret_by_reason
+
+                        _TYPE_TO_REASON = {
+                            "crash_loop": "CrashLoopBackOff",
+                            "image_pull": "ImagePullBackOff",
+                            "oom": "OOMKilled",
+                        }
+                        self._component_failures = []
+                        for f in e.failures:
+                            reason = _TYPE_TO_REASON.get(f.failure_type, "")
+                            translation = _interpret_by_reason(reason, f.message)
+                            title = (
+                                translation[0]
+                                if translation
+                                else f"Component '{f.component_reference or f.component_name}'"
                             )
-                        try:
-                            # Tune resources (commit only, no inline reprocess to avoid
-                            # race conditions with the current task's processing).
-                            result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
-                            if result.changes:
-                                logger.info(
-                                    "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
-                                    len(result.changes),
-                                    project_name,
-                                    dep_name,
+                            suggestion = translation[1] if translation else f.message
+
+                            self._component_failures.append(
+                                {
+                                    "component": f.component_reference or f.component_name,
+                                    "deployment": f.deployment_name or dep_name,
+                                    "failure_type": f.failure_type,
+                                    "message": f.message,
+                                    "title": title,
+                                    "suggestion": suggestion,
+                                    **({"logs": f.logs} if f.logs else {}),
+                                }
+                            )
+
+                        # Categorize failures by type
+                        oom_failures = [f for f in e.failures if f.failure_type == "oom"]
+                        image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
+                        crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
+
+                        task_service = (
+                            progress_manager._task_service
+                            if progress_manager and hasattr(progress_manager, "_task_service")
+                            else None
+                        )
+
+                        # Handle OOM: tune resources, queue refresh (existing behavior)
+                        if oom_failures:
+                            if progress_manager and argo_task:
+                                progress_manager.update_task(
+                                    argo_task,
+                                    f"OOM detected for {app_name}, tuning resources...",
                                 )
-                                # Queue a refresh task — the worker will pick it up
-                                # after this task completes (queue guard prevents
-                                # concurrent processing of the same deployment).
-                                task_service = (
-                                    progress_manager._task_service
-                                    if progress_manager and hasattr(progress_manager, "_task_service")
-                                    else None
-                                )
-                                if task_service:
-                                    await task_service.create_task(
-                                        task_type="refresh_deployment",
-                                        project_name=project_name,
-                                        deployment_name=dep_name,
-                                        cluster=settings.CLUSTER_MANAGER,
-                                        payload={
-                                            "project_name": project_name,
-                                            "deployment_name": dep_name,
-                                            "force_clone": False,
-                                        },
-                                    )
-                                else:
-                                    logger.warning(
-                                        "Task service not available, cannot queue refresh for %s/%s",
+                            try:
+                                result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
+                                if result.changes:
+                                    logger.info(
+                                        "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
+                                        len(result.changes),
                                         project_name,
                                         dep_name,
                                     )
-                            else:
-                                logger.warning(
-                                    "OOM auto-tune found no actionable changes for %s/%s",
+                                    await self._queue_refresh_task(task_service, project_name, dep_name)
+                                else:
+                                    logger.warning(
+                                        "OOM auto-tune found no actionable changes for %s/%s",
+                                        project_name,
+                                        dep_name,
+                                    )
+                                    sync_failures.append(
+                                        f"{app_name}: OOM detected but auto-tune could not determine new limits"
+                                    )
+                            except Exception as tune_err:
+                                logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
+                                sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
+
+                        # Handle ImagePullBackOff: disable component, queue refresh
+                        if image_pull_failures:
+                            disabled_components = [(f.component_name, f.message) for f in image_pull_failures]
+                            try:
+                                await disable_components_for_image_pull(project_name, dep_name, disabled_components)
+                                await self._queue_refresh_task(task_service, project_name, dep_name)
+                            except Exception as img_err:
+                                logger.error(
+                                    "ImagePull remediation failed for %s/%s: %s",
                                     project_name,
                                     dep_name,
+                                    img_err,
                                 )
-                                sync_failures.append(
-                                    f"{app_name}: OOM detected but auto-tune could not determine new limits"
-                                )
-                        except Exception as tune_err:
-                            logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
-                            sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
+                            names = ", ".join(f.component_name for f in image_pull_failures)
+                            sync_failures.append(f"{app_name}: ImagePullBackOff for {names}")
+
+                        # Handle CrashLoopBackOff: report only, no remediation
+                        if crash_loop_failures:
+                            names = ", ".join(f.component_name for f in crash_loop_failures)
+                            sync_failures.append(f"{app_name}: CrashLoopBackOff for {names}")
                     except TimeoutError:
                         sync_failures.append(f"{app_name}: timed out waiting for sync")
                         logger.error(f"Timed out waiting for '{app_name}' to sync")
@@ -2383,6 +2465,7 @@ class ProjectManager:
                 if progress_manager and argo_task:
                     progress_manager.fail_task(argo_task, f"Sync failures: {failure_summary}")
                 critical_failures.append(f"ArgoCD sync failures: {failure_summary}")
+                self._processing_error = failure_summary
                 return False
             else:
                 logger.info("All ArgoCD applications are synced and healthy")
@@ -3849,6 +3932,7 @@ class ProjectManager:
                 self.get_progress_manager().complete_task(creation_task)
 
             self._processing_error = None
+            self._component_failures = None
             return True
         except Exception as e:
             logger.exception(f"Error processing project: {e}")
@@ -4409,6 +4493,8 @@ class ProjectManager:
 
             variables = {
                 "name": unique_name,
+                "deployment_name": deployment_name,
+                "component_name": component_name,
                 "namespace": namespace,
                 "hostname": hostname,
                 "project": {"name": project_name},

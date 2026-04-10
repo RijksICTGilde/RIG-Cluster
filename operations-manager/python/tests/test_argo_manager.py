@@ -194,11 +194,15 @@ class TestWaitForApplicationSynced:
         callback.assert_called_once_with(2)  # elapsed_time after first poll_interval
 
     @pytest.mark.asyncio
-    async def test_on_progressing_not_called_when_stale(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
-        """Should not call on_progressing when status is stale."""
+    async def test_on_progressing_called_even_when_stale(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Should call on_progressing even when status is stale.
+
+        The callback uses kubectl to check pod health directly, so it
+        does not depend on ArgoCD's reconciliation freshness.
+        """
         mock_connector.get_application_status = AsyncMock(
             side_effect=[
-                # Stale Progressing
+                # Stale Progressing — callback should still fire
                 _make_status("Synced", "Progressing", reconciled_at="2026-03-17T10:00:00Z"),
                 # Fresh and healthy
                 _make_status("Synced", "Healthy", reconciled_at="2026-03-17T10:01:00Z"),
@@ -219,7 +223,7 @@ class TestWaitForApplicationSynced:
             )
 
         assert result is True
-        callback.assert_not_called()
+        callback.assert_called_once_with(2)
 
     @pytest.mark.asyncio
     async def test_on_progressing_exception_propagates(self, argo_manager: ArgoManager, mock_connector: AsyncMock):

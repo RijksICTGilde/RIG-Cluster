@@ -6,6 +6,7 @@ This module provides functionality to interact with Kubernetes clusters using ku
 
 import asyncio
 import base64
+import json
 import logging
 import os
 from datetime import UTC
@@ -738,7 +739,7 @@ class KubectlConnector:
             # try fetching previous container logs
             if not log_lines:
                 prev_args = ["logs", "-l", f"app={deployment_name}", "-n", namespace, f"--tail={lines}", "--previous"]
-                prev_stdout, prev_stderr, prev_code = await self._run_kubectl_command(prev_args)
+                prev_stdout, _, prev_code = await self._run_kubectl_command(prev_args)
                 if prev_code == 0 and prev_stdout.strip():
                     log_lines = ["[previous container logs]"] + [
                         line for line in prev_stdout.split("\n") if line.strip()
@@ -967,6 +968,41 @@ class KubectlConnector:
         except Exception as e:
             logger.error(f"Error getting deployment status: {e}")
             return []
+
+    async def get_deployment_conditions(self, namespace: str, deployment_name: str) -> list[dict[str, str]] | None:
+        """
+        Get the status conditions of a specific deployment.
+
+        Args:
+            namespace: Namespace of the deployment
+            deployment_name: Name of the deployment
+
+        Returns:
+            List of condition dicts (with keys: type, status, reason, message),
+            or None if the deployment was not found.
+        """
+        try:
+            args = [
+                "get",
+                "deployment",
+                deployment_name,
+                "-n",
+                namespace,
+                "-o",
+                "json",
+            ]
+            stdout, stderr, code = await self._run_kubectl_command(args)
+
+            if code != 0:
+                logger.debug(f"Deployment '{deployment_name}' not found in {namespace}: {stderr}")
+                return None
+
+            data = json.loads(stdout)
+            return data.get("status", {}).get("conditions", [])
+
+        except Exception as e:
+            logger.warning(f"Error getting deployment conditions for {deployment_name}: {e}")
+            return None
 
     async def delete_resource(self, resource_type: str, resource_name: str, namespace: str | None = None) -> bool:
         """

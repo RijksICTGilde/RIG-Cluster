@@ -129,6 +129,7 @@ class TestCreateAsyncTask:
             deployment_name="main",
             cluster="local",
             payload={"key": "value"},
+            max_attempts=None,
         )
 
     @pytest.mark.asyncio

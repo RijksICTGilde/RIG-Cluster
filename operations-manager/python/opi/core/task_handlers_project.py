@@ -137,7 +137,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             # ArgoCD monitoring
             monitor_task = progress.add_subtask(deploy_task, "ArgoCD & deployment monitoring")
             await _monitor_argocd_and_deployment(
-                task_id="",  # not used meaningfully by the monitor helper
+                _task_id="",  # not used by the monitor helper
                 project_name=project_name,
                 task_progress_manager=progress,
                 monitor_task=monitor_task,
@@ -184,7 +184,17 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             error_msg = project_manager.get_processing_error() or "Project processing failed"
             progress.fail_task(deploy_task, error_msg)
             progress.fail_project(error_msg)
-            return {"project_name": project_name, "status": "failed", "error": error_msg}
+            component_failures = project_manager.get_component_failures()
+            return {
+                "project_name": project_name,
+                "status": "failed",
+                "error": error_msg,
+                "processing": {
+                    "status": "failed",
+                    "error": error_msg,
+                    **({"component_failures": component_failures} if component_failures else {}),
+                },
+            }
 
     except Exception as exc:
         error_msg = f"Failed deployment: {exc}"
@@ -369,6 +379,11 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 **(
                     {"error": project_manager.get_processing_error()}
                     if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **(
+                    {"component_failures": component_failures}
+                    if (component_failures := project_manager.get_component_failures())
                     else {}
                 ),
             },

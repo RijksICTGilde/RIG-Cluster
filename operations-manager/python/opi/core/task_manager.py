@@ -57,6 +57,7 @@ class ProjectInfo:
     namespace: str | None = None
     web_addresses: dict[str, str] | None = None  # component_name -> web_address
     completed_at: datetime | None = None  # when project reached terminal status
+    error: str | None = None
 
 
 # Simple in-memory storage for projects only
@@ -144,6 +145,7 @@ class TaskProgressManager:
         """Mark the entire project as failed."""
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.FAILED
+            _projects[self.project_id].error = error
             _projects[self.project_id].completed_at = datetime.now(tz=UTC)
 
     def set_namespace(self, namespace: str) -> None:
