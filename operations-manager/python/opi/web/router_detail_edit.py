@@ -393,11 +393,11 @@ def _extract_deployment_name_from_flow(flow_id: str, project_data: dict[str, Any
     return None
 
 
-def _start_deployment(
-    project_name: str, result_yaml: dict[str, Any], deployment_name: str | None = None
-) -> tuple[str, BackgroundTask]:
-    """Create a background deployment task. Returns (task_id, background_task)."""
-    from opi.core.task_manager import create_task
+async def _start_deployment(
+    request: Request, project_name: str, result_yaml: dict[str, Any], deployment_name: str | None = None
+) -> str:
+    """Create a V2 async task for deployment processing. Returns task_id."""
+    from opi.core.task_helpers import create_async_task
 
     yaml_instance = YAML()
     yaml_instance.preserve_quotes = True
@@ -406,15 +406,15 @@ def _start_deployment(
     yaml_instance.dump(result_yaml, yaml_output)
     yaml_content = yaml_output.getvalue()
 
-    display_name = result_yaml.get("display-name", project_name)
-    task_id = create_task(display_name)
-
-    from opi.core.simple_background import process_project_yaml_background
-
-    bg_task = BackgroundTask(
-        process_project_yaml_background, task_id, project_name, yaml_content, deployment_name=deployment_name
+    task = await create_async_task(
+        request=request,
+        task_type="create_project",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={"project_name": project_name, "yaml_content": yaml_content, "deployment_name": deployment_name},
+        max_attempts=1,
     )
-    return task_id, bg_task
+    return str(task["task_id"])
 
 
 # ---------------------------------------------------------------------------
@@ -1105,7 +1105,7 @@ async def _modal_do_submit(
     if action == "process_project":
         # Extract targeted deployment name from flow_id when editing a specific deployment
         target_deployment_name = _extract_deployment_name_from_flow(flow_id, existing_data)
-        task_id, bg_task = _start_deployment(project_name, existing_data, deployment_name=target_deployment_name)
+        task_id = await _start_deployment(request, project_name, existing_data, deployment_name=target_deployment_name)
         if target_deployment_name:
             logger.info(
                 "Starting targeted deployment for %s/%s (task=%s, flow=%s)",
@@ -1125,9 +1125,7 @@ async def _modal_do_submit(
             rendered = str(process_components(rendered))
 
         clear_modal_wizard_state(request)
-        response = HTMLResponse(content=rendered)
-        response.background = bg_task
-        return response
+        return HTMLResponse(content=rendered)
 
     # save_only
     clear_modal_wizard_state(request)
@@ -1244,20 +1242,26 @@ async def _handle_backup_restore_submit(
 @detail_edit_router.get("/{project_name}/modal-wizard/progress/{task_id}", response_class=HTMLResponse)
 @requires_sso
 async def modal_wizard_progress_html(request: Request, project_name: str, task_id: str) -> HTMLResponse:
-    """Return server-rendered progress fragment for HTMX polling."""
-    from opi.core.task_manager import TaskStatus, _project_managers, _projects
+    """Return server-rendered progress fragment for HTMX polling.
+
+    Reads task state from the V2 async task service (database-backed).
+    """
+    from opi.core.task_helpers import get_task_service
+    from opi.web.router import _v2_task_to_template_context
 
     templates = get_templates()
+    task_service = get_task_service(request)
+    task = await task_service.get_task(task_id)
 
-    if task_id not in _projects:
-        context = {
+    if task is None:
+        context: dict[str, Any] = {
             "task_id": task_id,
             "project_name": project_name,
             "progress": 0,
             "current_step": "",
             "tasks": [],
             "status": "failed",
-            "error": "Taak niet meer beschikbaar (herstart of verlopen)",
+            "error": "Taak niet gevonden",
         }
         rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
         process_components = templates.env.filters.get("process_components")
@@ -1265,51 +1269,8 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
             rendered = str(process_components(rendered))
         return HTMLResponse(content=rendered, status_code=404)
 
-    project = _projects[task_id]
-    task_manager = _project_managers.get(task_id)
-
-    task_hierarchy: list[dict[str, Any]] = []
-    progress = 0
-
-    if task_manager:
-        main_tasks = []
-        subtasks_by_parent: dict[str, list] = {}
-
-        for task in task_manager.tasks.values():
-            if task.parent_id is None:
-                main_tasks.append(task)
-            else:
-                subtasks_by_parent.setdefault(task.parent_id, []).append(task)
-
-        for main_task in main_tasks:
-            task_data: dict[str, Any] = {
-                "name": main_task.name,
-                "status": main_task.status.value,
-                "subtasks": [],
-            }
-            if main_task.id in subtasks_by_parent:
-                for subtask in subtasks_by_parent[main_task.id]:
-                    task_data["subtasks"].append(
-                        {
-                            "name": subtask.name,
-                            "status": subtask.status.value,
-                        }
-                    )
-            task_hierarchy.append(task_data)
-
-        total = len(task_manager.tasks)
-        completed = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
-        progress = int((completed / total * 100) if total > 0 else 0)
-
-    context = {
-        "task_id": task_id,
-        "project_name": project_name,
-        "progress": progress,
-        "current_step": project.current_step or "Verwerking gestart...",
-        "tasks": task_hierarchy,
-        "status": project.status.value,
-        "error": getattr(project, "error", None),
-    }
+    context = _v2_task_to_template_context(task, project_name)
+    context["task_id"] = task_id
 
     rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
     process_components = templates.env.filters.get("process_components")

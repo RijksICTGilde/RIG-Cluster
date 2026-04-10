@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from opi.connectors.git import GitConnector, create_git_connector_for_project_files
+from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import (
     get_max_memory_limit_mi,
@@ -200,15 +201,32 @@ async def _analyze_component_resources(
     component_ref: str,
     namespace: str,
     cluster: str,
+    kubectl: KubectlConnector | None = None,
 ) -> _ComponentAnalysis | None:
     """
     Query Prometheus and compute a memory recommendation for a single component.
 
     Returns:
         _ComponentAnalysis with current state and recommendation, or None
-        if no recommendation (no data or within threshold).
+        if no recommendation (no data, within threshold, or deployment unhealthy).
     """
     unique_name = generate_unique_name(dep_name, component_ref)
+
+    # Skip unhealthy deployments — their low memory usage is misleading
+    if kubectl is not None and KubectlConnector.isConnected:
+        try:
+            conditions = await kubectl.get_deployment_conditions(namespace, unique_name)
+            if conditions is not None:
+                available = next((c for c in conditions if c.get("type") == "Available"), None)
+                if available and available.get("status") != "True":
+                    reason = available.get("reason", "unknown")
+                    logger.info(
+                        f"Skipping {unique_name}: deployment is not available "
+                        f"(reason: {reason}), memory data would be misleading"
+                    )
+                    return None
+        except Exception as e:
+            logger.warning(f"Failed to check deployment health for {unique_name}: {e}")
     window_hours = settings.RESOURCE_TUNING_WINDOW_HOURS
     buffer_percent = settings.RESOURCE_TUNING_MEMORY_BUFFER_PERCENT
     threshold_percent = settings.RESOURCE_TUNING_THRESHOLD_PERCENT
@@ -382,6 +400,7 @@ async def check_deployment_resources(
     except Exception:
         return []
 
+    kubectl = KubectlConnector()
     results: list[MemoryCheckResult] = []
 
     deployments = project_data.get("deployments", [])
@@ -402,7 +421,14 @@ async def check_deployment_resources(
                 continue
 
             analysis = await _analyze_component_resources(
-                connector, file_handler, project_data, deployment_name, component_ref, namespace, cluster
+                connector,
+                file_handler,
+                project_data,
+                deployment_name,
+                component_ref,
+                namespace,
+                cluster,
+                kubectl=kubectl,
             )
             if analysis is None:
                 continue
@@ -467,6 +493,7 @@ async def tune_deployment_resources(
         except Exception as e:
             raise RuntimeError(f"Metrics backend unavailable: {e}") from e
 
+        kubectl = KubectlConnector()
         changes: list[dict[str, str]] = []
         unchanged: list[str] = []
 
@@ -491,7 +518,14 @@ async def tune_deployment_resources(
                     continue
 
                 analysis = await _analyze_component_resources(
-                    connector, file_handler, project_data, dep_name, component_ref, namespace, cluster
+                    connector,
+                    file_handler,
+                    project_data,
+                    dep_name,
+                    component_ref,
+                    namespace,
+                    cluster,
+                    kubectl=kubectl,
                 )
                 if analysis is None:
                     unchanged.append(component_ref)
@@ -524,14 +558,20 @@ async def tune_deployment_resources(
                 # Update base component definition so new deployments inherit
                 # a realistic starting point. The OOM watcher will bump up any
                 # deployment that actually needs more memory.
+                # Always write both request and limit together to keep them consistent.
                 base_resources = file_handler.extract_component_resources(project_data, component_ref)
-                base_updates: dict[str, str] = {}
-                if analysis.new_request != base_resources["requests_memory"]:
-                    base_updates["requests_memory"] = analysis.new_request
-                if analysis.new_limit != base_resources["limits_memory"]:
-                    base_updates["limits_memory"] = analysis.new_limit
-                if base_updates:
-                    file_handler.set_component_resources(project_data, component_ref, base_updates)
+                if (
+                    analysis.new_request != base_resources["requests_memory"]
+                    or analysis.new_limit != base_resources["limits_memory"]
+                ):
+                    file_handler.set_component_resources(
+                        project_data,
+                        component_ref,
+                        {
+                            "requests_memory": analysis.new_request,
+                            "limits_memory": analysis.new_limit,
+                        },
+                    )
 
                 # Write resource history at both levels
                 source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"

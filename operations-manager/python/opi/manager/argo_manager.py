@@ -1025,18 +1025,28 @@ class ArgoManager:
                         logger.error(error_msg)
                         raise RuntimeError(error_msg)
 
-                    # Check for terminal health failure
-                    if health_status == "Degraded":
-                        error_msg = f"Application '{app_name}' is degraded"
-                        logger.error(error_msg)
-                        raise RuntimeError(error_msg)
+                # Invoke the health check callback when the application is not
+                # yet healthy.  The callback uses kubectl to check pod state
+                # directly (OOM, CrashLoopBackOff, ImagePullBackOff), so it
+                # does not depend on ArgoCD's reconciliation freshness.
+                # This covers both "Progressing" (new deploy) and "Degraded"
+                # (refresh of an already-failing app where ArgoCD skips the
+                # Progressing phase).  Runs before the terminal Degraded
+                # check so that per-component details are available.
+                call_on_progressing = on_progressing is not None and health_status in ("Progressing", "Degraded")
+
+                # Check for terminal health failure (only if no callback
+                # will run — the callback provides richer per-component
+                # details via DeploymentHealthError)
+                if status_is_fresh and health_status == "Degraded" and not call_on_progressing:
+                    error_msg = f"Application '{app_name}' is degraded"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
 
                 logger.debug(
                     f"Application '{app_name}': sync={sync_status}, health={health_status}, "
                     f"fresh={status_is_fresh}, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
                 )
-
-                call_on_progressing = on_progressing is not None and status_is_fresh and health_status == "Progressing"
 
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval

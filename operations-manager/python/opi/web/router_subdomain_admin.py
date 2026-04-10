@@ -14,11 +14,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from ruamel.yaml import YAML
-from starlette.background import BackgroundTask
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.simple_background import process_project_yaml_background
-from opi.core.task_manager import create_task
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.visualizers.flows import get_flow
@@ -354,15 +351,16 @@ async def _do_submit(request: Request, user: dict, project_name: str) -> HTMLRes
     yaml_instance.dump(existing_data, yaml_output)
     yaml_content = yaml_output.getvalue()
 
-    display_name = existing_data.get("display-name", project_name)
-    task_id = create_task(display_name)
+    from opi.core.task_helpers import create_async_task
 
-    bg_task = BackgroundTask(
-        process_project_yaml_background,
-        task_id,
-        project_name,
-        yaml_content,
+    task = await create_async_task(
+        request=request,
+        task_type="create_project",
+        project_name=project_name,
+        payload={"project_name": project_name, "yaml_content": yaml_content},
+        max_attempts=1,
     )
+    task_id = str(task["task_id"])
 
     templates = get_templates()
     rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
@@ -373,6 +371,4 @@ async def _do_submit(request: Request, user: dict, project_name: str) -> HTMLRes
         rendered = str(process_components(rendered))
 
     clear_modal_wizard_state(request)
-    response = HTMLResponse(content=rendered)
-    response.background = bg_task
-    return response
+    return HTMLResponse(content=rendered)

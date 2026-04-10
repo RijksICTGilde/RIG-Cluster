@@ -1,31 +1,33 @@
 """
-OOM Kill Watcher and ImagePullBackOff detection.
+Deployment health watcher: OOM, ImagePullBackOff, and CrashLoopBackOff detection.
 
-Provides two mechanisms for OOM detection:
-1. **Inline detection** (``detect_oom_kills`` / ``create_oom_progressing_callback``):
-   Used during the ArgoCD polling loop to detect OOM kills while the
-   application is still ``Progressing``.  When detected, raises
-   ``OOMDetectedError`` so the caller can trigger tuning immediately.
+Provides two mechanisms:
+1. **Inline detection** (``create_health_check_callback``):
+   Used during the ArgoCD polling loop to detect pod health issues while
+   the application is still ``Progressing``.  When detected, raises
+   ``DeploymentHealthError`` so the caller can handle each failure type.
 
 2. **Fire-and-forget** (``schedule_oom_check``):
    After a deploy or refresh completes, a delayed background check queries
-   kubectl for OOM-killed containers.  If detected, the tune service bumps
-   memory limits and triggers reprocessing.  Capped at max_attempts.
+   kubectl for OOM kills and image pull errors.  If detected, queues a
+   task for remediation via the task queue (no direct reprocessing).
 
-Additionally detects **ImagePullBackOff** errors on pods.  When detected,
-the affected deployment component is disabled (``disabled: true``,
-``disabled-reason: "ImagePullBackOff: ..."``) and the project is
-reprocessed to set ``replicas: 0``, stopping the retry loop.  The
-component is automatically re-enabled when a new image is pushed via
-``update_image_and_regenerate()``.
+Failure type handling:
+- **OOM**: Auto-tune memory limits and queue a refresh task.
+- **ImagePullBackOff**: Queue a task to disable the component (``replicas: 0``).
+  Re-enabled when a new image is pushed via ``update_image_and_regenerate()``.
+- **CrashLoopBackOff**: Report only, no remediation.  Pods stay running
+  so users can access logs.
 """
 
 import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from opi.connectors.kubectl import KubectlConnector
+from opi.core.async_task_service import AsyncTaskService
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.services.resource_tuning_service import get_project_data, tune_deployment_resources
@@ -33,18 +35,17 @@ from opi.utils.naming import generate_unique_name
 
 logger = logging.getLogger(__name__)
 
-# Grace period: don't check for OOM kills until the deployment has had
-# this many seconds to start up.  Avoids false positives from previous
-# OOM kills that haven't been cleared yet by a fresh pod.
-OOM_CHECK_GRACE_SECONDS = 30
+# Grace period: don't check for pod health issues until the deployment
+# has had this many seconds to start up.  Avoids false positives from
+# previous OOM kills that haven't been cleared yet by a fresh pod.
+HEALTH_CHECK_GRACE_SECONDS = 30
 
-# How often to re-check for OOM kills after the grace period.
-# Set to 0 to check every poll iteration (every 5s) — needed to catch
-# pods that briefly run then OOM-kill before ArgoCD declares healthy.
-OOM_CHECK_INTERVAL_SECONDS = 0
+# How often to re-check after the grace period.
+# Set to 0 to check every poll iteration (every 5s).
+HEALTH_CHECK_INTERVAL_SECONDS = 0
 
-# Stop checking after this many seconds (OOM during boot is fast).
-OOM_CHECK_MAX_ELAPSED_SECONDS = 120
+# Stop checking after this many seconds (boot-time failures are fast).
+HEALTH_CHECK_MAX_ELAPSED_SECONDS = 120
 
 # Maximum number of inline OOM → tune → reprocess cycles per deployment.
 # With the sliding bump factor (3x/2x/1.5x), 3 attempts covers:
@@ -55,149 +56,168 @@ OOM_INLINE_MAX_ATTEMPTS = 3
 # during the current process lifetime.  Keyed by "project/deployment".
 _inline_oom_attempts: dict[str, int] = {}
 
+# Module-level task service reference for the fire-and-forget path.
+# Set during app startup via ``set_task_service()``.
+_task_service_ref: AsyncTaskService | None = None
 
-class OOMDetectedError(Exception):
-    """Raised when OOM kills are detected during deployment polling."""
 
-    def __init__(self, components: list[str], namespace: str):
-        self.components = components
+def set_task_service(task_service: AsyncTaskService) -> None:
+    """Store a reference to the task service for fire-and-forget use."""
+    global _task_service_ref
+    _task_service_ref = task_service
+
+
+# ---------------------------------------------------------------------------
+# Data types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PodHealthResult:
+    """Result of a unified pod health check for one component."""
+
+    component_name: str
+    oom_detected: bool = False
+    image_pull_error: str | None = None
+    crash_loop_detected: bool = False
+    crash_loop_message: str | None = None
+
+
+@dataclass
+class ComponentFailure:
+    """One component's failure details."""
+
+    component_name: str  # unique name (deployment-component)
+    failure_type: str  # "oom" | "image_pull" | "crash_loop"
+    message: str
+    deployment_name: str = ""  # user-facing deployment name
+    component_reference: str = ""  # user-facing component reference
+    logs: list[str] | None = None  # last log lines captured before failure
+
+
+class DeploymentHealthError(Exception):
+    """Raised when pod health issues are detected during deployment polling."""
+
+    def __init__(self, failures: list[ComponentFailure], namespace: str):
+        self.failures = failures
         self.namespace = namespace
-        names = ", ".join(components)
-        super().__init__(f"OOM kills detected for {names} in {namespace}")
-
-
-async def _check_oom_kills_via_kubectl(namespace: str, unique_name: str) -> bool:
-    """
-    Check whether any pod matching *unique_name* in *namespace* was OOM-killed.
-
-    Uses ``kubectl get pods -o json`` and inspects each container's
-    ``lastState.terminated`` for OOM indicators:
-    - ``reason == "OOMKilled"`` (explicit)
-    - ``exitCode == 137`` (SIGKILL from OOM killer, sometimes reported as "Error")
-
-    Args:
-        namespace: Kubernetes namespace to search
-        unique_name: Deployment/pod name prefix to match
-
-    Returns:
-        True if at least one container was OOM-killed
-    """
-    kubectl = KubectlConnector()
-
-    if not KubectlConnector.isConnected:
-        logger.warning("kubectl not connected, cannot check OOM kills for %s", unique_name)
-        return False
-
-    try:
-        args = [
-            "get",
-            "pods",
-            "-n",
-            namespace,
-            "-l",
-            f"app={unique_name}",
-            "-o",
-            "json",
-        ]
-        stdout, stderr, code = await kubectl.run_command(args)
-
-        if code != 0:
-            logger.warning("Failed to get pods for OOM check (%s/%s): %s", namespace, unique_name, stderr)
-            return False
-
-        pods_data = json.loads(stdout)
-        for pod in pods_data.get("items", []):
-            pod_created = pod.get("metadata", {}).get("creationTimestamp", "")
-            for container_status in pod.get("status", {}).get("containerStatuses", []):
-                last_state = container_status.get("lastState", {})
-                terminated = last_state.get("terminated", {})
-                reason = terminated.get("reason", "")
-                exit_code = terminated.get("exitCode")
-                if reason == "OOMKilled" or exit_code == 137:
-                    # Only count OOM kills that happened during this pod's
-                    # lifetime.  If the OOM predates the pod creation, it's
-                    # stale (e.g. from a previous replicaset before a tune).
-                    oom_finished = terminated.get("finishedAt", "")
-                    if pod_created and oom_finished and oom_finished < pod_created:
-                        logger.debug(
-                            "Ignoring stale OOM for pod %s (oom=%s < created=%s)",
-                            pod.get("metadata", {}).get("name", "unknown"),
-                            oom_finished,
-                            pod_created,
-                        )
-                        continue
-                    logger.info(
-                        "OOM kill detected for pod %s container %s in %s (reason=%s, exitCode=%s)",
-                        pod.get("metadata", {}).get("name", "unknown"),
-                        container_status.get("name", "unknown"),
-                        namespace,
-                        reason,
-                        exit_code,
-                    )
-                    return True
-
-    except Exception as e:
-        logger.warning("Error checking OOM kills for %s/%s: %s", namespace, unique_name, e)
-
-    return False
+        summary = "; ".join(f"{f.component_name}: {f.failure_type}" for f in failures)
+        super().__init__(f"Pod health issues in {namespace}: {summary}")
 
 
 _IMAGE_PULL_REASONS = {"ImagePullBackOff", "ErrImagePull", "InvalidImageName"}
+_CRASH_LOOP_REASONS = {"CrashLoopBackOff"}
 
 
-async def _check_image_pull_errors(namespace: str, unique_name: str) -> str | None:
+async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     """
-    Check whether any pod matching *unique_name* has an image pull error.
+    Single kubectl call to detect OOM, ImagePullBackOff, and CrashLoopBackOff.
 
-    Inspects each container's current ``waiting`` state for ImagePullBackOff,
-    ErrImagePull, or InvalidImageName reasons.
+    Runs ``kubectl get pods -o json`` once and inspects each container's
+    state for all three failure types:
+    - OOM: ``lastState.terminated.reason == "OOMKilled"`` or ``exitCode == 137``
+    - ImagePull: ``state.waiting.reason`` in {ImagePullBackOff, ErrImagePull, InvalidImageName}
+    - CrashLoop: ``state.waiting.reason == "CrashLoopBackOff"``
+
+    Args:
+        namespace: Kubernetes namespace to search
+        unique_name: Deployment/pod name prefix (label selector ``app={unique_name}``)
 
     Returns:
-        The error message if an image pull error is found, None otherwise.
+        PodHealthResult with all detected issues
     """
+    result = PodHealthResult(component_name=unique_name)
     kubectl = KubectlConnector()
 
     if not KubectlConnector.isConnected:
-        return None
+        logger.warning("kubectl not connected, cannot check pod health for %s", unique_name)
+        return result
 
     try:
         args = ["get", "pods", "-n", namespace, "-l", f"app={unique_name}", "-o", "json"]
         stdout, stderr, code = await kubectl.run_command(args)
 
         if code != 0:
-            logger.warning("Failed to get pods for image pull check (%s/%s): %s", namespace, unique_name, stderr)
-            return None
+            logger.warning("Failed to get pods for health check (%s/%s): %s", namespace, unique_name, stderr)
+            return result
 
         pods_data = json.loads(stdout)
         for pod in pods_data.get("items", []):
+            pod_name = pod.get("metadata", {}).get("name", "unknown")
+            pod_created = pod.get("metadata", {}).get("creationTimestamp", "")
+
             for container_status in pod.get("status", {}).get("containerStatuses", []):
+                container_name = container_status.get("name", "unknown")
+
+                # Check OOM via lastState.terminated
+                last_state = container_status.get("lastState", {})
+                terminated = last_state.get("terminated", {})
+                reason = terminated.get("reason", "")
+                exit_code = terminated.get("exitCode")
+                if reason == "OOMKilled" or exit_code == 137:
+                    oom_finished = terminated.get("finishedAt", "")
+                    if pod_created and oom_finished and oom_finished < pod_created:
+                        logger.debug(
+                            "Ignoring stale OOM for pod %s (oom=%s < created=%s)",
+                            pod_name,
+                            oom_finished,
+                            pod_created,
+                        )
+                    else:
+                        logger.info(
+                            "OOM kill detected for pod %s container %s in %s (reason=%s, exitCode=%s)",
+                            pod_name,
+                            container_name,
+                            namespace,
+                            reason,
+                            exit_code,
+                        )
+                        result.oom_detected = True
+
+                # Check waiting state for ImagePull and CrashLoop
                 waiting = container_status.get("state", {}).get("waiting", {})
-                reason = waiting.get("reason", "")
-                if reason in _IMAGE_PULL_REASONS:
+                waiting_reason = waiting.get("reason", "")
+
+                if waiting_reason in _IMAGE_PULL_REASONS:
                     message = waiting.get("message", "image pull failed")
                     logger.info(
                         "Image pull error for pod %s container %s in %s: %s - %s",
-                        pod.get("metadata", {}).get("name", "unknown"),
-                        container_status.get("name", "unknown"),
+                        pod_name,
+                        container_name,
                         namespace,
-                        reason,
+                        waiting_reason,
                         message,
                     )
-                    return f"{reason}: {message}"
+                    result.image_pull_error = f"{waiting_reason}: {message}"
+
+                if waiting_reason in _CRASH_LOOP_REASONS:
+                    message = waiting.get("message", "container keeps crashing")
+                    logger.info(
+                        "CrashLoopBackOff for pod %s container %s in %s: %s",
+                        pod_name,
+                        container_name,
+                        namespace,
+                        message,
+                    )
+                    result.crash_loop_detected = True
+                    result.crash_loop_message = f"CrashLoopBackOff: {message}"
 
     except Exception as e:
-        logger.warning("Error checking image pull errors for %s/%s: %s", namespace, unique_name, e)
+        logger.warning("Error checking pod health for %s/%s: %s", namespace, unique_name, e)
 
-    return None
+    return result
 
 
-async def _disable_components_for_image_pull(
+async def disable_components_for_image_pull(
     project_name: str,
     deployment_name: str,
     disabled_components: list[tuple[str, str]],
 ) -> None:
     """
-    Disable components with image pull errors: update YAML, commit, reprocess.
+    Disable components with image pull errors: update YAML and commit.
+
+    Does NOT trigger reprocessing — the caller is responsible for that
+    (typically by queuing a refresh task through the task queue).
 
     Args:
         project_name: Name of the project
@@ -208,7 +228,6 @@ async def _disable_components_for_image_pull(
     from opi.services.resource_tuning_service import (
         commit_project_yaml,
         get_project_data_from_git,
-        trigger_reprocessing,
     )
 
     project_data, filename, git_connector = await get_project_data_from_git(project_name)
@@ -226,7 +245,6 @@ async def _disable_components_for_image_pull(
     finally:
         await git_connector.close()
 
-    await trigger_reprocessing(project_name, filename, deployment_name)
     logger.info(
         "Disabled %d component(s) with image pull errors in %s/%s: %s",
         len(disabled_components),
@@ -244,14 +262,15 @@ async def _run_oom_check(
     delay_seconds: int,
 ) -> None:
     """
-    Internal coroutine: wait, check for OOM, tune if needed.
+    Internal coroutine: wait, check pod health, remediate if needed.
 
-    This is the actual work function called inside the fire-and-forget task.
+    Uses the task queue for reprocessing to avoid race conditions with
+    concurrent tasks operating on the same deployment.
     """
     await asyncio.sleep(delay_seconds)
 
     logger.info(
-        "OOM watcher check starting for %s/%s (attempt %d/%d)",
+        "Health watcher check starting for %s/%s (attempt %d/%d)",
         project_name,
         deployment_name,
         attempt,
@@ -261,7 +280,7 @@ async def _run_oom_check(
     try:
         project_data, _ = get_project_data(project_name)
     except ValueError as e:
-        logger.warning("OOM watcher: project lookup failed for %s: %s", project_name, e)
+        logger.warning("Health watcher: project lookup failed for %s: %s", project_name, e)
         return
 
     # Find the deployment in project data
@@ -273,18 +292,18 @@ async def _run_oom_check(
             break
 
     if not target_dep:
-        logger.warning("OOM watcher: deployment '%s' not found in project '%s'", deployment_name, project_name)
+        logger.warning("Health watcher: deployment '%s' not found in project '%s'", deployment_name, project_name)
         return
 
     base_namespace = target_dep.get("namespace")
     cluster = target_dep.get("cluster")
     if not base_namespace or not cluster:
-        logger.warning("OOM watcher: deployment '%s' missing namespace or cluster", deployment_name)
+        logger.warning("Health watcher: deployment '%s' missing namespace or cluster", deployment_name)
         return
 
     namespace = get_prefixed_namespace(cluster, base_namespace)
 
-    # Check each component for OOM kills and image pull errors
+    # Check each component for health issues (unified check)
     any_oom = False
     image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
     components = target_dep.get("components", [])
@@ -296,28 +315,28 @@ async def _run_oom_check(
             continue
 
         unique_name = generate_unique_name(deployment_name, component_ref)
+        health = await check_pod_health(namespace, unique_name)
 
-        if await _check_oom_kills_via_kubectl(namespace, unique_name):
+        if health.oom_detected:
             any_oom = True
+        if health.image_pull_error:
+            image_pull_errors.append((component_ref, health.image_pull_error))
+        # CrashLoopBackOff: no remediation in fire-and-forget — only reported inline
 
-        error_msg = await _check_image_pull_errors(namespace, unique_name)
-        if error_msg:
-            image_pull_errors.append((component_ref, error_msg))
-
-    # Handle image pull errors: disable components, commit, reprocess
+    # Handle image pull errors: disable in YAML, then queue refresh task
     if image_pull_errors:
         try:
-            await _disable_components_for_image_pull(project_name, deployment_name, image_pull_errors)
+            await disable_components_for_image_pull(project_name, deployment_name, image_pull_errors)
+            # Queue a refresh task instead of direct reprocessing
+            await _queue_refresh_task(project_name, deployment_name)
         except Exception as e:
-            logger.error(
-                "Failed to disable components for image pull errors in %s/%s: %s", project_name, deployment_name, e
-            )
+            logger.error("Failed to handle image pull errors in %s/%s: %s", project_name, deployment_name, e)
 
-    # Handle OOM kills: tune resources and schedule next check
+    # Handle OOM kills: tune resources (git-only), then queue refresh
     if not any_oom:
         if not image_pull_errors:
             logger.info(
-                "Deployment watcher: no issues detected for %s/%s (attempt %d/%d)",
+                "Health watcher: no issues detected for %s/%s (attempt %d/%d)",
                 project_name,
                 deployment_name,
                 attempt,
@@ -326,7 +345,7 @@ async def _run_oom_check(
         return
 
     logger.info(
-        "OOM watcher: OOM detected for %s/%s, triggering auto-tune (attempt %d/%d)",
+        "Health watcher: OOM detected for %s/%s, triggering auto-tune (attempt %d/%d)",
         project_name,
         deployment_name,
         attempt,
@@ -334,14 +353,15 @@ async def _run_oom_check(
     )
 
     try:
-        result = await tune_deployment_resources(project_name, deployment_name)
+        result = await tune_deployment_resources(project_name, deployment_name, skip_reprocessing=True)
         if result.changes:
             logger.info(
-                "OOM watcher: auto-tune applied %d change(s) for %s/%s",
+                "Health watcher: auto-tune applied %d change(s) for %s/%s",
                 len(result.changes),
                 project_name,
                 deployment_name,
             )
+            await _queue_refresh_task(project_name, deployment_name)
             schedule_oom_check(
                 project_name,
                 deployment_name,
@@ -349,9 +369,32 @@ async def _run_oom_check(
                 max_attempts=max_attempts,
             )
         else:
-            logger.info("OOM watcher: tune found no actionable changes for %s/%s", project_name, deployment_name)
+            logger.info("Health watcher: tune found no actionable changes for %s/%s", project_name, deployment_name)
     except Exception as e:
-        logger.error("OOM watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
+        logger.error("Health watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
+
+
+async def _queue_refresh_task(project_name: str, deployment_name: str) -> None:
+    """Queue a refresh_deployment task via the task queue.
+
+    Uses the module-level ``_task_service_ref`` set by ``set_task_service()``.
+    """
+    if _task_service_ref is None:
+        logger.warning("Task service not available, cannot queue refresh for %s/%s", project_name, deployment_name)
+        return
+
+    await _task_service_ref.create_task(
+        task_type="refresh_deployment",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        cluster=settings.CLUSTER_MANAGER,
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "force_clone": False,
+        },
+    )
+    logger.info("Queued refresh task for %s/%s", project_name, deployment_name)
 
 
 def schedule_oom_check(
@@ -362,11 +405,10 @@ def schedule_oom_check(
     max_attempts: int | None = None,
 ) -> asyncio.Task | None:
     """
-    Schedule a delayed OOM check as a fire-and-forget background task.
+    Schedule a delayed health check as a fire-and-forget background task.
 
-    After ``delay_seconds``, queries kubectl for OOM kills on the deployment's
-    pods.  If OOM detected, calls ``tune_deployment_resources()`` which commits
-    new limits and triggers reprocessing.
+    After ``delay_seconds``, queries kubectl for OOM kills and image pull
+    errors.  Remediates via the task queue (no direct reprocessing).
 
     Args:
         project_name: Name of the project
@@ -388,7 +430,7 @@ def schedule_oom_check(
 
     if attempt > max_attempts:
         logger.warning(
-            "OOM watcher: max attempts (%d) reached for %s/%s, manual intervention required",
+            "Health watcher: max attempts (%d) reached for %s/%s, manual intervention required",
             max_attempts,
             project_name,
             deployment_name,
@@ -396,7 +438,7 @@ def schedule_oom_check(
         return None
 
     logger.info(
-        "OOM watcher: scheduled check for %s/%s in %ds (attempt %d/%d)",
+        "Health watcher: scheduled check for %s/%s in %ds (attempt %d/%d)",
         project_name,
         deployment_name,
         delay_seconds,
@@ -406,64 +448,66 @@ def schedule_oom_check(
 
     task = asyncio.create_task(
         _run_oom_check(project_name, deployment_name, attempt, max_attempts, delay_seconds),
-        name=f"oom-watch-{project_name}-{deployment_name}-{attempt}",
+        name=f"health-watch-{project_name}-{deployment_name}-{attempt}",
     )
     return task
 
 
-async def detect_oom_kills(
+async def check_all_components_health(
     namespace: str,
     component_names: list[str],
-) -> list[str]:
+) -> list[PodHealthResult]:
     """
-    Check multiple components for OOM kills via kubectl.
+    Check multiple components for health issues via kubectl.
 
     Args:
         namespace: Kubernetes namespace
         component_names: List of unique component names (deployment prefixes)
 
     Returns:
-        List of component names that have OOM-killed pods
+        List of PodHealthResult for components that have issues
     """
-    oom_components: list[str] = []
+    results: list[PodHealthResult] = []
     for name in component_names:
-        if await _check_oom_kills_via_kubectl(namespace, name):
-            oom_components.append(name)  # noqa: PERF401
-    return oom_components
+        health = await check_pod_health(namespace, name)
+        if health.oom_detected or health.image_pull_error or health.crash_loop_detected:
+            results.append(health)
+    return results
 
 
-def create_oom_progressing_callback(
+def create_health_check_callback(
     project_name: str,
     deployment_name: str,
     namespace: str,
     component_names: list[str],
-    grace_seconds: int = OOM_CHECK_GRACE_SECONDS,
+    component_refs: dict[str, str] | None = None,
+    grace_seconds: int = HEALTH_CHECK_GRACE_SECONDS,
 ) -> Callable[[int], Awaitable[None]] | None:
     """
     Build an ``on_progressing`` callback for ``wait_for_application_synced``.
 
-    The callback checks for OOM kills via kubectl after the grace period.
-    If OOM is detected, raises ``OOMDetectedError``.
-
-    Returns ``None`` if the maximum number of inline OOM tune attempts
-    has been reached for this project/deployment, to prevent infinite
-    tune → reprocess → tune loops.
+    The callback checks for OOM, ImagePullBackOff, and CrashLoopBackOff
+    via kubectl after the grace period.  When any issue is detected,
+    raises ``DeploymentHealthError`` with per-component failure details
+    including user-facing names and captured logs.
 
     Args:
-        project_name: Project name (for attempt tracking)
-        deployment_name: Deployment name (for attempt tracking)
+        project_name: Project name (for OOM attempt tracking)
+        deployment_name: Deployment name (user-facing, for OOM attempt tracking)
         namespace: Kubernetes namespace for the deployment
         component_names: Unique names of the deployment's components
+        component_refs: Mapping from unique name to component reference
+            (user-facing name). If None, unique names are used as-is.
         grace_seconds: Seconds to wait before checking (default 30)
 
     Returns:
-        Async callback ``(elapsed_seconds) -> None``, or None if max attempts reached
+        Async callback ``(elapsed_seconds) -> None``, or None if max OOM attempts reached
     """
     attempt_key = f"{project_name}/{deployment_name}"
     current_attempts = _inline_oom_attempts.get(attempt_key, 0)
     if current_attempts >= OOM_INLINE_MAX_ATTEMPTS:
         logger.warning(
-            "OOM inline detection: max attempts (%d) reached for %s, skipping",
+            "Health check: max OOM tune attempts (%d) reached for %s, skipping",
             OOM_INLINE_MAX_ATTEMPTS,
             attempt_key,
         )
@@ -474,38 +518,97 @@ def create_oom_progressing_callback(
     async def _callback(elapsed_seconds: int) -> None:
         nonlocal last_check_at
 
-        if elapsed_seconds < grace_seconds:
+        # Stop checking after max elapsed (boot-time failures are fast)
+        if elapsed_seconds > HEALTH_CHECK_MAX_ELAPSED_SECONDS:
             return
 
-        # Stop checking after max elapsed (OOM during boot is fast)
-        if elapsed_seconds > OOM_CHECK_MAX_ELAPSED_SECONDS:
+        # Throttle checks
+        if last_check_at > 0 and (elapsed_seconds - last_check_at) < HEALTH_CHECK_INTERVAL_SECONDS:
             return
 
-        # Check every OOM_CHECK_INTERVAL_SECONDS after the grace period
-        if last_check_at > 0 and (elapsed_seconds - last_check_at) < OOM_CHECK_INTERVAL_SECONDS:
-            return
+        # CrashLoopBackOff and ImagePullBackOff are visible immediately —
+        # no grace period needed.  OOM needs the grace period because
+        # lastState.terminated can contain stale data from a previous pod.
+        check_oom = elapsed_seconds >= grace_seconds
 
         is_first_check = last_check_at == 0
         last_check_at = elapsed_seconds
         log = logger.info if is_first_check else logger.debug
         log(
-            "OOM check: probing %d component(s) in %s (elapsed %ds, %d/%d tune cycles used)",
+            "Health check: probing %d component(s) in %s (elapsed %ds, oom=%s, %d/%d OOM tune cycles used)",
             len(component_names),
             namespace,
             elapsed_seconds,
+            check_oom,
             current_attempts,
             OOM_INLINE_MAX_ATTEMPTS,
         )
 
-        oom_components = await detect_oom_kills(namespace, component_names)
-        if oom_components:
+        unhealthy = await check_all_components_health(namespace, component_names)
+        if not unhealthy:
+            logger.info("Health check: no issues detected in %s", namespace)
+            return
+
+        # Build per-component failure list with friendly names and logs
+        refs = component_refs or {}
+        kubectl = KubectlConnector()
+        failures: list[ComponentFailure] = []
+        has_oom = False
+        for health in unhealthy:
+            comp_ref = refs.get(health.component_name, health.component_name)
+
+            # Capture logs for actionable diagnostics
+            logs: list[str] | None = None
+            if health.crash_loop_detected or health.oom_detected:
+                try:
+                    logs = await kubectl.get_deployment_logs(health.component_name, namespace, lines=20)
+                except Exception as log_err:
+                    logger.debug("Failed to capture logs for %s: %s", health.component_name, log_err)
+
+            if health.oom_detected and check_oom:
+                has_oom = True
+                failures.append(
+                    ComponentFailure(
+                        component_name=health.component_name,
+                        failure_type="oom",
+                        message="OOM kill detected",
+                        deployment_name=deployment_name,
+                        component_reference=comp_ref,
+                        logs=logs,
+                    )
+                )
+            if health.image_pull_error:
+                failures.append(
+                    ComponentFailure(
+                        component_name=health.component_name,
+                        failure_type="image_pull",
+                        message=health.image_pull_error,
+                        deployment_name=deployment_name,
+                        component_reference=comp_ref,
+                    )
+                )
+            if health.crash_loop_detected:
+                failures.append(
+                    ComponentFailure(
+                        component_name=health.component_name,
+                        failure_type="crash_loop",
+                        message=health.crash_loop_message or "CrashLoopBackOff",
+                        deployment_name=deployment_name,
+                        component_reference=comp_ref,
+                        logs=logs,
+                    )
+                )
+
+        if not failures:
+            # Only OOM detected but still in grace period — skip for now
+            return
+
+        if has_oom:
             _inline_oom_attempts[attempt_key] = current_attempts + 1
-            raise OOMDetectedError(oom_components, namespace)
 
-        logger.info("OOM check: no OOM kills detected in %s", namespace)
+        raise DeploymentHealthError(failures, namespace)
 
-    # Reset attempts when callback is created — a fresh deploy starts clean.
-    # The counter only increments when OOM is actually detected.
+    # Reset OOM attempts when callback is created — a fresh deploy starts clean.
     _inline_oom_attempts.pop(attempt_key, None)
 
     return _callback

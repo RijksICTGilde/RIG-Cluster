@@ -28,7 +28,7 @@
     {% if status == "completed" %}
     <p class="edit-progress-step" style="color: var(--rvo-color-groen-700);">Wijzigingen succesvol verwerkt!</p>
     {% elif status == "failed" %}
-    <p class="edit-progress-step edit-progress-error">Verwerking mislukt: {{ error or "Onbekende fout" }}</p>
+    {% include "partials/_component_failures.html.j2" %}
     {% else %}
     <p class="edit-progress-step">{{ current_step }}</p>
     {% endif %}

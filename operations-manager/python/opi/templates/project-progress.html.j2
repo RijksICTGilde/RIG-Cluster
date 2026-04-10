@@ -71,12 +71,7 @@
                 </div>
 
                 {# Error Message #}
-                <div id="error-message" style="display: none;">
-                    <c-alert kind="error" heading="Er is een fout opgetreden"
-                             content="Er ging iets mis tijdens het aanmaken van uw project.">
-                        <div id="error-details"></div>
-                    </c-alert>
-                </div>
+                <div id="error-message" style="display: none;"></div>
 
                 {# Actions - project details link shown after completion #}
                 <div id="actions-section">
@@ -510,33 +505,17 @@
         if (completedActions) completedActions.style.display = '';
     }
 
-    function showError(error, tasks) {
+    function showError() {
         const errorMessage = document.getElementById('error-message');
-        const errorDetails = document.getElementById('error-details');
+        if (!errorMessage) return;
 
-        if (errorMessage) {
-            errorMessage.style.display = 'block';
-        }
-        if (errorDetails) {
-            // Collect specific error messages from failed tasks
-            var details = [];
-            if (tasks && tasks.length > 0) {
-                tasks.forEach(function(task) {
-                    if (task.error) details.push(task.error);
-                    if (task.subtasks) {
-                        task.subtasks.forEach(function(sub) {
-                            if (sub.error) details.push(sub.error);
-                        });
-                    }
-                });
-            }
-            if (details.length > 0) {
-                errorDetails.innerHTML = details.map(function(d) {
-                    return '<p>' + d.replace(/</g, '&lt;') + '</p>';
-                }).join('');
-            } else if (error) {
-                errorDetails.textContent = error;
-            }
+        // Load server-rendered error partial via HTMX
+        errorMessage.setAttribute('hx-get', '/projects/{{ project_name }}/task-errors/' + TASK_ID);
+        errorMessage.setAttribute('hx-trigger', 'load');
+        errorMessage.setAttribute('hx-swap', 'innerHTML');
+        errorMessage.style.display = 'block';
+        if (typeof htmx !== 'undefined') {
+            htmx.process(errorMessage);
         }
         // Show project details link so the user can fix the issue
         var defaultActions = document.getElementById('default-actions');
@@ -575,7 +554,7 @@
                 showSuccess();
             } else if (data.status === 'failed') {
                 clearInterval(pollTimer);
-                showError(data.error || 'Project aanmaak mislukt', data.tasks);
+                showError();
             }
 
         } catch (error) {
