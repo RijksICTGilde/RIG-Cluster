@@ -236,6 +236,7 @@ authorized_licenses = [
     "GNU General Public License (GPL)",
     "GNU Library or Lesser General Public License (LGPL)",
     "LGPLv3+",
+    "LGPL-3.0-or-later",
     "ISC License (ISCL)",
     "MIT",
     "MIT AND Python-2.0",
