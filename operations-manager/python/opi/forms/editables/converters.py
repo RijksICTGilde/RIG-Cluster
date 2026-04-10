@@ -263,7 +263,7 @@ class KeyValueConverter:
     def _write_as_dict(self, value: Any) -> dict[str, str] | None:
         """Parse KEY=value text into a dict for YAML map storage."""
         if isinstance(value, dict):
-            return value if value else None
+            return value or None
         text = str(value or "").strip()
         if not text:
             return None
@@ -278,7 +278,7 @@ class KeyValueConverter:
             # Convert dict back to KEY=value text
             return "\n".join(f"{k}={v}" for k, v in value.items())
         text = str(value or "").strip()
-        return text if text else None
+        return text or None
 
     @staticmethod
     def _parse_env_text(text: str) -> dict[str, str]:
