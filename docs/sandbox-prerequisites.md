@@ -14,7 +14,7 @@ WHAT IS ZAD?
   backup and cloning capabilities for feature branch deployments.
 
   ZAD integrates into CI/CD through a ready-made GitHub Action, and
-  its API offers numerous options — with more being added — to control
+  its API offers numerous options - with more being added - to control
   deployments, update images, create backups, spin up feature branch
   environments, and clean up when done.
 
@@ -23,13 +23,13 @@ HOW IT WORKS (GitOps)
   The Operations Manager (ZAD) uses three Git repositories in Forgejo:
 
   1. zad-projects
-     One file per project — the complete playbook for your
+     One file per project - the complete playbook for your
      application. It declares which services to provision, how to
      configure them (SSO with Keycloak, local user accounts,
      database schemas, object storage buckets), and how to deploy
      your application. Everything from infrastructure to user-facing
      settings in a single, declarative definition. Define what your
-     project needs — ZAD builds the rest.
+     project needs - ZAD builds the rest.
 
   2. zad-argo-user-applications
      ArgoCD Application manifests, generated from the project definitions.
@@ -62,7 +62,7 @@ PORT REQUIREMENTS
 REQUIRED TOOLS
 
   Install with brew:
-    brew install kind kubectl kustomize sops age pwgen
+    brew install kind kubectl kustomize sops age pwgen yq
 
   Also required (not in brew):
     - Docker Desktop (must be running)

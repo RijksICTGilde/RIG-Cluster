@@ -135,9 +135,9 @@ clients:
     publicClient: true
     protocol: "openid-connect"
     redirectUris:
-      - "{{ operations_manager_url }}/invite/*"
+      - "{{ operations_manager_domain }}/invite/*"
     webOrigins:
-      - "{{ operations_manager_url }}"
+      - "{{ operations_manager_domain }}"
     standardFlowEnabled: true
     implicitFlowEnabled: false
     directAccessGrantsEnabled: false
@@ -266,8 +266,9 @@ These variables are automatically provided:
 | `platform_realm_name` | Platform realm name (e.g., `rig-platform`) |
 | `project_realm_name` | Generated project realm name |
 | `project_display_name` | Display name for the realm |
-| `operations_manager_url` | Operations manager base URL |
+| `operations_manager_domain` | Operations manager domain (hostname) |
 | `invite_client_id` | Client ID for invite flow |
+| `platform_client_id` | Platform client ID for federation |
 
 ### Captured Outputs
 

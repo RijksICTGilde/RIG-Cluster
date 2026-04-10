@@ -54,6 +54,7 @@ class KeycloakYamlHandler:
         await self._process_platform_clients(config.get("platformClients"), variables)
         await self._process_identity_providers(config.get("identityProviders"), variables)
         await self._process_authentication_flows(config.get("authenticationFlows"), variables)
+        await self._process_browser_flow(config.get("browserFlow"), variables)
         await self._process_client_scopes(config.get("clientScopes"), variables)
         await self._process_clients(config.get("clients"), variables)
         await self._process_realm_roles(config.get("realmRoles"), variables)
@@ -80,13 +81,15 @@ class KeycloakYamlHandler:
         # Merge variables: YAML variables + context (context overrides)
         variables = {**config.get("variables", {}), **context}
 
-        # Process only authentication flows
+        # Process authentication flows and browser flow setting
         flows_section = config.get("authenticationFlows")
         if flows_section:
             await self._process_authentication_flows(flows_section, variables)
             logger.info("Authentication flows configuration completed")
         else:
             logger.debug("No authenticationFlows section in configuration")
+
+        await self._process_browser_flow(config.get("browserFlow"), variables)
 
     async def ensure_clients(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
         """Ensure clients are correctly configured (idempotent).
@@ -369,6 +372,7 @@ class KeycloakYamlHandler:
                     authenticate_by_default=item.get("authenticateByDefault", False),
                     sync_mode=config.get("syncMode", "FORCE"),
                     enabled=item.get("enabled", True),
+                    update_profile_first_login=item.get("updateProfileFirstLogin", "off"),
                 )
             else:
                 # OIDC identity provider (default)
@@ -380,6 +384,7 @@ class KeycloakYamlHandler:
                     client_secret=config.get("clientSecret"),
                     discovery_url=config.get("discoveryUrl"),
                     authenticate_by_default=item.get("authenticateByDefault", True),
+                    update_profile_first_login=item.get("updateProfileFirstLogin", "off"),
                 )
 
             # Process mappers if present
@@ -479,6 +484,28 @@ class KeycloakYamlHandler:
 
                 logger.info(f"Configuring SSO redirect flow for realm {realm_name} with provider {provider_alias}")
                 await self.keycloak.configure_sso_redirect_flow(realm_name, provider_alias)
+
+    async def _process_browser_flow(self, flow_alias: str | None, variables: dict[str, Any]) -> None:
+        """Set the realm's browser flow to the specified flow alias.
+
+        Args:
+            flow_alias: The flow alias to set as browser flow (e.g., "browser")
+            variables: Context variables (must include realm_name or project_realm_name)
+        """
+        if not flow_alias:
+            return
+
+        realm_name = variables.get("realm_name") or variables.get("project_realm_name")
+        if not realm_name:
+            logger.warning("No realm_name in context for browser flow, skipping")
+            return
+
+        resolved_alias: str = self._substitute_variables(flow_alias, variables)
+        changed = await self.keycloak.ensure_browser_flow(realm_name, resolved_alias)
+        if changed:
+            logger.info(f"Set browser flow to '{resolved_alias}' for realm {realm_name}")
+        else:
+            logger.debug(f"Browser flow already '{resolved_alias}' for realm {realm_name}")
 
     async def _process_client_scopes(self, scopes_section: Any, variables: dict[str, Any]) -> None:
         """Process clientScopes section.

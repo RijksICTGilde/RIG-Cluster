@@ -1,0 +1,661 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zad.rijksapp.dev/schemas/project-v2.json",
+  "title": "ZAD Project File (v2)",
+  "description": "Schema for ZAD self-service project definition files (schema-version 2).",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "display-name": { "type": "string" },
+    "description": { "type": "string" },
+    "schema-version": { "type": "number" },
+    "clusters": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "users": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/user" }
+    },
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/service-entry" }
+    },
+    "config": { "$ref": "#/$defs/config" },
+    "repositories": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/repository" }
+    },
+    "registries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/registry" }
+    },
+    "components": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "deployments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/deployment" }
+    },
+    "helm-charts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/helm-chart" }
+    },
+    "helmfile": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/helmfile-entry" }
+    },
+    "remote-sources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/remote-source" }
+    },
+    "invites": { "$ref": "#/$defs/invites" },
+    "backup": { "$ref": "#/$defs/backup" },
+    "domains": { "$ref": "#/$defs/domains" }
+  },
+
+  "$defs": {
+
+    "domains": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed-subdomains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/allowed-subdomain-entry" }
+        },
+        "allowed-domains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/allowed-domain-entry" }
+        }
+      }
+    },
+
+    "allowed-subdomain-entry": {
+      "type": "object",
+      "required": ["domain", "subdomains"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": { "type": "string" },
+        "subdomains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/allowed-subdomain-detail" }
+        }
+      }
+    },
+
+    "allowed-subdomain-detail": {
+      "type": "object",
+      "required": ["name", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/domain-history-entry" }
+        }
+      }
+    },
+
+    "allowed-domain-entry": {
+      "type": "object",
+      "required": ["domain", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "supports-dots": { "type": "boolean" },
+        "issuer": { "type": "string" },
+        "restricted-subdomains": { "type": "boolean" },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/domain-history-entry" }
+        }
+      }
+    },
+
+    "domain-history-entry": {
+      "type": "object",
+      "required": ["date", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "by": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+
+
+    "age-encrypted": {
+      "type": "string",
+      "pattern": "(-----BEGIN AGE ENCRYPTED FILE-----|^base64\\+age:)"
+    },
+
+    "age-encrypted-or-plain": {
+      "oneOf": [
+        { "$ref": "#/$defs/age-encrypted" },
+        { "type": "string", "pattern": "^plain:" }
+      ]
+    },
+
+    "user": {
+      "type": "object",
+      "required": ["email", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "owner", "member"] }
+      }
+    },
+
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "age-public-key": { "type": "string" },
+        "age-private-key": { "$ref": "#/$defs/age-encrypted" },
+        "api-key": { "$ref": "#/$defs/age-encrypted" },
+        "keycloak": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/keycloak-config" }
+        }
+      }
+    },
+
+    "keycloak-config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": { "type": "string" },
+        "realm": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
+      }
+    },
+
+    "repository": {
+      "type": "object",
+      "required": ["name", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
+        "branch": { "type": "string" },
+        "path": { "type": "string" },
+        "project_name": { "type": "string" }
+      }
+    },
+
+    "registry": {
+      "type": "object",
+      "required": ["name", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
+      }
+    },
+
+    "service-entry": {
+      "description": "A service reference: either a plain string name or a single-key dict with config.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "additionalProperties": {}
+        }
+      ]
+    },
+
+    "service-config": {
+      "description": "Service configuration. Shape of config is service-specific.",
+      "type": "object",
+      "properties": {
+        "config": {},
+        "type": { "type": "string" }
+      }
+    },
+
+    "component-path": {
+      "type": "object",
+      "required": ["match"],
+      "additionalProperties": false,
+      "properties": {
+        "match": { "type": "string" },
+        "rewrite": { "type": "string" }
+      }
+    },
+
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": { "type": "string" },
+        "memory": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "properties": {
+                "request": { "type": "string" },
+                "limit": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory": { "type": "string" },
+            "cpu": { "type": "string" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory": { "type": "string" },
+            "cpu": { "type": "string" }
+          }
+        },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resource-history-entry" }
+        }
+      }
+    },
+
+    "resource-history-entry": {
+      "type": "object",
+      "required": ["timestamp", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "timestamp": { "type": "string" },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory": { "type": "string" }
+          }
+        },
+        "source": { "type": "string", "enum": ["auto-tune", "oom-watcher", "manual"] },
+        "deployment": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+
+    "component": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "image": { "type": "string" },
+        "ports": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "inbound": { "type": "array", "items": { "type": "integer" } },
+            "outbound": { "type": "array", "items": { "type": "integer" } }
+          }
+        },
+        "path": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/component-path" }
+        },
+        "resources": { "$ref": "#/$defs/resources" },
+        "services": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/service-entry" }
+        },
+        "uses-components": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "user-env-vars": {
+          "oneOf": [
+            { "$ref": "#/$defs/age-encrypted" },
+            { "type": "object" }
+          ]
+        },
+        "publish-on-web": { "type": "boolean" },
+        "sso-rijk": { "type": "boolean" },
+        "disabled": { "type": "boolean" },
+        "disabled-reason": { "type": "string" },
+        "aliases": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "uses-services": {
+          "description": "Legacy v1 field — should be migrated to services.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/service-entry" }
+        },
+        "storage": {
+          "description": "Legacy v1 field — should be migrated to services.",
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    },
+
+    "deployment": {
+      "type": "object",
+      "required": ["name", "cluster", "namespace"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "cluster": { "type": "string" },
+        "namespace": { "type": "string" },
+        "repository": { "type": "string" },
+        "base-domain": { "type": ["string", "null"] },
+        "subdomain": { "type": ["string", "null"] },
+        "domain-mode": { "type": "string" },
+        "domain-format": { "type": "string" },
+        "issuer": { "type": "string" },
+        "configuration": { "$ref": "#/$defs/age-encrypted" },
+        "components": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deployment-component" }
+        },
+        "services": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deployment-service" }
+        },
+        "helm-charts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deployment-helm-chart" }
+        },
+        "helmfile": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deployment-helmfile" }
+        },
+        "root-component": { "type": "string" },
+        "clone-from": { "$ref": "#/$defs/clone-from" }
+      }
+    },
+
+    "deployment-component": {
+      "type": "object",
+      "required": ["reference"],
+      "additionalProperties": false,
+      "properties": {
+        "reference": { "type": "string" },
+        "image": { "type": "string" },
+        "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "registry": { "type": "string" },
+        "resources": { "$ref": "#/$defs/resources" },
+        "path": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/component-path" }
+        },
+        "services": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/deployment-service" }
+          }
+        },
+        "user-env-vars": {
+          "oneOf": [
+            { "$ref": "#/$defs/age-encrypted" },
+            { "type": "object" }
+          ]
+        },
+        "env-vars": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "disabled": { "type": "boolean" },
+        "disabled-reason": { "type": "string" }
+      }
+    },
+
+    "deployment-service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reference": { "type": "string" },
+        "config": { "$ref": "#/$defs/deployment-service-config" }
+      }
+    },
+
+    "deployment-service-config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "generation": { "type": "integer" },
+        "revisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/service-revision" }
+        }
+      }
+    },
+
+    "service-revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "generation": { "type": "integer" },
+        "resource": { "type": "string" },
+        "status": { "type": "string" },
+        "created_at": { "type": "string" },
+        "superseded_at": { "type": "string" },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string" },
+              "source": { "type": "string" },
+              "timestamp": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "deployment-helm-chart": {
+      "type": "object",
+      "required": ["reference"],
+      "additionalProperties": false,
+      "properties": {
+        "reference": { "type": "string" },
+        "release-name": { "type": "string" },
+        "helm-values": {}
+      }
+    },
+
+    "deployment-helmfile": {
+      "type": "object",
+      "required": ["reference"],
+      "additionalProperties": false,
+      "properties": {
+        "reference": { "type": "string" },
+        "helm-values": {},
+        "env-vars": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
+    "clone-from": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "reference": { "type": "string" },
+        "mode": { "type": "string", "enum": ["once", "always"] },
+        "status": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "completed": { "type": "boolean" },
+            "timestamp": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "helm-chart": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "source-type": { "type": "string" },
+        "git-url": { "type": "string" },
+        "git-ref": { "type": "string" },
+        "chart-path": { "type": "string" },
+        "helm-values": {},
+        "services": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/service-entry" }
+        },
+        "uses-services": {
+          "description": "Legacy v1 field.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/service-entry" }
+        }
+      }
+    },
+
+    "helmfile-entry": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "ref": { "type": "string" },
+        "path": { "type": "string" },
+        "files": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "helm-values": {},
+        "services": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/service-entry" }
+        },
+        "uses-services": {
+          "description": "Legacy v1 field.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/service-entry" }
+        }
+      }
+    },
+
+    "remote-source": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "chisel": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "server-url": { "type": "string" },
+            "username": { "type": "string" },
+            "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
+          }
+        },
+        "services": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/remote-source-service" }
+        }
+      }
+    },
+
+    "remote-source-service": {
+      "type": "object",
+      "properties": {
+        "host": { "type": ["string", "integer"] },
+        "port": { "type": "integer" },
+        "username": { "type": "string" },
+        "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
+        "database": { "type": "string" },
+        "schema": { "type": "string" },
+        "access-key": { "$ref": "#/$defs/age-encrypted-or-plain" },
+        "secret-key": { "$ref": "#/$defs/age-encrypted-or-plain" },
+        "bucket": { "type": "string" },
+        "secure": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+
+    "invites": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "settings": {
+          "type": "object",
+          "properties": {
+            "default_language": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "active": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/invite" }
+        }
+      }
+    },
+
+    "invite": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string" },
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "realm_roles": { "type": "array", "items": { "type": "string" } },
+        "client_roles": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        },
+        "groups": { "type": "array", "items": { "type": "string" } },
+        "restrict_domain": { "type": "string" },
+        "auth_methods": { "type": "array", "items": { "type": "string" } },
+        "contact_email": { "type": "string" },
+        "application_url": { "type": "string" },
+        "message": { "$ref": "#/$defs/i18n-text" },
+        "success_title": { "$ref": "#/$defs/i18n-text" },
+        "success_button": { "$ref": "#/$defs/i18n-text" }
+      }
+    },
+
+    "i18n-text": {
+      "type": "object",
+      "properties": {
+        "nl": { "type": "string" },
+        "en": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    }
+  }
+}

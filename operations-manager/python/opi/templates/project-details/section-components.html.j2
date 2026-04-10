@@ -1,0 +1,113 @@
+{# Components Section #}
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
+            <c-heading type="h2"><c-icon icon="puzzel" size="xl" color="donkerblauw" />Components</c-heading>
+            {% if user_role in ["admin", "owner"] %}
+            <c-button kind="secondary" size="sm" label="Toevoegen" showIcon="before" icon="plus"
+                      @click="openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen')" />
+            {% endif %}
+        </c-layout-flow>
+        <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
+
+        {% if project.components %}
+        <c-layout-flow gap="lg">
+            {% for component in project.components %}
+            <c-card class="component-card" padding="lg" background="color" backgroundColor="wit" outline="true">
+                <c-layout-flow gap="md">
+                    <div class="component-header">
+                        <c-icon icon="puzzel" size="lg" color="donkerblauw" />
+                        <div style="flex: 1;">
+                            <c-heading type="h3" textContent="{{ component.name }}" />
+                            <div class="component-type">{{ component.type|title }}</div>
+                        </div>
+                        {% if user_role in ["admin", "owner"] %}
+                        <c-layout-flow row="true" gap="xs">
+                            <c-button kind="secondary" size="sm" label="Bewerken" showIcon="before" icon="bewerken"
+                                @click="openEditModal('modal-edit-component-{{ loop.index0 }}', 'Component bewerken - {{ component.name }}')" />
+                            <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
+                                @click="showDangerConfirmation('component', '{{ component.name }}', 'Weet u zeker dat u component &quot;{{ component.name }}&quot; wilt verwijderen?')" />
+                        </c-layout-flow>
+                        {% endif %}
+                    </div>
+
+                    <div class="component-specs">
+                        {% if component.ports %}
+                        <div class="spec-item">
+                            <strong>Poorten:</strong>
+                            {% if component.ports.inbound %}Inbound: {{ component.ports.inbound|join(", ") }}{% endif %}
+                            {% if component.ports.outbound %}{% if component.ports.inbound %} | {% endif %}Outbound: {{ component.ports.outbound|join(", ") }}{% endif %}
+                        </div>
+                        {% endif %}
+
+                        {% if component.resources %}
+                        <div class="spec-item">
+                            <strong>Resources:</strong>
+                            {% set req = component.resources.get('requests', {}) or {} %}
+                            {% set lim = component.resources.get('limits', {}) or {} %}
+                            {% if req.get('memory') or lim.get('memory') %}
+                                Memory: {{ req.get('memory', '?') }} / {{ lim.get('memory', '?') }}
+                            {% elif component.resources.memory is string %}
+                                Memory: {{ component.resources.memory }}
+                            {% endif %}
+                            {% if req.get('cpu') or lim.get('cpu') %}
+                                | CPU: {{ req.get('cpu', '?') }} / {{ lim.get('cpu', '?') }}
+                            {% elif component.resources.cpu is string %}
+                                | CPU: {{ component.resources.cpu }}
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        {% if component.services %}
+                        <div class="spec-item">
+                            <strong>Services:</strong>
+                            {% set svc_names = [] %}
+                            {% for svc in component.services %}
+                                {% if svc is string %}
+                                    {% set _ = svc_names.append(svc) %}
+                                {% elif svc is mapping %}
+                                    {% for key in svc %}
+                                        {% set _ = svc_names.append(key) %}
+                                    {% endfor %}
+                                {% endif %}
+                            {% endfor %}
+                            {{ svc_names|join(", ")|replace("-", " ")|title }}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    {# Public ingress links for this component #}
+                    {% if component.ingress_links %}
+                    <c-layout-flow gap="sm">
+                        <c-heading type="h5"><c-icon icon="externe-link" size="sm" color="hemelblauw" />Publieke links</c-heading>
+                        <c-layout-flow gap="sm">
+                            {% for link in component.ingress_links %}
+                            <c-button
+                                label="{{ link.deployment_name }} ({{ link.cluster }})"
+                                kind="secondary"
+                                size="sm"
+                                showIcon="after"
+                                icon="externe-link"
+                                @click="window.open('{{ link.url }}', '_blank')" />
+                            {% endfor %}
+                        </c-layout-flow>
+                    </c-layout-flow>
+                    {% endif %}
+
+                    {# User Environment Variables indicator for this component #}
+                    {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
+                    <div class="env-vars-indicator">
+                        <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                        <span>{{ component['user-env-vars']|length }} omgevingsvariabele{% if component['user-env-vars']|length != 1 %}n{% endif %}</span>
+                        <span class="rvo-text--subtle">(zie Omgevingsvariabelen sectie)</span>
+                    </div>
+                    {% endif %}
+                </c-layout-flow>
+            </c-card>
+            {% endfor %}
+        </c-layout-flow>
+        {% else %}
+        <c-alert kind="info">Geen componenten geconfigureerd</c-alert>
+        {% endif %}
+    </c-layout-flow>
+</c-card>

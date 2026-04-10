@@ -68,8 +68,9 @@ def mock_project_service() -> Any:
     """Mock project service for testing without database."""
 
     class MockProjectInfo:
-        def __init__(self, name: str) -> None:
+        def __init__(self, name: str, api_key: str = "test-api-key-12345") -> None:
             self.name = name
+            self.api_key = api_key
             self.data = {
                 "deployments": [
                     {
@@ -84,15 +85,24 @@ def mock_project_service() -> Any:
             }
 
     class MockProjectService:
-        def get_all_projects(self) -> dict[str, MockProjectInfo]:
-            return {
-                "test-project": MockProjectInfo("test-project"),
+        def __init__(self) -> None:
+            self._projects = {
+                "test-project": MockProjectInfo("test-project", "test-api-key-12345"),
             }
 
-    # Patch where it's used (in logs_router), not where it's defined
-    with patch("opi.api.logs_router.get_project_service") as mock:
-        mock.return_value = MockProjectService()
-        yield mock
+        def get_all_projects(self) -> dict[str, MockProjectInfo]:
+            return self._projects
+
+        def get_project(self, project_name: str) -> MockProjectInfo | None:
+            return self._projects.get(project_name)
+
+    # Patch in both locations: endpoint_util (for auth) and logs_router (for usage)
+    mock_service = MockProjectService()
+    with (
+        patch("opi.api.endpoint_util.get_project_service", return_value=mock_service),
+        patch("opi.api.logs_router.get_project_service", return_value=mock_service),
+    ):
+        yield mock_service
 
 
 @pytest.fixture
@@ -104,7 +114,14 @@ def mock_settings() -> Any:
         mock_settings.SECRET_KEY = "test-secret-key-for-testing-only"
         mock_settings.OIDC_DISABLED = True
         mock_settings.ENABLE_GIT_MONITOR = False
+        mock_settings.KEYCLOAK_URL = ""
         yield mock_settings
+
+
+@pytest.fixture
+def api_key() -> str:
+    """API key for testing authenticated endpoints."""
+    return "test-api-key-12345"
 
 
 @pytest.fixture

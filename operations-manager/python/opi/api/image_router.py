@@ -3,6 +3,8 @@ Image upload API router for pushing container images to a remote registry.
 
 Customers upload Docker image tarballs (from `docker save`) via HTTP, and the
 Operations Manager pushes them to the configured registry using skopeo.
+
+Optionally updates a deployment's component image reference after a successful push.
 """
 
 import logging
@@ -10,9 +12,11 @@ import os
 import tempfile
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.config import settings
+from opi.manager.project_manager import ProjectManager
 from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
@@ -30,13 +34,24 @@ async def push_image(
     file: UploadFile,
     image_name: str = Query(..., description="Name of the container image"),
     tag: str = Query(..., description="Image tag"),
-) -> dict:
+    deployment: str | None = Query(None, description="Deployment to update with the pushed image"),
+    component: str | None = Query(None, description="Component within the deployment to update"),
+) -> JSONResponse:
     """
     Upload a Docker image tarball and push it to the configured container registry.
 
     The tarball should be created with `docker save`. It is streamed to disk in chunks
     to avoid holding the full image in memory, then pushed via skopeo.
+
+    Optionally, provide both `deployment` and `component` to update
+    the deployment's image reference and trigger a redeployment after a successful push.
     """
+    if (deployment is None) != (component is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Both deployment and component must be provided together",
+        )
+
     max_bytes = settings.IMAGE_UPLOAD_MAX_SIZE_MB * 1024 * 1024
     upload_dir = settings.TEMP_DIR
 
@@ -76,13 +91,22 @@ async def push_image(
             f"Received image tarball for {project_name}/{image_name}:{tag} ({bytes_written / (1024 * 1024):.1f} MB)"
         )
 
-        image_ref = await connector.push_image(tarball_path, project_name, image_name, tag)
+        image_ref = await connector.push_image(tarball_path, image_name, tag)
 
-        return {
+        response_data: dict[str, object] = {
             "status": "success",
             "message": f"Successfully pushed to {image_ref}",
             "image": image_ref,
         }
+
+        if deployment and component:
+            project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+            await project_manager.update_image_and_regenerate(deployment, component, image_ref)
+            response_data["deployment_updated"] = True
+            response_data["deployment"] = deployment
+            response_data["component"] = component
+
+        return JSONResponse(response_data)
 
     except HTTPException:
         raise

@@ -7,10 +7,16 @@ Subdomains are registered per (subdomain, base_domain) pair and associated with 
 
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 
-from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.core.cluster_config import (
+    CLUSTER_CONFIG,
+    get_ingress_postfix,
+    is_domain_subdomain_restricted,
+)
 from opi.core.database_pools import get_database_pool
+from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
 logger = logging.getLogger(__name__)
 # Dedicated audit logger for subdomain operations
@@ -27,15 +33,19 @@ def get_supported_base_domains(cluster: str | None = None) -> set[str]:
     Returns:
         Set of supported base domain strings
     """
+
+    def _extract_domain(entry: str | dict) -> str:
+        return entry["domain"] if isinstance(entry, dict) else entry
+
     if cluster and cluster in CLUSTER_CONFIG:
         nice_url_config = CLUSTER_CONFIG[cluster].get("nice_url", {})
-        return set(nice_url_config.get("supported_domains", []))
+        return {_extract_domain(d) for d in nice_url_config.get("supported_domains", [])}
 
     # Collect all supported domains from all clusters
-    all_domains = set()
+    all_domains: set[str] = set()
     for cluster_config in CLUSTER_CONFIG.values():
         nice_url_config = cluster_config.get("nice_url", {})
-        all_domains.update(nice_url_config.get("supported_domains", []))
+        all_domains.update(_extract_domain(d) for d in nice_url_config.get("supported_domains", []))
     return all_domains
 
 
@@ -69,12 +79,315 @@ def validate_base_domain(base_domain: str, cluster: str | None = None, language:
     supported_domains = get_supported_base_domains(cluster)
 
     if base_domain_lower not in supported_domains:
+        # Accept any syntactically valid domain (custom domain support)
+        if re.match(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$", base_domain_lower):
+            return True, None
         return False, messages["not_supported"].format(
             base_domain=base_domain_lower, supported=", ".join(sorted(supported_domains))
         )
 
     return True, None
 
+
+def get_project_allowed_subdomains(project_data: dict[str, Any], domain: str) -> list[dict[str, Any]]:
+    """Get allowed subdomain details for a specific domain from project data.
+
+    Args:
+        project_data: Parsed project YAML data
+        domain: The base domain to look up (e.g., "rijks.app")
+
+    Returns:
+        List of subdomain detail dicts (name, status, history).
+        Empty list if no entry found.
+    """
+    domains_config = project_data.get("domains")
+    if not domains_config or not isinstance(domains_config, dict):
+        return []
+    for entry in domains_config.get("allowed-subdomains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry.get("subdomains", [])
+    return []
+
+
+def get_subdomain_status(project_data: dict[str, Any], domain: str, subdomain: str) -> str | None:
+    """Get the approval status for a specific subdomain on a domain.
+
+    Returns:
+        The status string ('requested', 'approved', 'denied') or None if
+        the subdomain is not in the allow-list.
+    """
+    for detail in get_project_allowed_subdomains(project_data, domain):
+        if isinstance(detail, dict) and detail.get("name", "").lower() == subdomain.lower():
+            return detail.get("status")
+    return None
+
+
+def get_project_allowed_domain_config(project_data: dict[str, Any], domain: str) -> dict[str, Any] | None:
+    """Get allowed domain configuration from project data.
+
+    Looks up domain in ``domains.allowed-domains``. Works for both
+    platform and custom domains — the list is unified.
+
+    Args:
+        project_data: Parsed project YAML data
+        domain: The domain to look up (e.g., "rijks.app", "mijn-app.nl")
+
+    Returns:
+        Domain config dict if found, None otherwise.
+    """
+    domains_config = project_data.get("domains")
+    if not domains_config or not isinstance(domains_config, dict):
+        return None
+    for entry in domains_config.get("allowed-domains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry
+    return None
+
+
+def is_deployment_domain_approved(
+    project_data: dict[str, Any],
+    base_domain: str | None,
+    subdomain: str | None,
+    cluster: str,
+) -> bool:
+    """Check if a deployment's domain+subdomain combination is approved for use.
+
+    Unified approval check — no distinction between custom and predefined domains.
+    The only domain that's always allowed without approval is the cluster default.
+
+    Rules:
+    1. Cluster default domain (ingress_postfix) → always True
+    2. Any other domain → must be in the project's domains section with status approved
+    3. If the domain has restricted subdomains → subdomain must also be approved
+
+    Args:
+        project_data: Parsed project YAML data
+        base_domain: The base domain (e.g., "rijks.app", "mijn-app.nl")
+        subdomain: The subdomain (e.g., "wies"), or None if not used
+        cluster: Cluster name for config lookup
+    """
+    if not base_domain:
+        return True  # No domain specified, using cluster default
+
+    # Check if this is the cluster default domain
+    ingress_postfix = get_ingress_postfix(cluster)
+    cluster_domain = ingress_postfix.lstrip(".")
+    if base_domain == cluster_domain:
+        return True
+
+    # Check domain approval in allowed-domains (applies to ALL non-default domains)
+    domain_config = get_project_allowed_domain_config(project_data, base_domain)
+    if not domain_config:
+        return False  # Domain not in allowed-domains
+    if domain_config.get("status") != "approved":
+        return False  # Domain not approved
+
+    # Domain approved — check subdomain if present and restricted
+    if subdomain:
+        # Check cluster-level restriction
+        supported = get_supported_base_domains(cluster)
+        if base_domain in supported and is_domain_subdomain_restricted(cluster, base_domain):
+            status = get_subdomain_status(project_data, base_domain, subdomain)
+            return status == "approved"
+        # Check domain-level restriction (for custom domains with restricted-subdomains)
+        if domain_config.get("restricted-subdomains", False):
+            status = get_subdomain_status(project_data, base_domain, subdomain)
+            return status == "approved"
+
+    return True
+
+
+def is_domain_format_dot_based(domain_format: str) -> bool:
+    """Check if a domain format uses dot notation between parts.
+
+    Dot-based formats (e.g., ``component.subdomain``) create multi-level
+    hostnames. The format ID itself uses dots vs dashes to indicate this.
+
+    Examples:
+        "component.subdomain" → True
+        "component-subdomain" → False
+        "subdomain" → False (single part)
+        "component-deployment-project" → False
+    """
+    # Format IDs use dots for dot-based, dashes for dash-based
+    # Strip trailing domain part if present in ID
+    parts_before_domain = domain_format.replace(".domain", "")
+    return "." in parts_before_domain
+
+
+def is_subdomain_allowed_for_project(
+    subdomain: str,
+    base_domain: str,
+    project_data: dict[str, Any],
+    cluster: str,
+) -> tuple[bool, str | None]:
+    """Check if a subdomain is allowed for a project on a restricted domain.
+
+    For domains with restricted_subdomains in cluster config, the subdomain
+    must appear in the project's allowed-subdomains list.
+
+    For custom domains with restricted-subdomains, the subdomain must appear
+    in the project's allowed-subdomains list for that custom domain.
+
+    Args:
+        subdomain: The subdomain to check
+        base_domain: The base domain
+        project_data: Parsed project YAML data
+        cluster: Cluster name
+
+    Returns:
+        Tuple of (is_allowed, error_message). If allowed, error_message is None.
+    """
+    # Check if this is a platform domain with restrictions
+    supported = get_supported_base_domains(cluster)
+    if base_domain in supported:
+        if not is_domain_subdomain_restricted(cluster, base_domain):
+            return True, None
+    else:
+        # Custom domain - check project-level restriction
+        custom_config = get_project_allowed_domain_config(project_data, base_domain)
+        if custom_config and not custom_config.get("restricted-subdomains", False):
+            return True, None
+        if not custom_config:
+            return True, None  # No config means no restriction at domain level
+
+    # Domain is restricted - check project allow-list
+    status = get_subdomain_status(project_data, base_domain, subdomain)
+    if status is None:
+        return False, (
+            f"Het domein '{base_domain}' heeft subdomeinen beperkt. "
+            f"Het subdomein '{subdomain}' is niet aangevraagd voor dit project."
+        )
+    if status == "approved":
+        return True, None
+    if status == "requested":
+        return False, (f"Het subdomein '{subdomain}' op '{base_domain}' is aangevraagd maar nog niet goedgekeurd.")
+    # status == "denied"
+    return False, (f"Het subdomein '{subdomain}' op '{base_domain}' is afgewezen.")
+
+
+def is_domain_allowed_for_project(
+    domain: str,
+    project_data: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Check if a domain is approved for use in a project.
+
+    All non-default domains must be listed in ``domains.allowed-domains``
+    with ``status: approved`` to be used in deployments.
+
+    Args:
+        domain: The domain to check (e.g., "rijks.app", "mijn-app.nl")
+        project_data: Parsed project YAML data
+
+    Returns:
+        Tuple of (is_allowed, error_message). If allowed, error_message is None.
+    """
+    domain_config = get_project_allowed_domain_config(project_data, domain)
+    if domain_config is None:
+        return False, (
+            f"Het domein '{domain}' is niet goedgekeurd voor dit project. Vraag het domein aan via de wizard."
+        )
+    status = domain_config.get("status", "")
+    if status != "approved":
+        return False, (
+            f"Het domein '{domain}' heeft status '{status}' en kan nog niet worden gebruikt. "
+            f"Alleen domeinen met status 'approved' mogen worden ingezet."
+        )
+    return True, None
+
+
+def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
+    """Ensure unapproved domains and subdomains have request entries.
+
+    Scans all deployments in the project data. For each deployment using
+    a domain or subdomain that isn't approved, adds a ``status: requested``
+    entry to the project's ``domains`` section.
+
+    Called by both the wizard (via hooks) and the API when processing
+    project YAML. Mutates ``project_data`` in place.
+
+    Args:
+        project_data: Parsed project YAML data (mutated in place)
+        cluster: Cluster name for config lookup
+    """
+    ingress_postfix = get_ingress_postfix(cluster)
+    cluster_domain = ingress_postfix.lstrip(".")
+
+    for dep in project_data.get("deployments", []):
+        if not isinstance(dep, dict):
+            continue
+
+        base_domain = dep.get("base-domain")
+        subdomain = dep.get("subdomain")
+        domain_format = dep.get("domain-format", "")
+        template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
+
+        if not base_domain or base_domain == "__custom__":
+            continue
+
+        is_cluster_default = base_domain == cluster_domain
+
+        # --- Domain-level request (skip for cluster default) ---
+        if not is_cluster_default:
+            domain_config = get_project_allowed_domain_config(project_data, base_domain)
+            if domain_config is None:
+                domains_section = project_data.setdefault("domains", {})
+                allowed_domains = domains_section.setdefault("allowed-domains", [])
+                now = datetime.now(UTC).isoformat()
+                allowed_domains.append(
+                    {
+                        "domain": base_domain,
+                        "status": "requested",
+                        "history": [{"date": now, "status": "requested"}],
+                    }
+                )
+                logger.info("Domain request created: %s", base_domain)
+
+        # --- Subdomain-level request ---
+        if not subdomain or "{subdomain}" not in template:
+            continue
+
+        # Check if domain restricts subdomains
+        supported = get_supported_base_domains(cluster)
+        is_restricted = False
+        if base_domain in supported:
+            is_restricted = is_domain_subdomain_restricted(cluster, base_domain)
+        else:
+            dc = get_project_allowed_domain_config(project_data, base_domain)
+            is_restricted = bool(dc and dc.get("restricted-subdomains", False))
+
+        if not is_restricted:
+            continue
+
+        if get_subdomain_status(project_data, base_domain, subdomain) is not None:
+            continue
+
+        domains_section = project_data.setdefault("domains", {})
+        allowed_subdomains = domains_section.setdefault("allowed-subdomains", [])
+
+        domain_entry = None
+        for entry in allowed_subdomains:
+            if isinstance(entry, dict) and entry.get("domain") == base_domain:
+                domain_entry = entry
+                break
+        if domain_entry is None:
+            domain_entry = {"domain": base_domain, "subdomains": []}
+            allowed_subdomains.append(domain_entry)
+
+        now = datetime.now(UTC).isoformat()
+        domain_entry["subdomains"].append(
+            {
+                "name": subdomain.lower(),
+                "status": "requested",
+                "history": [{"date": now, "status": "requested"}],
+            }
+        )
+        logger.info("Subdomain request created: %s.%s", subdomain, base_domain)
+
+
+# Sentinel value for bare domain registrations in subdomain_registry.
+# Uses the DNS convention "@" to represent the apex/bare domain.
+BARE_DOMAIN_SUBDOMAIN = "@"
 
 # DNS subdomain validation constants
 SUBDOMAIN_MAX_LENGTH = 63
@@ -730,6 +1043,102 @@ class SubdomainConnector:
             return count
         finally:
             await pool.release(conn)
+
+    async def register_bare_domain(
+        self,
+        base_domain: str,
+        project_name: str,
+        deployment_name: str,
+        cluster: str,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Register the bare/apex domain in the subdomain registry.
+
+        Uses ``@`` as the subdomain value (DNS convention for apex).
+        Skips subdomain format validation since ``@`` is not a DNS label.
+
+        Args:
+            base_domain: The custom domain (e.g., "voorbeeld.nl")
+            project_name: The project name that owns this domain
+            deployment_name: The deployment name using this domain
+            cluster: The cluster where this domain is deployed
+            created_by: Optional email/identifier of who created the registration
+
+        Returns:
+            Dictionary with the created registration details
+
+        Raises:
+            BaseDomainValidationError: If the base domain is not valid
+            SubdomainNotAvailableError: If the bare domain is already taken
+            SubdomainError: If registration fails
+        """
+        base_domain_lower = base_domain.lower()
+
+        # Validate base domain syntax
+        is_valid, error_message = validate_base_domain(base_domain_lower, cluster)
+        if not is_valid:
+            raise BaseDomainValidationError(error_message)
+
+        if not await self.check_availability(BARE_DOMAIN_SUBDOMAIN, base_domain_lower):
+            existing = await self.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain_lower)
+            if existing and existing.get("project_name") == project_name:
+                logger.info(f"Bare domain '{base_domain_lower}' already registered to same project '{project_name}'")
+                return existing
+            raise SubdomainNotAvailableError(f"Kaal domein '{base_domain_lower}' is niet beschikbaar")
+
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            result = await conn.fetchrow(
+                f"""
+                INSERT INTO {self.TABLE_NAME}
+                (subdomain, base_domain, project_name, deployment_name, cluster, created_by)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (subdomain, base_domain) DO NOTHING
+                RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
+                """,
+                BARE_DOMAIN_SUBDOMAIN,
+                base_domain_lower,
+                project_name,
+                deployment_name,
+                cluster,
+                created_by,
+            )
+
+            if result is None:
+                existing = await self.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain_lower)
+                if existing and existing.get("project_name") == project_name:
+                    return existing
+                raise SubdomainNotAvailableError(f"Kaal domein '{base_domain_lower}' is niet beschikbaar")
+
+            logger.info(
+                f"Registered bare domain '{base_domain_lower}' "
+                f"for project '{project_name}', deployment '{deployment_name}'"
+            )
+            audit_logger.info(
+                f"BARE_DOMAIN_REGISTERED: {base_domain_lower} "
+                f"project={project_name} deployment={deployment_name} cluster={cluster}"
+            )
+
+            return dict(result)
+        except SubdomainNotAvailableError:
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to register bare domain '{base_domain_lower}'")
+            raise SubdomainError(f"Bare domain registration failed: {e}") from e
+        finally:
+            await pool.release(conn)
+
+    async def delete_bare_domain(self, base_domain: str) -> bool:
+        """Delete a bare domain registration.
+
+        Args:
+            base_domain: The base domain to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return await self.delete(BARE_DOMAIN_SUBDOMAIN, base_domain)
 
     async def register_or_update_for_deployment(
         self,

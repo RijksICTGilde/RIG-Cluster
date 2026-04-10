@@ -4,10 +4,14 @@ import glob
 import logging
 import os
 import re
+from typing import Any
 
+from opi.services import CloneFromType
 from opi.utils.naming import generate_manifest_name, generate_pvc_manifest_type
 
 logger = logging.getLogger(__name__)
+
+MARKED_FOR_DELETION_SUFFIX = ".marked-for-deletion.yaml"
 
 
 class PVCManager:
@@ -258,14 +262,21 @@ class PVCManager:
                 clone_type = clone_from.get("type")
                 source_deployment: str | None = None
 
-                if clone_type == "deployment":
+                if clone_type == CloneFromType.DEPLOYMENT.value:
                     source_deployment = clone_from.get("reference")
-                elif clone_type == "remote-source":
+                elif clone_type == CloneFromType.REMOTE_SOURCE.value:
                     # PVC cannot clone from remote source (Kubernetes dataSource only works locally)
                     logger.warning(
                         f"PVC clone-from type 'remote-source' is not supported for {deployment_name}/{component_name}/{storage_name}. "
                         "Kubernetes PVC dataSource only supports local cloning. Skipping PVC clone."
                     )
+                elif clone_type == CloneFromType.BACKUP.value:
+                    # Backup restore: skip PVC cloning, data will come from backup restore
+                    logger.info(
+                        f"Clone-from type 'backup' for PVC {deployment_name}/{component_name}/{storage_name}: "
+                        "skipping live PVC clone, data will come from backup restore"
+                    )
+                    source_deployment = None
                 else:
                     raise ValueError(
                         f"Unknown clone-from type '{clone_type}' for PVC in deployment '{deployment_name}'"
@@ -318,3 +329,170 @@ class PVCManager:
             logger.info(f"Successfully created PVC manifest: {pvc_manifest_path}")
 
         return created_files
+
+    async def handle_service_removal(
+        self,
+        project_name: str,
+        deployment_name: str,
+        deployment_data: dict[str, Any],
+        project_data: dict[str, Any],
+        marked_for_deletion_service: "MarkedForDeletionService | None" = None,
+    ) -> dict[str, Any]:
+        """Handle cleanup when persistent-storage service is removed from a deployment.
+
+        Instead of deleting PVC manifests (which would cause ArgoCD to prune
+        the PVCs immediately), this method **renames** each PVC manifest file
+        with a ``.marked-for-deletion.yaml`` suffix.  The renamed file stays
+        in the kustomize directory so ArgoCD keeps the PVC alive.
+
+        A record is inserted into the ``marked_for_deletion`` table with the
+        exact filename so the reconciliation job can later remove the file,
+        regenerate ``kustomization.yaml``, and let ArgoCD prune the PVC after
+        the grace period.
+
+        Args:
+            project_name: Name of the project.
+            deployment_name: Name of the deployment losing the service.
+            deployment_data: The deployment dict from the *previous* YAML.
+            project_data: The *previous* project YAML.
+            marked_for_deletion_service: Optional service for deferred deletion.
+
+        Returns:
+            Structured result dict with operations, errors, success.
+        """
+        from opi.core.cluster_config import get_prefixed_namespace
+
+        cluster = deployment_data.get("cluster", "")
+        namespace = deployment_data.get("namespace", "")
+        prefixed_namespace = get_prefixed_namespace(cluster, namespace) if cluster and namespace else namespace
+
+        result: dict[str, Any] = {
+            "service": "pvc",
+            "deployment": deployment_name,
+            "trigger": "service_removal",
+            "operations": [],
+            "success": True,
+            "errors": [],
+        }
+
+        # Find components in this deployment that had persistent-storage
+        file_handler = self.project_manager._project_file_handler
+        component_refs = file_handler.extract_deployment_components(project_data, deployment_name)
+
+        # Get the deployment git connector via the proper API
+        repositories = project_data.get("repositories", [])
+        repo_config = repositories[0] if repositories else {}
+        repo_name = repo_config.get("name", "") if isinstance(repo_config, dict) else ""
+
+        try:
+            git_connector = await self.project_manager.get_git_connector_for_deployment(repo_name, repo_config)
+        except Exception as e:
+            error_msg = (
+                f"Cannot access git connector for repository '{repo_name}' "
+                f"- cannot rename PVC manifests for deferred deletion: {e}"
+            )
+            logger.error(error_msg)
+            result["errors"].append(error_msg)
+            result["success"] = False
+            return result
+
+        repo_path = await self.project_manager.get_repository_path(repo_name)
+        if repo_path:
+            deployment_path = f"{repo_path}/{cluster}/{project_name}/{deployment_name}"
+        else:
+            deployment_path = f"{cluster}/{project_name}/{deployment_name}"
+
+        working_dir = await git_connector.get_working_dir()
+        full_output_dir = os.path.join(working_dir, deployment_path)
+
+        for component_ref in component_refs:
+            ref_name = component_ref.get("reference") if isinstance(component_ref, dict) else component_ref
+            if not ref_name:
+                continue
+
+            # Get persistent storage entries for this component
+            storage_configs = file_handler.extract_component_storage(project_data, ref_name)
+            persistent_storage = file_handler.get_persistent_storage(storage_configs)
+
+            if not persistent_storage:
+                continue
+
+            for storage in persistent_storage:
+                storage_name = storage["name"]
+
+                # Get the generation to compute the correct manifest filename
+                generation = (
+                    file_handler.get_storage_generation(project_data, deployment_name, ref_name, storage_name) or 0
+                )
+
+                # Compute the manifest filename (same logic as create_pvc_manifests_for_component)
+                manifest_filename = self.get_pvc_manifest_filename(ref_name, storage_name, generation)
+                manifest_path = os.path.join(full_output_dir, manifest_filename)
+
+                if not os.path.exists(manifest_path):
+                    logger.warning(
+                        "PVC manifest file not found at %s - may have been already removed",
+                        manifest_path,
+                    )
+                    continue
+
+                # Rename the file: webapp-data-pvc.yaml -> webapp-data-pvc.marked-for-deletion.yaml
+                marked_filename = manifest_filename.replace(".yaml", MARKED_FOR_DELETION_SUFFIX)
+                marked_path = os.path.join(full_output_dir, marked_filename)
+
+                os.rename(manifest_path, marked_path)
+                logger.info(
+                    "Renamed PVC manifest for deferred deletion: %s -> %s",
+                    manifest_filename,
+                    marked_filename,
+                )
+
+                # Record in marked_for_deletion table
+                if marked_for_deletion_service is not None:
+                    await marked_for_deletion_service.mark_resource(
+                        resource_type="pvc",
+                        resource_name=marked_filename,
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        cluster=cluster,
+                        metadata={
+                            "deployment_path": deployment_path,
+                            "namespace": prefixed_namespace,
+                            "component": ref_name,
+                            "storage_name": storage_name,
+                            "original_filename": manifest_filename,
+                        },
+                    )
+                    result["operations"].append(
+                        {
+                            "type": "mark_for_deletion",
+                            "resource_type": "pvc",
+                            "resource_name": marked_filename,
+                            "original_filename": manifest_filename,
+                            "status": "marked",
+                        }
+                    )
+                    logger.info(
+                        "Marked PVC for deferred deletion: %s (project=%s, deployment=%s, component=%s)",
+                        marked_filename,
+                        project_name,
+                        deployment_name,
+                        ref_name,
+                    )
+                else:
+                    # No marked_for_deletion_service available - delete the manifest immediately
+                    os.remove(marked_path)
+                    result["operations"].append(
+                        {
+                            "type": "immediate_deletion",
+                            "resource_type": "pvc",
+                            "resource_name": manifest_filename,
+                            "status": "deleted",
+                        }
+                    )
+                    logger.warning(
+                        "No marked_for_deletion_service available - deleted PVC manifest immediately: %s",
+                        manifest_filename,
+                    )
+
+        return result

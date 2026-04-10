@@ -7,6 +7,7 @@ repos:
       - id: check-yaml
         args: [--allow-multiple-documents]
       - id: check-added-large-files
+        exclude: ^operations-manager/python/static/promo\.mp4$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.11
@@ -19,6 +20,20 @@ repos:
 
   - repo: local
     hooks:
+      - id: pyright
+        name: pyright
+        entry: uv run --directory operations-manager/python pyright
+        language: system
+        files: ^operations-manager/python/.*\.py$
+        pass_filenames: false
+
+      - id: djlint
+        name: djlint
+        entry: uv run --directory operations-manager/python djlint --lint opi/templates/
+        language: system
+        files: ^operations-manager/python/.*\.(html|html\.j2)$
+        pass_filenames: false
+
       - id: pyright
         name: pyright
         entry: uv run --directory operations-manager/python pyright

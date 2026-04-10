@@ -32,6 +32,9 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
         },
+        "min_memory_limit_mi": 25,
+        "max_memory_limit_mi": 4096,
+        "max_memory_request_mi": 1024,
         "uses_capsule": False,
         "ca_certificate": {
             "enabled": True,
@@ -47,7 +50,10 @@ CLUSTER_CONFIG = {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
         "nice_url": {
-            "supported_domains": ["kind", "local"],  # Domains that support nice URL pattern
+            "supported_domains": [
+                {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
+                {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
+            ],
         },
     },
     "sandboxed-local": {
@@ -72,12 +78,23 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,
         },
+        "min_memory_limit_mi": 25,
+        "max_memory_limit_mi": 4096,
+        "max_memory_request_mi": 1024,
         "uses_capsule": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
         "nice_url": {
-            "supported_domains": ["sandbox.rijksapp.dev"],
+            "supported_domains": [
+                {"domain": "sandbox.rijksapp.dev", "supports_dots": False, "restricted_subdomains": True},
+                {
+                    "domain": "robbertuittenbroek.nl",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
+            ],
         },
     },
     "odcn-production": {
@@ -103,13 +120,37 @@ CLUSTER_CONFIG = {
         "keycloak": {
             "support_http": False,  # Only generate HTTPS redirect URIs in production
         },
+        "min_memory_limit_mi": 25,
+        "max_memory_limit_mi": 4096,
+        "max_memory_request_mi": 1024,
         "uses_capsule": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
         "nice_url": {
-            "supported_domains": ["rijks.app", "rijksapps.nl"],  # Domains that support nice URL pattern
+            "supported_domains": [
+                {"domain": "rijks.app", "supports_dots": True, "issuer": "letsencrypt", "restricted_subdomains": True},
+                {
+                    "domain": "rijksapps.nl",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
+                {
+                    "domain": "rijksapp.nl",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
+                {
+                    "domain": "rijksapp.dev",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
+            ],
         },
+        "extensions": ["odcn-registry-rewrite"],
     },
 }
 
@@ -544,6 +585,55 @@ def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) 
     return f"{project_clean}-db-rw.{infrastructure_namespace}.svc.cluster.local"
 
 
+def get_min_memory_limit_mi(cluster_name: str) -> int:
+    """
+    Get the minimum memory limit in Mi for a specific cluster.
+
+    This prevents setting memory limits below what the container runtime accepts.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Minimum memory limit in Mi
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("min_memory_limit_mi", 25)
+
+
+def get_max_memory_limit_mi(cluster_name: str) -> int:
+    """
+    Get the maximum memory limit in Mi for a specific cluster.
+
+    This is the upper bound for auto-tuning and wizard dropdowns.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Maximum memory limit in Mi
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("max_memory_limit_mi", 4096)
+
+
+def get_max_memory_request_mi(cluster_name: str) -> int:
+    """
+    Get the maximum memory request in Mi for a specific cluster.
+
+    Memory requests are capped lower than limits. Below this cap, requests
+    and limits scale together. Above it, only limits can increase further.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Maximum memory request in Mi
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("max_memory_request_mi", 1024)
+
+
 def uses_capsule(cluster_name: str) -> bool:
     """
     Check if the cluster uses Capsule multi-tenancy.
@@ -681,6 +771,9 @@ def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
     """
     Get the list of domains that support nice URLs for a specific cluster.
 
+    Extracts domain strings from the structured supported_domains list
+    for backward compatibility.
+
     Args:
         cluster_name: Name of the cluster
 
@@ -694,7 +787,8 @@ def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
     nice_url_config = get_nice_url_config(cluster_name)
     if nice_url_config is None:
         return []
-    return nice_url_config.get("supported_domains", [])
+    raw = nice_url_config.get("supported_domains", [])
+    return [entry["domain"] if isinstance(entry, dict) else entry for entry in raw]
 
 
 def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
@@ -713,3 +807,110 @@ def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
     """
     supported_domains = get_nice_url_supported_domains(cluster_name)
     return base_domain in supported_domains
+
+
+def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
+    """
+    Get the issuer for a specific domain on a cluster.
+
+    Looks up the domain in the cluster's supported_domains list.
+    Returns the per-domain issuer if configured, otherwise falls back
+    to the cluster's default cluster_issuer.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The domain to check (e.g., "rijksapp.nl")
+
+    Returns:
+        Issuer string (e.g., "letsencrypt") or None if no issuer is needed.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is not None:
+        for entry in nice_url_config.get("supported_domains", []):
+            if isinstance(entry, dict) and entry.get("domain") == domain:
+                return entry.get("issuer")
+    return None
+
+
+def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:
+    """
+    Check if a specific domain has restricted subdomains on a cluster.
+
+    When restricted, only subdomains explicitly listed in the project's
+    allowed-subdomains section may be used.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The domain to check (e.g., "rijks.app")
+
+    Returns:
+        True if the domain restricts subdomains, False otherwise.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return False
+    for entry in nice_url_config.get("supported_domains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry.get("restricted_subdomains", False)
+    return False
+
+
+def get_restricted_subdomain_domains(cluster_name: str) -> list[str]:
+    """
+    Get domains that have subdomain restrictions enabled on a cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        List of domain strings with restricted_subdomains=True.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return []
+    return [
+        entry["domain"]
+        for entry in nice_url_config.get("supported_domains", [])
+        if isinstance(entry, dict) and entry.get("restricted_subdomains", False)
+    ]
+
+
+def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
+    """
+    Check if a specific domain supports dot-separated hostnames on a cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The domain to check (e.g., "rijks.app")
+
+    Returns:
+        True if the domain supports dot-separated hostnames, False otherwise.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return False
+    for entry in nice_url_config.get("supported_domains", []):
+        if isinstance(entry, dict) and entry.get("domain") == domain:
+            return entry.get("supports_dots", False)
+    return False
+
+
+def get_extensions(cluster_name: str) -> list[str]:
+    """Get the list of manifest extension names configured for a cluster.
+
+    Returns an empty list if no extensions are configured.
+    """
+    config = get_cluster_config(cluster_name)
+    return config.get("extensions", [])

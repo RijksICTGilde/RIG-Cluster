@@ -1,0 +1,326 @@
+"""Bridge: converts EditableVisualizer into FormField for rendering."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from opi.forms.editables.editable import EditableCondition, apply_virtualize
+from opi.forms.editables.path import resolve_path
+from opi.forms.editables.resolvers import build_resolver_map
+from opi.forms.editables.service_path import smart_get_value
+from opi.forms.field import FormField
+from opi.forms.visualizers.providers import get_provider
+
+if TYPE_CHECKING:
+    from opi.forms.visualizers.visualizer import EditableVisualizer
+
+
+def editable_to_form_field(
+    editable: EditableVisualizer,
+    yaml_data: dict[str, Any],
+    errors: dict[str, list[str]] | None = None,
+    index: int | None = None,
+    edit_mode: bool = False,
+    provider_context: dict[str, Any] | None = None,
+    parent_virtualize: tuple[str, str] | None = None,
+    warnings: dict[str, list[str]] | None = None,
+) -> FormField:
+    """Convert an EditableVisualizer + YAML data into a FormField.
+
+    Bridges the visualizer layer into the existing FormField -> WidgetAdapter pipeline.
+    """
+    ed = editable.editable
+    yaml_path = ed.yaml_path
+    converter = ed.converter
+    default = ed.default
+    required = ed.required
+    min_items = ed.min_items
+    max_items = ed.max_items
+    options_provider_name = ed.values_provider
+
+    widget = str(editable.widget)
+    label = editable.label
+    description = editable.description
+    placeholder = editable.placeholder
+    readonly_flag = editable.readonly
+    readonly_on_edit_flag = editable.readonly_on_edit
+    locked_by_service = editable.locked_by_service
+    htmx_trigger = editable.htmx_trigger
+    htmx_target = editable.htmx_target
+    htmx_swap = editable.htmx_swap
+    attributes = editable.attributes
+    help_text = editable.help_text
+    help_template = editable.help_template
+    examples = editable.examples
+
+    # --- Shared logic ---
+
+    # 1. Resolve the path (real for data access, virtual for form names)
+    real_path = resolve_path(yaml_path, index)
+    virt = ed.virtualize or parent_virtualize
+    form_path = apply_virtualize(real_path, virt) if virt else real_path
+
+    # 2. Extract value from YAML using the real path (fall back to default)
+    raw_value = smart_get_value(yaml_data, real_path)
+    if raw_value is None and default is not None:
+        raw_value = default
+
+    # 3. Apply converter for display
+    # For editable widgets, use read() to convert YAML → form-compatible value
+    # (e.g. dict → string for select dropdowns). Fall back to view() for
+    # read-only display or converters that don't implement read().
+    display_value = raw_value
+    if converter:
+        if hasattr(converter, "read") and widget in ("select", "text", "textarea", "radio"):
+            display_value = converter.read(raw_value)
+        else:
+            try:
+                display_value = converter.view(raw_value, yaml_data=yaml_data)
+            except TypeError:
+                display_value = converter.view(raw_value)
+
+    # 3b. Auto-detect KV format from stored value so the toggle matches
+    if converter and hasattr(converter, "detect_format") and raw_value is not None:
+        detected_fmt = converter.detect_format(raw_value)
+        attributes = dict(attributes or {})
+        attributes["kv_format"] = detected_fmt
+
+    # 4. Resolve options (pass current value so providers can include tuner-set values)
+    option_context = dict(provider_context or {})
+    if raw_value is not None:
+        option_context.setdefault("current_value", str(raw_value))
+    options = _resolve_options(options_provider_name, option_context)
+
+    # 5. Build HTMX attrs dict
+    htmx_attrs: dict[str, str] = {}
+    if htmx_trigger:
+        htmx_attrs["hx-trigger"] = htmx_trigger
+    if htmx_target:
+        htmx_attrs["hx-target"] = htmx_target
+    if htmx_swap:
+        htmx_attrs["hx-swap"] = htmx_swap
+
+    # 6. Determine readonly
+    readonly = readonly_flag or (readonly_on_edit_flag and edit_mode)
+
+    # 7. Check locked_by_service: force value + readonly when the service is active
+    if locked_by_service and _is_service_active(locked_by_service, yaml_data):
+        display_value = True
+        readonly = True
+        description = f"Vereist door: {_service_display_name(locked_by_service)}"
+
+    # 8. Build FormField (use form_path for name/path, look up errors by real_path)
+    return FormField(
+        name=form_path,
+        path=form_path,
+        schema_type=str,
+        widget_type=widget,
+        label=label,
+        required=required,
+        description=description,
+        placeholder=placeholder,
+        value=display_value,
+        options=options or None,
+        errors=(errors or {}).get(real_path, []),
+        warnings=(warnings or {}).get(real_path, []),
+        readonly=readonly,
+        readonly_on_edit=readonly_on_edit_flag,
+        min_items=min_items,
+        max_items=max_items,
+        htmx_attrs=htmx_attrs,
+        attributes=attributes or {},
+        default=default,
+        help_text=help_text,
+        help_template=help_template,
+        examples=examples,
+        virtualize=virt,
+    )
+
+
+def evaluate_show_when(dep_value: Any, show_when: dict[str, Any] | None) -> bool:
+    """Evaluate a ``show_when`` condition against a dependency value.
+
+    Returns True when the condition is met (or when *show_when* is None,
+    in which case truthiness of *dep_value* decides).
+
+    Supported operators:
+    - ``{"contains": "value"}`` - dep_value is a list containing "value"
+    - ``{"contains_any": [...]}`` - dep_value is a list containing any value
+    - ``{"field": "value"}`` - dep_value equals "value"
+    - ``{"field": ["v1", "v2"]}`` - dep_value is in the list
+    """
+    if show_when is None:
+        return bool(dep_value)
+
+    for key, expected in show_when.items():
+        if key == "contains":
+            if not isinstance(dep_value, list):
+                return False
+            names = _extract_names_from_list(dep_value)
+            if expected not in names:
+                return False
+        elif key == "contains_any":
+            if not isinstance(dep_value, list) or not isinstance(expected, list):
+                return False
+            names = _extract_names_from_list(dep_value)
+            if not any(e in names for e in expected):
+                return False
+        else:
+            if isinstance(expected, list):
+                if dep_value not in expected:
+                    return False
+            elif dep_value != expected:
+                return False
+
+    return True
+
+
+def should_render_editable(
+    editable: EditableVisualizer,
+    yaml_data: dict[str, Any],
+    index: int | None = None,
+    siblings: list[EditableVisualizer] | None = None,
+) -> bool:
+    """Check if an editable should be rendered based on its dependencies.
+
+    Implements 4 dependency patterns:
+
+    1. show_when is an EditableCondition -> evaluate against yaml_data (no depends_on needed)
+    2. No depends_on -> always render (True)
+    3. depends_on set, no show_when -> render if dependency value is truthy
+    4. depends_on + show_when dict -> evaluate conditions (see ``evaluate_show_when``)
+
+    When *siblings* is provided, the dependency value is passed through the
+    dependency field's converter (if any) before comparison.  This is needed
+    when a converter maps stored values to sentinel display values (e.g.
+    ``CustomDomainSelectConverter`` maps ``"mijnapp.nl"`` → ``"__custom__"``).
+    """
+    ed = editable.editable
+    depends_on = ed.depends_on
+    show_when = ed.show_when
+
+    # Callable condition: evaluate against full yaml_data
+    if isinstance(show_when, EditableCondition):
+        # Provide resolver map so the condition can resolve transient
+        # defaults (e.g. base-domain when not explicitly selected)
+        if siblings and hasattr(show_when, "set_resolvers"):
+            show_when.set_resolvers(build_resolver_map(siblings))
+        return show_when.check(yaml_data)
+
+    if not depends_on:
+        return True
+
+    # Resolve [*] wildcard in depends_on when rendering inside a sequence
+    if index is not None and "[*]" in depends_on:
+        depends_on = depends_on.replace("[*]", f"[{index}]", 1)
+
+    dep_value = smart_get_value(yaml_data, depends_on)
+
+    # Apply the dependency field's converter so show_when compares against
+    # the display value (e.g. "__custom__") rather than the raw stored value.
+    if siblings and show_when and dep_value is not None:
+        dep_converter = _find_converter_for_path(siblings, depends_on)
+        if dep_converter and hasattr(dep_converter, "view"):
+            dep_value = dep_converter.view(dep_value)
+
+    return evaluate_show_when(dep_value, show_when)
+
+
+def resolve_options_for_editable(
+    editable: EditableVisualizer,
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve dynamic options using the PROVIDER_REGISTRY."""
+    provider_name = editable.editable.values_provider
+    return _resolve_options(provider_name, context)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _find_converter_for_path(
+    siblings: list[EditableVisualizer],
+    yaml_path: str,
+) -> Any | None:
+    """Find the converter for the editable whose yaml_path matches *yaml_path*."""
+    for sib in siblings:
+        if sib.editable.yaml_path == yaml_path:
+            return sib.editable.converter
+        # Recurse into groups
+        if sib.children:
+            result = _find_converter_for_path(sib.children, yaml_path)
+            if result is not None:
+                return result
+    return None
+
+
+def _resolve_options(
+    provider_name: str | None,
+    context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Resolve options by provider name."""
+    if not provider_name:
+        return []
+
+    kwargs = _filter_provider_kwargs(provider_name, context or {})
+    try:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.debug(f"_resolve_options: provider={provider_name!r}, filtered_kwargs={kwargs}")
+        provider = get_provider(provider_name, **kwargs)
+        return provider.get_options()
+    except KeyError:
+        return []
+
+
+def _filter_provider_kwargs(
+    provider_name: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Filter context kwargs to only those accepted by the provider's __init__."""
+    import inspect
+
+    from opi.forms.visualizers.providers import PROVIDER_REGISTRY
+
+    provider_cls = PROVIDER_REGISTRY.get(provider_name)
+    if not provider_cls or not context:
+        return {}
+
+    sig = inspect.signature(provider_cls.__init__)
+    valid_params = set(sig.parameters.keys()) - {"self"}
+    return {k: v for k, v in context.items() if k in valid_params}
+
+
+def _extract_names_from_list(items: list) -> list[str]:  # type: ignore[type-arg]
+    """Extract names from a mixed str/dict list (services format)."""
+    names: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            names.append(item)
+        elif isinstance(item, dict):
+            names.extend(item.keys())
+    return names
+
+
+def _is_service_active(service_name: str, yaml_data: dict[str, Any]) -> bool:
+    """Check if a service is in the selected services list."""
+    services = yaml_data.get("services", [])
+    if not isinstance(services, list):
+        return False
+    return service_name in _extract_names_from_list(services)
+
+
+# Display names for services used in locked_by_service hints
+_SERVICE_DISPLAY_NAMES: dict[str, str] = {
+    "authorization-wall": "Authorization Wall",
+    "keycloak": "Keycloak",
+    "publish-on-web": "Publiceren op het web",
+}
+
+
+def _service_display_name(service_name: str) -> str:
+    """Get a human-readable display name for a service."""
+    return _SERVICE_DISPLAY_NAMES.get(service_name, service_name)

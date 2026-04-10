@@ -47,4 +47,13 @@ data:
     PROJECT_REPO_PASSWORD=plain:admin1234
     PROJECT_REPO_BRANCH=main
 
+    REGISTRY_URL=registry.sandbox.rijksapp.dev
+    REGISTRY_ORG=rig
+    REGISTRY_USERNAME=admin
+    REGISTRY_PASSWORD=plain:admin1234
+    REGISTRY_VERIFY_TLS=true
+    IMAGE_UPLOAD_MAX_SIZE_MB=5120
+
+    PROMETHEUS_EXTERNAL_URL=https://prometheus.sandbox.rijksapp.dev
+
     LOG_TO_FILE=false

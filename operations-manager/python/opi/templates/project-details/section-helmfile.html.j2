@@ -1,0 +1,50 @@
+{# Helmfile Section (Base level) #}
+{% if project.helmfile %}
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="oranje" />Helmfile</c-heading>
+        <p class="rvo-text--subtle">Helmfile definities op project niveau</p>
+
+        <div class="helmfile-section">
+            {% for helmfile in project.helmfile %}
+            <c-card class="helmfile-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
+                <c-layout-flow gap="md">
+                    <div class="helmfile-header">
+                        <c-icon icon="applicatie" size="lg" color="oranje" />
+                        <div>
+                            <c-heading type="h3" textContent="{{ helmfile.name }}" />
+                            {% if helmfile.get('repository') %}
+                            <div class="rvo-text--sm rvo-text--subtle">{{ helmfile.repository }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="helmfile-specs">
+                        {% if helmfile.get('path') %}
+                        <div class="spec-item"><strong>Path:</strong> {{ helmfile.path }}</div>
+                        {% endif %}
+                        {% if helmfile.get('branch') %}
+                        <div class="spec-item"><strong>Branch:</strong> {{ helmfile.branch }}</div>
+                        {% endif %}
+                    </div>
+
+                    {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values']|length > 0 %}
+                    <div class="helm-values-section" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                            <c-icon icon="sleutel" size="sm" color="hemelblauw" />
+                            <span class="rvo-text--sm" style="font-weight: 600;">Helm Values (Base)</span>
+                            <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
+                        </div>
+                        <c-secret-field
+                            value="{{ helmfile['helm-values'] | tojson(indent=2) }}"
+                            valueType="json"
+                            contentWidth="lg" />
+                    </div>
+                    {% endif %}
+                </c-layout-flow>
+            </c-card>
+            {% endfor %}
+        </div>
+    </c-layout-flow>
+</c-card>
+{% endif %}

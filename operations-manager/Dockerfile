@@ -2,6 +2,12 @@
 # Stage 1: Base system with dependencies (rarely changes)
 FROM python:3.14-slim AS base-system
 
+# Pin tool versions for deterministic builds and optimal layer caching.
+# Bump these ARGs when you need a newer version.
+ARG SOPS_VERSION=v3.12.1
+ARG KOPIA_VERSION=0.22.3
+ARG CHISEL_VERSION=1.11.3
+
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -33,9 +39,8 @@ RUN curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | gpg --d
 # TARGETARCH is set automatically by Docker buildx (amd64 or arm64)
 ARG TARGETARCH
 
-# Install SOPS - cached unless SOPS version changes
-RUN SOPS_VERSION=$(curl -s https://api.github.com/repos/getsops/sops/releases/latest | grep -Po '"tag_name": "\K.*?(?=")') \
-    && curl -LO "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
+# Install SOPS - layer cached unless SOPS_VERSION ARG changes
+RUN curl -LO "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
     && chmod +x "sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
     && mv "sops-${SOPS_VERSION}.linux.${TARGETARCH}" /usr/local/bin/sops
 
@@ -44,10 +49,9 @@ RUN curl -LO "https://dl.min.io/client/mc/release/linux-${TARGETARCH}/mc" \
     && chmod +x mc \
     && mv mc /usr/local/bin/mc
 
-# Install Kopia - for backup repository operations
+# Install Kopia - layer cached unless KOPIA_VERSION ARG changes
 # Kopia uses "x64" for amd64 and "arm64" for arm64
 RUN KOPIA_ARCH=$(echo "${TARGETARCH}" | sed 's/amd64/x64/') \
-    && KOPIA_VERSION=$(curl -s https://api.github.com/repos/kopia/kopia/releases/latest | grep -Po '"tag_name": "v\K[^"]*') \
     && curl -LO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}/kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" \
     && tar -xzf "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" \
     && mv "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}/kopia" /usr/local/bin/kopia \
@@ -59,9 +63,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends skopeo
 
-# Install Chisel - used for establishing HTTP tunnels to remote services
-RUN CHISEL_VERSION=$(curl -s https://api.github.com/repos/jpillora/chisel/releases/latest | grep -Po '"tag_name": "v?\K[^"]*') \
-    && curl -LO "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" \
+# Install Chisel - layer cached unless CHISEL_VERSION ARG changes
+RUN curl -LO "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" \
     && gunzip "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" \
     && chmod +x "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}" \
     && mv "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}" /usr/local/bin/chisel
@@ -101,12 +104,19 @@ COPY keys/git-server-key keys/git-server-key.pub /app/keys/
 
 # Copy specific environment files (rarely change)
 COPY operations-manager/python/.env /app/
-COPY operations-manager/python/.env.local /app/
 COPY operations-manager/python/.env.production /app/
+
+# Copy Alembic configuration (for database migrations)
+COPY operations-manager/python/alembic.ini /app/
+
+# Copy entrypoint script
+COPY operations-manager/docker-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Copy application code and resources (change frequently - put last for optimal caching)
 COPY operations-manager/python/opi ./opi
 COPY operations-manager/python/manifests ./manifests
+COPY operations-manager/python/extensions ./extensions
 COPY operations-manager/python/sources ./sources
 COPY operations-manager/python/static ./static
 
@@ -126,5 +136,5 @@ EXPOSE 5678
 # Use tini as PID 1 to properly reap zombie child processes
 ENTRYPOINT ["tini", "--"]
 
-# Set the command to run the application
-CMD ["python", "-m", "opi.server"]
+# Set the command to run the entrypoint script (which handles migrations then starts the app)
+CMD ["/app/entrypoint.sh"]

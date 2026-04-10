@@ -6,7 +6,7 @@
 #}
 
 {% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
-<c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive">
+<c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive" additionalJs='<script src="/static/js/json-enc.js"></script>'>
 
     <div class="rvo-demo-page">
         {# Header #}
@@ -36,6 +36,12 @@
             </main>
 
             {# Footer #}
+            {% set version_label = 'ZAD ' + version + (' (' + build_date + ')' if build_date else '') %}
+            {% if version != '0.1.0' %}
+                {% set version_menu = [{'content': version_label, 'link': 'https://github.com/RijksICTGilde/RIG-Cluster/commit/' + version}] %}
+            {% else %}
+                {% set version_menu = [{'content': version_label}] %}
+            {% endif %}
             <c-footer
                 maxWidth="lg"
                 :primaryMenu="[
@@ -44,23 +50,11 @@
                         'items': [
                             {'content': 'Over het platform', 'link': '/about'},
                             {'content': 'Architectuur', 'link': '/architecture'},
-                            {'content': 'Documentatie', 'link': '/docs'},
-                            {'content': 'API Referentie', 'link': '/api'},
-                            {'content': 'Status', 'link': '/status'}
+                            {'content': 'API Referentie', 'link': '/api'}
                         ]
                     }
                 ]"
-                :secondaryMenu="[
-                    {
-                        'label': 'Organisatie',
-                        'items': [
-                            {'content': 'Over ODC-Noord', 'link': '/organization'},
-                            {'content': 'Privacyverklaring', 'link': '/privacy'},
-                            {'content': 'Toegankelijkheid', 'link': '/accessibility'},
-                            {'content': 'Cookieverklaring', 'link': '/cookies'}
-                        ]
-                    }
-                ]" />
+                :secondaryMenu="version_menu" />
         </c-layout-flow>
 
         <style>
@@ -75,7 +69,7 @@
             h4 .utrecht-icon,
             h5 .utrecht-icon,
             h6 .utrecht-icon {
-                vertical-align: text-bottom;
+                vertical-align: sub;
                 margin-right: 0.1em;
             }
         </style>

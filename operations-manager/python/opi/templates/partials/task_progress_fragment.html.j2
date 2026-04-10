@@ -1,0 +1,88 @@
+{#
+  Generic task progress fragment - server-rendered progress with HTMX polling.
+
+  Replaces itself every 2s until the task completes or fails.
+  Can be used inline (e.g. inside a deployment card) or in a modal.
+
+  Required context:
+    - task_id: str
+    - progress_url: str (the HTMX poll endpoint URL)
+    - progress: int (0-100)
+    - current_step: str
+    - status: str ("running", "completed", "failed")
+  Optional:
+    - tasks: list of task dicts (name, status, subtasks)
+    - error: str | None
+    - component_failures: list of failure dicts (component, deployment, failure_type, message, logs) | None
+    - project_name: str | None (for linking to detail page)
+    - container_id: str (default: "task-progress-{{ task_id }}")
+    - success_message: str (default: "Wijzigingen succesvol verwerkt!")
+    - on_complete: str | None (JavaScript to run on Ok click, e.g. "location.reload()")
+#}
+{% set _container_id = container_id | default("task-progress-" ~ task_id) %}
+{% set _success_msg = success_message | default("Wijzigingen succesvol verwerkt!") %}
+<div id="{{ _container_id }}"
+     {% if status not in ("completed", "failed") %}
+     hx-get="{{ progress_url }}"
+     hx-trigger="every 2s"
+     hx-target="#{{ _container_id }}"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+    <div class="edit-progress-bar-wrapper">
+        <div class="edit-progress-bar" style="width: {{ progress }}%"></div>
+    </div>
+
+    {% if status == "completed" %}
+    <p class="edit-progress-step rvo-text--groen-700">{{ _success_msg }}</p>
+    {% elif status == "failed" %}
+    {% include "partials/_component_failures.html.j2" %}
+    {% else %}
+    <p class="edit-progress-step">{{ current_step }}</p>
+    {% endif %}
+
+    {% if tasks %}
+    <div class="edit-progress-tasks">
+        {% for task in tasks %}
+        <div class="edit-progress-task-item">
+            {% if task.status == "completed" %}
+            <c-icon icon="vinkje" size="sm" color="groen" />
+            {% elif task.status == "failed" %}
+            <c-icon icon="kruis" size="sm" color="rood" />
+            {% elif task.status == "running" %}
+            <c-icon icon="pijl-naar-rechts" size="sm" color="hemelblauw" />
+            {% else %}
+            <c-icon icon="klok" size="sm" color="grijs-600" />
+            {% endif %}
+            <span>{{ task.name }}</span>
+        </div>
+        {% if task.subtasks %}
+        {% for subtask in task.subtasks %}
+        <div class="edit-progress-task-item edit-progress-subtask">
+            {% if subtask.status == "completed" %}
+            <c-icon icon="vinkje" size="sm" color="groen" />
+            {% elif subtask.status == "failed" %}
+            <c-icon icon="kruis" size="sm" color="rood" />
+            {% elif subtask.status == "running" %}
+            <c-icon icon="pijl-naar-rechts" size="sm" color="hemelblauw" />
+            {% else %}
+            <c-icon icon="klok" size="sm" color="grijs-600" />
+            {% endif %}
+            <span>{{ subtask.name }}</span>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if status == "completed" and on_complete is defined and on_complete %}
+    <div class="edit-progress-actions">
+        <c-button kind="primary" label="Ok" @click="{{ on_complete }}" />
+    </div>
+    {% elif status == "failed" and on_complete is defined and on_complete %}
+    <div class="edit-progress-actions">
+        <c-button kind="primary" label="Sluiten" @click="{{ on_complete }}" />
+    </div>
+    {% endif %}
+</div>

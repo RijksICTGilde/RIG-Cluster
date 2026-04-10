@@ -1,0 +1,38 @@
+name: test-project-services
+description: "Test project with services for E2E UI testing"
+
+clusters:
+  - local
+
+users:
+  - email: test@example.com
+    role: admin
+  - email: developer@example.com
+    role: developer
+
+config:
+  api-key: test-api-key-services-67890
+
+services:
+  - keycloak
+  - postgresql
+
+components:
+  - name: backend
+    publish-on-web: true
+    type: deployment
+    ports:
+      inbound: [8080]
+      outbound: [443, 5432]
+    uses-services:
+      - keycloak
+      - postgresql
+
+deployments:
+  - name: default
+    cluster: local
+    namespace: test-project-services
+    repository: main-repo
+    components:
+      - reference: backend
+        image: "python:3.13-slim"

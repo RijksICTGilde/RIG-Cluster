@@ -6,11 +6,13 @@ Grafana's datasource API, using a service account token for authentication.
 This is used in ODCN production where direct Prometheus access is not available.
 """
 
+import asyncio
 import logging
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import requests
+import httpx
 
 from opi.core.config import settings
 from opi.utils.naming import generate_unique_name
@@ -42,6 +44,7 @@ class GrafanaPrometheusConnector:
     _token: str | None
     _datasource_uid: str | None
     _datasource_type: str
+    _client: httpx.AsyncClient | None
 
     def __new__(cls) -> "GrafanaPrometheusConnector":
         """Implement singleton pattern."""
@@ -51,7 +54,7 @@ class GrafanaPrometheusConnector:
         return cls._instance
 
     def __init__(self) -> None:
-        """Initialize the Grafana Prometheus connector."""
+        """Initialize the Grafana Prometheus connector (config only, no I/O)."""
         if self._initialized:
             return
 
@@ -59,20 +62,28 @@ class GrafanaPrometheusConnector:
         self._grafana_url = settings.GRAFANA_URL.rstrip("/")
         self._token = settings.GRAFANA_TOKEN
         self._datasource_uid = settings.GRAFANA_DATASOURCE_UID
-        self._datasource_type = "prometheus"  # Default, will be updated on discovery
+        self._datasource_type = "prometheus"
+        self._client = None
 
         logger.debug(f"Initializing GrafanaPrometheusConnector with URL: {self._grafana_url}")
 
         if not self._token:
             logger.warning("GRAFANA_TOKEN not set - Grafana connector will not work")
             GrafanaPrometheusConnector.is_connected = False
+
+    async def connect(self) -> None:
+        """Perform async initialization: discover datasource and test connection."""
+        if GrafanaPrometheusConnector.is_connected:
+            return
+        if not self._token:
             return
 
-        # Auto-discover datasource if not configured
-        if not self._datasource_uid:
-            self._discover_datasource()
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0))
 
-        self._test_connection()
+        if not self._datasource_uid:
+            await self._discover_datasource()
+
+        await self._test_connection()
         logger.debug("GrafanaPrometheusConnector initialized")
 
     def _get_headers(self) -> dict[str, str]:
@@ -82,13 +93,16 @@ class GrafanaPrometheusConnector:
             "Content-Type": "application/json",
         }
 
-    def _discover_datasource(self) -> None:
+    async def _discover_datasource(self) -> None:
         """Auto-discover the Prometheus/Mimir datasource UID."""
+        if self._client is None:
+            return
+
         logger.debug("Auto-discovering Prometheus/Mimir datasource...")
 
         try:
             url = f"{self._grafana_url}/api/datasources"
-            resp = requests.get(url, headers=self._get_headers(), timeout=10)
+            resp = await self._client.get(url, headers=self._get_headers())
 
             if resp.status_code != 200:
                 logger.warning(f"Failed to fetch datasources: {resp.status_code}")
@@ -107,10 +121,10 @@ class GrafanaPrometheusConnector:
 
             logger.warning("No Prometheus/Mimir datasource found in Grafana")
 
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             logger.warning(f"Error discovering datasource: {e}")
 
-    def _test_connection(self) -> bool:
+    async def _test_connection(self) -> bool:
         """Test the connection to Grafana and the Prometheus datasource."""
         if not self._datasource_uid:
             logger.warning("No datasource UID configured - cannot test connection")
@@ -118,8 +132,7 @@ class GrafanaPrometheusConnector:
             return False
 
         try:
-            # Test with a simple query
-            result = self._execute_query("up", instant=True)
+            result = await self._execute_query("up", instant=True)
             if result is not None:
                 GrafanaPrometheusConnector.is_connected = True
                 logger.info("Grafana Prometheus connection successful")
@@ -134,7 +147,7 @@ class GrafanaPrometheusConnector:
             logger.warning(f"Grafana connection failed: {e}")
             return False
 
-    def reconnect(self) -> bool:
+    async def reconnect(self) -> bool:
         """Attempt to reconnect to Grafana."""
         if GrafanaPrometheusConnector.is_connected:
             logger.debug("Grafana already connected, skipping reconnect")
@@ -142,26 +155,48 @@ class GrafanaPrometheusConnector:
 
         logger.info(f"Attempting to reconnect to Grafana at {self._grafana_url}")
 
-        if not self._datasource_uid:
-            self._discover_datasource()
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0))
 
-        return self._test_connection()
+        if not self._datasource_uid:
+            await self._discover_datasource()
+
+        return await self._test_connection()
 
     def _ensure_connected(self) -> None:
         """Ensure Grafana is connected, raise error if not."""
-        if not GrafanaPrometheusConnector.is_connected:
+        if not GrafanaPrometheusConnector.is_connected or self._client is None:
             raise GrafanaConnectionError("Grafana is not connected")
 
-    def _execute_query(
+    def _build_query_obj(
+        self, ref_id: str, query: str, instant: bool, step: str = "5m", datasource_uid: str | None = None
+    ) -> dict[str, Any]:
+        """Build a single query object for the Grafana API."""
+        query_obj: dict[str, Any] = {
+            "refId": ref_id,
+            "datasource": {
+                "type": self._datasource_type,
+                "uid": datasource_uid or self._datasource_uid,
+            },
+            "expr": query,
+            "instant": instant,
+            "range": not instant,
+        }
+        if not instant and step:
+            query_obj["interval"] = step
+        return query_obj
+
+    async def _execute_query(
         self,
         query: str,
         instant: bool = True,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         step: str = "5m",
+        datasource_uid: str | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Execute a PromQL query through Grafana's API.
+        Execute a single PromQL query through Grafana's API (async, non-blocking).
 
         Args:
             query: The PromQL query to execute
@@ -169,50 +204,112 @@ class GrafanaPrometheusConnector:
             start_time: Start time for range queries
             end_time: End time for range queries
             step: Step interval for range queries
+            datasource_uid: Optional datasource UID override (e.g. for billing Mimir)
 
         Returns:
             List of metric results in Prometheus API format
         """
+        results = await self._execute_batch_queries(
+            queries={"A": query},
+            instant=instant,
+            start_time=start_time,
+            end_time=end_time,
+            step=step,
+            datasource_uid=datasource_uid,
+        )
+        return results.get("A", [])
+
+    async def _execute_batch_queries(
+        self,
+        queries: dict[str, str],
+        instant: bool = True,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        step: str = "5m",
+        datasource_uid: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """
+        Execute multiple PromQL queries in a single Grafana API request.
+
+        All queries in a batch share the same instant/range mode and time window.
+
+        Args:
+            queries: Mapping of refId to PromQL query string
+            instant: If True, execute instant queries. If False, range queries.
+            start_time: Start time for range queries
+            end_time: End time for range queries
+            step: Step interval for range queries
+            datasource_uid: Optional datasource UID override (e.g. for billing Mimir)
+
+        Returns:
+            Dictionary mapping refId to list of metric results in Prometheus API format
+        """
+        if self._client is None:
+            raise GrafanaConnectionError("HTTP client not initialized")
+
+        if not queries:
+            return {}
+
         url = f"{self._grafana_url}/api/ds/query"
 
-        query_obj: dict[str, Any] = {
-            "refId": "A",
-            "datasource": {
-                "type": self._datasource_type,
-                "uid": self._datasource_uid,
-            },
-            "expr": query,
-            "instant": instant,
-            "range": not instant,
-        }
-
-        if not instant and step:
-            query_obj["interval"] = step
+        query_objects = [
+            self._build_query_obj(ref_id, query, instant, step, datasource_uid) for ref_id, query in queries.items()
+        ]
 
         payload: dict[str, Any] = {
-            "queries": [query_obj],
+            "queries": query_objects,
             "from": "now-5m",
             "to": "now",
         }
 
-        # For range queries, use specific timestamps
-        if not instant and start_time and end_time:
+        if start_time and end_time:
             payload["from"] = str(int(start_time.timestamp() * 1000))
+            payload["to"] = str(int(end_time.timestamp() * 1000))
+        elif end_time:
+            payload["from"] = str(int(end_time.timestamp() * 1000) - 60_000)
             payload["to"] = str(int(end_time.timestamp() * 1000))
 
         try:
-            resp = requests.post(url, headers=self._get_headers(), json=payload, timeout=30)
+            resp = await self._client.post(url, headers=self._get_headers(), json=payload)
 
             if resp.status_code != 200:
                 logger.error(f"Grafana query failed: {resp.status_code} - {resp.text[:500]}")
                 raise GrafanaQueryError(f"Query failed with status {resp.status_code}")
 
-            result = resp.json()
-            return self._convert_grafana_response(result, instant)
+            grafana_result = resp.json()
+            return self._convert_batch_grafana_response(grafana_result, queries.keys(), instant)
 
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"Grafana request error: {e}")
             raise GrafanaQueryError(f"Request failed: {e}") from e
+
+    def _convert_batch_grafana_response(
+        self,
+        grafana_result: dict[str, Any],
+        ref_ids: Iterable[str],
+        instant: bool = True,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """
+        Convert a batched Grafana API response to Prometheus API format, keyed by refId.
+
+        Args:
+            grafana_result: The raw Grafana response JSON
+            ref_ids: The refIds that were queried
+            instant: Whether these were instant queries
+
+        Returns:
+            Dictionary mapping refId to list of metric results
+        """
+        all_results: dict[str, list[dict[str, Any]]] = {ref_id: [] for ref_id in ref_ids}
+        ref_results = grafana_result.get("results", {})
+
+        for ref_id, ref_result in ref_results.items():
+            if ref_id not in all_results:
+                continue
+            frames = ref_result.get("frames", [])
+            all_results[ref_id] = self._convert_frames(frames, instant)
+
+        return all_results
 
     def _convert_grafana_response(self, grafana_result: dict[str, Any], instant: bool = True) -> list[dict[str, Any]]:
         """
@@ -221,65 +318,72 @@ class GrafanaPrometheusConnector:
         Grafana returns data in a different format than the Prometheus API.
         This method converts it to match the prometheus_api_client format.
         """
+        batch = self._convert_batch_grafana_response(grafana_result, grafana_result.get("results", {}).keys(), instant)
+        results: list[dict[str, Any]] = []
+        for ref_results in batch.values():
+            results.extend(ref_results)
+        return results
+
+    def _convert_frames(self, frames: list[dict[str, Any]], instant: bool) -> list[dict[str, Any]]:
+        """Convert Grafana data frames to Prometheus API format."""
         results: list[dict[str, Any]] = []
 
-        ref_results = grafana_result.get("results", {})
-        for ref_result in ref_results.values():
-            frames = ref_result.get("frames", [])
+        for frame in frames:
+            schema = frame.get("schema", {})
+            data = frame.get("data", {})
 
-            for frame in frames:
-                schema = frame.get("schema", {})
-                data = frame.get("data", {})
+            labels: dict[str, str] = {}
+            fields = schema.get("fields", [])
+            for field in fields:
+                field_labels = field.get("labels", {})
+                if field_labels:
+                    labels.update(field_labels)
 
-                # Extract labels from schema fields
-                labels: dict[str, str] = {}
-                fields = schema.get("fields", [])
-                for field in fields:
-                    field_labels = field.get("labels", {})
-                    if field_labels:
-                        labels.update(field_labels)
+            values = data.get("values", [])
 
-                # Get values
-                values = data.get("values", [])
+            if instant:
+                if values and len(values) > 1 and values[1]:
+                    timestamp = values[0][0] if values[0] else 0
+                    value = values[1][0] if values[1] else 0
+                    results.append(
+                        {
+                            "metric": labels,
+                            "value": [timestamp / 1000, str(value)],
+                        }
+                    )
+            else:
+                if values and len(values) > 1:
+                    timestamps = values[0] or []
+                    metric_values = values[1] or []
 
-                if instant:
-                    # Instant query: single value
-                    if values and len(values) > 1 and values[1]:
-                        timestamp = values[0][0] if values[0] else 0
-                        value = values[1][0] if values[1] else 0
+                    range_values = []
+                    for i, ts in enumerate(timestamps):
+                        if i < len(metric_values):
+                            range_values.append([ts / 1000, str(metric_values[i])])
+
+                    if range_values:
                         results.append(
                             {
                                 "metric": labels,
-                                "value": [timestamp / 1000, str(value)],  # Convert ms to seconds
+                                "values": range_values,
                             }
                         )
-                else:
-                    # Range query: multiple values over time
-                    if values and len(values) > 1:
-                        timestamps = values[0] if values[0] else []
-                        metric_values = values[1] if values[1] else []
-
-                        range_values = []
-                        for i, ts in enumerate(timestamps):
-                            if i < len(metric_values):
-                                range_values.append([ts / 1000, str(metric_values[i])])
-
-                        if range_values:
-                            results.append(
-                                {
-                                    "metric": labels,
-                                    "values": range_values,
-                                }
-                            )
 
         return results
 
-    def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def custom_query(
+        self,
+        query: str,
+        datasource_uid: str | None = None,
+        eval_time: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Execute a custom PromQL query.
 
         Args:
             query: The PromQL query to execute.
+            datasource_uid: Optional datasource UID override (e.g. for billing Mimir).
+            eval_time: Optional evaluation timestamp. Defaults to now.
 
         Returns:
             List of metric results.
@@ -288,12 +392,12 @@ class GrafanaPrometheusConnector:
         logger.debug(f"Executing custom query: {query}")
 
         try:
-            return self._execute_query(query, instant=True)
+            return await self._execute_query(query, instant=True, datasource_uid=datasource_uid, end_time=eval_time)
         except Exception as e:
             logger.error(f"Failed to execute custom query: {e}")
             raise GrafanaQueryError(f"Failed to execute custom query: {e}") from e
 
-    def get_cpu_usage_by_namespace(self, namespace: str | None = None) -> list[dict[str, Any]]:
+    async def get_cpu_usage_by_namespace(self, namespace: str | None = None) -> list[dict[str, Any]]:
         """Get CPU usage metrics grouped by pod."""
         self._ensure_connected()
 
@@ -307,29 +411,29 @@ class GrafanaPrometheusConnector:
         logger.debug(f"Querying CPU usage: {query}")
 
         try:
-            return self._execute_query(query, instant=True)
+            return await self._execute_query(query, instant=True)
         except Exception as e:
             logger.error(f"Failed to query CPU usage: {e}")
             raise GrafanaQueryError(f"Failed to query CPU usage: {e}") from e
 
-    def get_memory_usage_by_namespace(self, namespace: str | None = None) -> list[dict[str, Any]]:
+    async def get_memory_usage_by_namespace(self, namespace: str | None = None) -> list[dict[str, Any]]:
         """Get memory usage metrics grouped by pod."""
         self._ensure_connected()
 
         if namespace:
-            query = f'sum(container_memory_usage_bytes{{namespace="{namespace}",container!=""}}) by (pod)'
+            query = f'sum(container_memory_working_set_bytes{{namespace="{namespace}",container!=""}}) by (pod)'
         else:
-            query = 'sum(container_memory_usage_bytes{container!=""}) by (namespace, pod)'
+            query = 'sum(container_memory_working_set_bytes{container!=""}) by (namespace, pod)'
 
         logger.debug(f"Querying memory usage: {query}")
 
         try:
-            return self._execute_query(query, instant=True)
+            return await self._execute_query(query, instant=True)
         except Exception as e:
             logger.error(f"Failed to query memory usage: {e}")
             raise GrafanaQueryError(f"Failed to query memory usage: {e}") from e
 
-    def get_pod_count(self, namespace: str | None = None) -> int:
+    async def get_pod_count(self, namespace: str | None = None) -> int:
         """Get the count of running pods."""
         self._ensure_connected()
 
@@ -338,7 +442,7 @@ class GrafanaPrometheusConnector:
         logger.debug(f"Querying pod count: {query}")
 
         try:
-            result = self._execute_query(query, instant=True)
+            result = await self._execute_query(query, instant=True)
             if result and len(result) > 0:
                 return int(float(result[0]["value"][1]))
             return 0
@@ -346,7 +450,7 @@ class GrafanaPrometheusConnector:
             logger.error(f"Failed to query pod count: {e}")
             raise GrafanaQueryError(f"Failed to query pod count: {e}") from e
 
-    def get_pod_restarts(self, namespace: str | None = None) -> list[dict[str, Any]]:
+    async def get_pod_restarts(self, namespace: str | None = None) -> list[dict[str, Any]]:
         """Get pod restart counts."""
         self._ensure_connected()
 
@@ -358,12 +462,12 @@ class GrafanaPrometheusConnector:
         logger.debug(f"Querying pod restarts: {query}")
 
         try:
-            return self._execute_query(query, instant=True)
+            return await self._execute_query(query, instant=True)
         except Exception as e:
             logger.error(f"Failed to query pod restarts: {e}")
             raise GrafanaQueryError(f"Failed to query pod restarts: {e}") from e
 
-    def get_network_receive_bytes(self, namespace: str | None = None) -> list[dict[str, Any]]:
+    async def get_network_receive_bytes(self, namespace: str | None = None) -> list[dict[str, Any]]:
         """Get network receive bytes rate."""
         self._ensure_connected()
 
@@ -375,12 +479,12 @@ class GrafanaPrometheusConnector:
         logger.debug(f"Querying network receive: {query}")
 
         try:
-            return self._execute_query(query, instant=True)
+            return await self._execute_query(query, instant=True)
         except Exception as e:
             logger.error(f"Failed to query network receive: {e}")
             raise GrafanaQueryError(f"Failed to query network receive: {e}") from e
 
-    def get_network_transmit_bytes(self, namespace: str | None = None) -> list[dict[str, Any]]:
+    async def get_network_transmit_bytes(self, namespace: str | None = None) -> list[dict[str, Any]]:
         """Get network transmit bytes rate."""
         self._ensure_connected()
 
@@ -392,12 +496,12 @@ class GrafanaPrometheusConnector:
         logger.debug(f"Querying network transmit: {query}")
 
         try:
-            return self._execute_query(query, instant=True)
+            return await self._execute_query(query, instant=True)
         except Exception as e:
             logger.error(f"Failed to query network transmit: {e}")
             raise GrafanaQueryError(f"Failed to query network transmit: {e}") from e
 
-    def get_cluster_overview(self) -> dict[str, Any]:
+    async def get_cluster_overview(self) -> dict[str, Any]:
         """Get a high-level overview of cluster metrics."""
         self._ensure_connected()
 
@@ -410,7 +514,7 @@ class GrafanaPrometheusConnector:
 
         try:
             # Total CPU usage
-            cpu_result = self._execute_query(
+            cpu_result = await self._execute_query(
                 'sum(rate(container_cpu_usage_seconds_total{container!=""}[5m]))',
                 instant=True,
             )
@@ -418,20 +522,20 @@ class GrafanaPrometheusConnector:
                 overview["total_cpu_usage"] = float(cpu_result[0]["value"][1])
 
             # Total memory usage
-            memory_result = self._execute_query(
-                'sum(container_memory_usage_bytes{container!=""})',
+            memory_result = await self._execute_query(
+                'sum(container_memory_working_set_bytes{container!=""})',
                 instant=True,
             )
             if memory_result:
                 overview["total_memory_bytes"] = int(float(memory_result[0]["value"][1]))
 
             # Pod count
-            pod_result = self._execute_query("count(kube_pod_info)", instant=True)
+            pod_result = await self._execute_query("count(kube_pod_info)", instant=True)
             if pod_result:
                 overview["pod_count"] = int(float(pod_result[0]["value"][1]))
 
             # Namespace count
-            ns_result = self._execute_query(
+            ns_result = await self._execute_query(
                 "count(count by (namespace) (kube_pod_info))",
                 instant=True,
             )
@@ -444,7 +548,7 @@ class GrafanaPrometheusConnector:
 
         return overview
 
-    def query_range(self, query: str, start_time: str, end_time: str, step: str) -> list[dict[str, Any]]:
+    async def query_range(self, query: str, start_time: str, end_time: str, step: str) -> list[dict[str, Any]]:
         """Execute a range query to get time-series data."""
         self._ensure_connected()
 
@@ -455,7 +559,7 @@ class GrafanaPrometheusConnector:
             start_dt = datetime.fromisoformat(start_time)
             end_dt = datetime.fromisoformat(end_time)
 
-            return self._execute_query(
+            return await self._execute_query(
                 query,
                 instant=False,
                 start_time=start_dt,
@@ -466,7 +570,9 @@ class GrafanaPrometheusConnector:
             logger.error(f"Failed to execute range query: {e}")
             raise GrafanaQueryError(f"Failed to execute range query: {e}") from e
 
-    def get_component_metrics(self, namespace: str, pod_prefix: str, time_range: str = "6h") -> dict[str, float | None]:
+    async def get_component_metrics(
+        self, namespace: str, pod_prefix: str, time_range: str = "6h"
+    ) -> dict[str, float | None]:
         """Get aggregated metrics for a specific component."""
         if not GrafanaPrometheusConnector.is_connected:
             return {
@@ -484,27 +590,32 @@ class GrafanaPrometheusConnector:
         }
 
         try:
-            # CPU usage
-            cpu_query = (
-                f"avg(rate(container_cpu_usage_seconds_total{{"
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
-                f"}}[{time_range}]))"
-            )
-            cpu_result = self._execute_query(cpu_query, instant=True)
-            if cpu_result and len(cpu_result) > 0:
+            # Batch CPU + memory into a single request
+            batch_queries = {
+                "cpu": (
+                    f"avg(rate(container_cpu_usage_seconds_total{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
+                    f"}}[{time_range}]))"
+                ),
+                "memory": (
+                    f'sum(container_memory_working_set_bytes{{namespace="{namespace}",'
+                    f'pod=~"{pod_prefix}.*",container!=""}})'
+                ),
+            }
+
+            batch_results = await self._execute_batch_queries(queries=batch_queries, instant=True)
+
+            cpu_result = batch_results.get("cpu", [])
+            if cpu_result:
                 metrics["cpu_cores"] = float(cpu_result[0]["value"][1])
 
-            # Memory usage
-            memory_query = (
-                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
-            )
-            memory_result = self._execute_query(memory_query, instant=True)
-            if memory_result and len(memory_result) > 0:
+            memory_result = batch_results.get("memory", [])
+            if memory_result:
                 memory_bytes = float(memory_result[0]["value"][1])
                 metrics["memory_bytes"] = memory_bytes
                 metrics["memory_mb"] = memory_bytes / (1024 * 1024)
 
-            # HTTP requests per second
+            # HTTP requests per second — try-until-found, stays sequential
             for req_metric in [
                 "http_requests_total",
                 "http_server_requests_seconds_count",
@@ -512,7 +623,7 @@ class GrafanaPrometheusConnector:
             ]:
                 req_query = f'sum(rate({req_metric}{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{time_range}]))'
                 try:
-                    req_result = self._execute_query(req_query, instant=True)
+                    req_result = await self._execute_query(req_query, instant=True)
                     if req_result and len(req_result) > 0:
                         value = float(req_result[0]["value"][1])
                         if value > 0:
@@ -527,19 +638,19 @@ class GrafanaPrometheusConnector:
 
         return metrics
 
-    def get_deployment_component_metrics(
+    async def get_deployment_component_metrics(
         self, namespace: str, components: list[str], deployment_name: str, time_range: str = "6h"
     ) -> dict[str, dict[str, float | None]]:
         """Get metrics for all components in a deployment."""
-        result: dict[str, dict[str, float | None]] = {}
+        pod_prefixes = {name: generate_unique_name(deployment_name, name) for name in components}
 
-        for component_name in components:
-            pod_prefix = generate_unique_name(deployment_name, component_name)
-            result[component_name] = self.get_component_metrics(namespace, pod_prefix, time_range)
+        tasks = {
+            name: self.get_component_metrics(namespace, prefix, time_range) for name, prefix in pod_prefixes.items()
+        }
+        gathered = await asyncio.gather(*tasks.values())
+        return dict(zip(tasks.keys(), gathered, strict=True))
 
-        return result
-
-    def get_component_metrics_timeseries(
+    async def get_component_metrics_timeseries(
         self, namespace: str, pod_prefix: str, duration_minutes: int = 60, step_minutes: int = 5
     ) -> dict[str, Any]:
         """Get time-series metrics for a component over a duration."""
@@ -583,94 +694,67 @@ class GrafanaPrometheusConnector:
         }
 
         try:
-            # CPU usage time-series
-            cpu_query = (
-                f"sum(rate(container_cpu_usage_seconds_total{{"
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
-                f"}}[{step}]))"
-            )
-            cpu_result = self._execute_query(
-                cpu_query, instant=False, start_time=start_time, end_time=end_time, step=step
-            )
-            if cpu_result and len(cpu_result) > 0 and "values" in cpu_result[0]:
-                for ts, value in cpu_result[0]["values"]:
-                    cpu_millicores = float(value) * 1000
-                    result["cpu"].append({"timestamp": ts, "value": round(cpu_millicores, 2)})
+            # Batch all 7 range queries into a single Grafana request
+            range_queries = {
+                "cpu": (
+                    f"sum(rate(container_cpu_usage_seconds_total{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""'
+                    f"}}[{step}]))"
+                ),
+                "memory": (
+                    f'sum(container_memory_working_set_bytes{{namespace="{namespace}",'
+                    f'pod=~"{pod_prefix}.*",container!=""}})'
+                ),
+                "requests": (
+                    f'sum(rate(http_requests_total{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{step}])) * 60'
+                ),
+                "network_in": (
+                    f"sum(rate(container_network_receive_bytes_total{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
+                    f"}}[{step}])) / 1024"
+                ),
+                "network_out": (
+                    f"sum(rate(container_network_transmit_bytes_total{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
+                    f"}}[{step}])) / 1024"
+                ),
+                "disk_read": (
+                    f"sum(rate(container_fs_reads_bytes_total{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
+                    f"}}[{step}])) / 1024"
+                ),
+                "disk_write": (
+                    f"sum(rate(container_fs_writes_bytes_total{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
+                    f"}}[{step}])) / 1024"
+                ),
+            }
 
-            # Memory usage time-series
-            memory_query = (
-                f'sum(container_memory_usage_bytes{{namespace="{namespace}",pod=~"{pod_prefix}.*",container!=""}})'
+            range_results = await self._execute_batch_queries(
+                queries=range_queries,
+                instant=False,
+                start_time=start_time,
+                end_time=end_time,
+                step=step,
             )
-            memory_result = self._execute_query(
-                memory_query, instant=False, start_time=start_time, end_time=end_time, step=step
-            )
-            if memory_result and len(memory_result) > 0 and "values" in memory_result[0]:
-                for ts, value in memory_result[0]["values"]:
-                    memory_mb = float(value) / (1024 * 1024)
-                    result["memory"].append({"timestamp": ts, "value": round(memory_mb, 1)})
 
-            # HTTP requests time-series
-            requests_query = (
-                f'sum(rate(http_requests_total{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{step}])) * 60'
-            )
-            requests_result = self._execute_query(
-                requests_query, instant=False, start_time=start_time, end_time=end_time, step=step
-            )
-            if requests_result and len(requests_result) > 0 and "values" in requests_result[0]:
-                for ts, value in requests_result[0]["values"]:
-                    result["requests"].append({"timestamp": ts, "value": round(float(value), 1)})
+            # Process range results
+            converters: dict[str, tuple[str, float, int]] = {
+                # refId -> (result_key, multiplier, rounding)
+                "cpu": ("cpu", 1000, 2),  # cores -> millicores
+                "memory": ("memory", 1 / (1024 * 1024), 1),  # bytes -> MB
+                "requests": ("requests", 1, 1),
+                "network_in": ("network_in", 1, 2),
+                "network_out": ("network_out", 1, 2),
+                "disk_read": ("disk_read", 1, 2),
+                "disk_write": ("disk_write", 1, 2),
+            }
 
-            # Network receive
-            network_in_query = (
-                f"sum(rate(container_network_receive_bytes_total{{"
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f"}}[{step}])) / 1024"
-            )
-            network_in_result = self._execute_query(
-                network_in_query, instant=False, start_time=start_time, end_time=end_time, step=step
-            )
-            if network_in_result and len(network_in_result) > 0 and "values" in network_in_result[0]:
-                for ts, value in network_in_result[0]["values"]:
-                    result["network_in"].append({"timestamp": ts, "value": round(float(value), 2)})
-
-            # Network transmit
-            network_out_query = (
-                f"sum(rate(container_network_transmit_bytes_total{{"
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f"}}[{step}])) / 1024"
-            )
-            network_out_result = self._execute_query(
-                network_out_query, instant=False, start_time=start_time, end_time=end_time, step=step
-            )
-            if network_out_result and len(network_out_result) > 0 and "values" in network_out_result[0]:
-                for ts, value in network_out_result[0]["values"]:
-                    result["network_out"].append({"timestamp": ts, "value": round(float(value), 2)})
-
-            # Disk read
-            disk_read_query = (
-                f"sum(rate(container_fs_reads_bytes_total{{"
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f"}}[{step}])) / 1024"
-            )
-            disk_read_result = self._execute_query(
-                disk_read_query, instant=False, start_time=start_time, end_time=end_time, step=step
-            )
-            if disk_read_result and len(disk_read_result) > 0 and "values" in disk_read_result[0]:
-                for ts, value in disk_read_result[0]["values"]:
-                    result["disk_read"].append({"timestamp": ts, "value": round(float(value), 2)})
-
-            # Disk write
-            disk_write_query = (
-                f"sum(rate(container_fs_writes_bytes_total{{"
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*"'
-                f"}}[{step}])) / 1024"
-            )
-            disk_write_result = self._execute_query(
-                disk_write_query, instant=False, start_time=start_time, end_time=end_time, step=step
-            )
-            if disk_write_result and len(disk_write_result) > 0 and "values" in disk_write_result[0]:
-                for ts, value in disk_write_result[0]["values"]:
-                    result["disk_write"].append({"timestamp": ts, "value": round(float(value), 2)})
+            for ref_id, (key, multiplier, rounding) in converters.items():
+                data = range_results.get(ref_id, [])
+                if data and "values" in data[0]:
+                    for ts, value in data[0]["values"]:
+                        result[key].append({"timestamp": ts, "value": round(float(value) * multiplier, rounding)})
 
             # Extract timestamps
             result["cpu_timestamps"] = [item["timestamp"] for item in result["cpu"]]
@@ -679,25 +763,30 @@ class GrafanaPrometheusConnector:
             result["network_timestamps"] = [item["timestamp"] for item in result["network_in"]]
             result["disk_timestamps"] = [item["timestamp"] for item in result["disk_read"]]
 
-            # Fetch resource limits
-            cpu_limit_query = (
-                f"sum(kube_pod_container_resource_limits{{"
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu"'
-                f"}})"
-            )
-            cpu_limit_result = self._execute_query(cpu_limit_query, instant=True)
-            if cpu_limit_result and len(cpu_limit_result) > 0:
-                cpu_limit_cores = float(cpu_limit_result[0]["value"][1])
+            # Batch both instant limit queries into a single request
+            limit_queries = {
+                "cpu_limit": (
+                    f"sum(kube_pod_container_resource_limits{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu"'
+                    f"}})"
+                ),
+                "memory_limit": (
+                    f"sum(kube_pod_container_resource_limits{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory"'
+                    f"}})"
+                ),
+            }
+
+            limit_results = await self._execute_batch_queries(queries=limit_queries, instant=True)
+
+            cpu_limit_data = limit_results.get("cpu_limit", [])
+            if cpu_limit_data:
+                cpu_limit_cores = float(cpu_limit_data[0]["value"][1])
                 result["cpu_limit"] = round(cpu_limit_cores * 1000, 0)
 
-            memory_limit_query = (
-                f"sum(kube_pod_container_resource_limits{{"
-                f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory"'
-                f"}})"
-            )
-            memory_limit_result = self._execute_query(memory_limit_query, instant=True)
-            if memory_limit_result and len(memory_limit_result) > 0:
-                memory_limit_bytes = float(memory_limit_result[0]["value"][1])
+            memory_limit_data = limit_results.get("memory_limit", [])
+            if memory_limit_data:
+                memory_limit_bytes = float(memory_limit_data[0]["value"][1])
                 result["memory_limit"] = round(memory_limit_bytes / (1024 * 1024), 0)
 
         except Exception as e:
@@ -705,7 +794,7 @@ class GrafanaPrometheusConnector:
 
         return result
 
-    def get_deployment_component_metrics_timeseries(
+    async def get_deployment_component_metrics_timeseries(
         self,
         namespace: str,
         components: list[str],
@@ -714,17 +803,16 @@ class GrafanaPrometheusConnector:
         step_minutes: int = 5,
     ) -> dict[str, dict[str, list[dict[str, Any]]]]:
         """Get time-series metrics for all components in a deployment."""
-        result: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        pod_prefixes = {name: generate_unique_name(deployment_name, name) for name in components}
 
-        for component_name in components:
-            pod_prefix = generate_unique_name(deployment_name, component_name)
-            result[component_name] = self.get_component_metrics_timeseries(
-                namespace, pod_prefix, duration_minutes, step_minutes
-            )
+        tasks = {
+            name: self.get_component_metrics_timeseries(namespace, prefix, duration_minutes, step_minutes)
+            for name, prefix in pod_prefixes.items()
+        }
+        gathered = await asyncio.gather(*tasks.values())
+        return dict(zip(tasks.keys(), gathered, strict=True))
 
-        return result
-
-    def get_pvc_storage_by_namespace(
+    async def get_pvc_storage_by_namespace(
         self, namespace: str, duration_minutes: int = 60, step_minutes: int = 5
     ) -> dict[str, dict[str, Any]]:
         """
@@ -762,13 +850,13 @@ class GrafanaPrometheusConnector:
         try:
             # Query all PVC usage in the namespace - simple namespace filter only
             pvc_used_query = f'kubelet_volume_stats_used_bytes{{namespace="{namespace}"}}'
-            pvc_used_result = self._execute_query(
+            pvc_used_result = await self._execute_query(
                 pvc_used_query, instant=False, start_time=start_time, end_time=end_time, step=step
             )
 
             # Get PVC capacities (current values)
             pvc_capacity_query = f'kubelet_volume_stats_capacity_bytes{{namespace="{namespace}"}}'
-            pvc_capacity_result = self._execute_query(pvc_capacity_query, instant=True)
+            pvc_capacity_result = await self._execute_query(pvc_capacity_query, instant=True)
 
             # Build capacity lookup by PVC name
             pvc_capacities: dict[str, float] = {}
@@ -808,7 +896,7 @@ class GrafanaPrometheusConnector:
 
         return result
 
-    def discover_workloads_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
+    async def discover_workloads_in_namespace(self, namespace: str) -> list[dict[str, Any]]:
         """Discover workloads in a namespace via Prometheus metrics."""
         if not GrafanaPrometheusConnector.is_connected:
             logger.warning("Grafana not connected, cannot discover workloads")
@@ -820,7 +908,7 @@ class GrafanaPrometheusConnector:
             query = f'kube_pod_info{{namespace="{namespace}"}}'
             logger.debug(f"Discovering workloads with query: {query}")
 
-            result = self._execute_query(query, instant=True)
+            result = await self._execute_query(query, instant=True)
 
             for item in result:
                 metric = item.get("metric", {})
@@ -892,7 +980,7 @@ class GrafanaPrometheusConnector:
 
         return pod_name
 
-    def get_discovered_workload_metrics_timeseries(
+    async def get_discovered_workload_metrics_timeseries(
         self,
         namespace: str,
         workloads: list[dict[str, Any]],
@@ -900,21 +988,19 @@ class GrafanaPrometheusConnector:
         step_minutes: int = 5,
     ) -> dict[str, dict[str, Any]]:
         """Get time-series metrics for discovered workloads."""
-        result: dict[str, dict[str, Any]] = {}
+        names = [w.get("name", "") for w in workloads if w.get("name")]
 
-        for workload in workloads:
-            workload_name = workload.get("name", "")
-            if not workload_name:
-                continue
-
-            result[workload_name] = self.get_component_metrics_timeseries(
-                namespace, workload_name, duration_minutes, step_minutes
-            )
-
-        return result
+        tasks = {
+            name: self.get_component_metrics_timeseries(namespace, name, duration_minutes, step_minutes)
+            for name in names
+        }
+        gathered = await asyncio.gather(*tasks.values())
+        return dict(zip(tasks.keys(), gathered, strict=True))
 
 
-def create_grafana_prometheus_connector() -> GrafanaPrometheusConnector:
+async def create_grafana_prometheus_connector() -> GrafanaPrometheusConnector:
     """Create and return a GrafanaPrometheusConnector instance."""
     logger.debug("Creating GrafanaPrometheusConnector")
-    return GrafanaPrometheusConnector()
+    connector = GrafanaPrometheusConnector()
+    await connector.connect()
+    return connector

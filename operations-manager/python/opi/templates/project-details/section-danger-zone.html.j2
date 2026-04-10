@@ -1,0 +1,32 @@
+{# Danger Zone Section #}
+{% if user_role in ["admin", "owner"] %}
+<c-card outline="true" padding="xl" backgroundColor="wit" style="border-color: var(--rvo-color-rood-300);">
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" style="margin-bottom: 0; color: var(--rvo-color-rood-600);"><c-icon icon="waarschuwing" size="xl" color="rood" />Danger zone</c-heading>
+
+        <c-card padding="md" background="color" backgroundColor="grijs-050" outline="true" style="border-color: var(--rvo-color-grijs-400);">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--rvo-space-md);">
+                <div>
+                    <strong>Project herverwerken</strong>
+                    <p class="rvo-text--subtle rvo-text--sm" style="margin: 0;">Herverwerkt het projectbestand vanuit Git. Detecteert wijzigingen en synchroniseert deployments, services en manifesten. Verwijderde deployments worden opgeruimd, nieuwe worden aangemaakt.</p>
+                </div>
+                <c-button kind="secondary" size="sm" label="Project herverwerken"
+                          showIcon="before" icon="refresh"
+                          @click="showDangerConfirmation('refresh', '{{ project.name }}', 'Weet u zeker dat u het project &quot;{{ project.display_name or project.name }}&quot; wilt herverwerken? Dit synchroniseert alle deployments met het projectbestand. Verwijderde deployments worden opgeruimd.')" />
+            </div>
+        </c-card>
+
+        <c-card padding="md" background="color" backgroundColor="grijs-050" outline="true" style="border-color: var(--rvo-color-rood-300);">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--rvo-space-md);">
+                <div>
+                    <strong style="color: var(--rvo-color-rood-600);">Project "{{ project.display_name or project.name }}" verwijderen</strong>
+                    <p class="rvo-text--subtle rvo-text--sm" style="margin: 0;">Verwijdert het volledige project inclusief alle deployments, services en configuratie. Dit kan niet ongedaan worden gemaakt.</p>
+                </div>
+                <c-button kind="warning" size="sm" label="Project verwijderen"
+                          showIcon="before" icon="verwijderen"
+                          @click="showDangerConfirmation('project', '{{ project.name }}', 'Weet u zeker dat u het volledige project &quot;{{ project.display_name or project.name }}&quot; wilt verwijderen? Dit verwijdert ALLE deployments, services en configuratie.')" />
+            </div>
+        </c-card>
+    </c-layout-flow>
+</c-card>
+{% endif %}

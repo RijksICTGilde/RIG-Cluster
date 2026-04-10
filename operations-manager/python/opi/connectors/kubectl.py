@@ -6,14 +6,16 @@ This module provides functionality to interact with Kubernetes clusters using ku
 
 import asyncio
 import base64
+import json
 import logging
 import os
+from datetime import UTC
 from typing import Any
 
+from jinja2 import Template
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
-from jinja2 import Template  # noqa: E402
 
 
 class KubectlConnectionError(Exception):
@@ -729,10 +731,20 @@ class KubectlConnector:
 
             if code != 0:
                 logger.warning(f"Failed to get deployment logs: {stderr}")
-                return []
 
             # Split logs into lines, filter out empty lines
             log_lines = [line for line in stdout.split("\n") if line.strip()]
+
+            # If no logs found (e.g. CrashLoopBackOff with no running container),
+            # try fetching previous container logs
+            if not log_lines:
+                prev_args = ["logs", "-l", f"app={deployment_name}", "-n", namespace, f"--tail={lines}", "--previous"]
+                prev_stdout, _, prev_code = await self._run_kubectl_command(prev_args)
+                if prev_code == 0 and prev_stdout.strip():
+                    log_lines = ["[previous container logs]"] + [
+                        line for line in prev_stdout.split("\n") if line.strip()
+                    ]
+
             return log_lines
 
         except Exception as e:
@@ -786,6 +798,28 @@ class KubectlConnector:
                 env=self.env,
             )
 
+            # Wait briefly to see if process exits immediately (no running pods)
+            await asyncio.sleep(0.5)
+            if process.returncode is not None:
+                logger.info(f"Log stream exited immediately for {deployment_name}, trying previous container logs")
+                # Try --previous without -f (incompatible flags)
+                prev_cmd = [
+                    "kubectl",
+                    "logs",
+                    "-l",
+                    f"app={deployment_name}",
+                    "-n",
+                    namespace,
+                    f"--tail={lines}",
+                    "--previous",
+                ]
+                process = await asyncio.create_subprocess_exec(
+                    *prev_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=self.env,
+                )
+
             logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid})")
             return process
 
@@ -793,22 +827,41 @@ class KubectlConnector:
             logger.error(f"Error starting log stream for {deployment_name}: {e}")
             return None
 
-    async def get_namespace_events(self, namespace: str, limit: int = 50) -> list[dict[str, str]]:
+    # Event object prefixes and reasons that are infrastructure noise —
+    # not actionable by project users.
+    _IGNORED_EVENT_PREFIXES = ("cm-acme-",)
+    _IGNORED_EVENT_REASONS = (
+        "FailedToUpdateEndpoint",
+        "FailedIngressToRouteConversion",
+    )
+
+    async def get_namespace_events(
+        self,
+        namespace: str,
+        limit: int = 50,
+        event_type: str | None = "Warning",
+        max_age_hours: float = 2,
+    ) -> list[dict[str, str]]:
         """
         Get recent events from a namespace.
 
         Args:
             namespace: Namespace to get events from
             limit: Maximum number of events to retrieve (default: 50)
+            event_type: Filter by event type (default: "Warning"), None for all
+            max_age_hours: Only return events younger than this (default: 2)
 
         Returns:
             List of event dictionaries with keys: type, reason, object, message, time
         """
+        from datetime import datetime
+
         logger.debug(f"Getting events for namespace {namespace}")
 
         try:
-            # Get events in JSON format for easier parsing
             args = ["get", "events", "-n", namespace, "--sort-by=.metadata.creationTimestamp", "-o", "json"]
+            if event_type:
+                args.extend(["--field-selector", f"type={event_type}"])
             stdout, stderr, code = await self._run_kubectl_command(args)
 
             if code != 0:
@@ -818,16 +871,37 @@ class KubectlConnector:
             import json
 
             events_data = json.loads(stdout)
-            events = [
-                {
-                    "type": event.get("type", ""),
-                    "reason": event.get("reason", ""),
-                    "object": event.get("involvedObject", {}).get("name", ""),
-                    "message": event.get("message", ""),
-                    "time": event.get("metadata", {}).get("creationTimestamp", ""),
-                }
-                for event in list(reversed(events_data.get("items", [])))[:limit]
-            ]
+            now = datetime.now(UTC)
+            events: list[dict[str, str]] = []
+            for event in reversed(events_data.get("items", [])):
+                timestamp = event.get("metadata", {}).get("creationTimestamp", "")
+                if timestamp and max_age_hours > 0:
+                    try:
+                        event_dt = datetime.fromisoformat(timestamp)
+                        if (now - event_dt).total_seconds() / 3600 > max_age_hours:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                # Filter out infrastructure noise that users can't act on
+                obj_name = event.get("involvedObject", {}).get("name", "")
+                reason = event.get("reason", "")
+                if any(obj_name.startswith(p) for p in self._IGNORED_EVENT_PREFIXES):
+                    continue
+                if reason in self._IGNORED_EVENT_REASONS:
+                    continue
+
+                events.append(
+                    {
+                        "type": event.get("type", ""),
+                        "reason": reason,
+                        "object": obj_name,
+                        "message": event.get("message", ""),
+                        "time": timestamp,
+                    }
+                )
+                if len(events) >= limit:
+                    break
 
             return events
 
@@ -894,6 +968,41 @@ class KubectlConnector:
         except Exception as e:
             logger.error(f"Error getting deployment status: {e}")
             return []
+
+    async def get_deployment_conditions(self, namespace: str, deployment_name: str) -> list[dict[str, str]] | None:
+        """
+        Get the status conditions of a specific deployment.
+
+        Args:
+            namespace: Namespace of the deployment
+            deployment_name: Name of the deployment
+
+        Returns:
+            List of condition dicts (with keys: type, status, reason, message),
+            or None if the deployment was not found.
+        """
+        try:
+            args = [
+                "get",
+                "deployment",
+                deployment_name,
+                "-n",
+                namespace,
+                "-o",
+                "json",
+            ]
+            stdout, stderr, code = await self._run_kubectl_command(args)
+
+            if code != 0:
+                logger.debug(f"Deployment '{deployment_name}' not found in {namespace}: {stderr}")
+                return None
+
+            data = json.loads(stdout)
+            return data.get("status", {}).get("conditions", [])
+
+        except Exception as e:
+            logger.warning(f"Error getting deployment conditions for {deployment_name}: {e}")
+            return None
 
     async def delete_resource(self, resource_type: str, resource_name: str, namespace: str | None = None) -> bool:
         """

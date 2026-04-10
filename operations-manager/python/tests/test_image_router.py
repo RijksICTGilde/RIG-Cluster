@@ -2,7 +2,7 @@
 Tests for the image upload router.
 
 Tests authentication, streaming upload, size limits, cleanup on error,
-and proper error responses — all with mocked skopeo connector.
+and proper error responses - all with mocked skopeo connector.
 """
 
 import io
@@ -64,7 +64,7 @@ def mock_connector():
     mock.is_skopeo_available = True
     mock._validate_image_name = MagicMock()
     mock._validate_tag = MagicMock()
-    mock.push_image = AsyncMock(return_value="rcr.rijksapps.nl/rig/test-project/myapp:v1.0")
+    mock.push_image = AsyncMock(return_value="rcr.rijksapps.nl/rig/zad:myapp-v1.0")
     with patch("opi.api.image_router.SkopeoConnector", return_value=mock):
         yield mock
 
@@ -111,7 +111,7 @@ class TestUpload:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
-        assert "rcr.rijksapps.nl/rig/test-project/myapp:v1.0" in data["image"]
+        assert "rcr.rijksapps.nl/rig/zad:myapp-v1.0" in data["image"]
 
     def test_empty_file(self, client, mock_project_service, mock_connector, mock_settings):
         response = client.post(
@@ -160,6 +160,61 @@ class TestErrorHandling:
             files={"file": ("myapp.tar", b"data")},
         )
         assert response.status_code == 502
+
+
+class TestDeploymentUpdate:
+    def test_push_with_deployment_update(self, client, mock_project_service, mock_connector, mock_settings):
+        mock_pm = MagicMock()
+        mock_pm.update_image_and_regenerate = AsyncMock(return_value={})
+        with patch("opi.api.image_router.ProjectManager", return_value=mock_pm):
+            response = client.post(
+                "/api/v1/projects/test-project/images/push"
+                "?image_name=myapp&tag=v1.0&deployment=production&component=frontend",
+                headers={"X-API-Key": "test-key"},
+                files={"file": ("myapp.tar", b"data")},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["deployment_updated"] is True
+        assert data["deployment"] == "production"
+        assert data["component"] == "frontend"
+        mock_pm.update_image_and_regenerate.assert_called_once_with(
+            "production", "frontend", "rcr.rijksapps.nl/rig/zad:myapp-v1.0"
+        )
+
+    def test_only_deployment_name_returns_400(self, client, mock_project_service, mock_connector, mock_settings):
+        response = client.post(
+            "/api/v1/projects/test-project/images/push?image_name=myapp&tag=v1.0&deployment=production",
+            headers={"X-API-Key": "test-key"},
+            files={"file": ("myapp.tar", b"data")},
+        )
+        assert response.status_code == 400
+        assert "both" in response.json()["detail"].lower()
+
+    def test_only_component_name_returns_400(self, client, mock_project_service, mock_connector, mock_settings):
+        response = client.post(
+            "/api/v1/projects/test-project/images/push?image_name=myapp&tag=v1.0&component=frontend",
+            headers={"X-API-Key": "test-key"},
+            files={"file": ("myapp.tar", b"data")},
+        )
+        assert response.status_code == 400
+        assert "both" in response.json()["detail"].lower()
+
+    def test_push_without_deployment_params_has_no_deployment_fields(
+        self, client, mock_project_service, mock_connector, mock_settings
+    ):
+        tarball = io.BytesIO(b"fake-docker-image-data")
+        response = client.post(
+            "/api/v1/projects/test-project/images/push?image_name=myapp&tag=v1.0",
+            headers={"X-API-Key": "test-key"},
+            files={"file": ("myapp.tar", tarball)},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "deployment_updated" not in data
+        assert "deployment" not in data
+        assert "component" not in data
 
 
 class TestQueryParams:

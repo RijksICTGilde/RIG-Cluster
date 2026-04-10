@@ -11,7 +11,8 @@ from opi.utils.logging_config import setup_logging
 logger = logging.getLogger(__name__)
 
 PROJECT_NAME: str = "OPI"
-VERSION: str = "0.1.0"  # replace in CI/CD pipeline
+VERSION: str = os.environ.get("ZAD_VERSION", "0.1.0")
+BUILD_DATE: str = os.environ.get("ZAD_BUILD_DATE", "")
 PROJECT_DESCRIPTION: str = "OPI - Operational Platform Interface"
 
 
@@ -212,11 +213,19 @@ class Settings(BaseSettings):
     API_TOKEN: str = "d68d6aebd694d636e5eb4784a952b9c3"  # Example hardcoded token for development
     USE_UNSAFE_API_KEY: bool = False  # Use hardcoded "secret" API key for development (set to True in .env.local)
     MASTER_API_KEY: str | None = None  # Master API key for admin operations (backups, etc.)
+    ADMIN_API_KEY: str | None = None  # Admin API key for cleanup, reconciliation, and maintenance operations
 
     # SOPS age key settings (from Kubernetes secret)
     SOPS_AGE_KEY_CONTENT: str | None = None  # Full SOPS age key content from secret
     SOPS_AGE_PUBLIC_KEY: str | None = None  # Public key for SOPS age encryption
     SOPS_AGE_PRIVATE_KEY: str | None = None  # Private key for SOPS age decryption
+
+    # OpenTelemetry configuration
+    OTEL_ENABLED: bool = False  # Safe default - zero overhead when off
+    OTEL_SERVICE_NAME: str = "opi-operations-manager"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://jaeger.rig-system:4317"
+    OTEL_TRACES_SAMPLER_ARG: str = "1.0"  # 1.0 = 100% sampling for dev
+    OTEL_LOG_CORRELATION: bool = True
 
     # Prometheus metrics configuration
     ENABLE_TRACEMALLOC: bool = False  # Enable tracemalloc for Python memory allocation tracking (adds ~10-30% overhead)
@@ -224,6 +233,8 @@ class Settings(BaseSettings):
     # Logging configuration
     LOG_TO_FILE: bool = False  # Enable file logging alongside stdout
     LOG_FILE_PATH: str = "log.txt"  # Path to log file when LOG_TO_FILE is enabled
+    LOG_ERRORS_TO_FILE: bool = False  # Write WARNING+ to a separate persistent error log
+    LOG_ERRORS_FILE_PATH: str = "/data/logs/errors.log"  # Path to error log (should be on PVC)
 
     # Temporary directory configuration
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
@@ -263,6 +274,19 @@ class Settings(BaseSettings):
     DATABASE_ADMIN_NAME: str = "postgres"
     DATABASE_ADMIN_PASSWORD: str = "changeMe123!"
 
+    # Deletion grace period (days before marked resources are purged by reconciliation)
+    DELETION_GRACE_PERIOD_DAYS: int = 7
+
+    # Async task worker settings
+    TASK_WORKER_ENABLED: bool = True
+    TASK_WORKER_POLL_INTERVAL: float = 2.0
+    TASK_WORKER_HEARTBEAT_INTERVAL: float = 30.0
+    TASK_WORKER_STALE_THRESHOLD: int = 120
+    TASK_WORKER_MAX_ATTEMPTS: int = 3
+    TASK_WORKER_CONCURRENCY: int = 4
+    TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1
+    TASK_WORKER_MAX_DURATION: int = 1800  # 30 minutes
+
     # MinIO configuration
     MINIO_HOST: str = "minio.kind:9000"
     MINIO_ADMIN_ACCESS_KEY: str = "admin"
@@ -288,11 +312,35 @@ class Settings(BaseSettings):
     # External Prometheus URL for browser access (iframe in metrics explorer)
     # Falls back to PROMETHEUS_URL if not set
     PROMETHEUS_EXTERNAL_URL: str | None = None
+    # Bearer token that Prometheus sends when scraping /metrics endpoints.
+    # Applications can validate this to restrict access to metrics.
+    # Sourced from the prometheus-metrics-auth secret.
+    PROMETHEUS_METRICS_AUTH_TOKEN: str | None = None
 
     # Grafana configuration (used when METRICS_BACKEND="grafana")
     GRAFANA_URL: str = "http://grafana-service.rig-system.svc.cluster.local:3000"
     GRAFANA_TOKEN: str | None = None
     GRAFANA_DATASOURCE_UID: str | None = None  # Auto-discovered if not set
+    GRAFANA_BILLING_DATASOURCE_UID: str | None = None  # UID of the billing Mimir datasource in Grafana
+
+    # Resource tuning configuration
+    RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
+    RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed
+    RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Only recommend if diff > 20%
+    # max_memory_limit_mi is now in cluster_config (per-cluster setting)
+
+    # Deployment sanitization configuration
+    SANITIZE_RESTART_THRESHOLD: int = 10  # Restarts above this = broken
+
+    # OOM watcher (fire-and-forget post-deploy check)
+    OOM_WATCHER_ENABLED: bool = True
+    OOM_WATCHER_DELAY_SECONDS: int = 120  # Wait before checking for OOM kills
+    OOM_WATCHER_MAX_ATTEMPTS: int = 3  # Max tune cycles per deploy
+
+    # Federation settings
+    FEDERATION_ROLE: str = "standalone"  # standalone | master | slave
+    FEDERATION_PEERS: str = ""  # JSON: [{"cluster":"local","url":"...","api_key":"..."}]
+    FEDERATION_REQUEST_TIMEOUT: int = 30
 
     # Backup configuration
     BACKUP_S3_ENDPOINT: str = "minio.rig-backup-destination.svc:9000"
@@ -396,7 +444,12 @@ def _load_sops_key_from_local_file() -> str | None:
 def _get_settings() -> Settings:
     settings = Settings()
 
-    setup_logging(log_to_file=settings.LOG_TO_FILE, log_file_path=settings.LOG_FILE_PATH)
+    setup_logging(
+        log_to_file=settings.LOG_TO_FILE,
+        log_file_path=settings.LOG_FILE_PATH,
+        log_errors_to_file=settings.LOG_ERRORS_TO_FILE,
+        log_errors_file_path=settings.LOG_ERRORS_FILE_PATH,
+    )
 
     # Detailed logging for SOPS key configuration
     logger.info("=== SOPS Age Key Configuration Debug ===")

@@ -86,16 +86,16 @@ class TestDeleteResourcesForDeployment:
         # Verify delete_database was called with ONLY database_name
         mock_connector.delete_database.assert_called_once()
         call_kwargs = mock_connector.delete_database.call_args
-        assert "host" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
-        assert "admin_username" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
-        assert "admin_password" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
+        assert "host" not in (call_kwargs.kwargs or {})
+        assert "admin_username" not in (call_kwargs.kwargs or {})
+        assert "admin_password" not in (call_kwargs.kwargs or {})
         assert call_kwargs == call(database_name="test_project_pr_123")
 
         # Verify delete_user was called with ONLY username
         mock_connector.delete_user.assert_called_once()
         call_kwargs = mock_connector.delete_user.call_args
-        assert "host" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
-        assert "admin_username" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
+        assert "host" not in (call_kwargs.kwargs or {})
+        assert "admin_username" not in (call_kwargs.kwargs or {})
         assert call_kwargs == call(username="test_project_pr_123")
 
     @pytest.mark.asyncio
@@ -186,10 +186,11 @@ class TestDeleteDeploymentClientRealm:
         realm_changes: list[str] = []
         connector.admin.change_current_realm = MagicMock(side_effect=lambda r: realm_changes.append(r))
 
-        # Mock find_client_by_client_id to return a client
+        # Mock find_client_by_client_id to return a confidential client and a public client
         # (this method internally switches to master before returning)
         mock_client = {"id": "internal-uuid-123", "clientId": "test-project-pr-123"}
-        connector.find_client_by_client_id = AsyncMock(return_value=mock_client)
+        mock_public_client = {"id": "internal-uuid-456", "clientId": "test-project-pr-123-public"}
+        connector.find_client_by_client_id = AsyncMock(side_effect=[mock_client, mock_public_client])
 
         # Mock delete_client to succeed
         connector.admin.delete_client = MagicMock()
@@ -200,27 +201,21 @@ class TestDeleteDeploymentClientRealm:
             realm_name="test-project-odcn-production",
         )
 
-        # The realm must be set to the project realm BEFORE delete_client is called.
-        # Sequence should be:
-        # 1. change_current_realm("test-project-odcn-production") - initial switch
-        # 2. find_client_by_client_id (internally switches to master)
-        # 3. change_current_realm("test-project-odcn-production") - re-switch after find
-        # 4. delete_client
-        # 5. change_current_realm("master") - cleanup
+        # Verify both clients were deleted
+        connector.admin.delete_client.assert_any_call(client_id="internal-uuid-123")
+        connector.admin.delete_client.assert_any_call(client_id="internal-uuid-456")
+        assert connector.admin.delete_client.call_count == 2
 
-        # Verify the realm was set to project realm right before delete
+        # Verify the realm was set to project realm before each delete
         assert "test-project-odcn-production" in realm_changes, (
             f"Project realm was never set. Realm changes: {realm_changes}"
         )
 
-        # The last realm change before delete_client should be the project realm
-        # Find the index where delete_client was called relative to realm changes
-        connector.admin.delete_client.assert_called_once_with(client_id="internal-uuid-123")
-
         # After the initial switch, find_client returns (which switched to master internally),
-        # then we must see another switch to project realm before the final switch to master
-        assert realm_changes.count("test-project-odcn-production") >= 2, (
-            f"Expected at least 2 switches to project realm (initial + before delete). Realm changes: {realm_changes}"
+        # then we must see switches to project realm before each delete
+        assert realm_changes.count("test-project-odcn-production") >= 3, (
+            f"Expected at least 3 switches to project realm (initial + before each delete). "
+            f"Realm changes: {realm_changes}"
         )
 
     @pytest.mark.asyncio
@@ -240,3 +235,28 @@ class TestDeleteDeploymentClientRealm:
 
         assert result is False
         connector.admin.delete_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_client_without_public_client(self):
+        """Should delete only the confidential client when public client doesn't exist."""
+        from opi.connectors.keycloak import KeycloakConnector
+
+        connector = KeycloakConnector.__new__(KeycloakConnector)
+        connector.admin = MagicMock()
+
+        realm_changes: list[str] = []
+        connector.admin.change_current_realm = MagicMock(side_effect=lambda r: realm_changes.append(r))
+
+        mock_client = {"id": "internal-uuid-123", "clientId": "test-project-pr-123"}
+        connector.find_client_by_client_id = AsyncMock(side_effect=[mock_client, None])
+
+        connector.admin.delete_client = MagicMock()
+
+        result = await connector.delete_deployment_client(
+            deployment_name="pr-123",
+            project_name="test-project",
+            realm_name="test-project-realm",
+        )
+
+        assert result is True
+        connector.admin.delete_client.assert_called_once_with(client_id="internal-uuid-123")

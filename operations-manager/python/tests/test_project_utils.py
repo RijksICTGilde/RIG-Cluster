@@ -13,7 +13,7 @@ from opi.utils.project_utils import (
 
 
 class TestNormalizeContainerImage:
-    """OCI spec requires lowercase repository names — normalization must catch violations."""
+    """OCI spec requires lowercase repository names - normalization must catch violations."""
 
     def test_already_lowercase_is_noop(self):
         image, was_normalized = normalize_container_image("ghcr.io/org/repo:latest")
@@ -89,48 +89,27 @@ class TestValidateComponentPaths:
 class TestValidateRootComponent:
     """Root component constraint validation."""
 
-    def test_single_root_nice_url_passes(self):
-        validate_root_component(
-            [("frontend", True, 8080), ("worker", False, None)],
-            "nice-url",
-        )
+    def test_valid_root_in_nice_url_passes(self):
+        validate_root_component("frontend", ["frontend", "worker"], "nice-url")
 
     def test_no_root_passes(self):
-        validate_root_component(
-            [("frontend", False, 8080), ("worker", False, None)],
-            "nice-url",
-        )
+        validate_root_component(None, ["frontend", "worker"], "nice-url")
 
-    def test_multiple_roots_raises(self):
-        with pytest.raises(ComponentValidationError, match="only one component can be marked as root"):
-            validate_root_component(
-                [("frontend", True, 8080), ("backend", True, 3000)],
-                "nice-url",
-            )
-
-    def test_root_without_port_raises(self):
-        with pytest.raises(ComponentValidationError, match="no port specified"):
-            validate_root_component(
-                [("worker", True, None)],
-                "nice-url",
-            )
+    def test_root_not_in_deployment_raises(self):
+        with pytest.raises(ComponentValidationError, match="not a component in this deployment"):
+            validate_root_component("missing", ["frontend", "backend"], "nice-url")
 
     def test_root_in_non_nice_url_mode_raises(self):
         with pytest.raises(ComponentValidationError, match="only valid in nice-url domain mode"):
-            validate_root_component(
-                [("frontend", True, 8080)],
-                "deployment-name",
-            )
+            validate_root_component("frontend", ["frontend"], "deployment-name")
 
     def test_root_in_component_specific_mode_raises(self):
         with pytest.raises(ComponentValidationError, match="only valid in nice-url domain mode"):
-            validate_root_component(
-                [("frontend", True, 8080)],
-                "component-specific",
-            )
+            validate_root_component("frontend", ["frontend"], "component-specific")
 
-    def test_empty_components_passes(self):
-        validate_root_component([], "nice-url")
+    def test_none_root_always_passes(self):
+        validate_root_component(None, [], "nice-url")
+        validate_root_component(None, [], "deployment-name")
 
 
 class TestParseAliases:

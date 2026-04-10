@@ -114,6 +114,42 @@ async def encrypt_age_content(plain_content: str, public_key: str | None) -> str
     return stdout.decode("utf-8").strip()
 
 
+def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
+    """
+    Encrypt content using age encryption with the provided public key (synchronous version).
+
+    Args:
+        plain_content: The content to encrypt
+        public_key: The age public key
+
+    Returns:
+        Encrypted content as string with AGE markers
+
+    Raises:
+        ValueError: If public_key or plain_content is missing
+        Exception: If age encryption fails
+    """
+    if not public_key:
+        raise ValueError("Missing public age key for encryption")
+    if not plain_content:
+        raise ValueError("Missing plain content for encryption")
+
+    process = subprocess.run(
+        ["age", "--armor", "-r", public_key],
+        input=plain_content,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if process.returncode != 0:
+        error_msg = process.stderr.strip()
+        logger.error(f"age encryption failed (sync): {error_msg}")
+        raise Exception(f"Age encryption failed: {error_msg}")
+
+    return process.stdout.strip()
+
+
 def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | None:
     """
     Decrypt age-encrypted content using the provided private key (synchronous version).
@@ -270,7 +306,7 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
         Decrypted or processed password
     """
     if not password:
-        return password
+        return password or ""
 
     encoding_type, content = parse_password_with_prefix(password)
 
@@ -379,7 +415,7 @@ def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
     """
 
     if not password:
-        raise ValueError("Missing password")
+        return password or ""
 
     encoding_type, content = parse_password_with_prefix(password)
 

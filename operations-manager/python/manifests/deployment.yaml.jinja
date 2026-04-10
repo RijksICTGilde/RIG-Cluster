@@ -5,12 +5,13 @@ metadata:
   namespace: "{{ namespace }}"
   labels:
     app: "{{ name }}"
+    deployment: "{{ deployment_name }}"
     project: "{{ project.name }}"
     component: application
 spec:
   strategy:
     type: {{ pod_replacement_mode }}
-  replicas: 1
+  replicas: {{ replicas }}
   revisionHistoryLimit: 3
   selector:
     matchLabels:
@@ -19,12 +20,15 @@ spec:
   template:
     metadata:
       annotations:
-        # Prometheus scraping annotations
+{% if metrics_config %}
+        # Prometheus scraping annotations (metrics-scraper service enabled)
         prometheus.io/scrape: "true"
-        prometheus.io/port: "{{ metrics_port if metrics_port else application_port }}"
-        prometheus.io/path: "{{ metrics_path if metrics_path else '/metrics' }}"
+        prometheus.io/port: "{{ metrics_config.port if metrics_config.port else application_port }}"
+        prometheus.io/path: "{{ metrics_config.path if metrics_config.path else '/metrics' }}"
+{% endif %}
       labels:
         app: "{{ name }}"
+        deployment: "{{ deployment_name }}"
         project: "{{ project.name }}"
         component: application
         network-policy: allow-db-access
@@ -111,11 +115,11 @@ spec:
           {% endif %}
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
+              memory: "{{ resources_requests_memory }}"
+              cpu: "{{ resources_requests_cpu }}"
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: "{{ resources_limits_memory }}"
+              cpu: "{{ resources_limits_cpu }}"
           startupProbe:
             tcpSocket:
               port: {{ application_port }}
@@ -136,10 +140,11 @@ spec:
             failureThreshold: 3
 {% if sidecars is defined and sidecars %}
 {% for sidecar in sidecars %}
+{% set section = 'container' %}
 {% include 'sidecar-' + sidecar + '.yaml.jinja' %}
 {% endfor %}
 {% endif %}
-      {% if storage_configs or (ca_config and ca_config.enabled) %}
+      {% if storage_configs or (ca_config and ca_config.enabled) or (sidecars is defined and sidecars) %}
       volumes:
       {% if storage_configs %}
       {% for storage in storage_configs %}
@@ -160,4 +165,10 @@ spec:
             path: {{ ca_config.node_path }}
             type: File
       {% endif %}
+{% if sidecars is defined and sidecars %}
+{% for sidecar in sidecars %}
+{% set section = 'volumes' %}
+{% include 'sidecar-' + sidecar + '.yaml.jinja' %}
+{% endfor %}
+{% endif %}
       {% endif %}

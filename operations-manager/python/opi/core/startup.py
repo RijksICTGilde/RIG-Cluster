@@ -34,32 +34,32 @@ from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
-from opi.connectors.subdomain import SUBDOMAIN_REGISTRY_TABLE_SQL
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_service import get_project_service, initialize_project_service
+from opi.services.project_service import Project, ProjectUser, get_project_service, initialize_project_service
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
 
 
-async def create_subdomain_registry_table() -> None:
-    """Create the subdomain_registry table if it doesn't exist.
+def _run_alembic_migrations() -> None:
+    """Run Alembic migrations to bring the database schema to head.
 
-    This table is used by the nice URL feature to track globally unique subdomains.
+    This replaces the individual CREATE TABLE IF NOT EXISTS calls.
+    Alembic's baseline migration uses IF NOT EXISTS so it is safe
+    for databases that already have the tables.
     """
-    from opi.core.database_pools import get_database_pool
+    import pathlib
 
-    pool = get_database_pool("main")
-    conn = await pool.acquire()
-    try:
-        await conn.execute(SUBDOMAIN_REGISTRY_TABLE_SQL)
-        logger.debug("Subdomain registry table and indexes created/verified")
-    finally:
-        await pool.release(conn)
+    from alembic import command
+    from alembic.config import Config
+
+    ini_path = pathlib.Path(__file__).resolve().parents[2] / "alembic.ini"
+    alembic_cfg = Config(str(ini_path))
+    command.upgrade(alembic_cfg, "head")
 
 
 @retry(
@@ -180,7 +180,7 @@ async def start_prometheus_reconnection_task() -> None:
     The application continues to function without Prometheus - metrics will
     simply be unavailable until connection is established.
     """
-    metrics_connector = get_metrics_connector()
+    metrics_connector = await get_metrics_connector()
 
     if metrics_connector.is_connected:
         logger.info("Metrics connector already connected, no background reconnection needed")
@@ -331,9 +331,6 @@ async def refresh_projects_from_git() -> int:
 
     project_service = get_project_service()
 
-    # Clear existing projects to reload fresh data
-    project_service.clear_all_projects()
-
     # Create a shared Git connector that will be reused across all ProjectManagers
     shared_git_connector = None
     try:
@@ -347,6 +344,9 @@ async def refresh_projects_from_git() -> int:
         raise
 
     try:
+        # Build new project dict first, then swap atomically to avoid
+        # a window where the cache is empty or partially populated (causes 401s).
+        new_projects: dict[str, Project] = {}
         loaded_count = 0
         for project_file in project_files:
             # Each ProjectManager shares the git connector for project files
@@ -364,16 +364,28 @@ async def refresh_projects_from_git() -> int:
                 project_name = await project_manager.get_name()
                 project_data = await project_manager.get_contents()
 
-                # Register project with users and full project data
-                project_service.register(
-                    project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
+                # Build Project object for the new dict
+                users_data = project_data.get("users", [])
+                users = None
+                if users_data and isinstance(users_data, list):
+                    users = [
+                        ProjectUser(email=u["email"], role=u["role"])
+                        for u in users_data
+                        if isinstance(u, dict) and "email" in u and "role" in u
+                    ]
+
+                new_projects[project_name] = Project(
+                    name=project_name,
+                    api_key=api_key,
+                    filename=project_file_base_name,
+                    users=users or None,
+                    data=project_data,
                 )
 
                 # Add project users to allowed emails list
-                project_users = project_data.get("users", [])
-                if project_users:
+                if users_data:
                     user_service = get_user_service()
-                    project_user_emails = [u.get("email") for u in project_users if u.get("email")]
+                    project_user_emails = [u.get("email") for u in users_data if u.get("email")]
                     if project_user_emails:
                         user_service.add_allowed_emails(project_user_emails)
 
@@ -382,6 +394,9 @@ async def refresh_projects_from_git() -> int:
                 logger.error(f"Error refreshing project file {project_file}: {e}")
             finally:
                 await project_manager.close()
+
+        # Atomic swap: concurrent requests always see a complete project set
+        project_service.replace_all_projects(new_projects)
 
         logger.info(f"Refreshed {loaded_count} projects from Git")
         return loaded_count
@@ -566,7 +581,12 @@ async def check_minio_availability() -> bool:
 
 
 async def _setup_database(readiness: "ReadinessState") -> bool:
-    """Initialize database pools. Returns True on success."""
+    """Initialize database pools. Returns True on success.
+
+    Note: Database migrations are now primarily handled by the Docker entrypoint
+    (docker-entrypoint.sh) which runs 'alembic upgrade head' before starting the app.
+    This function provides a backup/sanity check to verify the schema is ready.
+    """
     try:
         from opi.core.database_pools import is_database_available
 
@@ -576,11 +596,14 @@ async def _setup_database(readiness: "ReadinessState") -> bool:
 
         await initialize_database_pools()
 
-        # Create subdomain registry table
+        # Run Alembic migrations as a backup check (primary responsibility now in entrypoint)
         try:
-            await create_subdomain_registry_table()
+            logger.info("Running Alembic migrations as sanity check (primary migrations handled by entrypoint)")
+            _run_alembic_migrations()
+            logger.info("Alembic migration sanity check completed")
         except Exception as e:
-            logger.warning(f"Failed to create subdomain registry table: {e}")
+            # Log but don't fail - entrypoint already ran migrations before this code executed
+            logger.debug(f"Alembic sanity check skipped or encountered non-fatal issue: {e}")
 
         readiness.database.mark_ready()
         return True
@@ -607,6 +630,22 @@ async def _setup_projects(readiness: "ReadinessState", app: FastAPI, skip_checks
             env_emails = [email.strip() for email in settings.ALLOWED_EMAILS.split(",") if email.strip()]
             if env_emails:
                 user_service.add_allowed_emails(env_emails)
+
+        # Load platform users from the users database table into the allowlist
+        try:
+            from opi.core.database_pools import get_database_pool
+            from opi.services.user_admin_service import UserAdminService
+
+            pool = get_database_pool("main")
+            admin_service = UserAdminService(pool)
+            db_users = await admin_service.list_users()
+            if db_users:
+                db_emails = [u["email"] for u in db_users if u.get("email")]
+                if db_emails:
+                    user_service.add_allowed_emails(db_emails)
+                    logger.info(f"Loaded {len(db_emails)} platform users from database into allowlist")
+        except Exception as e:
+            logger.warning(f"Could not load platform users from database: {e}")
 
         project_service = get_project_service()
         default_admin_emails = [
@@ -766,7 +805,7 @@ async def run_startup_tasks(app: FastAPI) -> bool:
 
     # Initialize metrics connector (non-critical)
     logger.info("Initializing metrics connector")
-    metrics_connector = get_metrics_connector()
+    metrics_connector = await get_metrics_connector()
     if not metrics_connector.is_connected:
         logger.warning("Metrics connector not available at startup, starting background reconnection task")
         app.state.metrics_reconnect_task = asyncio.create_task(start_prometheus_reconnection_task())

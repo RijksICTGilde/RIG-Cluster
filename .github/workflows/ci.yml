@@ -12,11 +12,11 @@ jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Install dependencies
@@ -30,17 +30,17 @@ jobs:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Install dependencies
         run: uv sync --all-groups
       - name: Run tests with coverage
-        run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow" --tb=short
+        run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
       - name: Coverage report
         run: uv run coverage report --fail-under=21
 
@@ -50,11 +50,11 @@ jobs:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Install dependencies
@@ -62,4 +62,4 @@ jobs:
           uv sync --all-groups
           uv pip install pip
       - name: License check
-        run: uv run liccheck
+        run: uv run liccheck -s pyproject.toml

@@ -66,7 +66,7 @@ When `authorization-wall` is enabled for a component:
 - **Service**: Traffic is routed to port 4180 (oauth2-proxy) instead of the application port
 - **Cookie secret**: A SOPS-encrypted Kubernetes Secret with a random cookie encryption key
 
-No ingress changes are needed — the ingress routes to the service as normal.
+No ingress changes are needed - the ingress routes to the service as normal.
 
 ## Configuration
 

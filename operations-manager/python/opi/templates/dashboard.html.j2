@@ -15,11 +15,36 @@
 
     {# Page Header #}
     <div>
-        <c-heading type="h1" textContent="Dashboard (dit is dummy / fake!)" />
+        <c-heading type="h1" textContent="Dashboard" />
         <p class="rvo-text--lg">
             Hier vindt u een overzicht van al uw projecten, deployments en resource usage.
         </p>
     </div>
+
+    {# Health Summary Banner #}
+    {% if health_counts is defined %}
+        {% if health_counts.Degraded > 0 %}
+        <c-alert kind="error" heading="{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen" maxWidth="lg">
+            <c-layout-flow gap="xs">
+                {% for project in projects if project.health == 'Degraded' %}
+                <c-link content="{{ project.display_name }} - Bekijk deployment status" href="/projects/details/{{ project.name }}#deployment-status" weight="bold" />
+                {% endfor %}
+            </c-layout-flow>
+        </c-alert>
+        {% elif health_counts.Progressing > 0 %}
+        <c-alert kind="warning" heading="{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt" maxWidth="lg">
+            <c-layout-flow gap="xs">
+                {% for project in projects if project.health == 'Progressing' %}
+                <c-link content="{{ project.display_name }} - Bekijk deployment status" href="/projects/details/{{ project.name }}#deployment-status" weight="bold" />
+                {% endfor %}
+            </c-layout-flow>
+        </c-alert>
+        {% elif health_counts.Healthy > 0 %}
+        <c-alert kind="success" heading="Alle {{ health_counts.Healthy }} project{{ 'en' if health_counts.Healthy != 1 }} {{ 'zijn' if health_counts.Healthy != 1 else 'is' }} gezond" maxWidth="lg" />
+        {% elif not argocd_available %}
+        <c-alert kind="info" heading="Status informatie niet beschikbaar" content="ArgoCD is niet verbonden." maxWidth="lg" />
+        {% endif %}
+    {% endif %}
 
     {# Quick Stats Cards #}
     <div class="stats-grid">
@@ -27,10 +52,10 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="applicatie" size="lg" />
-                    <span class="stat-number">12</span>
+                    <span class="stat-number" data-count="{{ active_projects }}">0</span>
                 </div>
                 <c-heading type="h3" textContent="Actieve Projecten" />
-                <p class="rvo-text--sm rvo-text--subtle">3 nieuwe deze maand</p>
+                <p class="rvo-text--sm rvo-text--subtle">{{ total_deployments }} deployments</p>
             </c-layout-flow>
         </c-card>
 
@@ -38,10 +63,9 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="server" size="lg" />
-                    <span class="stat-number">47</span>
+                    <span class="stat-number" data-count="{{ total_deployments }}">0</span>
                 </div>
                 <c-heading type="h3" textContent="Deployments" />
-                <p class="rvo-text--sm rvo-text--subtle">5 updates vandaag</p>
             </c-layout-flow>
         </c-card>
 
@@ -49,10 +73,9 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="user" size="lg" />
-                    <span class="stat-number">89</span>
+                    <span class="stat-number" data-count="{{ total_users }}">0</span>
                 </div>
                 <c-heading type="h3" textContent="Gebruikers" />
-                <p class="rvo-text--sm rvo-text--subtle">12 online nu</p>
             </c-layout-flow>
         </c-card>
 
@@ -60,10 +83,9 @@
             <c-layout-flow gap="sm">
                 <div class="stat-header">
                     <c-icon icon="vinkje" size="lg" />
-                    <span class="stat-number status-healthy">99.8{{ '%' }}</span>
+                    <span class="stat-number" data-count="{{ pod_count }}">0</span>
                 </div>
-                <c-heading type="h3" textContent="Uptime" />
-                <p class="rvo-text--sm rvo-text--subtle">Laatste 30 dagen</p>
+                <c-heading type="h3" textContent="Pods" />
             </c-layout-flow>
         </c-card>
     </div>
@@ -72,6 +94,7 @@
     <c-layout-flow gap="lg">
         <c-heading type="h2" textContent="Resource Usage" />
 
+        {% if prometheus_available and metrics %}
         <div class="metrics-grid">
             {# CPU Usage Gauge #}
             <c-card class="metric-card" outline="true" padding="lg" backgroundColor="wit">
@@ -80,11 +103,10 @@
                     <div class="gauge-container">
                         <canvas id="cpu-gauge" class="gauge"></canvas>
                         <div class="gauge-value">
-                            <span class="gauge-percentage">67{{ '%' }}</span>
-                            <span class="gauge-label">van 24 cores</span>
+                            <span class="gauge-percentage">{{ metrics.cpu_percentage }}{{ '%' }}</span>
+                            <span class="gauge-label">{{ metrics.cpu_usage_display }} / {{ metrics.cpu_limit_display }} cores</span>
                         </div>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle">Gemiddeld over alle nodes</p>
                 </c-layout-flow>
             </c-card>
 
@@ -95,11 +117,10 @@
                     <div class="gauge-container">
                         <canvas id="memory-gauge" class="gauge"></canvas>
                         <div class="gauge-value">
-                            <span class="gauge-percentage">84{{ '%' }}</span>
-                            <span class="gauge-label">van 64GB</span>
+                            <span class="gauge-percentage">{{ metrics.memory_percentage }}{{ '%' }}</span>
+                            <span class="gauge-label">{{ metrics.memory_usage_display }} / {{ metrics.memory_limit_display }}</span>
                         </div>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle">Totaal cluster geheugen</p>
                 </c-layout-flow>
             </c-card>
 
@@ -110,11 +131,10 @@
                     <div class="gauge-container">
                         <canvas id="storage-gauge" class="gauge"></canvas>
                         <div class="gauge-value">
-                            <span class="gauge-percentage">45{{ '%' }}</span>
-                            <span class="gauge-label">van 2TB</span>
+                            <span class="gauge-percentage">{{ metrics.storage_percentage }}{{ '%' }}</span>
+                            <span class="gauge-label">{{ metrics.storage_usage_display }} / {{ metrics.storage_capacity_display }}</span>
                         </div>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle">Persistent volumes</p>
                 </c-layout-flow>
             </c-card>
 
@@ -125,11 +145,50 @@
                     <div class="chart-container">
                         <canvas id="network-chart" class="chart"></canvas>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle">Inbound/Outbound per minuut</p>
+                    <p class="rvo-text--sm rvo-text--subtle">Inbound/Outbound (KB/s, laatste 30 min)</p>
                 </c-layout-flow>
             </c-card>
         </div>
+        {% else %}
+        <c-card outline="true" padding="lg" backgroundColor="wit">
+            <p class="rvo-text--md rvo-text--subtle">Metrics niet beschikbaar. Prometheus is niet verbonden of er zijn geen namespaces gevonden.</p>
+        </c-card>
+        {% endif %}
     </c-layout-flow>
+
+    {# Resource Comparison Bar #}
+    {% if prometheus_available and total_cpu_usage is defined and total_cpu_usage > 0 %}
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" textContent="Resource Verdeling" />
+        <c-card outline="true" padding="lg" backgroundColor="wit">
+            <c-layout-flow gap="md">
+                <p class="rvo-text--sm rvo-text--subtle">CPU gebruik per project</p>
+                <div class="resource-bar">
+                    {% for project in projects %}
+                        {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
+                        <div class="resource-segment resource-color-{{ loop.index0 % 6 }}"
+                             data-width="{{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}"
+                             style="width: 0%"
+                             title="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores">
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+                <div class="resource-legend">
+                    {% for project in projects %}
+                        {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
+                        <a href="/projects/details/{{ project.name }}" class="resource-legend-item">
+                            <span class="resource-dot resource-color-{{ loop.index0 % 6 }}"></span>
+                            <span class="rvo-text--sm">{{ project.display_name }}</span>
+                            <span class="rvo-text--sm rvo-text--subtle">{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</span>
+                        </a>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </c-layout-flow>
+        </c-card>
+    </c-layout-flow>
+    {% endif %}
 
     {# Projects Overview #}
     <c-layout-flow gap="lg">
@@ -144,155 +203,70 @@
                 @click="window.location.href='/projects/new'" />
         </div>
 
+        {% if projects %}
         <div class="projects-grid">
-            {# Project 1 #}
-            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
-                <c-layout-flow gap="md">
-                    <div class="project-header">
-                        <c-heading type="h3" textContent="webshop-backend" />
-                        <div class="project-status status-running">Running</div>
-                    </div>
-                    <p class="rvo-text--sm">E-commerce backend API met PostgreSQL en Redis</p>
-                    <div class="project-metrics">
-                        <div class="metric">
-                            <c-icon icon="server" size="sm" />
-                            <span>3 components</span>
+            {% for project in projects %}
+            <a href="/projects/details/{{ project.name }}" class="project-card-link">
+                <c-card class="project-card project-card-{{ project.health | default('Unknown') | lower }}" outline="true" padding="lg" backgroundColor="wit">
+                    <c-layout-flow gap="md">
+                        <div class="project-header">
+                            <c-heading type="h3" textContent="{{ project.display_name }}" />
+                            {% set health = project.health | default('Unknown') %}
+                            {% if health == 'Healthy' %}
+                            <div class="project-status status-healthy">
+                                <span class="status-dot status-dot-healthy"></span>
+                                Healthy
+                            </div>
+                            {% elif health == 'Progressing' %}
+                            <div class="project-status status-progressing">
+                                <span class="status-dot status-dot-progressing"></span>
+                                Progressing
+                            </div>
+                            {% elif health == 'Degraded' %}
+                            <div class="project-status status-degraded">
+                                <span class="status-dot status-dot-degraded"></span>
+                                Degraded
+                            </div>
+                            {% else %}
+                            <div class="project-status status-unknown">
+                                <span class="status-dot status-dot-unknown"></span>
+                                Unknown
+                            </div>
+                            {% endif %}
                         </div>
-                        <div class="metric">
-                            <c-icon icon="user" size="sm" />
-                            <span>1,247 visitors</span>
+                        {% if project.description %}
+                        <p class="rvo-text--sm">{{ project.description }}</p>
+                        {% endif %}
+                        <div class="project-metrics">
+                            <div class="metric">
+                                <c-icon icon="server" size="sm" />
+                                <span>{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 }}</span>
+                            </div>
+                            <div class="metric">
+                                <c-icon icon="user" size="sm" />
+                                <span>{{ project.user_count }} gebruiker{{ 's' if project.user_count != 1 }}</span>
+                            </div>
                         </div>
-                        <div class="metric">
-                            <c-icon icon="waarschuwing" size="sm" />
-                            <span>2 errors</span>
+                        {% if project.last_deployed %}
+                        <div class="project-deploy-time">
+                            <c-icon icon="kalender" size="sm" />
+                            <span class="rvo-text--sm" data-deploy-time="{{ project.last_deployed }}">
+                                {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
+                            </span>
                         </div>
-                    </div>
-                    <div class="project-actions">
-                        <c-button label="Dashboard" kind="tertiary" size="sm" />
-                        <c-button label="Logs" kind="tertiary" size="sm" />
-                        <c-button label="Settings" kind="tertiary" size="sm" />
-                    </div>
-                </c-layout-flow>
-            </c-card>
-
-            {# Project 2 #}
-            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
-                <c-layout-flow gap="md">
-                    <div class="project-header">
-                        <c-heading type="h3" textContent="analytics-dashboard" />
-                        <div class="project-status status-deploying">Deploying</div>
-                    </div>
-                    <p class="rvo-text--sm">Real-time analytics dashboard met ClickHouse</p>
-                    <div class="project-metrics">
-                        <div class="metric">
-                            <c-icon icon="server" size="sm" />
-                            <span>2 components</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="user" size="sm" />
-                            <span>456 visitors</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="vinkje" size="sm" />
-                            <span>0 errors</span>
-                        </div>
-                    </div>
-                    <div class="project-actions">
-                        <c-button label="Dashboard" kind="tertiary" size="sm" />
-                        <c-button label="Logs" kind="tertiary" size="sm" />
-                        <c-button label="Settings" kind="tertiary" size="sm" />
-                    </div>
-                </c-layout-flow>
-            </c-card>
-
-            {# Project 3 #}
-            <c-card class="project-card" outline="true" padding="lg" backgroundColor="wit">
-                <c-layout-flow gap="md">
-                    <div class="project-header">
-                        <c-heading type="h3" textContent="mobile-app-api" />
-                        <div class="project-status status-error">Error</div>
-                    </div>
-                    <p class="rvo-text--sm">REST API voor mobiele applicatie</p>
-                    <div class="project-metrics">
-                        <div class="metric">
-                            <c-icon icon="server" size="sm" />
-                            <span>1 component</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="user" size="sm" />
-                            <span>89 visitors</span>
-                        </div>
-                        <div class="metric">
-                            <c-icon icon="waarschuwing" size="sm" />
-                            <span>15 errors</span>
-                        </div>
-                    </div>
-                    <div class="project-actions">
-                        <c-button label="Dashboard" kind="tertiary" size="sm" />
-                        <c-button label="Logs" kind="tertiary" size="sm" />
-                        <c-button label="Settings" kind="tertiary" size="sm" />
-                    </div>
-                </c-layout-flow>
-            </c-card>
+                        {% endif %}
+                    </c-layout-flow>
+                </c-card>
+            </a>
+            {% endfor %}
         </div>
-    </c-layout-flow>
-
-    {# Recent Activity #}
-    <c-layout-flow gap="lg">
-        <c-heading type="h2" textContent="Recente Activiteit" />
-
+        {% else %}
         <c-card outline="true" padding="lg" backgroundColor="wit">
-            <c-layout-flow gap="md">
-                {# Activity Item 1 #}
-                <div class="activity-item">
-                    <div class="activity-icon activity-success">
-                        <c-icon icon="plus" size="sm" />
-                    </div>
-                    <div class="activity-content">
-                        <p><strong>webshop-backend</strong> deployment succesvol bijgewerkt naar versie 2.1.4</p>
-                        <p class="rvo-text--sm rvo-text--subtle">2 minuten geleden</p>
-                    </div>
-                </div>
-
-                {# Activity Item 2 #}
-                <div class="activity-item">
-                    <div class="activity-icon activity-warning">
-                        <c-icon icon="waarschuwing" size="sm" />
-                    </div>
-                    <div class="activity-content">
-                        <p><strong>mobile-app-api</strong> heeft hoge error rate (15 errors in laatste 5 minuten)</p>
-                        <p class="rvo-text--sm rvo-text--subtle">8 minuten geleden</p>
-                    </div>
-                </div>
-
-                {# Activity Item 3 #}
-                <div class="activity-item">
-                    <div class="activity-icon activity-info">
-                        <c-icon icon="info" size="sm" />
-                    </div>
-                    <div class="activity-content">
-                        <p><strong>analytics-dashboard</strong> nieuwe component wordt gedeployed</p>
-                        <p class="rvo-text--sm rvo-text--subtle">15 minuten geleden</p>
-                    </div>
-                </div>
-
-                {# Activity Item 4 #}
-                <div class="activity-item">
-                    <div class="activity-icon activity-success">
-                        <c-icon icon="user" size="sm" />
-                    </div>
-                    <div class="activity-content">
-                        <p>Nieuwe gebruiker <strong>jan.vries@odc.nl</strong> toegevoegd aan project <strong>webshop-backend</strong></p>
-                        <p class="rvo-text--sm rvo-text--subtle">1 uur geleden</p>
-                    </div>
-                </div>
-
-                <div style="text-align: center; margin-top: var(--rvo-space-md);">
-                    <c-button label="Alle activiteit bekijken" kind="tertiary" size="sm" />
-                </div>
-            </c-layout-flow>
+            <p class="rvo-text--md">Geen projecten gevonden.</p>
         </c-card>
+        {% endif %}
     </c-layout-flow>
+
 </c-layout-flow>
 {% endblock %}
 
@@ -325,10 +299,6 @@
         font-size: 2rem;
         font-weight: 700;
         color: var(--rvo-color-hemelblauw);
-    }
-
-    .status-healthy {
-        color: var(--rvo-color-groen);
     }
 
     /* Metrics Grid */
@@ -377,7 +347,7 @@
     }
 
     .gauge-label {
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         color: var(--rvo-color-grijs-700);
     }
 
@@ -394,6 +364,55 @@
         max-height: 120px;
     }
 
+    /* Resource Comparison Bar */
+    .resource-bar {
+        display: flex;
+        height: 12px;
+        border-radius: 6px;
+        overflow: hidden;
+        background: var(--rvo-color-grijs-200, #e0e0e0);
+    }
+
+    .resource-segment {
+        min-width: 4px;
+        transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .resource-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--rvo-space-md);
+    }
+
+    .resource-legend-item {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-xs);
+        text-decoration: none;
+        color: inherit;
+        padding: 2px 6px;
+        border-radius: 4px;
+        transition: background 0.15s ease;
+    }
+
+    .resource-legend-item:hover {
+        background: var(--rvo-color-grijs-100, #f0f0f0);
+    }
+
+    .resource-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .resource-color-0, .resource-color-0.resource-segment { background-color: #007bc7; }
+    .resource-color-1, .resource-color-1.resource-segment { background-color: #39870c; }
+    .resource-color-2, .resource-color-2.resource-segment { background-color: #e17000; }
+    .resource-color-3, .resource-color-3.resource-segment { background-color: #d52b1e; }
+    .resource-color-4, .resource-color-4.resource-segment { background-color: #6b4c9a; }
+    .resource-color-5, .resource-color-5.resource-segment { background-color: #007b8a; }
+
     /* Projects Grid */
     .projects-grid {
         display: grid;
@@ -401,13 +420,26 @@
         gap: var(--rvo-space-lg);
     }
 
-    .project-card {
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    .project-card-link {
+        text-decoration: none;
+        color: inherit;
+        display: block;
     }
 
+    .project-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+        border-top: 3px solid transparent;
+        cursor: pointer;
+    }
+
+    .project-card-healthy { border-top-color: var(--rvo-color-groen, #39870c); }
+    .project-card-progressing { border-top-color: var(--rvo-color-oranje, #e17000); }
+    .project-card-degraded { border-top-color: var(--rvo-color-rood, #d52b1e); }
+    .project-card-unknown { border-top-color: var(--rvo-color-grijs-400, #bbb); }
+
     .project-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-3px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.12);
     }
 
     .project-header {
@@ -417,26 +449,58 @@
     }
 
     .project-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
         padding: var(--rvo-space-xs) var(--rvo-space-sm);
-        border-radius: 4px;
+        border-radius: 12px;
         font-size: 0.75rem;
         font-weight: 600;
         text-transform: uppercase;
+        letter-spacing: 0.03em;
     }
 
-    .status-running {
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .status-dot-healthy { background: var(--rvo-color-groen, #39870c); }
+    .status-dot-progressing {
+        background: var(--rvo-color-oranje, #e17000);
+        animation: statusPulse 1.5s ease-in-out infinite;
+    }
+    .status-dot-degraded {
+        background: var(--rvo-color-rood, #d52b1e);
+        animation: statusPulse 1s ease-in-out infinite;
+    }
+    .status-dot-unknown { background: var(--rvo-color-grijs-500, #999); }
+
+    @keyframes statusPulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    .status-healthy {
         background: var(--rvo-color-groen-50);
         color: var(--rvo-color-groen);
     }
 
-    .status-deploying {
+    .status-progressing {
         background: var(--rvo-color-oranje-50);
         color: var(--rvo-color-oranje);
     }
 
-    .status-error {
+    .status-degraded {
         background: var(--rvo-color-rood-50);
         color: var(--rvo-color-rood);
+    }
+
+    .status-unknown {
+        background: var(--rvo-color-grijs-200);
+        color: var(--rvo-color-grijs-700);
     }
 
     .project-metrics {
@@ -453,53 +517,20 @@
         color: var(--rvo-color-grijs-700);
     }
 
+    .project-deploy-time {
+        display: flex;
+        align-items: center;
+        gap: var(--rvo-space-xs);
+        color: var(--rvo-color-grijs-600, #777);
+        font-size: 0.8rem;
+        padding-top: var(--rvo-space-xs);
+        border-top: 1px solid var(--rvo-color-grijs-200, #e0e0e0);
+    }
+
     .project-actions {
         display: flex;
         gap: var(--rvo-space-sm);
         flex-wrap: wrap;
-    }
-
-    /* Activity Styles */
-    .activity-item {
-        display: flex;
-        gap: var(--rvo-space-md);
-        align-items: flex-start;
-        padding-bottom: var(--rvo-space-md);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .activity-item:last-of-type {
-        border-bottom: none;
-        padding-bottom: 0;
-    }
-
-    .activity-icon {
-        flex-shrink: 0;
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .activity-success {
-        background: var(--rvo-color-groen-50);
-        color: var(--rvo-color-groen);
-    }
-
-    .activity-warning {
-        background: var(--rvo-color-oranje-50);
-        color: var(--rvo-color-oranje);
-    }
-
-    .activity-info {
-        background: var(--rvo-color-hemelblauw-50);
-        color: var(--rvo-color-hemelblauw);
-    }
-
-    .activity-content {
-        flex: 1;
     }
 
     /* Responsive adjustments */
@@ -509,86 +540,190 @@
         .projects-grid {
             grid-template-columns: 1fr;
         }
+
+        .health-banner {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .health-banner-aside {
+            align-self: flex-start;
+        }
     }
 </style>
 {% endblock %}
 
 {% block additional_scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        animateCounters();
+        animateResourceBar();
+        formatDeployTimes();
+    });
+
+    /* Animated number counters */
+    function animateCounters() {
+        var counters = document.querySelectorAll('[data-count]');
+        counters.forEach(function(el) {
+            var target = parseInt(el.getAttribute('data-count'), 10);
+            if (target === 0) { el.textContent = '0'; return; }
+            var duration = 600;
+            var start = performance.now();
+            function step(now) {
+                var progress = Math.min((now - start) / duration, 1);
+                var eased = 1 - Math.pow(1 - progress, 3);
+                el.textContent = Math.round(eased * target);
+                if (progress < 1) requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
+        });
+    }
+
+    /* Animate resource bar segments */
+    function animateResourceBar() {
+        var segments = document.querySelectorAll('.resource-segment[data-width]');
+        setTimeout(function() {
+            segments.forEach(function(seg) {
+                seg.style.width = seg.getAttribute('data-width') + '%';
+            });
+        }, 200);
+    }
+
+    /* Convert UTC timestamps to relative time */
+    function formatDeployTimes() {
+        var els = document.querySelectorAll('[data-deploy-time]');
+        els.forEach(function(el) {
+            var raw = el.getAttribute('data-deploy-time');
+            if (!raw) return;
+            try {
+                var ts = raw.endsWith('Z') ? raw : raw + 'Z';
+                var date = new Date(ts);
+                if (isNaN(date.getTime())) return;
+                var now = new Date();
+                var diffMs = now - date;
+                var diffMin = Math.floor(diffMs / 60000);
+                var diffHr = Math.floor(diffMs / 3600000);
+                var diffDay = Math.floor(diffMs / 86400000);
+                var relative;
+                if (diffMin < 1) relative = 'zojuist';
+                else if (diffMin < 60) relative = diffMin + ' min geleden';
+                else if (diffHr < 24) relative = diffHr + ' uur geleden';
+                else if (diffDay < 7) relative = diffDay + (diffDay === 1 ? ' dag' : ' dagen') + ' geleden';
+                else relative = date.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+                el.textContent = relative;
+                el.title = date.toLocaleString('nl-NL', { dateStyle: 'full', timeStyle: 'short' });
+            } catch(e) { /* keep original text */ }
+        });
+    }
+</script>
+
+{% if prometheus_available and metrics %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-    // Initialize gauges and charts when the page loads
     document.addEventListener('DOMContentLoaded', function() {
         initializeGauges();
         initializeCharts();
     });
 
-    function initializeGauges() {
-        // CPU Gauge
-        createGauge('cpu-gauge', 67, 'CPU Usage', '#1f5e99');
-
-        // Memory Gauge
-        createGauge('memory-gauge', 84, 'Memory Usage', '#e17000');
-
-        // Storage Gauge
-        createGauge('storage-gauge', 45, 'Storage Usage', '#007bc7');
+    function getGaugeColor(percentage) {
+        if (percentage >= 85) return '#d52b1e';      /* red */
+        if (percentage >= 70) return '#e17000';       /* orange */
+        return '#39870c';                              /* green */
     }
 
-    function createGauge(canvasId, percentage, label, color) {
-        const canvas = document.getElementById(canvasId);
-        const ctx = canvas.getContext('2d');
+    function initializeGauges() {
+        var cpuPct = {{ metrics.cpu_percentage }};
+        var memPct = {{ metrics.memory_percentage }};
+        var storagePct = {{ metrics.storage_percentage }};
 
-        // Set canvas size
+        animateGauge('cpu-gauge', cpuPct, getGaugeColor(cpuPct));
+        animateGauge('memory-gauge', memPct, getGaugeColor(memPct));
+        animateGauge('storage-gauge', storagePct, getGaugeColor(storagePct));
+    }
+
+    function animateGauge(canvasId, targetPct, color) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
         canvas.width = 150;
         canvas.height = 150;
+        var centerX = canvas.width / 2;
+        var centerY = canvas.height / 2;
+        var radius = 60;
+        var duration = 800;
+        var start = performance.now();
 
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        const radius = 60;
+        function draw(now) {
+            var progress = Math.min((now - start) / duration, 1);
+            var eased = 1 - Math.pow(1 - progress, 3);
+            var currentPct = eased * targetPct;
 
-        // Clear canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Draw background arc
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, Math.PI, 2 * Math.PI);
-        ctx.strokeStyle = '#f0f0f0';
-        ctx.lineWidth = 12;
-        ctx.stroke();
+            /* Background arc */
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, Math.PI, 2 * Math.PI);
+            ctx.strokeStyle = '#f0f0f0';
+            ctx.lineWidth = 12;
+            ctx.lineCap = 'butt';
+            ctx.stroke();
 
-        // Draw progress arc
-        const angle = Math.PI + (Math.PI * percentage / 100);
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, Math.PI, angle);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 12;
-        ctx.lineCap = 'round';
-        ctx.stroke();
+            /* Progress arc */
+            if (currentPct > 0) {
+                var angle = Math.PI + (Math.PI * currentPct / 100);
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, Math.PI, angle);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 12;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+            }
 
-        // Draw center circle
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
-        ctx.fillStyle = color;
-        ctx.fill();
+            /* Center dot */
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.15 + 0.85 * eased;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+
+            if (progress < 1) requestAnimationFrame(draw);
+        }
+        requestAnimationFrame(draw);
     }
 
     function initializeCharts() {
-        // Network Traffic Chart
-        const networkCtx = document.getElementById('network-chart').getContext('2d');
+        var networkInData = {{ metrics.network_in_data | tojson }};
+        var networkOutData = {{ metrics.network_out_data | tojson }};
+
+        var labels = networkInData.map(function(d) { return d.t; });
+        var inValues = networkInData.map(function(d) { return d.v; });
+        var outValues = networkOutData.map(function(d) { return d.v; });
+
+        if (labels.length === 0) {
+            labels = ['--'];
+            inValues = [0];
+            outValues = [0];
+        }
+
+        var networkCtx = document.getElementById('network-chart').getContext('2d');
         new Chart(networkCtx, {
             type: 'line',
             data: {
-                labels: ['10:00', '10:05', '10:10', '10:15', '10:20', '10:25', '10:30'],
+                labels: labels,
                 datasets: [{
-                    label: 'Inbound',
-                    data: [12, 19, 15, 25, 22, 18, 24],
+                    label: 'Inbound (KB/s)',
+                    data: inValues,
                     borderColor: '#007bc7',
                     backgroundColor: 'rgba(0, 123, 199, 0.1)',
+                    fill: true,
                     tension: 0.4
                 }, {
-                    label: 'Outbound',
-                    data: [8, 11, 9, 15, 14, 11, 16],
+                    label: 'Outbound (KB/s)',
+                    data: outValues,
                     borderColor: '#e17000',
                     backgroundColor: 'rgba(225, 112, 0, 0.1)',
+                    fill: true,
                     tension: 0.4
                 }]
             },
@@ -611,22 +746,6 @@
             }
         });
     }
-
-    // Auto-refresh data every 30 seconds
-    setInterval(function() {
-        // In a real application, this would fetch fresh data from the API
-        updateGauges();
-    }, 30000);
-
-    function updateGauges() {
-        // Generate some random variations for demo purposes
-        const cpuVariation = Math.floor(Math.random() * 10) - 5;
-        const memoryVariation = Math.floor(Math.random() * 10) - 5;
-        const storageVariation = Math.floor(Math.random() * 5) - 2;
-
-        createGauge('cpu-gauge', Math.max(0, Math.min(100, 67 + cpuVariation)), 'CPU Usage', '#1f5e99');
-        createGauge('memory-gauge', Math.max(0, Math.min(100, 84 + memoryVariation)), 'Memory Usage', '#e17000');
-        createGauge('storage-gauge', Math.max(0, Math.min(100, 45 + storageVariation)), 'Storage Usage', '#007bc7');
-    }
 </script>
+{% endif %}
 {% endblock %}

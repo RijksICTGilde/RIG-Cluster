@@ -25,6 +25,8 @@ spec:
           value: "/tmp"
         - name: PYTHONTMPDIR
           value: "/tmp"
+        - name: TEMP_DIR
+          value: "/data"
         - name: ENVIRONMENT
           value: "sandboxed-local"
         - name: LOCAL_DEVELOPMENT
@@ -55,6 +57,15 @@ spec:
             secretKeyRef:
               name: redis-admin-credentials
               key: REDIS_PASSWORD
+        - name: PROMETHEUS_METRICS_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: prometheus-metrics-auth
+              key: token
+        - name: LOG_ERRORS_TO_FILE
+          value: "true"
+        - name: LOG_ERRORS_FILE_PATH
+          value: "/data/logs/errors.log"
         volumeMounts:
         - name: kube-api-access
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -66,6 +77,8 @@ spec:
         - name: config-volume
           mountPath: /etc/config
           readOnly: true
+        - name: data
+          mountPath: /data
         resources:
           limits:
             cpu: "4"
@@ -95,4 +108,7 @@ spec:
       - name: config-volume
         configMap:
           name: operations-manager-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: operations-manager-data
       serviceAccountName: namespace-manager

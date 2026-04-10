@@ -182,7 +182,7 @@ class DatabaseSecret(BaseSecret):
     @property
     def connection_string(self) -> str:
         """Generate PostgreSQL connection string."""
-        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self.schema}"
+        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self.schema},public"
 
     def _get_additional_keys(self) -> dict[str, str]:
         """Add computed keys that are not defined in service definitions."""
@@ -257,6 +257,7 @@ class KeycloakSecret(BaseSecret):
 
     client_id: str
     client_secret: str
+    public_client_id: str
     discovery_url: str
     base_url: str
     realm: str
@@ -307,6 +308,32 @@ class RedisSecret(BaseSecret):
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid port value '{value}': {e}") from e
         return value
+
+
+@dataclass
+class MetricsAuthSecret(BaseSecret):
+    """Metrics scraper authentication secret.
+
+    Contains the Bearer token that Prometheus sends when scraping /metrics.
+    Applications use this to validate that scrape requests come from Prometheus.
+    The token is cluster-wide (same value for all deployments).
+    """
+
+    token: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-metrics-auth"
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.METRICS_SCRAPER
+
+
+@dataclass
+class PlatformSecret(BaseSecret):
+    """Platform-provided variables secret (always available per component)."""
+
+    deployment_name: str
+    component_name: str
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-platform"
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.PLATFORM
 
 
 @dataclass
