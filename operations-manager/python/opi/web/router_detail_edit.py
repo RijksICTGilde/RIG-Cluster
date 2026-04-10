@@ -223,7 +223,7 @@ def _detect_list_target(flow_id: str, state: Any) -> tuple[str, int, bool] | Non
             suffix = flow_id.removeprefix(prefix)
             if suffix.isdigit():
                 idx = int(suffix)
-                is_new = prefix in ("modal-add-deployment-",) or (
+                is_new = prefix == "modal-add-deployment-" or (
                     prefix == "modal-edit-component-" and state and (state.template_data or {}).get("is_new", False)
                 )
                 return list_key, idx, is_new
