@@ -140,6 +140,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
                     if not succeeded and project_manager.get_processing_error()
                     else {}
                 ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
             },
         }
         if result.get("warnings"):
@@ -278,6 +279,7 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
                     if not succeeded and project_manager.get_processing_error()
                     else {}
                 ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
             },
         }
         if result.get("warnings"):
@@ -382,13 +384,24 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Build response
         # ------------------------------------------------------------------
+        succeeded = processing_status != "failed"
         response: dict[str, Any] = {
-            "status": "success",
-            "message": f"Service '{service_name}' added successfully",
+            "status": "success" if succeeded else "failed",
+            "message": f"Service '{service_name}' added successfully"
+            if succeeded
+            else (project_manager.get_processing_error() or "Project processing failed"),
             "services_added": result.get("services_added", []),
             "services_skipped": result.get("services_skipped", []),
             "components_updated": result.get("components_updated", []),
-            "processing": {"status": processing_status},
+            "processing": {
+                "status": processing_status,
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            },
         }
         if result.get("warnings"):
             response["warnings"] = result["warnings"]

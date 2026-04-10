@@ -89,6 +89,7 @@ class AsyncTaskService:
         cluster: str,
         payload: dict,
         created_by: str | None = None,
+        max_attempts: int | None = None,
     ) -> dict:
         """Create a new async task, or return an existing active task if one matches.
 
@@ -151,20 +152,37 @@ class AsyncTaskService:
                         deployment_name,
                     )
 
-            row = await conn.fetchrow(
-                """
-                INSERT INTO async_tasks
-                    (task_type, project_name, deployment_name, cluster, payload, created_by)
-                VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                RETURNING *
-                """,
-                task_type,
-                project_name,
-                deployment_name,
-                cluster,
-                json.dumps(payload),
-                created_by,
-            )
+            if max_attempts is not None:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO async_tasks
+                        (task_type, project_name, deployment_name, cluster, payload, created_by, max_attempts)
+                    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+                    RETURNING *
+                    """,
+                    task_type,
+                    project_name,
+                    deployment_name,
+                    cluster,
+                    json.dumps(payload),
+                    created_by,
+                    max_attempts,
+                )
+            else:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO async_tasks
+                        (task_type, project_name, deployment_name, cluster, payload, created_by)
+                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+                    RETURNING *
+                    """,
+                    task_type,
+                    project_name,
+                    deployment_name,
+                    cluster,
+                    json.dumps(payload),
+                    created_by,
+                )
             logger.info(
                 "Created task %s type=%s for %s/%s on cluster %s",
                 row["id"],
