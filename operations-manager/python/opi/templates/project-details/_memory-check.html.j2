@@ -11,6 +11,36 @@
 {% set saving_warnings = memory_warnings | rejectattr('oom_detected') | list %}
 
 {% if oom_warnings %}
+{% set oom_at_max = [] %}
+{% set oom_tunable = [] %}
+{% for w in oom_warnings %}
+{% if w.current_limit == w.recommended_limit %}
+{% set _ = oom_at_max.append(w) %}
+{% else %}
+{% set _ = oom_tunable.append(w) %}
+{% endif %}
+{% endfor %}
+
+{% if oom_at_max %}
+<c-card padding="md" background="color" backgroundColor="rood-150" outline="true">
+    <c-layout-flow gap="sm">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <c-heading type="h5" textContent="OOM Kill gedetecteerd — maximale limiet bereikt" />
+            <c-icon icon="vraagteken" size="xl" color="hemelblauw"
+                    style="cursor: pointer;"
+                    @click="openServiceHelp('resources.html.j2')" />
+        </div>
+        <c-p>De volgende componenten worden gestopt wegens geheugengebrek, maar draaien al op de maximale geheugenlimiet.</c-p>
+        <c-ul>
+            {% for w in oom_at_max %}
+            <c-li>{{ w.component }}: {{ w.current_limit }} (maximum)</c-li>
+            {% endfor %}
+        </c-ul>
+    </c-layout-flow>
+</c-card>
+{% endif %}
+
+{% if oom_tunable %}
 <c-card padding="md" background="color" backgroundColor="rood-150" outline="true">
     <c-layout-flow gap="sm">
         <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -22,7 +52,7 @@
         <c-p>De volgende componenten worden herhaaldelijk gestopt wegens geheugengebrek (OOM Kill).
             Klik op "Tune resources" om het geheugen automatisch te verhogen.</c-p>
         <c-ul>
-            {% for w in oom_warnings %}
+            {% for w in oom_tunable %}
             <c-li>{{ w.component }}: {{ w.current_limit }} &#8594; {{ w.recommended_limit }}</c-li>
             {% endfor %}
         </c-ul>
@@ -32,6 +62,8 @@
                   hx-swap="innerHTML" />
     </c-layout-flow>
 </c-card>
+{% endif %}
+
 {% endif %}
 
 {% if saving_warnings %}
