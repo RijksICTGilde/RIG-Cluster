@@ -38,6 +38,18 @@ class TaskWorker:
         # Handler registry - maps TaskType to handler function
         self._handlers: dict[str, Callable] = {}
 
+        # Per-task-type concurrency limits (task_type -> max concurrent)
+        self._type_concurrency_limits: dict[str, int] = {}
+
+    def set_type_concurrency_limit(self, task_type: str, max_concurrent: int) -> None:
+        """Set a concurrency limit for a specific task type.
+
+        When the limit is reached, the worker will skip claiming tasks of this
+        type until a slot opens up. Other task types are unaffected.
+        """
+        self._type_concurrency_limits[task_type] = max_concurrent
+        logger.info("Set concurrency limit for %s: %d", task_type, max_concurrent)
+
     def register_handler(self, task_type: str, handler: Callable) -> None:
         """Register a handler function for a task type."""
         self._handlers[task_type] = handler
@@ -82,7 +94,10 @@ class TaskWorker:
                 # Wait for a concurrency slot before claiming
                 await self._semaphore.acquire()
 
-                task = await self._task_service.claim_next_task(self._cluster)
+                task = await self._task_service.claim_next_task(
+                    self._cluster,
+                    type_concurrency_limits=self._type_concurrency_limits or None,
+                )
                 if task is None:
                     self._semaphore.release()
                     await asyncio.sleep(settings.TASK_WORKER_POLL_INTERVAL)
