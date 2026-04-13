@@ -16,6 +16,7 @@ from jinja_roos_components.extension import ComponentExtension
 
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.i18n import get_current_translation, get_requested_language
+from opi.core.rrule_utils import format_rrule
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -95,35 +96,14 @@ def format_rrule_schedule(rrule: str | None) -> str:
     """Format an RRULE schedule string into a human-readable Dutch label.
 
     Example: "FREQ=DAILY;BYHOUR=2;BYMINUTE=0" -> "Dagelijks rond 02:00"
+
+    Delegates to the shared format_rrule() utility. This wrapper preserves
+    the original pass-through behavior for non-RRULE values (returns the
+    raw string instead of "Geen").
     """
     if not rrule or not isinstance(rrule, str) or "FREQ=" not in rrule:
         return str(rrule or "")
-    parts: dict[str, str] = {}
-    for segment in rrule.split(";"):
-        if "=" in segment:
-            key, _, val = segment.partition("=")
-            parts[key.strip().upper()] = val.strip()
-
-    freq = parts.get("FREQ", "")
-    freq_labels = {"DAILY": "Dagelijks", "WEEKLY": "Wekelijks", "MONTHLY": "Maandelijks"}
-    label = freq_labels.get(freq, freq)
-    hour = parts.get("BYHOUR", "2")
-    minute = parts.get("BYMINUTE", "0")
-    safe_hour = int(hour) if str(hour).isdigit() else 2
-    safe_minute = int(minute) if str(minute).isdigit() else 0
-    time_str = f"{safe_hour:02d}:{safe_minute:02d}"
-
-    day_labels = {
-        "MO": "maandag", "TU": "dinsdag", "WE": "woensdag", "TH": "donderdag",
-        "FR": "vrijdag", "SA": "zaterdag", "SU": "zondag",
-    }
-    if freq == "WEEKLY":
-        day = parts.get("BYDAY", "")
-        return f"{label} op {day_labels.get(day, day)} rond {time_str}"
-    if freq == "MONTHLY":
-        monthday = parts.get("BYMONTHDAY", "1")
-        return f"{label} op dag {monthday} rond {time_str}"
-    return f"{label} rond {time_str}"
+    return format_rrule(rrule)
 
 
 def get_service_name(service: str | dict[str, Any]) -> str:

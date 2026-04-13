@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from opi.core.async_task_service import AsyncTaskService, TaskType
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.config import settings
+from opi.core.rrule_utils import parse_rrule
 
 logger = logging.getLogger(__name__)
 
@@ -31,20 +32,6 @@ _FREQ_INTERVALS: dict[str, int] = {
 
 # Public alias with lowercase keys for external consumers (tests, API)
 SCHEDULE_INTERVALS: dict[str, int] = {k.lower(): v for k, v in _FREQ_INTERVALS.items()}
-
-
-def parse_rrule(rrule: str) -> dict[str, str]:
-    """Parse an RRULE string into key-value parts.
-
-    >>> parse_rrule("FREQ=DAILY;BYHOUR=2;BYMINUTE=0")
-    {'FREQ': 'DAILY', 'BYHOUR': '2', 'BYMINUTE': '0'}
-    """
-    parts: dict[str, str] = {}
-    for segment in rrule.split(";"):
-        if "=" in segment:
-            key, _, val = segment.partition("=")
-            parts[key.strip().upper()] = val.strip()
-    return parts
 
 
 class BackupScheduler:

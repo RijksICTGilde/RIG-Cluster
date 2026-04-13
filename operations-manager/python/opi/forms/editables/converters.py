@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import yaml
+
+from opi.core.rrule_utils import build_rrule, format_rrule, parse_rrule
+from opi.forms.editables.service_path import smart_get_value
 
 logger = logging.getLogger(__name__)
 
@@ -543,34 +547,6 @@ class AGEEncryptConverter:
 # RRULE schedule converters
 # ---------------------------------------------------------------------------
 
-def _parse_rrule(rrule: str | None) -> dict[str, str]:
-    """Parse an RRULE string into a dict of its parts.
-
-    Example: "FREQ=DAILY;BYHOUR=2;BYMINUTE=0" -> {"FREQ": "DAILY", "BYHOUR": "2", "BYMINUTE": "0"}
-    """
-    if not rrule or not isinstance(rrule, str):
-        return {}
-    parts: dict[str, str] = {}
-    for segment in rrule.split(";"):
-        if "=" in segment:
-            key, _, val = segment.partition("=")
-            parts[key.strip().upper()] = val.strip()
-    return parts
-
-
-def _build_rrule(freq: str, hour: int = 2, minute: int = 0, byday: str = "", bymonthday: str = "") -> str:
-    """Build an RRULE string from components."""
-    if not freq:
-        return ""
-    parts = [f"FREQ={freq.upper()}"]
-    parts.append(f"BYHOUR={hour}")
-    parts.append(f"BYMINUTE={minute}")
-    if freq.upper() == "WEEKLY" and byday:
-        parts.append(f"BYDAY={byday.upper()}")
-    if freq.upper() == "MONTHLY" and bymonthday:
-        parts.append(f"BYMONTHDAY={bymonthday}")
-    return ";".join(parts)
-
 
 def _get_schedule_from_context(context_data: dict[str, Any] | None, path_hint: str) -> str:
     """Extract the schedule RRULE value from context_data using path proximity.
@@ -580,9 +556,6 @@ def _get_schedule_from_context(context_data: dict[str, Any] | None, path_hint: s
     """
     if not context_data:
         return ""
-    import re
-
-    from opi.forms.editables.service_path import smart_get_value
 
     # Extract the parent path by removing the :suffix
     parent_path = re.sub(r":[^/]+$", "", path_hint)
@@ -602,7 +575,7 @@ class RRuleFrequencyConverter:
         """Extract frequency from RRULE for the select dropdown."""
         if not value:
             return ""
-        parts = _parse_rrule(str(value))
+        parts = parse_rrule(str(value))
         return parts.get("FREQ", "").upper()
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
@@ -637,32 +610,11 @@ class RRuleFrequencyConverter:
                     bymonthday = str(monthday_val) if monthday_val else ""
                     break
 
-        return _build_rrule(freq, hour, minute, byday, bymonthday)
+        return build_rrule(freq, hour, minute, byday, bymonthday)
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         """Human-readable schedule summary."""
-        if not value:
-            return "Geen"
-        parts = _parse_rrule(str(value))
-        freq = parts.get("FREQ", "")
-        freq_labels = {"DAILY": "Dagelijks", "WEEKLY": "Wekelijks", "MONTHLY": "Maandelijks"}
-        label = freq_labels.get(freq, freq)
-        hour = parts.get("BYHOUR", "2")
-        minute = parts.get("BYMINUTE", "0")
-        time_str = f"{int(hour):02d}:{int(minute):02d}"
-
-        day_labels = {
-            "MO": "maandag", "TU": "dinsdag", "WE": "woensdag", "TH": "donderdag",
-            "FR": "vrijdag", "SA": "zaterdag", "SU": "zondag",
-        }
-        if freq == "WEEKLY":
-            day = parts.get("BYDAY", "")
-            day_str = day_labels.get(day, day)
-            return f"{label} op {day_str} rond {time_str}"
-        if freq == "MONTHLY":
-            monthday = parts.get("BYMONTHDAY", "1")
-            return f"{label} op dag {monthday} rond {time_str}"
-        return f"{label} rond {time_str}"
+        return format_rrule(str(value) if value else None)
 
 
 def _find_parent_rrule(context_data: dict[str, Any] | None) -> str:
@@ -694,7 +646,7 @@ class RRuleTimeConverter:
         rrule = _find_parent_rrule(context_data)
         if not rrule:
             return "02:00"  # default
-        parts = _parse_rrule(rrule)
+        parts = parse_rrule(rrule)
         hour = parts.get("BYHOUR", "2")
         minute = parts.get("BYMINUTE", "0")
         return f"{int(hour):02d}:{int(minute):02d}"
@@ -714,7 +666,7 @@ class RRuleDayConverter:
         rrule = _find_parent_rrule(context_data)
         if not rrule:
             return "MO"
-        parts = _parse_rrule(rrule)
+        parts = parse_rrule(rrule)
         return parts.get("BYDAY", "MO")
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
@@ -731,7 +683,7 @@ class RRuleMonthDayConverter:
         rrule = _find_parent_rrule(context_data)
         if not rrule:
             return "1"
-        parts = _parse_rrule(rrule)
+        parts = parse_rrule(rrule)
         return parts.get("BYMONTHDAY", "1")
 
     def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:

@@ -9,7 +9,25 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
+from opi.core.backup_tasks import (
+    _create_deployment_from_source,
+    _pre_restore_pvcs,
+    _provision_deployment_infrastructure,
+    _resolve_deployment_info,
+    _restore_single_resource,
+)
+from opi.core.cluster_config import get_prefixed_namespace
+from opi.handlers.project_file_handler import create_project_file_handler
+from opi.manager.backup import (
+    create_backup_manager,
+    create_bucket_backup_manager,
+    create_database_backup_manager,
+)
+from opi.services import ServiceAdapter, ServiceType
+from opi.utils.naming import generate_backup_run_id
+from opi.utils.secrets import DatabaseSecret, MinIOSecret
 
 if TYPE_CHECKING:
     from opi.core.persistent_task_progress import PersistentTaskProgressManager
@@ -30,8 +48,6 @@ async def handle_backup(
     deployment_name = payload["deployment_name"]
     resource_types = payload.get("resource_types", DEFAULT_BACKUP_RESOURCE_TYPES)
 
-    from opi.core.backup_tasks import _resolve_deployment_info
-
     # Task 1: Resolve project and deployment info
     resolve_task = progress.add_task("Project en deployment opzoeken")
     try:
@@ -47,17 +63,6 @@ async def handle_backup(
     # Task 2: Run backups
     backup_task = progress.add_task("Backup uitvoeren")
 
-    from opi.connectors.kubectl import create_kubectl_connector
-    from opi.handlers.project_file_handler import create_project_file_handler
-    from opi.manager.backup import (
-        create_backup_manager,
-        create_bucket_backup_manager,
-        create_database_backup_manager,
-    )
-    from opi.services import ServiceAdapter, ServiceType
-    from opi.utils.naming import generate_backup_run_id
-    from opi.utils.secrets import DatabaseSecret, MinIOSecret
-
     backup_run_id = generate_backup_run_id()
     project_file_handler = create_project_file_handler()
     all_success = True
@@ -67,8 +72,6 @@ async def handle_backup(
     if "pvc" in resource_types:
         pvc_subtask = progress.add_subtask(backup_task, "PVC backup")
         try:
-            from opi.core.cluster_config import get_prefixed_namespace
-
             backup_manager = create_backup_manager()
             app_results = await backup_manager.backup_project_deployment(
                 project_name=project_name,
@@ -93,7 +96,7 @@ async def handle_backup(
                 try:
                     infra_results = await backup_manager.backup_namespace(infra_namespace)
                     total_results += len(infra_results)
-                except Exception as e:
+                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                     logger.warning("Failed to backup infra namespace %s: %s", infra_namespace, e)
         except (ValueError, RuntimeError, OSError, ConnectionError) as e:
             all_success = False
@@ -248,14 +251,6 @@ async def handle_restore(
     source_deployment = payload.get("source_deployment", "")
     deployment_config = payload.get("deployment_config")
 
-    from opi.core.backup_tasks import (
-        _create_deployment_from_source,
-        _pre_restore_pvcs,
-        _provision_deployment_infrastructure,
-        _resolve_deployment_info,
-        _restore_single_resource,
-    )
-
     try:
         if create_new_deployment:
             pvc_items = [item for item in backup_items if item.get("resource_type") == "pvc"]
@@ -267,7 +262,7 @@ async def handle_restore(
                 await _create_deployment_from_source(
                     project_name, target_deployment, source_deployment, deployment_config=deployment_config
                 )
-            except Exception as e:
+            except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                 progress.fail_task(create_task, str(e))
                 progress.fail_project(str(e))
                 return {"success": False, "error": str(e)}
@@ -285,7 +280,7 @@ async def handle_restore(
                         task_progress=progress,
                         pvc_task_id=pvc_task,
                     )
-                except Exception as e:
+                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                     progress.fail_task(pvc_task, str(e))
                     progress.fail_project(str(e))
                     return {"success": False, "error": str(e)}
@@ -295,7 +290,7 @@ async def handle_restore(
             infra_task = progress.add_task("Infrastructuur aanmaken")
             try:
                 await _provision_deployment_infrastructure(project_name, target_deployment, progress)
-            except Exception as e:
+            except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                 progress.fail_task(infra_task, str(e))
                 progress.fail_project(str(e))
                 return {"success": False, "error": str(e)}
@@ -308,7 +303,7 @@ async def handle_restore(
                     project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
                         project_name, target_deployment
                     )
-                except Exception as e:
+                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                     progress.fail_task(resolve_task, str(e))
                     progress.fail_project(str(e))
                     return {"success": False, "error": str(e)}
@@ -339,7 +334,7 @@ async def handle_restore(
                             current_cluster=current_cluster,
                         )
                         progress.complete_subtask(subtask)
-                    except Exception as e:
+                    except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                         all_success = False
                         progress.fail_subtask(subtask, str(e))
                         logger.exception("Failed to restore %s for %s/%s", label, project_name, target_deployment)
@@ -360,7 +355,7 @@ async def handle_restore(
                 project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
                     project_name, target_deployment
                 )
-            except Exception as e:
+            except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                 progress.fail_task(resolve_task, str(e))
                 progress.fail_project(str(e))
                 return {"success": False, "error": str(e)}
@@ -391,7 +386,7 @@ async def handle_restore(
                         current_cluster=current_cluster,
                     )
                     progress.complete_subtask(subtask)
-                except Exception as e:
+                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                     all_success = False
                     progress.fail_subtask(subtask, str(e))
                     logger.exception("Failed to restore %s for %s/%s", label, project_name, target_deployment)
