@@ -16,8 +16,6 @@
             <c-layout-flow row="true" gap="sm">
                 <c-button kind="secondary" size="sm" label="Backup aanmaken" showIcon="before" icon="iconen-toevoegen"
                           @click="openEditModal('modal-backup', 'Backup aanmaken')" />
-                <c-button kind="secondary" size="sm" label="Backup schema" showIcon="before" icon="instellingen"
-                          @click="openEditModal('modal-edit-backup-schedule-0', 'Backup schema instellen')" />
                 {% if ns.has_backups %}
                 <c-button kind="secondary" size="sm" label="Herstellen" showIcon="before" icon="terug"
                           @click="openEditModal('modal-restore', 'Backup herstellen')" />
@@ -37,11 +35,15 @@
                     {% if project.deployments | selectattr('cluster', 'equalto', current_cluster) | list | length > 1 %}
                     <c-tag content="{{ deployment.name }}" />
                     {% endif %}
+                    <c-button kind="secondary" size="xs" label="Schema wijzigen" showIcon="before" icon="instellingen"
+                              @click="openEditModal('modal-edit-backup-schedule-{{ loop.index0 }}', 'Backup schema instellen')" />
                 </c-layout-row>
                 {% else %}
                 <c-layout-row gap="sm" verticalSpacing="center">
                     <c-icon icon="info" size="md" color="grijs-500" />
                     <span class="rvo-text--subtle">Geen backup schema ingesteld voor <strong>{{ deployment.name }}</strong></span>
+                    <c-button kind="secondary" size="xs" label="Schema instellen" showIcon="before" icon="instellingen"
+                              @click="openEditModal('modal-edit-backup-schedule-{{ loop.index0 }}', 'Backup schema instellen')" />
                 </c-layout-row>
                 {% endif %}
             {% endif %}

@@ -5,6 +5,7 @@ This module provides the OptionsProvider protocol and concrete implementations
 for populating select/radio fields with dynamic data from OPI's domain.
 """
 
+import re
 from typing import Any, ClassVar, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG
@@ -537,13 +538,6 @@ class BareDomainComponentOptionsProvider(ComponentReferenceOptionsProvider):
         )
 
 
-class BackupScheduleOptionsProvider:
-    """Legacy provider — kept for backward compat references."""
-
-    def get_options(self) -> list[dict[str, Any]]:
-        return BackupScheduleFrequencyOptionsProvider().get_options()
-
-
 class BackupScheduleFrequencyOptionsProvider:
     """Provides RRULE frequency options for the backup schedule select."""
 
@@ -625,8 +619,6 @@ class BackupResourceTypesOptionsProvider:
 
     def _resolve_deployment_name(self) -> str:
         """Determine the deployment name from the path or form data."""
-        import re
-
         # Schedule modal: deployments[N]/backup/resource_types
         match = re.match(r"deployments\[(\d+)]", self._yaml_path)
         if match:
@@ -799,7 +791,6 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
-    "BackupScheduleOptionsProvider": BackupScheduleOptionsProvider,
     "BackupScheduleFrequencyOptionsProvider": BackupScheduleFrequencyOptionsProvider,
     "BackupScheduleTimeOptionsProvider": BackupScheduleTimeOptionsProvider,
     "BackupScheduleDayOptionsProvider": BackupScheduleDayOptionsProvider,

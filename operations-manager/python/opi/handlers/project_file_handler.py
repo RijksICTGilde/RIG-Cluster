@@ -2447,8 +2447,6 @@ class ProjectFileHandler:
         that the deployment uses, based on its components, helm-charts, and
         helmfiles.
         """
-        from opi.services import ServiceAdapter
-
         result: list[dict[str, str]] = []
         for bl in ServiceAdapter.get_backupable_labels():
             svc_types = ServiceAdapter.get_service_types_for_backup_label(bl["label"])

@@ -391,19 +391,21 @@ class TestHandleBackupExecution:
     def backup_mocks(self):
         """Patch all external dependencies of handle_backup.
 
-        The handler uses inline imports, so we patch at the source modules.
+        Patches target the consumer module (task_handlers_backup) where the
+        names are bound at import time.
         """
+        _thb = "opi.core.task_handlers_backup"
         with (
-            patch("opi.core.backup_tasks._resolve_deployment_info") as mock_resolve,
-            patch("opi.manager.backup.create_backup_manager") as mock_bm,
-            patch("opi.manager.backup.create_database_backup_manager") as mock_dbm,
-            patch("opi.manager.backup.create_bucket_backup_manager") as mock_bbm,
-            patch("opi.connectors.kubectl.create_kubectl_connector") as mock_kubectl,
-            patch("opi.handlers.project_file_handler.create_project_file_handler") as mock_pfh,
-            patch("opi.utils.secrets.DatabaseSecret") as mock_db_secret,
-            patch("opi.utils.secrets.MinIOSecret") as mock_minio_secret,
-            patch("opi.services.ServiceAdapter") as mock_sa,
-            patch("opi.utils.naming.generate_backup_run_id", return_value="20260325020000"),
+            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
+            patch(f"{_thb}.create_backup_manager") as mock_bm,
+            patch(f"{_thb}.create_database_backup_manager") as mock_dbm,
+            patch(f"{_thb}.create_bucket_backup_manager") as mock_bbm,
+            patch(f"{_thb}.create_kubectl_connector") as mock_kubectl,
+            patch(f"{_thb}.create_project_file_handler") as mock_pfh,
+            patch(f"{_thb}.DatabaseSecret") as mock_db_secret,
+            patch(f"{_thb}.MinIOSecret") as mock_minio_secret,
+            patch(f"{_thb}.ServiceAdapter") as mock_sa,
+            patch(f"{_thb}.generate_backup_run_id", return_value="20260325020000"),
         ):
             # Set up resolve to return a valid project/deployment
             mock_project = MagicMock()
@@ -721,9 +723,10 @@ class TestHandleRestoreExistingDeployment:
     @pytest.fixture
     def restore_mocks(self):
         """Patch external dependencies of handle_restore for existing deployment path."""
+        _thb = "opi.core.task_handlers_backup"
         with (
-            patch("opi.core.backup_tasks._resolve_deployment_info") as mock_resolve,
-            patch("opi.core.backup_tasks._restore_single_resource") as mock_restore_single,
+            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
+            patch(f"{_thb}._restore_single_resource") as mock_restore_single,
         ):
             mock_project = MagicMock()
             mock_project.model_dump.return_value = {"name": "test-project"}
@@ -856,12 +859,13 @@ class TestHandleRestoreNewDeployment:
     @pytest.fixture
     def new_deploy_mocks(self):
         """Patch external dependencies for the new deployment restore path."""
+        _thb = "opi.core.task_handlers_backup"
         with (
-            patch("opi.core.backup_tasks._create_deployment_from_source") as mock_create,
-            patch("opi.core.backup_tasks._pre_restore_pvcs") as mock_pre_restore,
-            patch("opi.core.backup_tasks._provision_deployment_infrastructure") as mock_provision,
-            patch("opi.core.backup_tasks._resolve_deployment_info") as mock_resolve,
-            patch("opi.core.backup_tasks._restore_single_resource") as mock_restore_single,
+            patch(f"{_thb}._create_deployment_from_source") as mock_create,
+            patch(f"{_thb}._pre_restore_pvcs") as mock_pre_restore,
+            patch(f"{_thb}._provision_deployment_infrastructure") as mock_provision,
+            patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
+            patch(f"{_thb}._restore_single_resource") as mock_restore_single,
         ):
             mock_create.return_value = None
             mock_pre_restore.return_value = None
