@@ -208,6 +208,12 @@ def create_test_app():
             ),
             patch("opi.handlers.project_file_handler.save_project_file"),
             patch("opi.web.router_user_admin._get_service", _mock_get_service),
+            patch(
+                "opi.manager.backup.BackupManager",
+                return_value=MagicMock(
+                    list_snapshots=AsyncMock(return_value=[]),
+                ),
+            ),
         ):
             # Mark all readiness services as ready
             import opi.core.readiness as readiness_module

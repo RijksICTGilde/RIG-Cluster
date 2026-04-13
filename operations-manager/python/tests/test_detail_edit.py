@@ -32,6 +32,14 @@ class TestDetectListTarget:
         result = _detect_list_target("modal-edit-domain-0", state=None)
         assert result == ("deployments", 0, False)
 
+    def test_edit_backup_schedule(self) -> None:
+        result = _detect_list_target("modal-edit-backup-schedule-0", state=None)
+        assert result == ("deployments", 0, False)
+
+    def test_edit_backup_schedule_second_deployment(self) -> None:
+        result = _detect_list_target("modal-edit-backup-schedule-1", state=None)
+        assert result == ("deployments", 1, False)
+
     def test_unknown_flow(self) -> None:
         assert _detect_list_target("modal-edit-services-0", state=None) is None
 
