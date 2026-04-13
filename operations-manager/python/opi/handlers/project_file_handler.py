@@ -2436,6 +2436,26 @@ class ProjectFileHandler:
 
         return False
 
+    def get_deployment_backup_labels(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+    ) -> list[dict[str, str]]:
+        """Get backup labels for services this deployment actually uses.
+
+        Returns the subset of backupable service labels (pvc, database, minio)
+        that the deployment uses, based on its components, helm-charts, and
+        helmfiles.
+        """
+        from opi.services import ServiceAdapter
+
+        result: list[dict[str, str]] = []
+        for bl in ServiceAdapter.get_backupable_labels():
+            svc_types = ServiceAdapter.get_service_types_for_backup_label(bl["label"])
+            if self.deployment_uses_service(project_data, deployment_name, svc_types):
+                result.append(bl)
+        return result
+
     def get_components_using_service(
         self,
         project_data: dict[str, Any],

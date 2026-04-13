@@ -7,6 +7,10 @@ from opi.forms.editables.converters import (
     CloneFromConverter,
     CustomDomainSelectConverter,
     KeyValueConverter,
+    RRuleDayConverter,
+    RRuleFrequencyConverter,
+    RRuleMonthDayConverter,
+    RRuleTimeConverter,
 )
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
@@ -56,6 +60,53 @@ DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(
     values_provider="DeploymentCloneFromOptionsProvider",
     converter=CloneFromConverter(),
     remove_when_none=True,
+)
+
+DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/schedule",
+    values_provider="BackupScheduleFrequencyOptionsProvider",
+    converter=RRuleFrequencyConverter(),
+    remove_when_none=True,
+)
+DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/schedule:time",
+    transient=True,
+    values_provider="BackupScheduleTimeOptionsProvider",
+    converter=RRuleTimeConverter(),
+    depends_on="deployments[*]/backup/schedule",
+)
+DEPLOYMENT_BACKUP_SCHEDULE_DAY_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/schedule:day",
+    transient=True,
+    values_provider="BackupScheduleDayOptionsProvider",
+    converter=RRuleDayConverter(),
+    depends_on="deployments[*]/backup/schedule",
+    show_when={"value": ["WEEKLY"]},
+)
+DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/schedule:monthday",
+    transient=True,
+    values_provider="BackupScheduleMonthDayOptionsProvider",
+    converter=RRuleMonthDayConverter(),
+    depends_on="deployments[*]/backup/schedule",
+    show_when={"value": ["MONTHLY"]},
+)
+DEPLOYMENT_BACKUP_RESOURCE_TYPES_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/resource_types",
+    values_provider="BackupResourceTypesOptionsProvider",
+    depends_on="deployments[*]/backup/schedule",
+)
+
+# Manual backup editables (transient — not saved to YAML)
+BACKUP_DEPLOYMENT_NAME_EDITABLE = Editable(
+    yaml_path="deployment_name",
+    transient=True,
+    values_provider="BackupDeploymentOptionsProvider",
+)
+BACKUP_RESOURCE_TYPES_EDITABLE = Editable(
+    yaml_path="resource_types",
+    transient=True,
+    values_provider="BackupResourceTypesOptionsProvider",
 )
 
 DEPLOYMENT_COMP_REFERENCE_EDITABLE = Editable(
@@ -114,6 +165,11 @@ DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
         DEPLOYMENT_DOMAIN_MODE_EDITABLE,
         DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
         DEPLOYMENT_CLONE_FROM_EDITABLE,
+        DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE,
+        DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE,
+        DEPLOYMENT_BACKUP_SCHEDULE_DAY_EDITABLE,
+        DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY_EDITABLE,
+        DEPLOYMENT_BACKUP_RESOURCE_TYPES_EDITABLE,
         DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     ],
 )

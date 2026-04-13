@@ -22,6 +22,13 @@ from opi.forms.visualizers.display_blocks import compute_url_preview as _compute
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import (
+    BACKUP_DEPLOYMENT_NAME,
+    BACKUP_RESOURCE_TYPES,
+    DEPLOYMENT_BACKUP_RESOURCE_TYPES,
+    DEPLOYMENT_BACKUP_SCHEDULE,
+    DEPLOYMENT_BACKUP_SCHEDULE_DAY,
+    DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY,
+    DEPLOYMENT_BACKUP_SCHEDULE_TIME,
     DEPLOYMENT_BASE_DOMAIN,
     DEPLOYMENT_CLONE_FROM,
     DEPLOYMENT_COMP_IMAGE,
@@ -732,8 +739,8 @@ BACKUP_SELECT_SECTION = FormSection(
     title="Backup configuratie",
     icon="database",
     description="Selecteer een deployment en welke resources u wilt back-uppen",
-    editables=[],
-    layout=[TemplatePartial(template="wizard/partials/backup_select_deployment.html.j2")],
+    editables=[BACKUP_DEPLOYMENT_NAME, BACKUP_RESOURCE_TYPES],
+    layout=["deployment_name", "resource_types"],
     post_save_action="trigger_backup",
     summary_fn=_backup_summary,
 )
@@ -959,6 +966,58 @@ def build_domain_approval_section() -> FormSection:
         layout=[TemplatePartial(template="wizard/partials/approval_items.html.j2")],
         post_save_action="process_project",
         post_merge=_apply_approval_to_project,
+    )
+
+
+def build_backup_schedule_section(deployment_index: int) -> FormSection:
+    """Build a backup schedule section targeting a specific deployment.
+
+    Materializes deployment[*] to the concrete deployment index for the
+    backup schedule SELECT field.
+    """
+    from opi.forms.editables.reindex import materialize_wildcard_visualizer
+
+    # Transient fields must be processed BEFORE the main schedule field so that
+    # RRuleFrequencyConverter.write() can read time/day/monthday from the result
+    # dict when building the combined RRULE string.
+    # The `layout` list below controls the display order independently.
+    editables = [
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE_TIME, deployment_index),
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE_DAY, deployment_index),
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY, deployment_index),
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_RESOURCE_TYPES, deployment_index),
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE, deployment_index),
+    ]
+
+    def _has_backupable_services(yaml_data: dict[str, Any], idx: int = deployment_index) -> bool:
+        from opi.handlers.project_file_handler import create_project_file_handler
+
+        deployments = yaml_data.get("deployments", [])
+        if not isinstance(deployments, list) or idx >= len(deployments):
+            return True
+        dep = deployments[idx]
+        dep_name = dep.get("name", "") if isinstance(dep, dict) else ""
+        if not dep_name:
+            return True
+        pfh = create_project_file_handler()
+        return bool(pfh.get_deployment_backup_labels(yaml_data, dep_name))
+
+    return FormSection(
+        section_id=f"backup-schedule-{deployment_index}",
+        title="Backup schema instellen",
+        icon="database",
+        description="Configureer automatische backups voor deze deployment. Tijden zijn een indicatie.",
+        editables=editables,
+        layout=[
+            f"deployments[{deployment_index}]/backup/schedule",
+            f"deployments[{deployment_index}]/backup/schedule:time",
+            f"deployments[{deployment_index}]/backup/schedule:day",
+            f"deployments[{deployment_index}]/backup/schedule:monthday",
+            f"deployments[{deployment_index}]/backup/resource_types",
+        ],
+        guard=_has_backupable_services,
+        guard_message="Deze deployment gebruikt geen services die geback-upt kunnen worden.",
+        post_save_action="save_only",
     )
 
 

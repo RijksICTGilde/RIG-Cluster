@@ -537,6 +537,134 @@ class BareDomainComponentOptionsProvider(ComponentReferenceOptionsProvider):
         )
 
 
+class BackupScheduleOptionsProvider:
+    """Legacy provider — kept for backward compat references."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return BackupScheduleFrequencyOptionsProvider().get_options()
+
+
+class BackupScheduleFrequencyOptionsProvider:
+    """Provides RRULE frequency options for the backup schedule select."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "", "label": "Geen"},
+            {"value": "DAILY", "label": "Dagelijks"},
+            {"value": "WEEKLY", "label": "Wekelijks"},
+            {"value": "MONTHLY", "label": "Maandelijks"},
+        ]
+
+
+class BackupScheduleTimeOptionsProvider:
+    """Provides half-hour time slots for the backup time indication."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = []
+        for hour in range(24):
+            for minute in (0, 30):
+                time_str = f"{hour:02d}:{minute:02d}"
+                options.append({"value": time_str, "label": time_str})
+        return options
+
+
+class BackupScheduleDayOptionsProvider:
+    """Provides day-of-week options for weekly schedules."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "MO", "label": "Maandag"},
+            {"value": "TU", "label": "Dinsdag"},
+            {"value": "WE", "label": "Woensdag"},
+            {"value": "TH", "label": "Donderdag"},
+            {"value": "FR", "label": "Vrijdag"},
+            {"value": "SA", "label": "Zaterdag"},
+            {"value": "SU", "label": "Zondag"},
+        ]
+
+
+class BackupScheduleMonthDayOptionsProvider:
+    """Provides day-of-month options for monthly schedules."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [{"value": str(day), "label": str(day)} for day in range(1, 29)]
+
+
+class BackupResourceTypesOptionsProvider:
+    """Provides resource type options filtered by what the deployment actually uses.
+
+    Uses ``yaml_data`` and ``yaml_path`` (passed generically by the bridge) to
+    determine which deployment is being edited, then checks which backup-capable
+    services that deployment uses via ``deployment_uses_service``.
+
+    Works for both:
+    - Schedule modal: path ``deployments[N]/backup/resource_types`` → deployment at index N
+    - Manual backup: path ``resource_types`` → uses ``_cluster_deployments`` context
+    """
+
+    def __init__(
+        self,
+        yaml_data: dict[str, Any] | None = None,
+        yaml_path: str | None = None,
+    ) -> None:
+        self._yaml_data = yaml_data or {}
+        self._yaml_path = yaml_path or ""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        from opi.handlers.project_file_handler import create_project_file_handler
+        from opi.services import ServiceAdapter
+
+        all_labels = ServiceAdapter.get_backupable_labels()
+        deployment_name = self._resolve_deployment_name()
+        if not deployment_name:
+            return [{"value": bl["label"], "label": bl["name"]} for bl in all_labels]
+
+        pfh = create_project_file_handler()
+        filtered = pfh.get_deployment_backup_labels(self._yaml_data, deployment_name)
+        return [{"value": bl["label"], "label": bl["name"]} for bl in filtered]
+
+    def _resolve_deployment_name(self) -> str:
+        """Determine the deployment name from the path or form data."""
+        import re
+
+        # Schedule modal: deployments[N]/backup/resource_types
+        match = re.match(r"deployments\[(\d+)]", self._yaml_path)
+        if match:
+            idx = int(match.group(1))
+            deployments = self._yaml_data.get("deployments", [])
+            if isinstance(deployments, list) and idx < len(deployments):
+                dep = deployments[idx]
+                if isinstance(dep, dict):
+                    return dep.get("name", "")
+            return ""
+
+        # Manual backup: selected deployment_name in form data
+        selected = self._yaml_data.get("deployment_name", "")
+        if selected:
+            return str(selected)
+
+        return ""
+
+
+class BackupDeploymentOptionsProvider:
+    """Provides deployment options for the manual backup modal.
+
+    Reads ``_cluster_deployments`` from ``yaml_data`` (set by
+    ``_build_backup_restore_context_async`` via template_data merge).
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
+        data = yaml_data or {}
+        self._deployments: list[dict[str, Any]] = data.get("_cluster_deployments", [])
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": dep["name"], "label": f"{dep['name']} ({dep.get('namespace', '')})"}
+            for dep in self._deployments
+            if dep.get("name")
+        ]
+
+
 class DeploymentCloneFromOptionsProvider:
     """Provides existing deployment names as clone-from options.
 
@@ -671,6 +799,13 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
+    "BackupScheduleOptionsProvider": BackupScheduleOptionsProvider,
+    "BackupScheduleFrequencyOptionsProvider": BackupScheduleFrequencyOptionsProvider,
+    "BackupScheduleTimeOptionsProvider": BackupScheduleTimeOptionsProvider,
+    "BackupScheduleDayOptionsProvider": BackupScheduleDayOptionsProvider,
+    "BackupScheduleMonthDayOptionsProvider": BackupScheduleMonthDayOptionsProvider,
+    "BackupResourceTypesOptionsProvider": BackupResourceTypesOptionsProvider,
+    "BackupDeploymentOptionsProvider": BackupDeploymentOptionsProvider,
     "DeploymentCloneFromOptionsProvider": DeploymentCloneFromOptionsProvider,
     "RootComponentOptionsProvider": RootComponentOptionsProvider,
     "BareDomainComponentOptionsProvider": BareDomainComponentOptionsProvider,
