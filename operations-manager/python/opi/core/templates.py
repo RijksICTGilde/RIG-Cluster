@@ -7,16 +7,18 @@ Includes Babel i18n integration for multi-language support.
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import markupsafe
 from fastapi.templating import Jinja2Templates
 from jinja_roos_components import setup_components
 from jinja_roos_components.extension import ComponentExtension
-from starlette.requests import Request
 
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.i18n import get_current_translation, get_requested_language
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
 # Dutch month names
 DUTCH_MONTHS = [
@@ -84,7 +86,7 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True) -
         else:
             return f"{day} {month} {year}"
 
-    except (ValueError, TypeError, AttributeError):
+    except ValueError, TypeError, AttributeError:
         # Fallback: return truncated original
         return str(value)[:19] if value else "-"
 

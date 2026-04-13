@@ -2,9 +2,9 @@ import asyncio
 import contextlib
 import logging
 import os
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
@@ -38,6 +38,9 @@ from opi.core.startup import run_startup_tasks
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.web.router import web_router
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
 

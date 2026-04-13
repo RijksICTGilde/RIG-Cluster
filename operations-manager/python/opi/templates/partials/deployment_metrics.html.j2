@@ -1,4 +1,15 @@
 {# Fragment: deployment metrics for a single deployment (no extends) #}
+{% set active_duration = duration | default(60) %}
+{% set durations = [(60, "1 uur"), (120, "2 uur"), (360, "6 uur"), (720, "12 uur"), (1440, "24 uur")] %}
+<div style="display: flex; gap: 4px; margin-bottom: 8px;">
+    {% for value, label in durations %}
+    <c-button size="xs"
+              kind="{% if value == active_duration %}primary{% else %}secondary{% endif %}"
+              hx-get="/projects/details/{{ project_name }}/metrics/{{ deployment.name }}?duration={{ value }}"
+              hx-target="#metrics-content"
+              hx-swap="innerHTML">{{ label }}</c-button>
+    {% endfor %}
+</div>
 {% if deployment.components %}
 <div class="metrics-grid">
     {% for component in deployment.components %}
@@ -245,7 +256,7 @@
 <div class="pvc-storage-section" style="margin-top: 24px;">
     <div class="pvc-storage-header" style="margin-bottom: 16px;">
         <c-heading type="h4"><c-icon icon="database" size="md" color="donkerblauw" />Persistent Storage</c-heading>
-        <p class="rvo-text--subtle rvo-text--sm">PVC disk usage (laatste uur)</p>
+        <p class="rvo-text--subtle rvo-text--sm">PVC disk usage</p>
     </div>
     <div class="metrics-grid">
         {% for pvc_name, pvc_data in pvc_storage.items() %}

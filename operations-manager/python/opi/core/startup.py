@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+    from opi.connectors.kubectl import KubectlConnector
     from opi.core.readiness import ReadinessState
-from fastapi import FastAPI
 from keycloak.exceptions import KeycloakError
 from tenacity import (
     after_log,
@@ -31,7 +33,6 @@ from opi.connectors.git import (
     create_git_connector_for_project_files,
 )
 from opi.connectors.keycloak import create_keycloak_connector
-from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
@@ -264,14 +265,14 @@ class ProjectRefreshState:
 
     REFRESH_TTL_SECONDS = 30
 
-    _instance: "ProjectRefreshState | None" = None
+    _instance: ProjectRefreshState | None = None
 
     def __init__(self) -> None:
         self.last_refresh_time: float = 0.0
         self.refresh_lock = asyncio.Lock()
 
     @classmethod
-    def get_instance(cls) -> "ProjectRefreshState":
+    def get_instance(cls) -> ProjectRefreshState:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -580,7 +581,7 @@ async def check_minio_availability() -> bool:
         return False
 
 
-async def _setup_database(readiness: "ReadinessState") -> bool:
+async def _setup_database(readiness: ReadinessState) -> bool:
     """Initialize database pools. Returns True on success.
 
     Note: Database migrations are now primarily handled by the Docker entrypoint
@@ -612,7 +613,7 @@ async def _setup_database(readiness: "ReadinessState") -> bool:
         return False
 
 
-async def _setup_projects(readiness: "ReadinessState", app: FastAPI, skip_checks: bool) -> bool:
+async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: bool) -> bool:
     """Load project files from Git. Returns True on success."""
     try:
         # Initialize the API key service for project API key registration
@@ -710,7 +711,7 @@ async def _setup_projects(readiness: "ReadinessState", app: FastAPI, skip_checks
         return False
 
 
-async def _setup_keycloak(readiness: "ReadinessState", skip_checks: bool) -> bool:
+async def _setup_keycloak(readiness: ReadinessState, skip_checks: bool) -> bool:
     """Set up Keycloak realm and SSO. Returns True on success."""
     if skip_checks:
         readiness.keycloak.mark_ready()
@@ -739,7 +740,7 @@ async def _setup_keycloak(readiness: "ReadinessState", skip_checks: bool) -> boo
         return False
 
 
-async def _setup_oauth(readiness: "ReadinessState", app: FastAPI) -> bool:
+async def _setup_oauth(readiness: ReadinessState, app: FastAPI) -> bool:
     """Register OAuth client. Returns True on success."""
     try:
         await register_oauth_client_after_keycloak_setup(app)

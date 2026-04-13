@@ -8,11 +8,15 @@ database-backed service mocked via an in-memory stub).
 """
 
 import re
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from playwright.sync_api import Page
 from tests.e2e.testserver import get_in_memory_user_service
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from playwright.sync_api import Page
 
 pytestmark = pytest.mark.e2e
 

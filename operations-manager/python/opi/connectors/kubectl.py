@@ -880,7 +880,7 @@ class KubectlConnector:
                         event_dt = datetime.fromisoformat(timestamp)
                         if (now - event_dt).total_seconds() / 3600 > max_age_hours:
                             continue
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         pass
 
                 # Filter out infrastructure noise that users can't act on

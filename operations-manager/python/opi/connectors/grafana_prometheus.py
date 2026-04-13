@@ -8,14 +8,16 @@ This is used in ODCN production where direct Prometheus access is not available.
 
 import asyncio
 import logging
-from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from opi.core.config import settings
 from opi.utils.naming import generate_unique_name
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,7 @@ class GrafanaPrometheusConnector:
     accessing Prometheus.
     """
 
-    _instance: "GrafanaPrometheusConnector | None" = None
+    _instance: GrafanaPrometheusConnector | None = None
     is_connected: bool = False
     _initialized: bool
     _grafana_url: str
@@ -46,7 +48,7 @@ class GrafanaPrometheusConnector:
     _datasource_type: str
     _client: httpx.AsyncClient | None
 
-    def __new__(cls) -> "GrafanaPrometheusConnector":
+    def __new__(cls) -> GrafanaPrometheusConnector:
         """Implement singleton pattern."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)

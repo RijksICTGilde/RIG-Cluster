@@ -39,10 +39,10 @@ class Project(BaseModel):
 class ProjectService:
     """Service for managing project mappings."""
 
-    _instance: "ProjectService | None" = None
+    _instance: ProjectService | None = None
     _initialized: bool = False
 
-    def __new__(cls) -> "ProjectService":
+    def __new__(cls) -> ProjectService:
         """Ensure only one instance of ProjectService exists (Singleton pattern)."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -171,7 +171,7 @@ class ProjectService:
         """
         return self._projects.copy()
 
-    def replace_all_projects(self, projects: dict[str, "Project"]) -> None:
+    def replace_all_projects(self, projects: dict[str, Project]) -> None:
         """Atomically replace all project mappings.
 
         This avoids the race condition of clear-then-rebuild, where concurrent

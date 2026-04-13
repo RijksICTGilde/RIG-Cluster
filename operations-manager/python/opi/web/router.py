@@ -1426,8 +1426,11 @@ async def project_details(request: Request, project_name: str):
                                             k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
                                             kubectl = KubectlConnector()
                                             raw_events = await kubectl.get_namespace_events(k8s_ns, limit=30)
+                                            prefix = f"{deployment_name}-"
                                             for event in raw_events:
                                                 obj = event.get("object", "unknown")
+                                                if obj != deployment_name and not obj.startswith(prefix):
+                                                    continue
                                                 reason = event.get("reason", "")
                                                 msg = event.get("message", "")
                                                 if msg:
@@ -1495,7 +1498,7 @@ async def project_details(request: Request, project_name: str):
                                         error["age"] = f"{diff_min} min geleden"
                                     else:
                                         error["age"] = f"{diff_min // 60} uur geleden"
-                                except (ValueError, TypeError):
+                                except ValueError, TypeError:
                                     pass
 
                             result = {
@@ -1775,12 +1778,28 @@ async def project_details(request: Request, project_name: str):
 
 @web_router.get("/projects/details/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
-async def deployment_metrics_fragment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+async def deployment_metrics_fragment(
+    request: Request, project_name: str, deployment_name: str, duration: int = 60
+) -> HTMLResponse:
     """Return metrics HTML fragment for a single deployment (HTMX lazy-load)."""
     from typing import Any
 
     from opi.core.startup import ensure_projects_fresh
     from opi.services.project_service import get_project_service
+
+    # Validate and compute step interval based on duration
+    allowed_durations = {60, 120, 360, 720, 1440}
+    if duration not in allowed_durations:
+        duration = 60
+    # Scale step to keep ~12-20 data points per chart
+    if duration <= 120:
+        step = 5
+    elif duration <= 360:
+        step = 15
+    elif duration <= 720:
+        step = 30
+    else:
+        step = 60
 
     templates = get_templates()
     user = get_current_user(request)
@@ -1834,8 +1853,8 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
                             namespace=k8s_namespace,
                             components=component_names,
                             deployment_name=deployment_name,
-                            duration_minutes=60,
-                            step_minutes=5,
+                            duration_minutes=duration,
+                            step_minutes=step,
                         )
                 elif helm_charts:
                     workloads = await prom.discover_workloads_in_namespace(k8s_namespace)
@@ -1844,15 +1863,15 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
                         metrics = await prom.get_discovered_workload_metrics_timeseries(
                             namespace=k8s_namespace,
                             workloads=workloads,
-                            duration_minutes=60,
-                            step_minutes=5,
+                            duration_minutes=duration,
+                            step_minutes=step,
                         )
 
                 try:
                     pvc_data = await prom.get_pvc_storage_by_namespace(
                         namespace=k8s_namespace,
-                        duration_minutes=60,
-                        step_minutes=5,
+                        duration_minutes=duration,
+                        step_minutes=step,
                     )
                     if pvc_data:
                         # Filter PVCs to only those belonging to this deployment
@@ -1878,10 +1897,12 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
         "partials/deployment_metrics.html.j2",
         {
             "request": request,
+            "project_name": project_name,
             "deployment": deployment_ctx,
             "metrics": metrics,
             "discovered_workloads": discovered_workloads,
             "pvc_storage": pvc_storage,
+            "duration": duration,
         },
     )
 
@@ -2126,7 +2147,7 @@ def _validate_path_safe(filename: str) -> None:
 
 
 async def _update_keycloak_redirect_uris_for_deployment(
-    project_manager: "ProjectManager",
+    project_manager: ProjectManager,
     project_name: str,
     deployment_name: str,
     cluster: str,

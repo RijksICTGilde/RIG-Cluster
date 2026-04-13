@@ -5,12 +5,14 @@ Provides an async context manager for Chisel tunnel setup/teardown with
 automatic password decryption support.
 """
 
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.connectors.chisel_connector import ChiselConnector
 from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 
 @asynccontextmanager

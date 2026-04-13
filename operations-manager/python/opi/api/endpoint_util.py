@@ -1,14 +1,17 @@
 import logging
 import re
 import secrets
-from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 from opi.core.config import settings
 from opi.services.project_service import get_project_service
-from starlette.requests import Request
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from starlette.requests import Request
 
 
 def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:

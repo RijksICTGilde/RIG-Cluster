@@ -846,7 +846,7 @@ async def _restore_snapshot(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
     backup_manager: Any,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a single snapshot and return detail + optional generation update."""
@@ -922,7 +922,7 @@ async def _restore_pvc(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
     backup_manager: Any,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a PVC from snapshot."""
@@ -998,7 +998,7 @@ async def _restore_database(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a database from snapshot using versioned restore."""
     result = await _restore_database_with_versioning(
@@ -1049,7 +1049,7 @@ async def _restore_bucket(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a bucket from snapshot using versioned restore."""
     result = await _restore_bucket_with_versioning(
@@ -1092,9 +1092,9 @@ async def _restore_bucket(
 
 
 def _set_generation(
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
     project_data: dict[str, Any],
-    update: "GenerationUpdate",
+    update: GenerationUpdate,
 ) -> None:
     """Set generation in project file based on resource type."""
     match update.resource_type:
@@ -1752,7 +1752,7 @@ async def _restore_pvc_with_versioning(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
     """
     Restore a PVC with versioning support.
@@ -1842,7 +1842,7 @@ async def _restore_database_with_versioning(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
     """
     Restore a database with versioning support.
@@ -1977,7 +1977,7 @@ async def _restore_bucket_with_versioning(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
     """
     Restore a bucket with versioning support.

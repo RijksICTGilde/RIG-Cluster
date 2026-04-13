@@ -34,7 +34,7 @@ def test_tools_page_has_submit_button(app_server: str, auth_page: Page) -> None:
     expect(submit_btn).to_contain_text("Process")
 
 
-def test_tools_page_screenshot(app_server: str, auth_page: Page, screenshot_dir: "Path") -> None:
+def test_tools_page_screenshot(app_server: str, auth_page: Page, screenshot_dir: Path) -> None:
     """Screenshot the tools page for visual verification."""
     auth_page.goto(f"{app_server}{TOOLS_URL}")
     auth_page.wait_for_load_state("networkidle")

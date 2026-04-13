@@ -66,7 +66,7 @@ def get_wizard_state(request: Request) -> WizardState | None:
     try:
         data: dict[str, Any] = json.loads(path.read_text())
         return WizardState.from_dict(data)
-    except (json.JSONDecodeError, KeyError, TypeError):
+    except json.JSONDecodeError, KeyError, TypeError:
         logger.warning("Invalid wizard state file (token=%s), clearing", token)
         clear_wizard_state(request)
         return None
@@ -141,7 +141,7 @@ def _load_state(request: Request, session_key: str) -> WizardState | None:
     try:
         data: dict[str, Any] = json.loads(path.read_text())
         return WizardState.from_dict(data)
-    except (json.JSONDecodeError, KeyError, TypeError):
+    except json.JSONDecodeError, KeyError, TypeError:
         logger.warning("Invalid state file (key=%s, token=%s), clearing", session_key, token)
         _clear_state(request, session_key)
         return None

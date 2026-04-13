@@ -699,7 +699,7 @@ def _compute_ca_hash(cert_path: str) -> str | None:
             check=True,
         )
         return result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         return None
 
 
