@@ -39,12 +39,9 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
-def _converter_write(converter: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> Any:
-    """Call converter.write() passing yaml_data when accepted."""
-    try:
-        return converter.write(value, yaml_data=yaml_data)
-    except TypeError:
-        return converter.write(value)
+def _converter_write(converter: Any, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    """Call converter.write() with context data."""
+    return converter.write(value, context_data=context_data)
 
 
 def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:
@@ -832,7 +829,7 @@ class EditableFormProcessor:
             if not stored_value:
                 continue
             # Apply converter.view to get the display value (e.g. "__custom__")
-            display_value = ed.converter.view(stored_value) if ed.converter else stored_value
+            display_value = ed.converter.view(stored_value, context_data=data) if ed.converter else stored_value
             if ed.defer_when.check(display_value):
                 deferred_path = ed.defers_to
                 if "[*]" in deferred_path and "[*]" not in concrete_path:
