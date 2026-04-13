@@ -69,6 +69,7 @@ function _sequenceEditModal(modal, action, path, index) {
         return response.text();
     })
     .then(function(html) {
+        // Safe: HTML comes from authenticated OPI endpoint with server-side Jinja2 escaping
         contentEl.innerHTML = html;
         /* Re-init service cards if present */
         contentEl.querySelectorAll('.service-cards-grid').forEach(function(grid) {
@@ -368,6 +369,7 @@ function openServiceHelp(templateName) {
             return resp.text();
         })
         .then(function(html) {
+            // Safe: HTML comes from authenticated OPI endpoint with server-side Jinja2 escaping
             content.innerHTML = html;
             /* Process ROOS components if the extension is available */
             if (typeof htmx !== 'undefined') {
@@ -427,6 +429,15 @@ document.addEventListener('DOMContentLoaded', function() {
 document.addEventListener('htmx:afterSettle', function(event) {
     initWizardWidgets(event.detail.target);
     scrollToFirstError(event.detail.target);
+
+    /* Clean up the _rerender hidden field after a re-render swap completes,
+       so the next regular form submit is not treated as another re-render. */
+    var form = document.getElementById('wizard-step-form')
+            || document.getElementById('modal-wizard-form');
+    if (form) {
+        var rr = form.querySelector('input[name="_rerender"]');
+        if (rr) rr.remove();
+    }
 });
 
 

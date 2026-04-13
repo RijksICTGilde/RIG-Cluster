@@ -8,17 +8,22 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class EditableConverter(Protocol):
-    """Sync converter for YAML <-> form <-> display values."""
+    """Sync converter for YAML <-> form <-> display values.
 
-    def read(self, value: Any) -> Any:
+    All methods receive an optional ``context_data`` dict — the full
+    project data (or wizard session state) surrounding the field.
+    Converters that don't need context simply ignore it.
+    """
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
         """YAML value -> form input value."""
         ...
 
-    def write(self, value: Any) -> Any:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
         """Form submission value -> YAML storage value."""
         ...
 
-    def view(self, value: Any) -> Any:
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
         """YAML value -> read-only display value."""
         ...
 

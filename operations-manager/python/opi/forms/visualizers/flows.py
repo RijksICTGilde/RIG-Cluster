@@ -275,6 +275,20 @@ def build_deployment_add_flow(
     )
 
 
+def build_backup_schedule_flow(deployment_index: int) -> FormFlow:
+    """Build a modal edit flow for a deployment's backup schedule."""
+    from opi.forms.visualizers.wizard_sections import build_backup_schedule_section
+
+    section = build_backup_schedule_section(deployment_index)
+    return FormFlow(
+        flow_id=f"modal-edit-backup-schedule-{deployment_index}",
+        title="Backup schema instellen",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+    )
+
+
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config."""
     from opi.forms.visualizers.wizard_sections import build_domain_section
@@ -326,6 +340,12 @@ def get_flow(flow_id: str, **context: Any) -> FormFlow:
                 int(suffix),
                 component_count=context.get("component_count"),
             )
+
+    # Dynamic backup schedule flows: modal-edit-backup-schedule-0, ...
+    if flow_id.startswith("modal-edit-backup-schedule-"):
+        suffix = flow_id.removeprefix("modal-edit-backup-schedule-")
+        if suffix.isdigit():
+            return build_backup_schedule_flow(int(suffix))
 
     # Dynamic add-deployment flows: modal-add-deployment-0, modal-add-deployment-1, ...
     if flow_id.startswith("modal-add-deployment-"):

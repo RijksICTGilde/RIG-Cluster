@@ -11,17 +11,41 @@
         <c-layout-flow row="true" justifyContent="space-between" alignItems="start">
             <div>
                 <c-heading type="h2"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
-                <p class="rvo-text--subtle">Beschikbare backups per deployment (alleen voor cluster: {{ current_cluster }})</p>
+                <p class="rvo-text--subtle">Backup beheer voor cluster: {{ current_cluster }}</p>
             </div>
             <c-layout-flow row="true" gap="sm">
                 <c-button kind="secondary" size="sm" label="Backup aanmaken" showIcon="before" icon="iconen-toevoegen"
                           @click="openEditModal('modal-backup', 'Backup aanmaken')" />
+                <c-button kind="secondary" size="sm" label="Backup schema" showIcon="before" icon="instellingen"
+                          @click="openEditModal('modal-edit-backup-schedule-0', 'Backup schema instellen')" />
                 {% if ns.has_backups %}
                 <c-button kind="secondary" size="sm" label="Herstellen" showIcon="before" icon="terug"
                           @click="openEditModal('modal-restore', 'Backup herstellen')" />
                 {% endif %}
             </c-layout-flow>
         </c-layout-flow>
+
+        {# Schedule status per deployment #}
+        {% for deployment in project.deployments %}
+            {% if deployment.cluster == current_cluster %}
+                {% set dep_backup = deployment.get('backup', {}) if deployment.get('backup') is mapping else {} %}
+                {% set dep_schedule = dep_backup.get('schedule', '') %}
+                {% if dep_schedule %}
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="vinkje" size="md" color="groen" />
+                    <span>Backups ingeschakeld — <strong>{{ dep_schedule | rrule_schedule }}</strong></span>
+                    {% if project.deployments | selectattr('cluster', 'equalto', current_cluster) | list | length > 1 %}
+                    <c-tag content="{{ deployment.name }}" />
+                    {% endif %}
+                </c-layout-row>
+                {% else %}
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    <c-icon icon="info" size="md" color="grijs-500" />
+                    <span class="rvo-text--subtle">Geen backup schema ingesteld voor <strong>{{ deployment.name }}</strong></span>
+                </c-layout-row>
+                {% endif %}
+            {% endif %}
+        {% endfor %}
 
         {% if ns.has_backups %}
         <div>
@@ -162,13 +186,6 @@
             {% endif %}
             {% endfor %}
         </div>
-        {% else %}
-        <c-card padding="md" outline="true" backgroundColor="grijs-050">
-            <c-layout-row gap="md" verticalSpacing="center">
-                <c-icon icon="info" size="md" color="grijs-500" />
-                <p class="rvo-text--md">Geen backups beschikbaar voor deployments op cluster {{ current_cluster }}</p>
-            </c-layout-row>
-        </c-card>
         {% endif %}
     </c-layout-flow>
 </c-card>

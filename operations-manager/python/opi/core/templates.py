@@ -91,6 +91,41 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True) -
         return str(value)[:19] if value else "-"
 
 
+def format_rrule_schedule(rrule: str | None) -> str:
+    """Format an RRULE schedule string into a human-readable Dutch label.
+
+    Example: "FREQ=DAILY;BYHOUR=2;BYMINUTE=0" -> "Dagelijks rond 02:00"
+    """
+    if not rrule or not isinstance(rrule, str) or "FREQ=" not in rrule:
+        return str(rrule or "")
+    parts: dict[str, str] = {}
+    for segment in rrule.split(";"):
+        if "=" in segment:
+            key, _, val = segment.partition("=")
+            parts[key.strip().upper()] = val.strip()
+
+    freq = parts.get("FREQ", "")
+    freq_labels = {"DAILY": "Dagelijks", "WEEKLY": "Wekelijks", "MONTHLY": "Maandelijks"}
+    label = freq_labels.get(freq, freq)
+    hour = parts.get("BYHOUR", "2")
+    minute = parts.get("BYMINUTE", "0")
+    safe_hour = int(hour) if str(hour).isdigit() else 2
+    safe_minute = int(minute) if str(minute).isdigit() else 0
+    time_str = f"{safe_hour:02d}:{safe_minute:02d}"
+
+    day_labels = {
+        "MO": "maandag", "TU": "dinsdag", "WE": "woensdag", "TH": "donderdag",
+        "FR": "vrijdag", "SA": "zaterdag", "SU": "zondag",
+    }
+    if freq == "WEEKLY":
+        day = parts.get("BYDAY", "")
+        return f"{label} op {day_labels.get(day, day)} rond {time_str}"
+    if freq == "MONTHLY":
+        monthday = parts.get("BYMONTHDAY", "1")
+        return f"{label} op dag {monthday} rond {time_str}"
+    return f"{label} rond {time_str}"
+
+
 def get_service_name(service: str | dict[str, Any]) -> str:
     """
     Extract service name from mixed service format.
@@ -141,6 +176,7 @@ templates.env.globals["build_date"] = BUILD_DATE
 # Register custom filters
 templates.env.filters["service_name"] = get_service_name
 templates.env.filters["dutch_date"] = format_dutch_date
+templates.env.filters["rrule_schedule"] = format_rrule_schedule
 
 # Register process_components filter for runtime-generated HTML that contains
 # component tags (e.g. form_html from render_from_editables). The extension's

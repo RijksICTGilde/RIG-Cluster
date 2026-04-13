@@ -31,6 +31,15 @@ class FormSection:
     summary_fn: Callable[[dict[str, Any]], str] | None = None
     enforcer: EditableEnforcer | None = None
     post_save_action: str = "save_only"  # "save_only" or "process_project"
+    guard: Callable[[dict[str, Any]], bool] | None = None
+    """Optional precondition check evaluated before rendering.
+
+    Receives the current data dict.  Returns ``True`` if the section can
+    proceed normally, ``False`` if the section should show ``guard_message``
+    instead of its editables.
+    """
+    guard_message: str = ""
+    """Message shown when ``guard`` returns ``False``."""
     post_merge: Callable[[dict[str, Any], dict[str, Any]], None] | None = None
     """Optional hook called after the section data is merged into the project.
 

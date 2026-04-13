@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from io import StringIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -18,6 +18,7 @@ from ruamel.yaml import YAML
 from starlette.background import BackgroundTask
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -44,6 +45,11 @@ from opi.web.router_wizard import (
     _find_sequence_editable,
     _split_data_across_sections,
 )
+
+if TYPE_CHECKING:
+    from opi.forms.visualizers.flows import FormFlow
+    from opi.forms.visualizers.sections import FormSection
+    from opi.forms.wizard.state import WizardState
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +100,18 @@ def _render_section_html(
 ) -> str:
     """Render form fields for a section.
 
+    If the section has a ``guard`` and it returns a message, that message
+    is rendered as an info alert instead of the form fields.
+
     Args:
         locked_services: Service names that should be visually marked as existing.
             Passed via ``_locked_services`` key in yaml_data so ``render_service_cards`` can
             indicate them. No longer prevents unchecking.
     """
+    # Check guard before rendering fields
+    if section.guard is not None and not section.guard(yaml_data):
+        return f'<c-alert kind="info">{section.guard_message}</c-alert>'
+
     renderer = _create_renderer()
     if not section.layout:
         return ""
@@ -163,7 +176,7 @@ def _is_backup_restore_flow(flow_id: str) -> bool:
     return flow_id in ("modal-backup", "modal-restore")
 
 
-def _flow_context_from_state(state, flow_id: str) -> dict[str, Any]:
+def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[str, Any]:
     """Extract flow builder context from wizard state.
 
     Deployment edit flows need ``component_count`` so the sequence
@@ -218,6 +231,7 @@ def _detect_list_target(flow_id: str, state: Any) -> tuple[str, int, bool] | Non
         ("modal-edit-deployment-", "deployments"),
         ("modal-add-deployment-", "deployments"),
         ("modal-edit-domain-", "deployments"),
+        ("modal-edit-backup-schedule-", "deployments"),
     ]:
         if flow_id.startswith(prefix):
             suffix = flow_id.removeprefix(prefix)
@@ -317,7 +331,7 @@ def _seed_components_from_clone_source(state: Any, flow_id: str) -> None:
     state.store_step_data(components_section_id, seed)
 
 
-def _determine_flow_action(flow, active_sections) -> str:
+def _determine_flow_action(flow: FormFlow, active_sections: list[FormSection]) -> str:
     """Return the post-save action for the flow.
 
     Returns 'process_project', 'trigger_backup', 'trigger_restore', or 'save_only'.
@@ -331,7 +345,7 @@ def _determine_flow_action(flow, active_sections) -> str:
 def _render_modal_step(
     request: Request,
     flow_id: str,
-    section,
+    section: FormSection,
     step_html: str,
     project_name: str,
     errors: dict[str, list[str]] | None = None,
@@ -552,45 +566,18 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     state.locked_services = _extract_services(project_data)
     state.populate_virt_mappings(flow.sections)
 
-    # Always include config and domains in template_data so converters and
-    # conditions (e.g. DomainNeedsRequestCondition) can access project-level data.
-    state.template_data = {
-        "config": project_data.get("config", {}),
-        "domains": project_data.get("domains", {}),
-    }
+    # The full project data is the domain object — providers and converters
+    # use it to resolve context (e.g. deployment name from path, component
+    # services, etc.).  Step data merges on top during get_merged_data().
+    state.template_data = dict(project_data)
 
     # Store is_new flag so _detect_list_target can distinguish add vs edit
     if flow_id.startswith("modal-edit-component-") and flow_context.get("is_new"):
         state.template_data["is_new"] = True
-        # Existing component names for uniqueness validation
         existing_components = (project.data or {}).get("components", [])
         state.template_data["existing_component_names"] = [
             c.get("name") for c in existing_components if isinstance(c, dict) and c.get("name")
         ]
-
-    # Service config edit flows need the services list so devirtualize
-    # can merge virtual keys back into the real list structure.
-    # Without it, smart_get_value fails because it expects a list, not a dict.
-    if flow_id.startswith(
-        ("modal-edit-services", "modal-edit-keycloak", "modal-edit-postgresql", "modal-edit-auth-wall")
-    ):
-        state.template_data["services"] = project_data.get("services", [])
-
-    # Component edit flows need project-level services and deployments
-    if flow_id.startswith("modal-edit-component-"):
-        state.template_data["services"] = project_data.get("services", [])
-        state.template_data["deployments"] = project_data.get("deployments", [])
-
-    # Deployment/domain edit/add flows need component names for the reference provider
-    if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-", "modal-edit-domain-")):
-        components = project_data.get("components", [])
-        state.template_data["components"] = components
-
-    # Domain flows need the domains section so approval conditions can check status
-    if flow_id.startswith(("modal-edit-domain-", "modal-add-deployment-", "modal-edit-deployment-")):
-        domains = project_data.get("domains")
-        if domains:
-            state.template_data["domains"] = domains
 
     # Add-deployment flows need existing names for uniqueness validation
     # and original deployment names for clone-from options (excluding the new slot)
@@ -600,9 +587,10 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         state.template_data["existing_deployment_names"] = existing_names
         state.template_data["_original_deployment_names"] = existing_names
 
-    # Inject backup/restore context into template_data for wizard partials
+    # Inject backup/restore context (cluster deployments) for manual backup/restore flows
     if _is_backup_restore_flow(flow_id):
-        state.template_data = await _build_backup_restore_context_async(flow_id, project_name, project_data)
+        backup_context = await _build_backup_restore_context_async(flow_id, project_name, project_data)
+        state.template_data.update(backup_context)
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
@@ -963,9 +951,18 @@ def _render_modal_review(
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
+    warnings: list[str] = []
+
+    # Restore flows: warn that restoring may break the running application
+    if flow_id == "modal-restore":
+        warnings.append(
+            "Het herstellen van een backup overschrijft de huidige data. "
+            "Dit kan ertoe leiden dat de applicatie tijdelijk niet beschikbaar is "
+            "of niet meer correct werkt."
+        )
+
     # Detect removed services for the review warning
     # Only relevant for flows that edit services - skip for deployment add/edit flows
-    warnings: list[str] = []
     has_services_section = any("services" in s.section_id for s in active_sections)
     if state.locked_services and has_services_section:
         merged_services = set(_extract_services(yaml_data))
@@ -1030,6 +1027,12 @@ async def _modal_do_submit(
     # Merge all step data
     merged_data = state.get_merged_data()
 
+    # Strip transient fields — they participate in form state but must
+    # not persist to the saved project file.
+    processor = EditableFormProcessor()
+    all_editables = [ed for section in active_sections for ed in section.editables]
+    processor.strip_transients_from(merged_data, all_editables)
+
     # Strip template-only keys: template_data provides context for rendering
     # and validation (e.g. config for AGE decryption, existing_deployment_names
     # for uniqueness checks) but should not overwrite existing project data.
@@ -1081,8 +1084,6 @@ async def _modal_do_submit(
             section.post_merge(existing_data, merged_data)
 
     # Compute derived values (e.g. issuer from base-domain)
-    from opi.forms.editables.processor import EditableFormProcessor
-
     processor = EditableFormProcessor()
     for section in active_sections:
         processor.apply_dependent_generators(section.editables, existing_data)
@@ -1147,31 +1148,48 @@ async def _handle_backup_restore_submit(
     state,
     templates,
 ) -> HTMLResponse:
-    """Handle backup/restore wizard submission - no project file changes."""
-    from opi.core.backup_tasks import run_backup_task, run_restore_task
-    from opi.core.task_manager import create_task
+    """Handle backup/restore wizard submission via the async task queue."""
+    from opi.core.async_task_service import TaskType
+    from opi.core.config import settings
 
     merged_data = state.get_merged_data()
-    task_id = create_task(project_name)
+    task_service = getattr(request.app.state, "task_service", None)
+    bg_task: BackgroundTask | None = None
 
     if action == "trigger_backup":
         deployment_name = merged_data.get("deployment_name", "")
-        resource_types = merged_data.get("resource_types", ["pvc", "database", "minio"])
+        resource_types = merged_data.get("resource_types", DEFAULT_BACKUP_RESOURCE_TYPES)
         if isinstance(resource_types, str):
             resource_types = [resource_types]
+
+        payload = {
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "resource_types": resource_types,
+        }
+
+        if task_service:
+            task = await task_service.create_task(
+                task_type=TaskType.BACKUP,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=settings.CLUSTER_MANAGER,
+                payload=payload,
+            )
+            task_id = task["task_id"]
+        else:
+            # Fallback to legacy BackgroundTask approach
+            from opi.core.backup_tasks import run_backup_task
+            from opi.core.task_manager import create_task
+
+            task_id = create_task(project_name)
+            bg_task = BackgroundTask(run_backup_task, task_id, project_name, deployment_name, resource_types)
 
         logger.info(
             "Starting backup for %s/%s (task=%s, types=%s)",
             project_name,
             deployment_name,
             task_id,
-            resource_types,
-        )
-        bg_task = BackgroundTask(
-            run_backup_task,
-            task_id,
-            project_name,
-            deployment_name,
             resource_types,
         )
 
@@ -1183,7 +1201,6 @@ async def _handle_backup_restore_submit(
         source_deployment = ""
         create_new_deployment = restore_mode == RestoreMode.NEW.value
 
-        # Extract deployment config from editables (new deployment step)
         deployment_config: dict[str, Any] | None = None
         if create_new_deployment:
             deployments = merged_data.get("deployments", [])
@@ -1193,17 +1210,51 @@ async def _handle_backup_restore_submit(
         else:
             target_deployment = merged_data.get("target_deployment", "")
 
-        # Get backup items for the selected run from template_data
         backup_items = []
         if state.template_data:
             for run in state.template_data.get("_backup_runs", []):
                 if run.get("backup_run_id") == backup_run_id:
                     backup_items = run.get("items", [])
                     source_deployment = run.get("deployment_name", "")
-                    # If no explicit target, use the source deployment
                     if not target_deployment:
                         target_deployment = source_deployment
                     break
+
+        payload = {
+            "project_name": project_name,
+            "backup_run_id": backup_run_id,
+            "target_deployment": target_deployment,
+            "backup_items": backup_items,
+            "create_new_deployment": create_new_deployment,
+            "source_deployment": source_deployment,
+            "deployment_config": deployment_config,
+        }
+
+        if task_service:
+            task = await task_service.create_task(
+                task_type=TaskType.RESTORE,
+                project_name=project_name,
+                deployment_name=target_deployment,
+                cluster=settings.CLUSTER_MANAGER,
+                payload=payload,
+            )
+            task_id = task["task_id"]
+        else:
+            from opi.core.backup_tasks import run_restore_task
+            from opi.core.task_manager import create_task
+
+            task_id = create_task(project_name)
+            bg_task = BackgroundTask(
+                run_restore_task,
+                task_id,
+                project_name,
+                backup_run_id,
+                target_deployment,
+                backup_items,
+                create_new_deployment=create_new_deployment,
+                source_deployment=source_deployment,
+                deployment_config=deployment_config,
+            )
 
         logger.info(
             "Starting restore for %s/%s from run %s (task=%s, items=%d, new=%s)",
@@ -1213,17 +1264,6 @@ async def _handle_backup_restore_submit(
             task_id,
             len(backup_items),
             create_new_deployment,
-        )
-        bg_task = BackgroundTask(
-            run_restore_task,
-            task_id,
-            project_name,
-            backup_run_id,
-            target_deployment,
-            backup_items,
-            create_new_deployment=create_new_deployment,
-            source_deployment=source_deployment,
-            deployment_config=deployment_config,
         )
 
     rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
@@ -1235,7 +1275,9 @@ async def _handle_backup_restore_submit(
 
     clear_modal_wizard_state(request)
     response = HTMLResponse(content=rendered)
-    response.background = bg_task
+    # Only attach BackgroundTask in legacy mode (no task_service)
+    if not task_service:
+        response.background = bg_task
     return response
 
 
@@ -1263,11 +1305,6 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
             "status": "failed",
             "error": "Taak niet gevonden",
         }
-        rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
-        return HTMLResponse(content=rendered, status_code=404)
 
     context = _v2_task_to_template_context(task, project_name)
     context["task_id"] = task_id

@@ -66,18 +66,14 @@ def editable_to_form_field(
         raw_value = default
 
     # 3. Apply converter for display
-    # For editable widgets, use read() to convert YAML → form-compatible value
-    # (e.g. dict → string for select dropdowns). Fall back to view() for
-    # read-only display or converters that don't implement read().
+    # For editable widgets, use read() to convert stored value → form-compatible value
+    # (e.g. dict → string for select dropdowns). Use view() for read-only display.
     display_value = raw_value
     if converter:
-        if hasattr(converter, "read") and widget in ("select", "text", "textarea", "radio"):
-            display_value = converter.read(raw_value)
+        if widget in ("select", "text", "textarea", "radio"):
+            display_value = converter.read(raw_value, context_data=yaml_data)
         else:
-            try:
-                display_value = converter.view(raw_value, yaml_data=yaml_data)
-            except TypeError:
-                display_value = converter.view(raw_value)
+            display_value = converter.view(raw_value, context_data=yaml_data)
 
     # 3b. Auto-detect KV format from stored value so the toggle matches
     if converter and hasattr(converter, "detect_format") and raw_value is not None:
@@ -89,6 +85,9 @@ def editable_to_form_field(
     option_context = dict(provider_context or {})
     if raw_value is not None:
         option_context.setdefault("current_value", str(raw_value))
+    # Pass yaml_data and resolved path so providers can do path-based lookups
+    option_context["yaml_data"] = yaml_data
+    option_context["yaml_path"] = real_path
     options = _resolve_options(options_provider_name, option_context)
 
     # 5. Build HTMX attrs dict
@@ -217,11 +216,12 @@ def should_render_editable(
     dep_value = smart_get_value(yaml_data, depends_on)
 
     # Apply the dependency field's converter so show_when compares against
-    # the display value (e.g. "__custom__") rather than the raw stored value.
+    # the form-compatible value (e.g. "__custom__", "DAILY") rather than
+    # the raw stored value (e.g. a custom domain, an RRULE string).
     if siblings and show_when and dep_value is not None:
         dep_converter = _find_converter_for_path(siblings, depends_on)
-        if dep_converter and hasattr(dep_converter, "view"):
-            dep_value = dep_converter.view(dep_value)
+        if dep_converter:
+            dep_value = dep_converter.read(dep_value, context_data=yaml_data)
 
     return evaluate_show_when(dep_value, show_when)
 
