@@ -1,17 +1,14 @@
 import logging
 import re
 import secrets
+from collections.abc import Callable  # noqa: TC003 — used in decorator signatures at runtime
 from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import HTTPException
 from opi.core.config import settings
 from opi.services.project_service import get_project_service
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from starlette.requests import Request
+from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
 
 
 def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
