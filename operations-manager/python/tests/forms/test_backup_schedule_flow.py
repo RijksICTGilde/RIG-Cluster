@@ -20,7 +20,6 @@ from opi.forms.visualizers.flows import (
 )
 from opi.forms.visualizers.providers import (
     BackupScheduleFrequencyOptionsProvider,
-    BackupScheduleOptionsProvider,
     BackupScheduleTimeOptionsProvider,
 )
 from opi.forms.visualizers.wizard_sections import build_backup_schedule_section
@@ -225,13 +224,6 @@ class TestBackupScheduleOptionsProvider:
         values = [o["value"] for o in provider.get_options()]
         assert len(values) == len(set(values))
 
-    def test_legacy_provider_delegates(self) -> None:
-        """BackupScheduleOptionsProvider delegates to frequency provider."""
-        legacy = BackupScheduleOptionsProvider()
-        freq = BackupScheduleFrequencyOptionsProvider()
-        assert legacy.get_options() == freq.get_options()
-
-
 class TestBackupScheduleTimeOptionsProvider:
     """Tests for the backup schedule time options provider."""
 
@@ -278,11 +270,6 @@ class TestProviderRegistry:
         from opi.forms.visualizers.providers import PROVIDER_REGISTRY
 
         assert "BackupScheduleMonthDayOptionsProvider" in PROVIDER_REGISTRY
-
-    def test_legacy_registered(self) -> None:
-        from opi.forms.visualizers.providers import PROVIDER_REGISTRY
-
-        assert "BackupScheduleOptionsProvider" in PROVIDER_REGISTRY
 
     def test_resource_types_registered(self) -> None:
         from opi.forms.visualizers.providers import PROVIDER_REGISTRY
