@@ -356,6 +356,11 @@ class Settings(BaseSettings):
     BACKUP_RETENTION_KEEP_DAILY: int = 7
     BACKUP_RETENTION_KEEP_WEEKLY: int = 4
 
+    # Backup scheduler settings
+    BACKUP_SCHEDULER_ENABLED: bool = True
+    BACKUP_SCHEDULER_INTERVAL: int = 3600  # seconds between schedule checks (hourly)
+    BACKUP_MAX_CONCURRENT: int = 2  # max backup/restore tasks running simultaneously
+
 
 def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
     """

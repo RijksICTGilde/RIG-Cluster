@@ -27,6 +27,8 @@ class TaskType(StrEnum):
     ADD_COMPONENT = "add_component"
     ADD_COMPONENT_TO_DEPLOYMENT = "add_component_to_deployment"
     ADD_SERVICE = "add_service"
+    BACKUP = "backup"
+    RESTORE = "restore"
 
 
 class AsyncTaskStatus(StrEnum):
@@ -51,7 +53,7 @@ class AsyncTaskStatus(StrEnum):
 _JSONB_COLUMNS = {"payload", "result", "subtasks"}
 
 
-def _row_to_dict(row: Any) -> dict:
+def _row_to_dict(row: Any) -> dict | None:
     """Convert an asyncpg Record to a dict with serializable types.
 
     UUID objects are converted to strings, datetime objects to ISO format
@@ -196,7 +198,11 @@ class AsyncTaskService:
         finally:
             await self._pool.release(conn)
 
-    async def claim_next_task(self, cluster: str) -> dict | None:
+    async def claim_next_task(
+        self,
+        cluster: str,
+        type_concurrency_limits: dict[str, int] | None = None,
+    ) -> dict | None:
         """Claim the next pending task for the given cluster.
 
         Uses SELECT ... FOR UPDATE SKIP LOCKED to safely claim a task without
@@ -204,6 +210,9 @@ class AsyncTaskService:
 
         Args:
             cluster: The cluster to claim a task for.
+            type_concurrency_limits: Optional mapping of task_type -> max concurrent
+                tasks. When a task type has reached its limit, pending tasks of that
+                type are skipped until a slot opens up.
 
         Returns:
             A dict representing the claimed task, or None if no task is available.
@@ -211,12 +220,35 @@ class AsyncTaskService:
         conn = await self._pool.acquire()
         try:
             async with conn.transaction():
+                # Build optional per-type concurrency filter
+                type_limit_sql = ""
+                params: list[Any] = [cluster]
+                if type_concurrency_limits:
+                    # For each limited type, add a condition that skips pending
+                    # tasks of that type when the limit is already reached.
+                    conditions = []
+                    for task_type, max_concurrent in type_concurrency_limits.items():
+                        idx_type = len(params) + 1
+                        idx_limit = len(params) + 2
+                        conditions.append(
+                            f"""NOT (
+                                t.task_type = ${idx_type}
+                                AND (
+                                    SELECT COUNT(*) FROM async_tasks tc
+                                    WHERE tc.task_type = ${idx_type}
+                                      AND tc.status IN ('claimed', 'running')
+                                ) >= ${idx_limit}
+                            )"""
+                        )
+                        params.extend([task_type, max_concurrent])
+                    type_limit_sql = "AND " + " AND ".join(conditions)
+
                 # Claim the next pending task, but skip tasks where another
                 # task for the same project/deployment is already in-flight.
                 # This prevents concurrent processing of the same deployment
                 # which could cause race conditions in git/ArgoCD operations.
                 row = await conn.fetchrow(
-                    """
+                    f"""
                     SELECT id FROM async_tasks t
                     WHERE t.status = 'pending' AND t.cluster = $1
                       AND NOT EXISTS (
@@ -226,11 +258,12 @@ class AsyncTaskService:
                             AND running.status IN ('claimed', 'running')
                             AND running.id != t.id
                       )
+                      {type_limit_sql}
                     ORDER BY t.created_at ASC
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
                     """,
-                    cluster,
+                    *params,
                 )
                 if row is None:
                     return None
@@ -682,6 +715,44 @@ class AsyncTaskService:
                     project_name,
                     uuid.UUID(task_id),
                 )
+            if row is None:
+                return None
+            return _row_to_dict(row)
+        finally:
+            await self._pool.release(conn)
+
+    async def get_last_completed_task(
+        self,
+        task_type: str,
+        project_name: str,
+        deployment_name: str | None = None,
+    ) -> dict | None:
+        """Get the most recently completed task matching the given criteria.
+
+        Args:
+            task_type: The task type to filter on.
+            project_name: The project name to filter on.
+            deployment_name: Optional deployment name for more specific matching.
+
+        Returns:
+            A dict representing the task, or None if no matching task exists.
+        """
+        conn = await self._pool.acquire()
+        try:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM async_tasks
+                WHERE task_type = $1
+                  AND project_name = $2
+                  AND deployment_name IS NOT DISTINCT FROM $3
+                  AND status = 'completed'
+                ORDER BY completed_at DESC
+                LIMIT 1
+                """,
+                task_type,
+                project_name,
+                deployment_name,
+            )
             if row is None:
                 return None
             return _row_to_dict(row)

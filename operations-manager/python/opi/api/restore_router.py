@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import create_git_connector_for_project_files
+from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
 from opi.handlers.project_file_handler import (
@@ -1562,11 +1563,10 @@ async def restore_deployment_resource(
         )
 
         # Validate resource type
-        valid_resource_types = ["pvc", "database", "minio"]
-        if body.resource_type not in valid_resource_types:
+        if body.resource_type not in VALID_BACKUP_RESOURCE_TYPES:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid resource_type '{body.resource_type}'. Must be one of: {valid_resource_types}",
+                detail=f"Invalid resource_type '{body.resource_type}'. Must be one of: {sorted(VALID_BACKUP_RESOURCE_TYPES)}",
             )
 
         # 1. Get project info

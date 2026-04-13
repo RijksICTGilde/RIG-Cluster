@@ -106,6 +106,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
             # Register handlers (imported locally to avoid circular imports)
+            from opi.core.task_handlers_backup import (  # type: ignore[reportMissingImports]
+                handle_backup,
+                handle_restore,
+            )
             from opi.core.task_handlers_components import (  # type: ignore[reportMissingImports]
                 handle_add_component,
                 handle_add_component_to_deployment,
@@ -137,9 +141,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
             _worker_instance.register_handler(TaskType.ADD_SERVICE, handle_add_service)
+            _worker_instance.register_handler(TaskType.BACKUP, handle_backup)
+            _worker_instance.register_handler(TaskType.RESTORE, handle_restore)
+
+            # Limit concurrent backup/restore tasks to avoid resource contention
+            _worker_instance.set_type_concurrency_limit(TaskType.BACKUP, settings.BACKUP_MAX_CONCURRENT)
+            _worker_instance.set_type_concurrency_limit(TaskType.RESTORE, settings.BACKUP_MAX_CONCURRENT)
 
             _worker_asyncio_task = asyncio.create_task(_worker_instance.run())
             logger.info("Task worker started in combined mode")
+
+            # Start backup scheduler if enabled
+            if settings.BACKUP_SCHEDULER_ENABLED:
+                try:
+                    from opi.core.backup_scheduler import BackupScheduler
+
+                    _backup_scheduler = BackupScheduler(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
+                    await _backup_scheduler.start()
+                    app.state.backup_scheduler = _backup_scheduler
+                except Exception as e:
+                    logger.error(f"Failed to start backup scheduler: {e}")
+
         except Exception as e:
             logger.error(f"Failed to start task worker: {e}")
     else:
@@ -181,6 +203,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     from opi.core.shutdown import begin_drain
 
     begin_drain()
+
+    # Stop backup scheduler
+    backup_scheduler = getattr(app.state, "backup_scheduler", None)
+    if backup_scheduler is not None:
+        await backup_scheduler.stop()
 
     # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:

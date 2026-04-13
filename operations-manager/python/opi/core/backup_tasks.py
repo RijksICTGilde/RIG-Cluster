@@ -343,6 +343,20 @@ async def run_restore_task(
 
                 if all_success:
                     task_progress.complete_task(restore_task)
+
+                    # Re-provision to update credentials after database/bucket restore
+                    infra_task = task_progress.add_task("Manifesten bijwerken")
+                    try:
+                        await _provision_deployment_infrastructure(project_name, target_deployment, task_progress)
+                        task_progress.complete_task(infra_task)
+                    except Exception as e:
+                        logger.exception(
+                            "Failed to re-provision after restore for %s/%s", project_name, target_deployment
+                        )
+                        task_progress.fail_task(infra_task, str(e))
+                        task_progress.fail_project(f"Herstel gelukt maar manifesten bijwerken mislukt: {e}")
+                        return
+
                     task_progress.complete_project()
                     logger.info("Restore task %s completed for %s/%s", task_id, project_name, target_deployment)
                 else:
@@ -397,6 +411,22 @@ async def run_restore_task(
 
             if all_success:
                 task_progress.complete_task(restore_task)
+
+                # Re-provision infrastructure to update credentials and regenerate manifests.
+                # The restore may have changed database passwords (new versioned database),
+                # so process_project_from_git ensures K8s secrets match the actual credentials.
+                infra_task = task_progress.add_task("Manifesten bijwerken")
+                try:
+                    await _provision_deployment_infrastructure(project_name, target_deployment, task_progress)
+                    task_progress.complete_task(infra_task)
+                except Exception as e:
+                    logger.exception(
+                        "Failed to re-provision after restore for %s/%s", project_name, target_deployment
+                    )
+                    task_progress.fail_task(infra_task, str(e))
+                    task_progress.fail_project(f"Herstel gelukt maar manifesten bijwerken mislukt: {e}")
+                    return
+
                 task_progress.complete_project()
                 logger.info("Restore task %s completed for %s/%s", task_id, project_name, target_deployment)
             else:
