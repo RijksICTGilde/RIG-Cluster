@@ -6,13 +6,16 @@ for handling user authentication via Keycloak.
 """
 
 import logging
+from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from opi.services.user_service import get_user_service
-from starlette.responses import Response
+
+if TYPE_CHECKING:
+    from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 

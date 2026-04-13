@@ -5,11 +5,15 @@ Tests the modal-based editing of project identity, team, and services
 using the EditModalHelper page object.
 """
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from playwright.sync_api import Page
 from tests.e2e.helpers.edit_modal import EditModalHelper
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from playwright.sync_api import Page
 
 pytestmark = pytest.mark.e2e
 

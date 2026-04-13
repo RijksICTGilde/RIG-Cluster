@@ -7,19 +7,21 @@ including git-based diff generation and structured change extraction.
 
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from deepdiff import DeepDiff
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
-from opi.connectors.git import GitConnector
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
 from opi.utils.age import decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.yaml_util import save_yaml_to_path
+
+if TYPE_CHECKING:
+    from opi.connectors.git import GitConnector
 
 logger = logging.getLogger(__name__)
 

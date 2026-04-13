@@ -14,12 +14,11 @@ Deletion ordering:
 
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.config import settings
-from opi.core.database_pool import DatabasePool
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.utils.naming import (
     generate_backup_prefix,
@@ -28,6 +27,9 @@ from opi.utils.naming import (
     generate_minio_policy_name,
     generate_minio_username,
 )
+
+if TYPE_CHECKING:
+    from opi.core.database_pool import DatabasePool
 
 logger = logging.getLogger(__name__)
 

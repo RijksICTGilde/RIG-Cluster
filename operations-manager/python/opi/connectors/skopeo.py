@@ -41,7 +41,7 @@ class SkopeoConnector:
     _lock = threading.Lock()
     is_skopeo_available = False
 
-    def __new__(cls) -> "SkopeoConnector":
+    def __new__(cls) -> SkopeoConnector:
         """Implement singleton pattern."""
         if cls._instance is None:
             with cls._lock:

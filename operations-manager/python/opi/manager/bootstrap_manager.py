@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class BootstrapManager:
     """Manager for bootstrap API operations."""
 
-    def __init__(self, project_manager: "ProjectManager") -> None:
+    def __init__(self, project_manager: ProjectManager) -> None:
         """
         Initialize the BootstrapManager with reference to ProjectManager.
 

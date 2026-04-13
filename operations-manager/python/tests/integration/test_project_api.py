@@ -10,12 +10,14 @@ These tests verify the project management endpoints:
 - Clone operations
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 from opi.services.project_service import Project, ProjectService, ProjectUser
+
+if TYPE_CHECKING:
+    from fastapi.testclient import TestClient
 
 
 @pytest.fixture

@@ -282,7 +282,7 @@ class ChiselConnector:
             sock.connect((host, port))
             sock.close()
             return True
-        except (TimeoutError, ConnectionRefusedError, OSError):
+        except TimeoutError, ConnectionRefusedError, OSError:
             return False
 
     def __enter__(self):

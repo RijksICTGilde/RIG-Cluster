@@ -6,12 +6,15 @@ Excludes health/metrics endpoints so Kubernetes probes still work.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
-from fastapi import Request
 from fastapi.responses import HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from opi.core.readiness import get_readiness_state
+
+if TYPE_CHECKING:
+    from fastapi import Request
 
 logger = logging.getLogger(__name__)
 

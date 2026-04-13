@@ -17,9 +17,11 @@ Example:
     )
 """
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass
@@ -163,7 +165,7 @@ class Sequence(LayoutElement):
     """
 
     field_name: str = ""
-    child_layout: "LayoutElement | list[LayoutChild] | None" = None
+    child_layout: LayoutElement | list[LayoutChild] | None = None
     min_items: int = 0
     max_items: int | None = None
     add_label: str = "common.add"
@@ -314,6 +316,6 @@ class ButtonGroup(LayoutElement):
         )
     """
 
-    buttons: list["Submit"] = field(default_factory=list)
+    buttons: list[Submit] = field(default_factory=list)
     alignment: str = "start"
     gap: str = "md"

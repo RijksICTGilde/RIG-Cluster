@@ -14,9 +14,13 @@ Headers set:
 - Content-Security-Policy
 """
 
+from typing import TYPE_CHECKING
+
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import Response
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
+    from starlette.responses import Response
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

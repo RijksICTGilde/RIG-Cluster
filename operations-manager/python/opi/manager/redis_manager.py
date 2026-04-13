@@ -31,7 +31,7 @@ class RedisManager:
               acl-key-prefix: false
     """
 
-    def __init__(self, project_manager: "ProjectManager") -> None:
+    def __init__(self, project_manager: ProjectManager) -> None:
         self.project_manager = project_manager
 
     async def create_resources_for_deployment(

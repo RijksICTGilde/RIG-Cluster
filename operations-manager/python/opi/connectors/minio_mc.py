@@ -42,7 +42,7 @@ class MinioConnector:
     configured_aliases: ClassVar[set[str]] = set()
     _retry_task = None
 
-    def __new__(cls) -> "MinioConnector":
+    def __new__(cls) -> MinioConnector:
         """Implement singleton pattern."""
         if cls._instance is None:
             with cls._lock:
@@ -947,7 +947,7 @@ class MinioConnector:
                     logger.info(f"Suspending versioning on bucket {validated_bucket_name}")
                     return await self.suspend_bucket_versioning(alias, validated_bucket_name)
 
-        except (MinioValidationError, MinioExecutionError):
+        except MinioValidationError, MinioExecutionError:
             logger.exception("Failed to ensure bucket versioning state")
             raise
         except Exception as e:
@@ -1038,7 +1038,7 @@ class MinioConnector:
                 "permissions": permissions,
             }
 
-        except (MinioValidationError, MinioExecutionError):
+        except MinioValidationError, MinioExecutionError:
             logger.exception("Failed to grant bucket access")
             raise
         except Exception as e:

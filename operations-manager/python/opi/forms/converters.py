@@ -108,7 +108,7 @@ class IntegerConverter:
             return self.default
         try:
             return int(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return self.default
 
 
@@ -212,7 +212,7 @@ class IntegerListConverter:
                 return []
         try:
             return [int(value)]
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return []
 
 
@@ -314,7 +314,7 @@ class YAMLConverter:
 
             parsed = yaml.safe_load(value)
             return parsed if parsed is not None else {}
-        except (ImportError, yaml.YAMLError):
+        except ImportError, yaml.YAMLError:
             return value
 
 

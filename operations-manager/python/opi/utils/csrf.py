@@ -1,10 +1,13 @@
 """CSRF protection utilities for web forms."""
 
 import secrets
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+
+if TYPE_CHECKING:
+    from starlette.responses import Response
 
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_FORM_FIELD = "csrf_token"

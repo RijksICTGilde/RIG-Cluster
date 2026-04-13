@@ -2,8 +2,12 @@
 E2E tests for the self-service project creation form.
 """
 
+from typing import TYPE_CHECKING
+
 import pytest
-from playwright.sync_api import Page
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 pytestmark = pytest.mark.e2e
 

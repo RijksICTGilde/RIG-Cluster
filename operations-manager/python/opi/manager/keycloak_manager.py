@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 class KeycloakManager:
     """Manager for Keycloak SSO operations and resources."""
 
-    def __init__(self, project_manager: "ProjectManager") -> None:
+    def __init__(self, project_manager: ProjectManager) -> None:
         """
         Initialize the KeycloakManager with reference to ProjectManager.
 

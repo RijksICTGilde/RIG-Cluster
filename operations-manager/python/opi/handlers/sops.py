@@ -12,10 +12,12 @@ import asyncio
 import logging
 import os
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from opi.connectors.kubectl import KubectlConnector
 from opi.core.config import settings
+
+if TYPE_CHECKING:
+    from opi.connectors.kubectl import KubectlConnector
 
 logger = logging.getLogger(__name__)
 

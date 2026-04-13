@@ -10,12 +10,15 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from types import TracebackType
+from typing import TYPE_CHECKING
 
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,7 @@ class ResourceType(StrEnum):
     BUCKET = "bucket"
 
     @classmethod
-    def from_string(cls, value: str | None) -> "ResourceType":
+    def from_string(cls, value: str | None) -> ResourceType:
         """Convert string to ResourceType, defaulting to PVC."""
         if not value:
             return cls.PVC
@@ -295,7 +298,7 @@ data:
         except Exception as e:
             logger.warning(f"Failed to update backup progress: {e}")
 
-    async def __aenter__(self) -> "BackupLock":
+    async def __aenter__(self) -> BackupLock:
         if not await self.acquire():
             raise RuntimeError("Could not acquire backup lock - another backup is running")
         return self
@@ -405,7 +408,7 @@ class BackupConfig:
         return get_backup_bucket_name(project_name, cluster)
 
     @classmethod
-    def from_settings(cls) -> "BackupConfig":
+    def from_settings(cls) -> BackupConfig:
         """Create BackupConfig from application settings."""
         # Get snapshot class from cluster config, fall back to settings if not configured
         snapshot_class = get_volume_snapshot_class(settings.CLUSTER_MANAGER) or settings.BACKUP_SNAPSHOT_CLASS

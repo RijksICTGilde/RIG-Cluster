@@ -5,19 +5,11 @@ Clients must poll /api/tasks/{task_id} for status and results.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
-from opi.api.router import (
-    AddComponentRequest,
-    AddComponentToDeploymentRequest,
-    AddServiceRequest,
-    CloneBucketFromExternalRequest,
-    CloneDatabaseFromExternalRequest,
-    UpdateImageRequest,
-    UpsertDeploymentRequest,
-)
 from opi.api.task_models import (
     AddComponentResult,
     AddComponentToDeploymentResult,
@@ -42,6 +34,17 @@ from opi.api.validation import (
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.utils.naming import sanitize_kubernetes_name
 from opi.utils.project_utils import validate_project_name
+
+if TYPE_CHECKING:
+    from opi.api.router import (
+        AddComponentRequest,
+        AddComponentToDeploymentRequest,
+        AddServiceRequest,
+        CloneBucketFromExternalRequest,
+        CloneDatabaseFromExternalRequest,
+        UpdateImageRequest,
+        UpsertDeploymentRequest,
+    )
 
 logger = logging.getLogger(__name__)
 

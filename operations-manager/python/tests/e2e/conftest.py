@@ -15,15 +15,19 @@ import json
 import os
 import socket
 import threading
-from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
-from playwright.sync_api import BrowserContext, Page
 from tests.e2e.testserver import SECRET_KEY, create_test_app
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from playwright.sync_api import BrowserContext, Page
 
 # Sandbox config - override via environment variables
 E2E_BASE_URL = os.environ.get("E2E_BASE_URL", "")
@@ -94,7 +98,7 @@ def app_server() -> Generator[str]:
 
 
 @pytest.fixture
-def authenticated_context(app_server: str, browser: "BrowserContext") -> Generator[BrowserContext]:
+def authenticated_context(app_server: str, browser: BrowserContext) -> Generator[BrowserContext]:
     """Browser context with a pre-signed session cookie containing a test user."""
     parsed = urlparse(app_server)
     context = browser.new_context()
@@ -145,7 +149,7 @@ def sandbox_url() -> str:
 
 
 @pytest.fixture(scope="session")
-def sandbox_context(browser: "BrowserContext", sandbox_url: str) -> Generator[BrowserContext]:
+def sandbox_context(browser: BrowserContext, sandbox_url: str) -> Generator[BrowserContext]:
     """Authenticated browser context for sandbox cluster tests."""
     context = browser.new_context(ignore_https_errors=True)
     signed = _sign_session({"user": SANDBOX_TEST_USER}, secret=E2E_SECRET_KEY)

@@ -8,15 +8,16 @@ as part of the FastAPI application lifecycle.
 import asyncio
 import logging
 import os
-from typing import Any
-
-from fastapi import FastAPI
+from typing import TYPE_CHECKING, Any
 
 from opi.connectors.git import start_monitoring_task
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 

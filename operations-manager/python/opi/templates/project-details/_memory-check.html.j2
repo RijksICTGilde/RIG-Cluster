@@ -30,7 +30,7 @@
                     style="cursor: pointer;"
                     @click="openServiceHelp('resources.html.j2')" />
         </div>
-        <c-p>De volgende componenten worden gestopt wegens geheugengebrek, maar draaien al op de maximale geheugenlimiet.</c-p>
+        <c-p>De volgende componenten worden herstart wegens geheugengebrek, maar draaien al op de maximale geheugenlimiet.</c-p>
         <c-ul>
             {% for w in oom_at_max %}
             <c-li>{{ w.component }}: {{ w.current_limit }} (maximum)</c-li>
@@ -49,7 +49,7 @@
                     style="cursor: pointer;"
                     @click="openServiceHelp('resources.html.j2')" />
         </div>
-        <c-p>De volgende componenten worden herhaaldelijk gestopt wegens geheugengebrek (OOM Kill).
+        <c-p>De volgende componenten worden herhaaldelijk herstart wegens geheugengebrek (OOM Kill).
             Klik op "Tune resources" om het geheugen automatisch te verhogen.</c-p>
         <c-ul>
             {% for w in oom_tunable %}

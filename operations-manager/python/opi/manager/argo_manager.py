@@ -2,8 +2,7 @@
 
 import logging
 import os
-from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
@@ -21,13 +20,16 @@ from opi.utils.naming import (
 )
 from opi.utils.sops import encrypt_to_sops_files
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
 logger = logging.getLogger(__name__)
 
 
 class ArgoManager:
     """Manager for ArgoCD-related operations and resources."""
 
-    def __init__(self, project_manager: "ProjectManager") -> None:
+    def __init__(self, project_manager: ProjectManager) -> None:
         """
         Initialize the ArgoManager with reference to ProjectManager.
 
@@ -1051,7 +1053,7 @@ class ArgoManager:
                 await asyncio.sleep(poll_interval)
                 elapsed_time += poll_interval
 
-            except (RuntimeError, TimeoutError):
+            except RuntimeError, TimeoutError:
                 raise
             except PermissionError:
                 # Application may not be accessible yet (AppProject not synced)

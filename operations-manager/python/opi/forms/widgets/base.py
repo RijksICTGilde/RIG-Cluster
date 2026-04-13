@@ -32,59 +32,59 @@ class WidgetAdapter(ABC):
     # Field rendering methods
 
     @abstractmethod
-    def render_text(self, field: "FormField") -> str:
+    def render_text(self, field: FormField) -> str:
         """Render a text input field."""
 
     @abstractmethod
-    def render_textarea(self, field: "FormField") -> str:
+    def render_textarea(self, field: FormField) -> str:
         """Render a textarea field."""
 
     @abstractmethod
-    def render_select(self, field: "FormField") -> str:
+    def render_select(self, field: FormField) -> str:
         """Render a select/dropdown field."""
 
     @abstractmethod
-    def render_checkbox(self, field: "FormField") -> str:
+    def render_checkbox(self, field: FormField) -> str:
         """Render a single checkbox field."""
 
     @abstractmethod
-    def render_checkbox_group(self, field: "FormField") -> str:
+    def render_checkbox_group(self, field: FormField) -> str:
         """Render a group of checkboxes."""
 
     @abstractmethod
-    def render_radio(self, field: "FormField") -> str:
+    def render_radio(self, field: FormField) -> str:
         """Render a radio button group."""
 
     @abstractmethod
-    def render_number(self, field: "FormField") -> str:
+    def render_number(self, field: FormField) -> str:
         """Render a number input field."""
 
     @abstractmethod
-    def render_date(self, field: "FormField") -> str:
+    def render_date(self, field: FormField) -> str:
         """Render a date picker field."""
 
     @abstractmethod
-    def render_file(self, field: "FormField") -> str:
+    def render_file(self, field: FormField) -> str:
         """Render a file upload field."""
 
     @abstractmethod
-    def render_hidden(self, field: "FormField") -> str:
+    def render_hidden(self, field: FormField) -> str:
         """Render a hidden field."""
 
     @abstractmethod
-    def render_service_cards(self, field: "FormField") -> str:
+    def render_service_cards(self, field: FormField) -> str:
         """Render service options as selectable cards with icons and descriptions."""
 
     @abstractmethod
-    def render_display_card(self, field: "FormField") -> str:
+    def render_display_card(self, field: FormField) -> str:
         """Render a read-only display card for status/encrypted fields."""
 
     @abstractmethod
-    def render_key_value_editor(self, field: "FormField") -> str:
+    def render_key_value_editor(self, field: FormField) -> str:
         """Render a key-value editor with YAML/ENV format toggle."""
 
     @abstractmethod
-    def render_nested(self, field: "FormField", children_html: list[str]) -> str:
+    def render_nested(self, field: FormField, children_html: list[str]) -> str:
         """
         Render a nested model's fields grouped together.
 
@@ -94,7 +94,7 @@ class WidgetAdapter(ABC):
         """
 
     @abstractmethod
-    def render_sequence(self, field: "FormField", items_html: list[str]) -> str:
+    def render_sequence(self, field: FormField, items_html: list[str]) -> str:
         """
         Render a sequence/repeatable field with add/remove buttons.
 
@@ -104,7 +104,7 @@ class WidgetAdapter(ABC):
         """
 
     @abstractmethod
-    def render_sequence_item(self, field: "FormField", index: int, item_html: str) -> str:
+    def render_sequence_item(self, field: FormField, index: int, item_html: str) -> str:
         """
         Render a single sequence item wrapper.
 
@@ -117,7 +117,7 @@ class WidgetAdapter(ABC):
     # Layout rendering methods
 
     @abstractmethod
-    def render_row(self, row: "Row", children_html: list[str]) -> str:
+    def render_row(self, row: Row, children_html: list[str]) -> str:
         """
         Render a horizontal row.
 
@@ -127,7 +127,7 @@ class WidgetAdapter(ABC):
         """
 
     @abstractmethod
-    def render_column(self, column: "Column", child_html: str) -> str:
+    def render_column(self, column: Column, child_html: str) -> str:
         """
         Render a column within a row.
 
@@ -137,7 +137,7 @@ class WidgetAdapter(ABC):
         """
 
     @abstractmethod
-    def render_fieldset(self, fieldset: "Fieldset", children_html: list[str]) -> str:
+    def render_fieldset(self, fieldset: Fieldset, children_html: list[str]) -> str:
         """
         Render a fieldset with legend.
 
@@ -147,7 +147,7 @@ class WidgetAdapter(ABC):
         """
 
     @abstractmethod
-    def render_div(self, div: "Div", children_html: list[str]) -> str:
+    def render_div(self, div: Div, children_html: list[str]) -> str:
         """
         Render a div wrapper.
 
@@ -157,11 +157,11 @@ class WidgetAdapter(ABC):
         """
 
     @abstractmethod
-    def render_submit(self, submit: "Submit") -> str:
+    def render_submit(self, submit: Submit) -> str:
         """Render a submit button."""
 
     @abstractmethod
-    def render_button_group(self, button_group: "ButtonGroup", buttons_html: list[str]) -> str:
+    def render_button_group(self, button_group: ButtonGroup, buttons_html: list[str]) -> str:
         """
         Render a group of buttons.
 
@@ -177,7 +177,7 @@ class WidgetAdapter(ABC):
         """Render a validation error message."""
 
     @abstractmethod
-    def render_errors(self, field: "FormField") -> str:
+    def render_errors(self, field: FormField) -> str:
         """Render all errors for a field."""
 
     @abstractmethod
@@ -203,7 +203,7 @@ class WidgetAdapter(ABC):
 
     # Utility methods (can be overridden but have default implementations)
 
-    def render_field(self, field: "FormField") -> str:
+    def render_field(self, field: FormField) -> str:
         """
         Render a field based on its widget type.
 

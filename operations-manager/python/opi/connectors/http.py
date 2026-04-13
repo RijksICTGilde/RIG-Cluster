@@ -103,7 +103,7 @@ class HttpConnector:
             try:
                 data = await response.json()
                 return status, data
-            except (aiohttp.ContentTypeError, json.JSONDecodeError):
+            except aiohttp.ContentTypeError, json.JSONDecodeError:
                 # Fall back to text
                 text = await response.text()
                 return status, text

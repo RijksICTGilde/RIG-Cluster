@@ -23,15 +23,19 @@ Failure type handling:
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from opi.connectors.kubectl import KubectlConnector
-from opi.core.async_task_service import AsyncTaskService
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.services.resource_tuning_service import get_project_data, tune_deployment_resources
 from opi.utils.naming import generate_unique_name
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from opi.core.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
 

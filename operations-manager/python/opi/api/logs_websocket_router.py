@@ -674,7 +674,7 @@ async def stream_logs(
                                     try:
                                         await asyncio.wait_for(process.wait(), timeout=2.0)
                                         logger.info("switch: process terminated cleanly")
-                                    except (OSError, TimeoutError):
+                                    except OSError, TimeoutError:
                                         logger.warning(f"switch: terminate timeout, killing PID {process.pid}")
                                         with contextlib.suppress(OSError):
                                             process.kill()
@@ -783,7 +783,7 @@ async def stream_logs(
                 task.cancel()
                 try:
                     await asyncio.wait_for(task, timeout=5.0)
-                except (asyncio.CancelledError, TimeoutError):
+                except asyncio.CancelledError, TimeoutError:
                     if not task.done():
                         logger.error(f"task {task_name} did NOT cancel within 5s")
 

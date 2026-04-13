@@ -6,10 +6,13 @@ a lightweight routing entry so subsequent status queries can be proxied back.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from opi.connectors.opi import OpiConnector, OpiConnectorError
 from opi.core.config import settings
-from opi.core.federation_config import FederationRegistry, PeerConfig
+
+if TYPE_CHECKING:
+    from opi.core.federation_config import FederationRegistry, PeerConfig
 
 logger = logging.getLogger(__name__)
 

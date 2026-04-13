@@ -7,9 +7,13 @@ domain is selected, and is hidden for platform domains.
 Run with: uv run pytest tests/e2e/test_wizard_bare_domain.py -v --timeout=60
 """
 
+from typing import TYPE_CHECKING
+
 import pytest
-from playwright.sync_api import Page
 from tests.e2e.helpers.wizard import WizardHelper
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 pytestmark = [pytest.mark.e2e]
 

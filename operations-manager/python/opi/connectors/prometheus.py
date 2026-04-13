@@ -29,13 +29,13 @@ class PrometheusQueryError(Exception):
 class PrometheusConnector:
     """Connector for interacting with Prometheus for metrics retrieval."""
 
-    _instance: "PrometheusConnector | None" = None
+    _instance: PrometheusConnector | None = None
     is_connected: bool = False
     prom: Any  # PrometheusConnect instance (untyped library)
     _initialized: bool
     _prometheus_url: str
 
-    def __new__(cls) -> "PrometheusConnector":
+    def __new__(cls) -> PrometheusConnector:
         """Implement singleton pattern."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -696,9 +696,11 @@ class PrometheusConnector:
             result["disk_timestamps"] = [item["timestamp"] for item in result["disk_read"]]
 
             # Fetch resource limits (current values, not time-series)
+            # Use max() instead of sum() so multiple pods (e.g. during rollout
+            # or CrashLoopBackOff) don't inflate the displayed limit.
             # CPU limit in cores, convert to millicores
             cpu_limit_query = (
-                f"sum(kube_pod_container_resource_limits{{"
+                f"max(kube_pod_container_resource_limits{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="cpu"'
                 f"}})"
             )
@@ -709,7 +711,7 @@ class PrometheusConnector:
 
             # Memory limit in bytes, convert to MB
             memory_limit_query = (
-                f"sum(kube_pod_container_resource_limits{{"
+                f"max(kube_pod_container_resource_limits{{"
                 f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory"'
                 f"}})"
             )

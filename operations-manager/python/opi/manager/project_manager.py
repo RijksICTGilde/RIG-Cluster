@@ -228,13 +228,13 @@ class ProjectManager:
         self._delete_project_manager = DeleteProjectManager(self)
         self._pvc_manager = PVCManager(self)
 
-    async def __aenter__(self) -> "ProjectManager":
+    async def __aenter__(self) -> ProjectManager:
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         await self.close()
 
-    async def _ensure_database_manager(self, skip_credential_check: bool = False) -> "DatabaseManager":
+    async def _ensure_database_manager(self, skip_credential_check: bool = False) -> DatabaseManager:
         """
         Lazily initialize DatabaseManager with correct database host based on project services.
 
@@ -1158,7 +1158,7 @@ class ProjectManager:
             await self.__git_connector_for_argocd.close()
             self.__git_connector_for_argocd = None
 
-    def set_progress_manager(self, task_progress_manager: "TaskProgressManager") -> None:
+    def set_progress_manager(self, task_progress_manager: TaskProgressManager) -> None:
         """Set the task progress manager for tracking operation status."""
         self.__progress_manager = task_progress_manager
 
@@ -1185,7 +1185,7 @@ class ProjectManager:
                 return dep
         return None
 
-    def get_progress_manager(self) -> "TaskProgressManager | None":
+    def get_progress_manager(self) -> TaskProgressManager | None:
         """Get the task progress manager for tracking operation status."""
         return self.__progress_manager
 
@@ -2074,7 +2074,7 @@ class ProjectManager:
     async def process_project_from_git(
         self,
         relative_project_file_path: str,
-        task_progress_manager: "TaskProgressManager | None" = None,
+        task_progress_manager: TaskProgressManager | None = None,
         deployment_name: str | None = None,
         force_clone: bool = False,
         argocd_resources_changed: bool = True,
@@ -2190,7 +2190,7 @@ class ProjectManager:
 
                 pool = get_database_pool("main")
                 marked_service = MarkedForDeletionService(pool)
-            except (KeyError, ValueError):
+            except KeyError, ValueError:
                 logger.warning("Database pool not available - persistent resources will be deleted immediately")
 
             project_name = current_yaml.get("name", "unknown")
@@ -2558,9 +2558,7 @@ class ProjectManager:
         # Deployments are already filtered for current cluster by caller
         for deployment in deployments:
             await self._process_deployment_manifests(deployment, project_repo_connector)
-            await project_repo_connector.commit_changes(
-                f"Add kubernetes manifests for project {project_name} for {deployment['name']}"
-            )
+            await project_repo_connector.commit_changes(f"Update manifests for {project_name}/{deployment['name']}")
 
         await project_repo_connector.push_changes()
 
@@ -3887,8 +3885,10 @@ class ProjectManager:
             except Exception as e:
                 logger.warning(f"Failed to save encrypted configs, continuing: {e}")
 
-            # TODO: this may need to be done earlier.. or at another place
-            await (await self.get_git_connector_for_project_files()).commit_and_push(f"Adding project {project_name}")
+            scope = f" (deployment: {deployment_name})" if deployment_name else ""
+            await (await self.get_git_connector_for_project_files()).commit_and_push(
+                f"Process project {project_name}{scope}"
+            )
 
             await self._argo_manager.create_argocd_resources(deployment_name)
 
@@ -5638,7 +5638,28 @@ class ProjectManager:
 
                 # Commit changes to Git
                 git_connector = await self.get_git_connector_for_project_files()
-                commit_message = f"Update deployment '{deployment_name}' in project '{project_name}'"
+
+                # Build descriptive commit message
+                change_parts: list[str] = []
+                for component in components:
+                    normalized_image, _ = normalize_container_image(component.image)
+                    if component.reference in existing_components:
+                        old_image = existing_components[component.reference].get("image", "")
+                        if old_image != normalized_image:
+                            change_parts.append(f"{component.reference} image to {normalized_image}")
+                    else:
+                        change_parts.append(f"add component {component.reference}")
+                if domain_format is not None:
+                    change_parts.append(f"domain-format to {domain_format}")
+                if subdomain is not None:
+                    change_parts.append(f"subdomain to {subdomain}")
+                if base_domain is not None:
+                    change_parts.append(f"base-domain to {base_domain}")
+                if clone_from and force_clone:
+                    change_parts.append(f"clone-from {clone_from}")
+
+                details = ", ".join(change_parts) if change_parts else "configuration"
+                commit_message = f"Update deployment '{deployment_name}' in project '{project_name}': {details}"
                 await git_connector.commit_and_push(commit_message)
 
                 logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")

@@ -5,8 +5,12 @@ These tests verify the API endpoints work correctly with mocked
 external dependencies like kubectl and the project service.
 """
 
+from typing import TYPE_CHECKING
+
 import pytest
-from fastapi.testclient import TestClient
+
+if TYPE_CHECKING:
+    from fastapi.testclient import TestClient
 
 
 @pytest.mark.integration

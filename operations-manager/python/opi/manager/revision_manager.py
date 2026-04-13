@@ -25,7 +25,7 @@ class RevisionManager:
     Uses JSONPath expressions for efficient querying of project data.
     """
 
-    def __init__(self, project_file_handler: "ProjectFileHandler") -> None:
+    def __init__(self, project_file_handler: ProjectFileHandler) -> None:
         """Initialize the RevisionManager.
 
         Args:

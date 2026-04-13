@@ -37,7 +37,7 @@ class OpiConnector:
         self.timeout = timeout
         self.session: aiohttp.ClientSession | None = None
 
-    async def __aenter__(self) -> "OpiConnector":
+    async def __aenter__(self) -> OpiConnector:
         connector = None if self.verify_tls else aiohttp.TCPConnector(ssl=False)
         self.session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=self.timeout),

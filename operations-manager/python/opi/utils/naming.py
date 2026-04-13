@@ -25,7 +25,7 @@ class HostnameFormat(Enum):
     DOTS = "dots"
 
     @classmethod
-    def from_domain_mode(cls, domain_mode: str | None) -> "HostnameFormat":
+    def from_domain_mode(cls, domain_mode: str | None) -> HostnameFormat:
         """Convert a domain_mode string to HostnameFormat enum.
 
         Args:
