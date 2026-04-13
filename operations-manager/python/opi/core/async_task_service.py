@@ -7,9 +7,10 @@ import socket
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from opi.core.database_pool import DatabasePool
+if TYPE_CHECKING:
+    from opi.core.database_pool import DatabasePool
 
 logger = logging.getLogger(__name__)
 

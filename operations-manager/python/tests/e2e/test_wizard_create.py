@@ -9,10 +9,14 @@ These tests require:
 Run with: pytest tests/e2e/ -m "e2e and sandbox" -v --timeout=300
 """
 
+from typing import TYPE_CHECKING
+
 import pytest
-from playwright.sync_api import Page
 from tests.e2e.helpers.cleanup import ProjectCleanup
 from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 

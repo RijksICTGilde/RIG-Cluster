@@ -7,11 +7,15 @@ data. They run against the local test server (no sandbox cluster needed).
 Run with: uv run pytest tests/e2e/test_wizard_flows.py -v --timeout=60
 """
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from playwright.sync_api import Page
 from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from playwright.sync_api import Page
 
 pytestmark = [pytest.mark.e2e]
 

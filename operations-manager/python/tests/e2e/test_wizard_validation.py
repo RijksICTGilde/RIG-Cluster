@@ -6,9 +6,13 @@ renders correctly, navigates between steps, and shows validation errors
 when required fields are missing.
 """
 
+from typing import TYPE_CHECKING
+
 import pytest
-from playwright.sync_api import Page
 from tests.e2e.helpers.wizard import WizardHelper
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 pytestmark = pytest.mark.e2e
 

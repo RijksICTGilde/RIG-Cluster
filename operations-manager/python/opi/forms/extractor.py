@@ -5,13 +5,15 @@ This module provides utilities to extract FormField instances
 from Pydantic models annotated with FormMeta.
 """
 
-from typing import Any, get_args, get_origin
+from typing import TYPE_CHECKING, Any, get_args, get_origin
 
 from pydantic import BaseModel
-from pydantic.fields import FieldInfo
 
 from opi.forms.field import FormField
 from opi.forms.schema import FormMeta, get_form_meta, infer_widget_type
+
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
 
 
 def extract_fields_from_model(

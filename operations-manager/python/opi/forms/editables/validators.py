@@ -71,7 +71,7 @@ class RangeValidator:
             return []
         try:
             num = float(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return ["Moet een geldig getal zijn"]
         errors: list[str] = []
         if self.min_value is not None and num < self.min_value:

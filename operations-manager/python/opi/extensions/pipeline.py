@@ -1,13 +1,15 @@
 import glob
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from opi.core.cluster_config import get_extensions
-from opi.extensions.base import ManifestExtension
 from opi.extensions.registry_rewrite import RegistryRewriteExtension
+
+if TYPE_CHECKING:
+    from opi.extensions.base import ManifestExtension
 
 logger = logging.getLogger(__name__)
 

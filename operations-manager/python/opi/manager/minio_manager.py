@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class MinioManager:
     """Manager for MinIO object storage operations and resources."""
 
-    def __init__(self, project_manager: "ProjectManager") -> None:
+    def __init__(self, project_manager: ProjectManager) -> None:
         """
         Initialize the MinioManager with reference to ProjectManager.
 
@@ -681,7 +681,7 @@ class MinioManager:
         deployment_name: str,
         deployment_data: dict[str, Any],
         project_data: dict[str, Any],
-        marked_for_deletion_service: "MarkedForDeletionService | None" = None,
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
         """Handle cleanup when MinIO service is removed from a deployment.
 

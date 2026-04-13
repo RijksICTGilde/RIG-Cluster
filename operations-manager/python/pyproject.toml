@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = [{name = "Robbert", email = "robbert.uittenbroek@rijksoverheid.nl"}]
 license = {text = "EUPL-1.2"}
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.14,<3.15"
 keywords = ["A Deployment Manager"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -90,7 +90,7 @@ dev = [
 # Ruff settings: https://docs.astral.sh/ruff/configuration/
 [tool.ruff]
 line-length = 120
-target-version = "py313"
+target-version = "py314"
 src = ["opi","tests"]
 exclude = ["opi/migrations"]
 
@@ -143,7 +143,7 @@ ignore = [
 max-complexity = 30
 
 [tool.pyright]
-pythonVersion = "3.13"
+pythonVersion = "3.14"
 typeCheckingMode = "basic"
 reportMissingImports = true
 reportMissingTypeStubs = false

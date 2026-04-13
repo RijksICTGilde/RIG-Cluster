@@ -298,7 +298,6 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
         Dict matching the V1 sync response structure with status, message,
         project info, urls, and processing details.
     """
-    from typing import Any
 
     from opi.manager.project_manager import create_project_manager
     from opi.services.project_service import get_project_service
@@ -435,7 +434,6 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
     Returns:
         Dict with status, message, project info, urls, and processing details.
     """
-    from typing import Any
 
     from opi.manager.project_manager import create_project_manager
     from opi.services.project_service import get_project_service

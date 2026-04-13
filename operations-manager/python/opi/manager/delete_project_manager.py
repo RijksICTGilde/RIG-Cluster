@@ -1357,7 +1357,7 @@ class DeleteProjectManager:
                         f"Using deferred deletion for {project_name}/{deployment_name} "
                         f"(data-retention-period: {retention_period}, {retention_hours}h)"
                     )
-                except (KeyError, ValueError):
+                except KeyError, ValueError:
                     logger.warning(
                         "Database pool not available - cannot use deferred deletion, falling back to immediate deletion"
                     )

@@ -6,8 +6,10 @@ Provides CRUD operations for the users table (email + full name).
 import logging
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from opi.core.database_pool import DatabasePool
+if TYPE_CHECKING:
+    from opi.core.database_pool import DatabasePool
 
 logger = logging.getLogger(__name__)
 

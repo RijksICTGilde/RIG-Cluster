@@ -35,9 +35,7 @@ class DatabaseManager:
     All database operations are performed on this bound server.
     """
 
-    def __init__(
-        self, project_manager: "ProjectManager", db_host: str, admin_username: str, admin_password: str
-    ) -> None:
+    def __init__(self, project_manager: ProjectManager, db_host: str, admin_username: str, admin_password: str) -> None:
         """
         Initialize the DatabaseManager bound to one PostgreSQL server.
 
@@ -1006,7 +1004,7 @@ class DatabaseManager:
         deployment_name: str,
         deployment_data: dict[str, Any],
         project_data: dict[str, Any],
-        marked_for_deletion_service: "MarkedForDeletionService | None" = None,
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
         """Handle cleanup when PostgreSQL service is removed from a deployment.
 

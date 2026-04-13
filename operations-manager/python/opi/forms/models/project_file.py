@@ -538,7 +538,7 @@ class ProjectFileModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
-    def validate_admin_user_exists(self) -> "ProjectFileModel":
+    def validate_admin_user_exists(self) -> ProjectFileModel:
         """Ensure at least one user has admin role."""
         if not self.users:
             return self  # Empty users list is handled by min_items constraint
@@ -549,7 +549,7 @@ class ProjectFileModel(BaseModel):
         return self
 
     @classmethod
-    def from_yaml_dict(cls, data: dict) -> "ProjectFileModel":
+    def from_yaml_dict(cls, data: dict) -> ProjectFileModel:
         """
         Create a ProjectFileModel from a parsed YAML dict.
 

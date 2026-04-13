@@ -63,11 +63,11 @@ class ProjectInfo:
 # Simple in-memory storage for projects only
 _projects: dict[str, ProjectInfo] = {}
 # Store TaskProgressManager instances per project
-_project_managers: dict[str, "TaskProgressManager"] = {}
+_project_managers: dict[str, TaskProgressManager] = {}
 # Track active monitoring tasks to prevent duplicate monitoring loops per project
-_active_monitoring_tasks: dict[str, "asyncio.Task[None]"] = {}
+_active_monitoring_tasks: dict[str, asyncio.Task[None]] = {}
 # Track active application monitoring tasks
-_active_app_monitoring_tasks: dict[str, "asyncio.Task[None]"] = {}
+_active_app_monitoring_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 class TaskProgressManager:
@@ -411,7 +411,7 @@ async def _monitor_task_progress(task_id: str) -> None:
     await _monitor_project_progress(task_id)
 
 
-async def monitor_argocd_deployment(task_id: str, project_name: str, progress_manager: "TaskProgressManager") -> None:
+async def monitor_argocd_deployment(task_id: str, project_name: str, progress_manager: TaskProgressManager) -> None:
     """
     Monitor ArgoCD application synchronization and deployment.
 
