@@ -724,9 +724,10 @@ class TestHandleRestoreExistingDeployment:
     def restore_mocks(self):
         """Patch external dependencies of handle_restore for existing deployment path."""
         _thb = "opi.core.task_handlers_backup"
+        _bt = "opi.core.backup_tasks"
         with (
             patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
-            patch(f"{_thb}._restore_single_resource") as mock_restore_single,
+            patch(f"{_bt}._restore_single_resource") as mock_restore_single,
             patch(f"{_thb}._provision_deployment_infrastructure") as mock_provision,
         ):
             mock_project = MagicMock()
@@ -863,12 +864,13 @@ class TestHandleRestoreNewDeployment:
     def new_deploy_mocks(self):
         """Patch external dependencies for the new deployment restore path."""
         _thb = "opi.core.task_handlers_backup"
+        _bt = "opi.core.backup_tasks"
         with (
             patch(f"{_thb}._create_deployment_from_source") as mock_create,
             patch(f"{_thb}._pre_restore_pvcs") as mock_pre_restore,
             patch(f"{_thb}._provision_deployment_infrastructure") as mock_provision,
             patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
-            patch(f"{_thb}._restore_single_resource") as mock_restore_single,
+            patch(f"{_bt}._restore_single_resource") as mock_restore_single,
         ):
             mock_create.return_value = None
             mock_pre_restore.return_value = None
@@ -1067,10 +1069,11 @@ class TestCreateDeploymentFromSourceYAML:
         mock_project.data = project_data
         mock_project.filename = "test-project.yaml"
 
+        _bt = "opi.core.backup_tasks"
         with (
-            patch("opi.services.project_service.get_project_service") as mock_ps,
-            patch("opi.handlers.project_file_handler.save_project_file") as mock_save,
-            patch("opi.connectors.git.create_git_connector_for_project_files") as mock_git,
+            patch(f"{_bt}.get_project_service") as mock_ps,
+            patch(f"{_bt}.save_project_file") as mock_save,
+            patch(f"{_bt}.create_git_connector_for_project_files") as mock_git,
         ):
             mock_ps.return_value.get_project.return_value = mock_project
             mock_ps.return_value.load_project_from_data = MagicMock()
