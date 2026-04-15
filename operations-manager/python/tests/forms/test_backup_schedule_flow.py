@@ -224,6 +224,7 @@ class TestBackupScheduleOptionsProvider:
         values = [o["value"] for o in provider.get_options()]
         assert len(values) == len(set(values))
 
+
 class TestBackupScheduleTimeOptionsProvider:
     """Tests for the backup schedule time options provider."""
 
