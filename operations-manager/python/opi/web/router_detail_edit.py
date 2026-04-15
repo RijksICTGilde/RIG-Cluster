@@ -1313,6 +1313,11 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
             "status": "failed",
             "error": "Taak niet gevonden",
         }
+        rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
+        process_components = templates.env.filters.get("process_components")
+        if process_components:
+            rendered = str(process_components(rendered))
+        return HTMLResponse(content=rendered)
 
     context = _v2_task_to_template_context(task, project_name)
     context["task_id"] = task_id

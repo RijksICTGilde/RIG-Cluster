@@ -262,7 +262,11 @@ async def run_restore_task(
             create_task = task_progress.add_task("Deployment aanmaken")
             try:
                 await _create_deployment_from_source(
-                    project_name, target_deployment, source_deployment, deployment_config=deployment_config
+                    project_name,
+                    target_deployment,
+                    source_deployment,
+                    deployment_config=deployment_config,
+                    backup_items=backup_items,
                 )
             except Exception as e:
                 task_progress.fail_task(create_task, str(e))

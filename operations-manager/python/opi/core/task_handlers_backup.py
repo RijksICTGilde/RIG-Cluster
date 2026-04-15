@@ -348,6 +348,20 @@ async def handle_restore(
 
             if all_success:
                 progress.complete_task(restore_task)
+
+                # Re-provision infrastructure to update credentials and regenerate manifests.
+                # The restore may have changed database passwords (new versioned database),
+                # so process_project_from_git ensures K8s secrets match the actual credentials.
+                infra_task = progress.add_task("Manifesten bijwerken")
+                try:
+                    await _provision_deployment_infrastructure(project_name, target_deployment, progress)
+                    progress.complete_task(infra_task)
+                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
+                    logger.exception("Failed to re-provision after restore for %s/%s", project_name, target_deployment)
+                    progress.fail_task(infra_task, str(e))
+                    progress.fail_project(f"Herstel gelukt maar manifesten bijwerken mislukt: {e}")
+                    return {"success": False, "error": str(e)}
+
                 progress.complete_project()
             else:
                 progress.fail_task(restore_task, "Een of meer herstelbewerkingen zijn mislukt")

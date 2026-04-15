@@ -116,7 +116,7 @@
                         size="sm"
                         showIcon="after"
                         icon="externe-link"
-                        @click="window.open('{{ link.url }}', '_blank')" />
+                        @click="window.open({{ link.url | tojson }}, '_blank')" />
                     {% endfor %}
                 </c-layout-flow>
             </c-layout-flow>

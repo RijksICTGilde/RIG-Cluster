@@ -727,6 +727,7 @@ class TestHandleRestoreExistingDeployment:
         with (
             patch(f"{_thb}._resolve_deployment_info") as mock_resolve,
             patch(f"{_thb}._restore_single_resource") as mock_restore_single,
+            patch(f"{_thb}._provision_deployment_infrastructure") as mock_provision,
         ):
             mock_project = MagicMock()
             mock_project.model_dump.return_value = {"name": "test-project"}
@@ -737,10 +738,12 @@ class TestHandleRestoreExistingDeployment:
                 "local",
             )
             mock_restore_single.return_value = None  # async, returns None on success
+            mock_provision.return_value = None
 
             yield {
                 "resolve": mock_resolve,
                 "restore_single": mock_restore_single,
+                "provision": mock_provision,
             }
 
     def test_restore_existing_all_items(self, restore_mocks) -> None:
@@ -915,13 +918,18 @@ class TestHandleRestoreNewDeployment:
 
         # Verify call order
         new_deploy_mocks["create"].assert_awaited_once_with(
-            "test-project", "staging", "prod", deployment_config={"subdomain": "staging"}
+            "test-project",
+            "staging",
+            "prod",
+            deployment_config={"subdomain": "staging"},
+            backup_items=payload["backup_items"],
         )
         new_deploy_mocks["pre_restore"].assert_awaited_once()
         new_deploy_mocks["provision"].assert_awaited_once()
-        new_deploy_mocks["resolve"].assert_awaited_once()
-        # Only non-PVC items go through _restore_single_resource
-        assert new_deploy_mocks["restore_single"].await_count == 1
+        # New deployment path does not call resolve or restore_single:
+        # database/minio data is restored during provisioning via clone-from.
+        new_deploy_mocks["resolve"].assert_not_awaited()
+        new_deploy_mocks["restore_single"].assert_not_awaited()
 
     def test_new_deployment_pvc_only(self, new_deploy_mocks) -> None:
         """New deployment with only PVC items: no resolve or single-restore needed."""
@@ -992,11 +1000,10 @@ class TestHandleRestoreNewDeployment:
         new_deploy_mocks["resolve"].assert_not_awaited()
         new_deploy_mocks["restore_single"].assert_not_awaited()
 
-    def test_new_deployment_non_pvc_failure_partial(self, new_deploy_mocks) -> None:
-        """If non-PVC restore fails, result is partial failure."""
+    def test_new_deployment_db_only_no_restore_single(self, new_deploy_mocks) -> None:
+        """Database-only items are restored during provisioning, not via restore_single."""
         from opi.core.task_handlers_backup import handle_restore
 
-        new_deploy_mocks["restore_single"].side_effect = RuntimeError("DB restore failed")
         payload = {
             "project_name": "test-project",
             "backup_run_id": "20260325020000",
@@ -1012,11 +1019,12 @@ class TestHandleRestoreNewDeployment:
                 },
             ],
         }
-        progress = _make_progress()
-        result = _run(handle_restore(payload, progress))
+        result = _run(handle_restore(payload, _make_progress()))
+        assert result["success"] is True
         new_deploy_mocks["create"].assert_awaited_once()
         new_deploy_mocks["provision"].assert_awaited_once()
-        progress.fail_project.assert_called()
+        # Non-PVC items are restored during provisioning, not via restore_single
+        new_deploy_mocks["restore_single"].assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
