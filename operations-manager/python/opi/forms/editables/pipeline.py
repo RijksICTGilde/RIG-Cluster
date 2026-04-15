@@ -65,19 +65,25 @@ def validate_fields(
 def convert_fields(
     field_map: dict[str, Any],
     editables: dict[str, Editable],
+    context_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply converter.write() to each value in the field map.
 
     Returns a new dict with converted values. Fields without a converter
     are passed through unchanged. Only processes fields present in both
     ``field_map`` and ``editables``.
+
+    Args:
+        field_map: The field values to convert.
+        editables: Mapping of field names to Editable instances.
+        context_data: Optional full project/session data passed to converters.
     """
     result: dict[str, Any] = {}
 
     for field_name, value in field_map.items():
         editable = editables.get(field_name)
         if editable and editable.converter and value is not None:
-            result[field_name] = editable.converter.write(value)
+            result[field_name] = editable.converter.write(value, context_data=context_data)
         else:
             result[field_name] = value
 
