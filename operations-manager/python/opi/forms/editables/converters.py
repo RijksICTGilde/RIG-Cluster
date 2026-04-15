@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 import yaml
 
 from opi.core.rrule_utils import build_rrule, format_rrule, parse_rrule
-from opi.forms.editables.service_path import smart_get_value
 
 logger = logging.getLogger(__name__)
 
@@ -546,21 +544,6 @@ class AGEEncryptConverter:
 # ---------------------------------------------------------------------------
 # RRULE schedule converters
 # ---------------------------------------------------------------------------
-
-
-def _get_schedule_from_context(context_data: dict[str, Any] | None, path_hint: str) -> str:
-    """Extract the schedule RRULE value from context_data using path proximity.
-
-    The transient fields live at paths like ``deployments[0]/backup/schedule:time``.
-    The parent RRULE is at ``deployments[0]/backup/schedule``.
-    """
-    if not context_data:
-        return ""
-
-    # Extract the parent path by removing the :suffix
-    parent_path = re.sub(r":[^/]+$", "", path_hint)
-    value = smart_get_value(context_data, parent_path)
-    return str(value) if value else ""
 
 
 class RRuleFrequencyConverter:
