@@ -8,6 +8,7 @@ infrastructure, and URL handling.
 
 from opi.utils.naming import (
     HostnameFormat,
+    ensure_fqdn,
     ensure_url_has_protocol,
     extract_domain_from_url,
     find_root_component,
@@ -1068,3 +1069,28 @@ class TestGetDeploymentHostnamesBareDomain:
             cluster=_CLUSTER,
         )
         assert hostnames.count("voorbeeld.nl") == 1
+
+
+class TestEnsureFqdn:
+    """Tests for ensure_fqdn — used to qualify service names for cross-namespace pods."""
+
+    def test_short_name_gets_qualified(self):
+        result = ensure_fqdn("rig-db-rw")
+        assert result == "rig-db-rw.rig-system.svc.cluster.local"
+
+    def test_already_qualified_unchanged(self):
+        result = ensure_fqdn("rig-db-rw.rig-system.svc.cluster.local")
+        assert result == "rig-db-rw.rig-system.svc.cluster.local"
+
+    def test_short_name_with_port(self):
+        result = ensure_fqdn("minio:9000")
+        assert result == "minio.rig-system.svc.cluster.local:9000"
+
+    def test_qualified_with_port_unchanged(self):
+        result = ensure_fqdn("minio.rig-system.svc.cluster.local:9000")
+        assert result == "minio.rig-system.svc.cluster.local:9000"
+
+    def test_partial_domain_unchanged(self):
+        """A hostname with a dot is already qualified enough."""
+        result = ensure_fqdn("db.other-namespace.svc")
+        assert result == "db.other-namespace.svc"
