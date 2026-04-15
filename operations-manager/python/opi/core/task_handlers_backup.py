@@ -1,7 +1,7 @@
 """Task handlers for backup and restore operations.
 
 These handlers are registered with the TaskWorker and executed via the
-async task queue, replacing the old BackgroundTask-based approach.
+async task queue. Shared helper functions live in backup_tasks.py.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from opi.core.backup_tasks import (
     _pre_restore_pvcs,
     _provision_deployment_infrastructure,
     _resolve_deployment_info,
-    _restore_single_resource,
+    restore_items_with_progress,
 )
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.handlers.project_file_handler import create_project_file_handler
@@ -41,8 +41,7 @@ async def handle_backup(
 ) -> dict:
     """Execute a deployment backup via the async task queue.
 
-    Extracts logic from backup_tasks.run_backup_task(), using the
-    PersistentTaskProgressManager for database-backed progress tracking.
+    Uses PersistentTaskProgressManager for database-backed progress tracking.
     """
     project_name = payload["project_name"]
     deployment_name = payload["deployment_name"]
@@ -240,8 +239,7 @@ async def handle_restore(
 ) -> dict:
     """Execute a deployment restore via the async task queue.
 
-    Extracts logic from backup_tasks.run_restore_task(), using the
-    PersistentTaskProgressManager for database-backed progress tracking.
+    Uses PersistentTaskProgressManager for database-backed progress tracking.
     """
     project_name = payload["project_name"]
     backup_run_id = payload["backup_run_id"]
@@ -317,34 +315,16 @@ async def handle_restore(
             progress.complete_task(resolve_task)
 
             restore_task = progress.add_task("Backup herstellen")
-            all_success = True
-
-            for item in backup_items:
-                resource_type = item.get("resource_type", "unknown")
-                component_name = item.get("component_name", "")
-                snapshot_id = item.get("snapshot_id", "")
-                reference_name = item.get("storage_name") or item.get("reference_name", "")
-
-                label = f"{resource_type.upper()}: {component_name or reference_name}"
-                subtask = progress.add_subtask(restore_task, f"Herstellen {label}")
-
-                try:
-                    await _restore_single_resource(
-                        project_name=project_name,
-                        deployment_name=target_deployment,
-                        resource_type=resource_type,
-                        snapshot_id=snapshot_id,
-                        component_name=component_name,
-                        reference_name=reference_name,
-                        project_data=project_data,
-                        app_namespace=app_namespace,
-                        current_cluster=current_cluster,
-                    )
-                    progress.complete_subtask(subtask)
-                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
-                    all_success = False
-                    progress.fail_subtask(subtask, str(e))
-                    logger.exception("Failed to restore %s for %s/%s", label, project_name, target_deployment)
+            all_success = await restore_items_with_progress(
+                backup_items=backup_items,
+                project_name=project_name,
+                target_deployment=target_deployment,
+                project_data=project_data,
+                app_namespace=app_namespace,
+                current_cluster=current_cluster,
+                progress=progress,
+                restore_task_id=restore_task,
+            )
 
             if all_success:
                 progress.complete_task(restore_task)
