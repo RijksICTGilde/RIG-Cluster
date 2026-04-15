@@ -106,7 +106,7 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     # Task 2: Delete deployment resources
     delete_task = progress.add_task("Deleting deployment resources")
     try:
-        deletion_results = await project_manager.delete_deployment(project_name, deployment_name)
+        deletion_results = await project_manager.delete_deployment(project_name, deployment_name, force=True)
 
         success = deletion_results.get("success", False) if isinstance(deletion_results, dict) else False
         if success:

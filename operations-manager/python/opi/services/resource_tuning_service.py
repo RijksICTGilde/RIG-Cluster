@@ -250,7 +250,7 @@ async def _analyze_component_resources(
             f'container="app"}}'
             f"[{window_hours}h])"
         )
-        max_results = await connector.custom_query(max_query)
+        max_results = connector.custom_query(max_query)
         if max_results:
             for result in max_results:
                 value = float(result.get("value", [0, 0])[1])
@@ -263,7 +263,7 @@ async def _analyze_component_resources(
             f'container="app"}}'
             f"[{window_hours}h])"
         )
-        avg_results = await connector.custom_query(avg_query)
+        avg_results = connector.custom_query(avg_query)
         if avg_results:
             for result in avg_results:
                 value = float(result.get("value", [0, 0])[1])
@@ -281,7 +281,7 @@ async def _analyze_component_resources(
             f'namespace="{namespace}", '
             f'pod=~"{unique_name}.*"}}'
         )
-        oom_results = await connector.custom_query(oom_query)
+        oom_results = connector.custom_query(oom_query)
         has_oom_kills = bool(oom_results)
     except Exception as e:
         logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")

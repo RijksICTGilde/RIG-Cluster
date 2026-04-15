@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
 
     from opi.forms.editables.editable import EditableEnforcer
     from opi.forms.layout import LayoutElement
@@ -46,4 +46,10 @@ class FormSection:
     Receives ``(project_data, wizard_data)`` and mutates ``project_data``
     in place.  Used for cross-list side effects like distributing a new
     component reference to selected deployments.
+    """
+    after_save: Callable[[Any], Coroutine[Any, Any, None]] | None = None
+    """Optional async hook called after the project file is saved.
+
+    Receives the FastAPI ``Request`` so it can access ``app.state``.
+    Errors are logged, not raised.
     """

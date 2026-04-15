@@ -51,6 +51,14 @@ class BackupScheduler:
             "Backup scheduler started (cluster=%s, interval=%ds)", self._cluster, settings.BACKUP_SCHEDULER_INTERVAL
         )
 
+    async def trigger_check(self) -> None:
+        """Run an immediate schedule check (e.g. after a schedule is saved)."""
+        logger.info("Backup scheduler: immediate check triggered")
+        try:
+            await self._check_and_schedule()
+        except Exception:
+            logger.exception("Error in triggered backup scheduler check")
+
     async def stop(self) -> None:
         """Stop the scheduler loop."""
         self._running = False
