@@ -78,6 +78,12 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True) -
         else:
             return str(value)
 
+        # Convert UTC to Amsterdam time for display
+        from zoneinfo import ZoneInfo
+
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(ZoneInfo("Europe/Amsterdam"))
+
         day = dt.day
         month = DUTCH_MONTHS[dt.month - 1]
         year = dt.year

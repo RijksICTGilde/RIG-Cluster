@@ -190,9 +190,20 @@ class TaskWorker:
                 # Close progress manager (final flush)
                 await progress.close()
 
-                # Mark task as completed
-                await self._task_service.complete_task(task_id, result)
-                logger.info("Task %s completed successfully", task_id)
+                # Check if the handler reported failure via its return value
+                if isinstance(result, dict) and result.get("success") is False:
+                    error_msg = result.get("error", "Task reported failure")
+                    # Handler already decided this is a permanent failure — no retries
+                    await self._task_service.fail_task(
+                        task_id=task_id,
+                        error_message=error_msg,
+                        attempt_count=1,
+                        max_attempts=0,
+                    )
+                    logger.warning("Task %s reported failure: %s", task_id, error_msg)
+                else:
+                    await self._task_service.complete_task(task_id, result)
+                    logger.info("Task %s completed successfully", task_id)
 
             except TimeoutError:
                 error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"

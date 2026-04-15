@@ -27,7 +27,6 @@ from opi.forms.visualizers.wizard_sections import (
     IDENTITY_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
-    RESTORE_NEW_DEPLOYMENT_SECTION,
     RESTORE_SELECT_SECTION,
     RESTORE_TARGET_SECTION,
     SERVICES_EDIT_SECTION,
@@ -35,6 +34,7 @@ from opi.forms.visualizers.wizard_sections import (
     TEAM_SECTION,
     build_deployment_wizard_section,
     build_domain_section,
+    build_restore_new_deployment_sections,
 )
 
 if TYPE_CHECKING:
@@ -180,13 +180,21 @@ MODAL_BACKUP_FLOW = FormFlow(
     sections=[BACKUP_SELECT_SECTION],
 )
 
-MODAL_RESTORE_FLOW = FormFlow(
-    flow_id="modal-restore",
-    title="Backup herstellen",
-    mode=FlowMode.WIZARD,
-    show_review=True,
-    sections=[RESTORE_SELECT_SECTION, RESTORE_TARGET_SECTION, RESTORE_NEW_DEPLOYMENT_SECTION],
-)
+
+def build_restore_flow(deployment_index: int = 0) -> FormFlow:
+    """Build the restore flow with new-deployment sections at the given index."""
+    return FormFlow(
+        flow_id="modal-restore",
+        title="Backup herstellen",
+        mode=FlowMode.WIZARD,
+        show_review=True,
+        sections=[
+            RESTORE_SELECT_SECTION,
+            RESTORE_TARGET_SECTION,
+            *build_restore_new_deployment_sections(deployment_index),
+        ],
+    )
+
 
 FLOW_REGISTRY: dict[str, FormFlow] = {
     CREATE_FLOW.flow_id: CREATE_FLOW,
@@ -199,7 +207,6 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_POSTGRESQL_FLOW.flow_id: MODAL_EDIT_POSTGRESQL_FLOW,
     MODAL_EDIT_AUTH_WALL_FLOW.flow_id: MODAL_EDIT_AUTH_WALL_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
-    MODAL_RESTORE_FLOW.flow_id: MODAL_RESTORE_FLOW,
 }
 
 # Lookup: service name → modal flow ID (for detail page config buttons)
@@ -319,6 +326,11 @@ def get_flow(flow_id: str, **context: Any) -> FormFlow:
     """
     if flow_id in FLOW_REGISTRY:
         return FLOW_REGISTRY[flow_id]
+
+    # Restore flow — built dynamically so the new-deployment sections
+    # target the correct deployment index (passed via context).
+    if flow_id == "modal-restore":
+        return build_restore_flow(context.get("deployment_index", 0))
 
     # Dynamic domain edit flows: modal-edit-domain-0, modal-edit-domain-1, ...
     if flow_id.startswith("modal-edit-domain-"):

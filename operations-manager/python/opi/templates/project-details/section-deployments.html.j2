@@ -122,42 +122,7 @@
             </c-layout-flow>
             {% endif %}
 
-            {# Deployment Configuration Variables #}
-            {% if deployment.configuration %}
-            <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                <c-heading type="h4" textContent="Configuratie Variabelen" />
-                <c-layout-flow gap="md">
-                    {% set variables = deployment.configuration.get('variables', {}) %}
-                    {% if variables %}
-                        {% for key, value in variables.items() %}
-                        <c-card padding="sm" backgroundColor="wit" outline="true">
-                            <c-layout-flow gap="xs">
-                                <c-layout-flow row="true" alignItems="center" gap="sm">
-                                    <c-icon icon="sleutel" size="sm" color="grijs-600" />
-                                    <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
-                                </c-layout-flow>
-                                <div style="margin-left: var(--rvo-space-lg);">
-                                    <c-secret-field value="{{ value }}" />
-                                </div>
-                            </c-layout-flow>
-                        </c-card>
-                        {% endfor %}
-
-                        {% set metadata = deployment.configuration.get('metadata', {}) %}
-                        {% if metadata.get('updated_on') %}
-                        <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-sm); border-top: 1px solid var(--rvo-color-grijs-100);">
-                            <small class="rvo-text--xs" style="display: flex; align-items: center; gap: var(--rvo-space-xs); color: var(--rvo-color-grijs-500);">
-                                <c-icon icon="info" size="sm" color="grijs-500" />
-                                Laatste update: {{ metadata.updated_on }}
-                            </small>
-                        </div>
-                        {% endif %}
-                    {% else %}
-                    <c-alert kind="info">Geen configuratie variabelen beschikbaar</c-alert>
-                    {% endif %}
-                </c-layout-flow>
-            </div>
-            {% endif %}
+            {# Deployment Configuration Variables - hidden while determining approach for secret display #}
 
             {# User Configuration Variables for components in this deployment #}
             {% set deployment_components = deployment.components %}

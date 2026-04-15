@@ -254,13 +254,16 @@ async def handle_restore(
     try:
         if create_new_deployment:
             pvc_items = [item for item in backup_items if item.get("resource_type") == "pvc"]
-            non_pvc_items = [item for item in backup_items if item.get("resource_type") != "pvc"]
 
             # Step 1: Create new deployment
             create_task = progress.add_task("Deployment aanmaken")
             try:
                 await _create_deployment_from_source(
-                    project_name, target_deployment, source_deployment, deployment_config=deployment_config
+                    project_name,
+                    target_deployment,
+                    source_deployment,
+                    deployment_config=deployment_config,
+                    backup_items=backup_items,
                 )
             except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                 progress.fail_task(create_task, str(e))
@@ -286,8 +289,11 @@ async def handle_restore(
                     return {"success": False, "error": str(e)}
                 progress.complete_task(pvc_task)
 
-            # Step 3: Provision infrastructure
-            infra_task = progress.add_task("Infrastructuur aanmaken")
+            # Step 3: Provision infrastructure and restore data
+            # Database and minio data is restored by their respective managers
+            # during provisioning (clone-from type "backup" with backup_items).
+            # PVC data was pre-restored in step 2.
+            infra_task = progress.add_task("Infrastructuur aanmaken en data herstellen")
             try:
                 await _provision_deployment_infrastructure(project_name, target_deployment, progress)
             except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
@@ -295,58 +301,7 @@ async def handle_restore(
                 progress.fail_project(str(e))
                 return {"success": False, "error": str(e)}
             progress.complete_task(infra_task)
-
-            # Step 4: Restore non-PVC resources
-            if non_pvc_items:
-                resolve_task = progress.add_task("Project en deployment opzoeken")
-                try:
-                    project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
-                        project_name, target_deployment
-                    )
-                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
-                    progress.fail_task(resolve_task, str(e))
-                    progress.fail_project(str(e))
-                    return {"success": False, "error": str(e)}
-                progress.complete_task(resolve_task)
-
-                restore_task = progress.add_task("Backup herstellen")
-                all_success = True
-
-                for item in non_pvc_items:
-                    resource_type = item.get("resource_type", "unknown")
-                    component_name = item.get("component_name", "")
-                    snapshot_id = item.get("snapshot_id", "")
-                    reference_name = item.get("storage_name") or item.get("reference_name", "")
-
-                    label = f"{resource_type.upper()}: {component_name or reference_name}"
-                    subtask = progress.add_subtask(restore_task, f"Herstellen {label}")
-
-                    try:
-                        await _restore_single_resource(
-                            project_name=project_name,
-                            deployment_name=target_deployment,
-                            resource_type=resource_type,
-                            snapshot_id=snapshot_id,
-                            component_name=component_name,
-                            reference_name=reference_name,
-                            project_data=project_data,
-                            app_namespace=app_namespace,
-                            current_cluster=current_cluster,
-                        )
-                        progress.complete_subtask(subtask)
-                    except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
-                        all_success = False
-                        progress.fail_subtask(subtask, str(e))
-                        logger.exception("Failed to restore %s for %s/%s", label, project_name, target_deployment)
-
-                if all_success:
-                    progress.complete_task(restore_task)
-                    progress.complete_project()
-                else:
-                    progress.fail_task(restore_task, "Een of meer herstelbewerkingen zijn mislukt")
-                    progress.fail_project("Herstel gedeeltelijk mislukt")
-            else:
-                progress.complete_project()
+            progress.complete_project()
 
         else:
             # Existing deployment restore

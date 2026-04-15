@@ -5,7 +5,7 @@ from __future__ import annotations
 from opi.web.router_detail_edit import (
     _apply_list_item_merge,
     _detect_list_target,
-    _seed_components_from_clone_source,
+    _seed_components_for_new_deployment,
 )
 
 
@@ -130,7 +130,7 @@ class TestNewDeploymentSystemFields:
 
 
 class _FakeState:
-    """Minimal state mock for _seed_components_from_clone_source tests."""
+    """Minimal state mock for _seed_components_for_new_deployment tests."""
 
     def __init__(self, template_data: dict, step_data: dict | None = None) -> None:
         self.template_data = template_data
@@ -167,8 +167,8 @@ class _FakeState:
             self.active_sections.append(section_id)
 
 
-class TestSeedComponentsFromCloneSource:
-    """Tests for _seed_components_from_clone_source."""
+class TestSeedComponentsForNewDeployment:
+    """Tests for _seed_components_for_new_deployment."""
 
     def test_clone_from_string_fills_images_from_source(self) -> None:
         state = _FakeState(
@@ -194,7 +194,7 @@ class TestSeedComponentsFromCloneSource:
                 },
             },
         )
-        _seed_components_from_clone_source(state, "modal-add-deployment-1")
+        _seed_components_for_new_deployment(state, 1)
         seeded = state.step_data.get("add-deployment-components-1", {})
         components = seeded.get("deployments", [{}])[1].get("components", [])
         assert len(components) == 2
@@ -232,7 +232,7 @@ class TestSeedComponentsFromCloneSource:
                 },
             },
         )
-        _seed_components_from_clone_source(state, "modal-add-deployment-1")
+        _seed_components_for_new_deployment(state, 1)
         seeded = state.step_data.get("add-deployment-components-1", {})
         components = seeded.get("deployments", [{}])[1].get("components", [])
         assert len(components) == 2
@@ -257,7 +257,7 @@ class TestSeedComponentsFromCloneSource:
                 },
             },
         )
-        _seed_components_from_clone_source(state, "modal-add-deployment-1")
+        _seed_components_for_new_deployment(state, 1)
         seeded = state.step_data.get("add-deployment-components-1", {})
         components = seeded.get("deployments", [{}])[1].get("components", [])
         assert len(components) == 2
@@ -280,13 +280,13 @@ class TestSeedComponentsFromCloneSource:
                 },
             },
         )
-        _seed_components_from_clone_source(state, "modal-add-deployment-1")
+        _seed_components_for_new_deployment(state, 1)
         seeded = state.step_data.get("add-deployment-components-1", {})
         components = seeded.get("deployments", [{}])[1].get("components", [])
         assert len(components) == 1
         assert components[0] == {"reference": "app", "image": ""}
 
-    def test_invalid_flow_id_does_nothing(self) -> None:
+    def test_out_of_range_index_does_nothing(self) -> None:
         state = _FakeState(template_data={"deployments": []})
-        _seed_components_from_clone_source(state, "modal-add-deployment-abc")
+        _seed_components_for_new_deployment(state, 5)
         assert len(state.step_data) == 0

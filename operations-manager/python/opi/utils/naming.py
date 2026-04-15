@@ -7,7 +7,6 @@ including deployments, services, PVCs, and other manifest resources.
 
 import logging
 import re
-from datetime import UTC
 from enum import Enum
 from typing import Any, Literal, get_args
 
@@ -2082,15 +2081,56 @@ def generate_backup_run_id() -> str:
     that are part of the same backup operation. This allows for consistent
     restoration of an entire deployment.
 
-    Format: YYYYMMDDHHmmss (UTC)
+    Format: YYYYMMDDHHmmss (Europe/Amsterdam local time)
 
     Returns:
         Backup run ID string
 
     Example:
         >>> generate_backup_run_id()
-        '20260116163045'
+        '20260116173045'
     """
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-    return datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    return datetime.now(ZoneInfo("Europe/Amsterdam")).strftime("%Y%m%d%H%M%S")
+
+
+def ensure_fqdn(hostname: str) -> str:
+    """Ensure a Kubernetes service hostname is fully qualified.
+
+    Short names like ``rig-db-rw`` only resolve within the same namespace.
+    Pods running in other namespaces need the FQDN. This function appends
+    the OPI namespace suffix when the hostname isn't already qualified.
+
+    Args:
+        hostname: Service hostname, e.g. ``rig-db-rw`` or
+            ``rig-db-rw.rig-system.svc.cluster.local``
+
+    Returns:
+        Fully qualified hostname.
+
+    Examples:
+        >>> ensure_fqdn("rig-db-rw")
+        'rig-db-rw.rig-system.svc.cluster.local'
+        >>> ensure_fqdn("rig-db-rw.rig-system.svc.cluster.local")
+        'rig-db-rw.rig-system.svc.cluster.local'
+        >>> ensure_fqdn("my-db:5432")
+        'my-db.rig-system.svc.cluster.local:5432'
+    """
+    # Strip port if present
+    port_suffix = ""
+    host = hostname
+    if ":" in host and not host.endswith(".local"):
+        host, port_suffix = host.rsplit(":", 1)
+        port_suffix = f":{port_suffix}"
+
+    if "." in host:
+        return f"{host}{port_suffix}"
+
+    from opi.core.cluster_config import CLUSTER_CONFIG
+    from opi.core.config import settings
+
+    cluster_conf = CLUSTER_CONFIG.get(settings.CLUSTER_MANAGER, {})
+    namespace = cluster_conf.get("namespace", "rig-system")
+    return f"{host}.{namespace}.svc.cluster.local{port_suffix}"
