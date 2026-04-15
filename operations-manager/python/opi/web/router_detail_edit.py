@@ -171,6 +171,16 @@ def _require_project_member_access(request: Request, project_name: str):
     return project, user_email
 
 
+def _extract_deployment_index_from_sections(state: WizardState) -> int | None:
+    """Extract deployment index from add-deployment section IDs in the state."""
+    for section_id in state.active_sections:
+        if section_id.startswith("add-deployment-info-"):
+            suffix = section_id.removeprefix("add-deployment-info-")
+            if suffix.isdigit():
+                return int(suffix)
+    return None
+
+
 def _is_backup_restore_flow(flow_id: str) -> bool:
     """Check if a flow ID is a backup or restore flow."""
     return flow_id in ("modal-backup", "modal-restore")
@@ -190,10 +200,14 @@ def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[st
         return {"component_count": len(components)}
     if flow_id.startswith("modal-edit-component-") and state.template_data.get("is_new"):
         return {"is_new": True}
+    if flow_id == "modal-restore":
+        # The new deployment index = total deployments - 1 (the appended empty slot)
+        deployments = state.template_data.get("deployments", [])
+        return {"deployment_index": len(deployments) - 1}
     return {}
 
 
-def _pad_sparse_submission(body: dict[str, Any], flow_id: str) -> dict[str, Any]:
+def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str = "") -> dict[str, Any]:
     """Pad sparse arrays collapsed by json-enc's cleanArrays.
 
     Single-item edit flows (component-N, deployment-N, domain-N) produce
@@ -201,12 +215,17 @@ def _pad_sparse_submission(body: dict[str, Any], flow_id: str) -> dict[str, Any]
     json-enc's ``cleanArrays`` collapses ``{"1": {...}}`` into ``[{...}]``,
     losing the original index.  This re-pads the array so that
     ``get_value`` finds data at the correct position.
+
+    Uses flow_id first; falls back to section_id for flows like
+    modal-restore where the index is in the section, not the flow.
     """
+    # Try flow_id first (most flows encode the index there)
     for prefix, key in [
         ("modal-edit-component-", "components"),
         ("modal-edit-deployment-", "deployments"),
         ("modal-edit-domain-", "deployments"),
         ("modal-add-deployment-", "deployments"),
+        ("modal-edit-backup-schedule-", "deployments"),
     ]:
         if flow_id.startswith(prefix):
             suffix = flow_id.removeprefix(prefix)
@@ -214,10 +233,26 @@ def _pad_sparse_submission(body: dict[str, Any], flow_id: str) -> dict[str, Any]
                 target_idx = int(suffix)
                 items = body.get(key)
                 if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
-                    # Insert empty placeholders so the actual data sits at target_idx
                     padded = [{} for _ in range(target_idx)] + items
                     return {**body, key: padded}
             break
+
+    # Fall back to section_id (e.g. "add-deployment-info-1" → deployments index 1)
+    for prefix, key in [
+        ("add-deployment-info-", "deployments"),
+        ("add-deployment-components-", "deployments"),
+        ("domain-edit-", "deployments"),
+    ]:
+        if section_id.startswith(prefix):
+            suffix = section_id.removeprefix(prefix)
+            if suffix.isdigit():
+                target_idx = int(suffix)
+                items = body.get(key)
+                if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
+                    padded = [{} for _ in range(target_idx)] + items
+                    return {**body, key: padded}
+            break
+
     return body
 
 
@@ -274,18 +309,13 @@ def _apply_list_item_merge(
         existing_list[idx] = item_data
 
 
-def _seed_components_from_clone_source(state: Any, flow_id: str) -> None:
+def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
     """Pre-fill the components step when adding a new deployment.
 
     Always seeds ALL project-level components. When clone-from is set,
     images are copied from the source deployment's components. Otherwise
     image fields are left empty.
     """
-    # Extract deployment index from flow_id
-    suffix = flow_id.removeprefix("modal-add-deployment-")
-    if not suffix.isdigit():
-        return
-    dep_idx = int(suffix)
 
     merged = state.get_merged_data()
     deployments = merged.get("deployments", [])
@@ -517,21 +547,22 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
                 components.append(_empty_sequence_item(COMPONENTS_SEQUENCE))
             project_data = {**project_data, "components": components}
 
-    flow = get_flow(flow_id, **flow_context)
-
-    # When adding a new deployment, ensure an empty slot at the target index.
-    # Always use len(deployments) as the actual index - the URL index may be
-    # stale if the page wasn't reloaded after a previous add.
-    if flow_id.startswith("modal-add-deployment-"):
+    # When adding a new deployment (or restoring to a new one), append an
+    # empty slot so the form targets that slot instead of an existing deployment.
+    if flow_id.startswith("modal-add-deployment-") or flow_id == "modal-restore":
         from opi.core.config import settings
 
         deployments = list(project_data.get("deployments", []))
         idx = len(deployments)
         deployments.append({"cluster": settings.CLUSTER_MANAGER})
         project_data = {**project_data, "deployments": deployments}
-        # Rebuild flow with the correct index
-        flow_id = f"modal-add-deployment-{idx}"
-        flow = get_flow(flow_id, **flow_context)
+
+        if flow_id.startswith("modal-add-deployment-"):
+            flow_id = f"modal-add-deployment-{idx}"
+        else:
+            flow_context["deployment_index"] = idx
+
+    flow = get_flow(flow_id, **flow_context)
 
     # Populate transient fields for deferred editables (e.g. custom domain text input)
     processor = EditableFormProcessor()
@@ -579,9 +610,8 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
             c.get("name") for c in existing_components if isinstance(c, dict) and c.get("name")
         ]
 
-    # Add-deployment flows need existing names for uniqueness validation
-    # and original deployment names for clone-from options (excluding the new slot)
-    if flow_id.startswith("modal-add-deployment-"):
+    # Add-deployment and restore flows need existing names for uniqueness validation
+    if flow_id.startswith("modal-add-deployment-") or flow_id == "modal-restore":
         existing_deployments = (project.data or {}).get("deployments", [])
         existing_names = [d.get("name") for d in existing_deployments if isinstance(d, dict) and d.get("name")]
         state.template_data["existing_deployment_names"] = existing_names
@@ -673,7 +703,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     if seq_action in ("add", "remove"):
         yaml_data = state.get_merged_data()
         processor = EditableFormProcessor()
-        padded_body = _pad_sparse_submission(body, flow_id)
+        padded_body = _pad_sparse_submission(body, flow_id, section_id)
         merged, _err = await processor.process_json_submission(
             padded_body,
             section.editables,
@@ -698,7 +728,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
-    submitted_data = _pad_sparse_submission(body, flow_id)
+    submitted_data = _pad_sparse_submission(body, flow_id, section_id)
 
     # Re-render only (preview update, e.g. service checkbox toggled) — process
     # the submission to get merged data but skip validation so newly-visible
@@ -798,13 +828,13 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         if next_section.section_id == "restore-target":
             _enrich_restore_target_context(state)
 
-        # Pre-fill components from clone source when adding a deployment
-        if (
-            flow_id.startswith("modal-add-deployment-")
-            and section_id.startswith("add-deployment-info-")
-            and next_section.section_id.startswith("add-deployment-components-")
+        # Pre-fill components when navigating from info to components step
+        if section_id.startswith("add-deployment-info-") and next_section.section_id.startswith(
+            "add-deployment-components-"
         ):
-            _seed_components_from_clone_source(state, flow_id)
+            suffix = section_id.removeprefix("add-deployment-info-")
+            if suffix.isdigit():
+                _seed_components_for_new_deployment(state, int(suffix))
 
         save_modal_wizard_state(request, state)
 
@@ -1135,6 +1165,14 @@ async def _modal_do_submit(
     if process_components:
         rendered = str(process_components(rendered))
 
+    # Run after_save hooks (fire-and-forget)
+    for section in active_sections:
+        if section.after_save:
+            try:
+                await section.after_save(request)
+            except Exception:
+                logger.exception("after_save hook failed for section %s", section.section_id)
+
     response = HTMLResponse(content=rendered)
     response.background = BackgroundTask(_commit_to_git, project_name, existing_data, flow_id)
     return response
@@ -1151,10 +1189,10 @@ async def _handle_backup_restore_submit(
     """Handle backup/restore wizard submission via the async task queue."""
     from opi.core.async_task_service import TaskType
     from opi.core.config import settings
+    from opi.core.task_helpers import get_task_service
 
     merged_data = state.get_merged_data()
-    task_service = getattr(request.app.state, "task_service", None)
-    bg_task: BackgroundTask | None = None
+    task_service = get_task_service(request)
 
     if action == "trigger_backup":
         deployment_name = merged_data.get("deployment_name", "")
@@ -1162,28 +1200,18 @@ async def _handle_backup_restore_submit(
         if isinstance(resource_types, str):
             resource_types = [resource_types]
 
-        payload = {
-            "project_name": project_name,
-            "deployment_name": deployment_name,
-            "resource_types": resource_types,
-        }
-
-        if task_service:
-            task = await task_service.create_task(
-                task_type=TaskType.BACKUP,
-                project_name=project_name,
-                deployment_name=deployment_name,
-                cluster=settings.CLUSTER_MANAGER,
-                payload=payload,
-            )
-            task_id = task["task_id"]
-        else:
-            # Fallback to legacy BackgroundTask approach
-            from opi.core.backup_tasks import run_backup_task
-            from opi.core.task_manager import create_task
-
-            task_id = create_task(project_name)
-            bg_task = BackgroundTask(run_backup_task, task_id, project_name, deployment_name, resource_types)
+        task = await task_service.create_task(
+            task_type=TaskType.BACKUP,
+            project_name=project_name,
+            deployment_name=deployment_name,
+            cluster=settings.CLUSTER_MANAGER,
+            payload={
+                "project_name": project_name,
+                "deployment_name": deployment_name,
+                "resource_types": resource_types,
+            },
+        )
+        task_id = task["task_id"]
 
         logger.info(
             "Starting backup for %s/%s (task=%s, types=%s)",
@@ -1203,9 +1231,12 @@ async def _handle_backup_restore_submit(
 
         deployment_config: dict[str, Any] | None = None
         if create_new_deployment:
+            # Find the new deployment index from the section ID
+            # (e.g. "add-deployment-info-1" → index 1)
             deployments = merged_data.get("deployments", [])
-            if deployments:
-                deployment_config = deployments[0]
+            new_dep_idx = _extract_deployment_index_from_sections(state)
+            if new_dep_idx is not None and new_dep_idx < len(deployments):
+                deployment_config = deployments[new_dep_idx]
             target_deployment = deployment_config.get("name", "") if deployment_config else ""
         else:
             target_deployment = merged_data.get("target_deployment", "")
@@ -1220,41 +1251,22 @@ async def _handle_backup_restore_submit(
                         target_deployment = source_deployment
                     break
 
-        payload = {
-            "project_name": project_name,
-            "backup_run_id": backup_run_id,
-            "target_deployment": target_deployment,
-            "backup_items": backup_items,
-            "create_new_deployment": create_new_deployment,
-            "source_deployment": source_deployment,
-            "deployment_config": deployment_config,
-        }
-
-        if task_service:
-            task = await task_service.create_task(
-                task_type=TaskType.RESTORE,
-                project_name=project_name,
-                deployment_name=target_deployment,
-                cluster=settings.CLUSTER_MANAGER,
-                payload=payload,
-            )
-            task_id = task["task_id"]
-        else:
-            from opi.core.backup_tasks import run_restore_task
-            from opi.core.task_manager import create_task
-
-            task_id = create_task(project_name)
-            bg_task = BackgroundTask(
-                run_restore_task,
-                task_id,
-                project_name,
-                backup_run_id,
-                target_deployment,
-                backup_items,
-                create_new_deployment=create_new_deployment,
-                source_deployment=source_deployment,
-                deployment_config=deployment_config,
-            )
+        task = await task_service.create_task(
+            task_type=TaskType.RESTORE,
+            project_name=project_name,
+            deployment_name=target_deployment,
+            cluster=settings.CLUSTER_MANAGER,
+            payload={
+                "project_name": project_name,
+                "backup_run_id": backup_run_id,
+                "target_deployment": target_deployment,
+                "backup_items": backup_items,
+                "create_new_deployment": create_new_deployment,
+                "source_deployment": source_deployment,
+                "deployment_config": deployment_config,
+            },
+        )
+        task_id = task["task_id"]
 
         logger.info(
             "Starting restore for %s/%s from run %s (task=%s, items=%d, new=%s)",
@@ -1274,11 +1286,7 @@ async def _handle_backup_restore_submit(
         rendered = str(process_components(rendered))
 
     clear_modal_wizard_state(request)
-    response = HTMLResponse(content=rendered)
-    # Only attach BackgroundTask in legacy mode (no task_service)
-    if not task_service:
-        response.background = bg_task
-    return response
+    return HTMLResponse(content=rendered)
 
 
 @detail_edit_router.get("/{project_name}/modal-wizard/progress/{task_id}", response_class=HTMLResponse)

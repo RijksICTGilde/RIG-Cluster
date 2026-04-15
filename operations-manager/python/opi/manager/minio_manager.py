@@ -209,9 +209,10 @@ class MinioManager:
                     await self.clone_minio_from_deployment(project_data, deployment, source_deployment)
                     return
                 elif clone_type == CloneFromType.BACKUP.value:
+                    # Fall through to normal resource creation, then restore data
                     logger.info(
                         f"Clone-from type 'backup' for deployment '{deployment_name}': "
-                        "skipping live MinIO clone, data will come from backup restore"
+                        "creating bucket, then restoring data from backup"
                     )
                 else:
                     raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
@@ -445,6 +446,44 @@ class MinioManager:
             )
 
             logger.info(f"MinIO resources ready for {deployment_name} (stored in secrets map)")
+
+            # Restore bucket data from backup if this is a backup clone
+            if clone_from and isinstance(clone_from, dict) and clone_from.get("type") == CloneFromType.BACKUP.value:
+                backup_items = clone_from.get("backup_items", [])
+                bucket_item = next(
+                    (item for item in backup_items if item.get("resource_type") == "bucket"),
+                    None,
+                )
+                if bucket_item:
+                    from opi.core.cluster_config import get_prefixed_namespace
+                    from opi.manager.backup.bucket_backup import create_bucket_backup_manager
+                    from opi.utils.naming import ensure_fqdn
+
+                    bucket_backup = create_bucket_backup_manager()
+                    dep_cluster = deployment.get("cluster", settings.CLUSTER_MANAGER)
+                    raw_ns = deployment.get("namespace", project_name)
+                    app_namespace = get_prefixed_namespace(dep_cluster, raw_ns)
+
+                    # Ensure FQDN — restore pod runs in the project namespace
+                    minio_host = ensure_fqdn(settings.MINIO_HOST)
+                    minio_endpoint = f"https://{minio_host}" if settings.MINIO_USE_TLS else f"http://{minio_host}"
+
+                    result = await bucket_backup.restore_bucket(
+                        cluster=dep_cluster,
+                        namespace=app_namespace,
+                        reference_name=bucket_item.get("reference_name", ""),
+                        target_minio_endpoint=minio_endpoint,
+                        target_bucket_name=bucket_name,
+                        target_access_key=settings.MINIO_ADMIN_ACCESS_KEY,
+                        target_secret_key=settings.MINIO_ADMIN_SECRET_KEY,
+                        snapshot_id=bucket_item.get("snapshot_id"),
+                        project_name=project_name,
+                    )
+                    if result.success:
+                        logger.info(f"Bucket restored from backup for {deployment_name}")
+                        self.project_manager.report_clone_performed(deployment_name, "minio-storage", None)
+                    else:
+                        raise RuntimeError(f"Bucket restore from backup failed: {result.error}")
 
         finally:
             if progress_manager and minio_task:

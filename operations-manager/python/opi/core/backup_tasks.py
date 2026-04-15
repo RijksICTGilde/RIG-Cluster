@@ -420,9 +420,7 @@ async def run_restore_task(
                     await _provision_deployment_infrastructure(project_name, target_deployment, task_progress)
                     task_progress.complete_task(infra_task)
                 except Exception as e:
-                    logger.exception(
-                        "Failed to re-provision after restore for %s/%s", project_name, target_deployment
-                    )
+                    logger.exception("Failed to re-provision after restore for %s/%s", project_name, target_deployment)
                     task_progress.fail_task(infra_task, str(e))
                     task_progress.fail_project(f"Herstel gelukt maar manifesten bijwerken mislukt: {e}")
                     return
@@ -443,11 +441,13 @@ async def _create_deployment_from_source(
     target_deployment: str,
     source_deployment: str,
     deployment_config: dict[str, Any] | None = None,
+    backup_items: list[dict[str, Any]] | None = None,
 ) -> None:
     """Create a new deployment by copying structure from a source deployment.
 
     Copies the deployment configuration (cluster, namespace, services, etc.)
-    but sets clone-from type to "backup" so managers skip live data cloning.
+    and sets clone-from type to "backup" so managers restore data from the
+    backup during infrastructure provisioning.
 
     When deployment_config is provided (from the wizard editables), the user's
     choices for domain fields (subdomain, base-domain, domain-format) and
@@ -481,72 +481,30 @@ async def _create_deployment_from_source(
         msg = f"Bron deployment '{source_deployment}' niet gevonden in project '{project_name}'"
         raise ValueError(msg)
 
-    # Copy structure, excluding fields that must be unique per deployment
-    clone_exclude_keys = [
-        "name",
-        "components",
-        "subdomain",
-        "base-domain",
-        "domain-mode",
-        "domain-format",
-        "issuer",
-        "clone-from",
-    ]
-    new_deployment: dict[str, Any] = {"name": target_deployment}
-    new_deployment.update(
-        {key: copy.deepcopy(value) for key, value in source_dep.items() if key not in clone_exclude_keys}
-    )
+    # Build new deployment from the wizard config (user's choices)
+    # and only infer system-managed fields that the wizard doesn't collect.
+    new_deployment: dict[str, Any] = copy.deepcopy(deployment_config) if deployment_config else {}
+    new_deployment["name"] = target_deployment
 
-    # Copy components from source
-    source_components = source_dep.get("components", [])
-    new_deployment["components"] = copy.deepcopy(source_components)
+    # Set clone-from for backup restore
+    new_deployment["clone-from"] = {
+        "type": CloneFromType.BACKUP.value,
+        "reference": source_deployment,
+        "mode": "once",
+        "backup_items": backup_items or [],
+    }
 
-    # Apply user-provided deployment config from wizard editables
-    if deployment_config:
-        for field in ("subdomain", "base-domain", "domain-format"):
-            if field in deployment_config:
-                new_deployment[field] = deployment_config[field]
-
-        # Handle clone-from: if user selected a deployment, use it; otherwise use backup type
-        user_clone_from = deployment_config.get("clone-from")
-        if user_clone_from and user_clone_from.get("type") == CloneFromType.DEPLOYMENT.value:
-            new_deployment["clone-from"] = user_clone_from
-        else:
-            new_deployment["clone-from"] = {
-                "type": CloneFromType.BACKUP.value,
-                "reference": source_deployment,
-                "mode": "once",
-            }
-    else:
-        # Legacy path: no deployment_config provided
-        # If source subdomain matches source name, set new subdomain to target name
-        source_subdomain = source_dep.get("subdomain")
-        source_name = source_dep.get("name")
-        if source_subdomain and source_subdomain == source_name:
-            new_deployment["subdomain"] = target_deployment
-
-        # Set clone-from to type "backup" so managers skip live cloning
-        new_deployment["clone-from"] = {
-            "type": CloneFromType.BACKUP.value,
-            "reference": source_deployment,
-            "mode": "once",
-        }
-
-    # Auto-infer cluster if not set
+    # Infer system-managed fields from source deployment or project
     if not new_deployment.get("cluster"):
-        project_clusters = project_data.get("clusters", [])
-        if len(project_clusters) == 1:
-            new_deployment["cluster"] = project_clusters[0]
+        new_deployment["cluster"] = source_dep.get("cluster") or (project_data.get("clusters", [None])[0])
 
-    # Auto-infer namespace if not set
     if not new_deployment.get("namespace"):
-        new_deployment["namespace"] = project_name
+        new_deployment["namespace"] = source_dep.get("namespace") or project_name
 
-    # Auto-infer repository if not set
     if not new_deployment.get("repository"):
-        repositories = project_data.get("repositories", [])
-        if len(repositories) == 1:
-            new_deployment["repository"] = repositories[0]["name"]
+        new_deployment["repository"] = source_dep.get("repository") or (
+            project_data.get("repositories", [{}])[0].get("name", "")
+        )
 
     # Add deployment to project data
     project_data["deployments"].append(new_deployment)
@@ -709,6 +667,7 @@ async def _pre_restore_pvcs(
             access_modes=access_modes,
             snapshot_id=snapshot_id,
             backup_enabled=backup_enabled,
+            project_name=project_name,
         )
 
         if not result.success:

@@ -345,7 +345,7 @@ class AsyncTaskService:
 
         if current_step is not None:
             set_clauses.append(f"current_step = ${param_idx}")
-            params.append(current_step)
+            params.append(current_step[:255] if len(current_step) > 255 else current_step)
             param_idx += 1
 
         if progress_percent is not None:
@@ -447,6 +447,10 @@ class AsyncTaskService:
             attempt_count: Current attempt number (before increment).
             max_attempts: Maximum number of allowed attempts.
         """
+        # Truncate to fit the DB column (varchar 255)
+        if len(error_message) > 255:
+            error_message = error_message[:252] + "..."
+
         conn = await self._pool.acquire()
         try:
             if attempt_count < max_attempts:

@@ -559,11 +559,73 @@ class DatabaseManager:
                 # Local deployment clone - extract reference name
                 clone_source_ref = clone_from.get("reference")
             elif clone_type == CloneFromType.BACKUP.value:
-                # Backup restore: skip live cloning, database will be filled by restore
-                logger.info(
-                    f"Clone-from type 'backup' for deployment '{deployment_name}': "
-                    "skipping live database clone, data will come from backup restore"
+                # Backup restore: restore database from Kopia backup
+                backup_items = clone_from.get("backup_items", [])
+                db_item = next(
+                    (item for item in backup_items if item.get("resource_type") == "database"),
+                    None,
                 )
+                if db_item:
+                    logger.info(
+                        f"Clone-from type 'backup' for deployment '{deployment_name}': "
+                        f"restoring database from snapshot {db_item.get('snapshot_id', '?')}"
+                    )
+                    from opi.core.cluster_config import get_prefixed_namespace
+                    from opi.core.config import settings
+                    from opi.manager.backup.database_backup import create_database_backup_manager
+
+                    # Ensure the target database exists before restoring into it
+                    self._ensure_connection()
+                    await self.postgres_connector.create_database(
+                        database_name=db_database,
+                        owner=db_username,
+                    )
+                    await self.postgres_connector.create_schema(
+                        schema_name=db_schema,
+                        database=db_database,
+                        owner=db_username,
+                    )
+                    logger.info(f"Created database {db_database} for backup restore")
+
+                    db_backup_manager = create_database_backup_manager()
+                    dep_cluster = deployment.get("cluster", settings.CLUSTER_MANAGER)
+                    raw_ns = deployment.get("namespace", project_name)
+                    app_namespace = get_prefixed_namespace(dep_cluster, raw_ns)
+
+                    # The restore pod runs in the project namespace, so the
+                    # database host must be a FQDN (not a short service name).
+                    from opi.utils.naming import ensure_fqdn
+
+                    restore_db_host = ensure_fqdn(self._db_host)
+                    restore_db_port = 5432
+                    if ":" in restore_db_host:
+                        restore_db_host, port_str = restore_db_host.rsplit(":", 1)
+                        restore_db_port = int(port_str) if port_str.isdigit() else 5432
+
+                    result = await db_backup_manager.restore_database(
+                        cluster=dep_cluster,
+                        namespace=app_namespace,
+                        reference_name=db_item.get("reference_name", ""),
+                        target_database_host=restore_db_host,
+                        target_database_port=restore_db_port,
+                        target_database_name=db_database,
+                        target_database_user=db_username,
+                        target_database_password=db_password,
+                        snapshot_id=db_item.get("snapshot_id"),
+                        project_name=project_name,
+                    )
+                    if result.success:
+                        logger.info(f"Database restored from backup for {deployment_name}")
+                        self.project_manager.report_clone_performed(
+                            deployment_name, ServiceType.POSTGRESQL_DATABASE.value, generation
+                        )
+                    else:
+                        raise RuntimeError(f"Database restore from backup failed: {result.error}")
+                else:
+                    logger.info(
+                        f"Clone-from type 'backup' for deployment '{deployment_name}': "
+                        "no database backup item found, skipping"
+                    )
                 clone_from = None
             else:
                 raise ValueError(f"Unknown clone-from type '{clone_type}' for deployment '{deployment_name}'")
@@ -904,18 +966,20 @@ class DatabaseManager:
 
             db_username = generate_database_name(project_name, deployment_name, None)
 
-            # Build list of all databases to delete: base name + all generational versions
-            databases_to_delete = [generate_database_name(project_name, deployment_name, None)]
+            # Build list of all databases to delete: base name + all generational versions.
+            # Check both the YAML generation and discover versions from PostgreSQL
+            # to handle cases where the YAML is out of sync (e.g. partial delete).
+            base_db_name = generate_database_name(project_name, deployment_name, None)
+            databases_to_delete = [base_db_name]
             current_generation = self._get_deployment_database_generation(project_data, deployment_name)
-            if current_generation is not None and current_generation > 0:
-                databases_to_delete.extend(
-                    generate_database_name(project_name, deployment_name, gen)
-                    for gen in range(1, current_generation + 1)
-                )
-                logger.info(
-                    f"Deployment has generation {current_generation}, "
-                    f"will attempt to delete {len(databases_to_delete)} database(s): {databases_to_delete}"
-                )
+            max_gen = current_generation or 0
+            # Also discover versions that may exist beyond what the YAML records
+            for gen in range(1, max_gen + 10):
+                versioned_name = generate_database_name(project_name, deployment_name, gen)
+                if versioned_name not in databases_to_delete:
+                    databases_to_delete.append(versioned_name)
+            if len(databases_to_delete) > 1:
+                logger.info(f"Will attempt to delete {len(databases_to_delete)} database(s): {databases_to_delete}")
 
             # Delete all databases (base + generational versions)
             for db_database in databases_to_delete:

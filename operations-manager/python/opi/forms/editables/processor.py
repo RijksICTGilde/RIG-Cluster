@@ -282,7 +282,11 @@ class EditableFormProcessor:
             ed = vis.editable
             if vis.readonly or (vis.readonly_on_edit and edit_mode):
                 continue
-            if not should_render_editable(vis, result, siblings=editables):
+            if not should_render_editable(vis, result, siblings=editables) and _read_submitted(submitted, ed) is None:
+                # The dependency may not be met in the old data yet (e.g.
+                # first-time creation of a backup schedule), but if the
+                # browser submitted a value the field was visible in the UI
+                # and must be processed — so only skip if nothing was submitted.
                 continue
 
             if vis.widget == WidgetType.GROUP:
@@ -405,7 +409,11 @@ class EditableFormProcessor:
         and applies converters for each child editable.
         """
         ed = vis.editable
-        items = get_value(submitted, ed.yaml_path)
+        virt = ed.virtualize
+        read_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
+        items = get_value(submitted, read_path)
+        if not isinstance(items, list) and virt and read_path != ed.yaml_path:
+            items = get_value(submitted, ed.yaml_path)
         if not isinstance(items, list):
             items = []
 
@@ -414,6 +422,20 @@ class EditableFormProcessor:
 
         # Write the submitted items into result (correct count + raw values)
         smart_set_value(result, ed.yaml_path, copy.deepcopy(items))
+
+        # Strip the virtual key from result so it doesn't leak into YAML
+        if virt and read_path != ed.yaml_path:
+            virtual_key = virt[1]
+            virtual_parts = read_path.split("/")
+            parent_parts = []
+            for part in virtual_parts:
+                if part.startswith(virtual_key):
+                    break
+                parent_parts.append(part)
+            parent_path = "/".join(parent_parts)
+            parent = smart_get_value(result, parent_path) if parent_path else result
+            if isinstance(parent, dict):
+                parent.pop(virtual_key, None)
 
         # In edit mode, readonly fields aren't rendered in the form and are
         # therefore absent from the submission.  Restore their values from

@@ -31,7 +31,7 @@
                 {% if dep_schedule %}
                 <c-layout-row gap="sm" verticalSpacing="center">
                     <c-icon icon="vinkje" size="md" color="groen" />
-                    <span>Backups ingeschakeld — <strong>{{ dep_schedule | rrule_schedule }}</strong></span>
+                    <span>Backups ingeschakeld: <strong>{{ dep_schedule | rrule_schedule }}</strong></span>
                     {% if project.deployments | selectattr('cluster', 'equalto', current_cluster) | list | length > 1 %}
                     <c-tag content="{{ deployment.name }}" />
                     {% endif %}

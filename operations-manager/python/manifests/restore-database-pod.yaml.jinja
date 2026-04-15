@@ -113,19 +113,42 @@ spec:
 
           echo "Found dump file: $DUMP_PATH"
 
+          # Detect the source schema from the dump (may differ from target)
+          # pg_restore --list output: "6; 2615 27880 SCHEMA - bt_iu7_productie bt_iu7_productie"
+          SOURCE_SCHEMA=$(pg_restore --list "$DUMP_PATH" 2>/dev/null | \
+            grep " SCHEMA - " | head -1 | awk '{print $6}')
+          echo "Source schema in dump: ${SOURCE_SCHEMA:-unknown}"
+          echo "Target schema: ${TARGET_DB_NAME}"
+
           # Restore using pg_restore
-          # --clean: Drop objects before recreating
-          # --if-exists: Don't error if objects don't exist
           # --no-owner: Don't set ownership
           # --no-privileges: Don't restore privileges
           PGPASSWORD="${TARGET_DB_PASSWORD}" pg_restore \
             -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
-            --clean --if-exists --no-owner --no-privileges \
+            --no-owner --no-privileges \
             --verbose \
             "$DUMP_PATH" || {
               # pg_restore often returns non-zero even on success due to missing objects
               echo "pg_restore completed (some warnings may be expected)"
             }
+
+          # Rename schema if source differs from target (e.g. restoring
+          # productie backup into kopie database)
+          if [ -n "$SOURCE_SCHEMA" ] && [ "$SOURCE_SCHEMA" != "${TARGET_DB_NAME}" ]; then
+            echo "Renaming schema ${SOURCE_SCHEMA} -> ${TARGET_DB_NAME}..."
+
+            # Drop the empty target schema (created during DB setup)
+            PGPASSWORD="${TARGET_DB_PASSWORD}" psql \
+              -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
+              -c "DROP SCHEMA IF EXISTS ${TARGET_DB_NAME} CASCADE;" || true
+
+            # Rename source schema to target
+            PGPASSWORD="${TARGET_DB_PASSWORD}" psql \
+              -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
+              -c "ALTER SCHEMA ${SOURCE_SCHEMA} RENAME TO ${TARGET_DB_NAME};"
+
+            echo "Schema renamed successfully"
+          fi
 
           # Cleanup
           rm -rf /tmp/restore

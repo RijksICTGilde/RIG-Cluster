@@ -29,16 +29,12 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_BACKUP_SCHEDULE_DAY,
     DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY,
     DEPLOYMENT_BACKUP_SCHEDULE_TIME,
-    DEPLOYMENT_BASE_DOMAIN,
     DEPLOYMENT_CLONE_FROM,
     DEPLOYMENT_COMP_IMAGE,
     DEPLOYMENT_COMP_REFERENCE,
     DEPLOYMENT_COMP_USER_ENV_VARS,
     DEPLOYMENT_COMPONENTS_SEQ,
-    DEPLOYMENT_CUSTOM_BASE_DOMAIN,
-    DEPLOYMENT_DOMAIN_FORMAT,
     DEPLOYMENT_NAME,
-    DEPLOYMENT_SUBDOMAIN,
     DEPLOYMENTS_SEQUENCE,
 )
 from opi.forms.visualizers.fields.domains import (
@@ -790,44 +786,33 @@ def _materialize_new_deployment_fields(
 
 # The base set of visualizers for creating a new deployment (info + domain).
 _NEW_DEPLOYMENT_INFO_VISUALIZERS = [DEPLOYMENT_NAME, DEPLOYMENT_CLONE_FROM]
-_NEW_DEPLOYMENT_DOMAIN_VISUALIZERS = [
-    DEPLOYMENT_SUBDOMAIN,
-    DEPLOYMENT_BASE_DOMAIN,
-    DEPLOYMENT_CUSTOM_BASE_DOMAIN,
-    DEPLOYMENT_DOMAIN_FORMAT,
-]
 
 
-def _build_restore_new_deployment_section() -> FormSection:
-    """Build the restore new deployment section with materialized editables.
+def _restore_new_visible(data: dict[str, Any]) -> bool:
+    return data.get("restore_mode") == "new"
 
-    Materializes deployment[*] visualizers to deployment[0] so the form
-    reads/writes a single deployment entry.
+
+def build_restore_new_deployment_sections(deployment_index: int = 0) -> list[FormSection]:
+    """Build sections for the restore-to-new-deployment flow.
+
+    Reuses the add-deployment builders (info, components, domain) with
+    clone-from excluded — the backup source is already selected in step 2.
+    All sections are conditionally visible based on ``restore_mode == "new"``.
+
+    Args:
+        deployment_index: Index of the new deployment slot in the
+            deployments list. Set at init time to ``len(deployments)``
+            so it targets an empty slot, not an existing deployment.
     """
-    editables = _materialize_new_deployment_fields(
-        0, _NEW_DEPLOYMENT_INFO_VISUALIZERS + _NEW_DEPLOYMENT_DOMAIN_VISUALIZERS
-    )
+    info = build_deployment_add_info_section(deployment_index, include_clone_from=False)
+    components = build_deployment_add_components_section(deployment_index)
+    domain = build_deployment_add_domain_section(deployment_index)
 
-    return FormSection(
-        section_id="restore-new-deployment",
-        title="Deployment configuratie",
-        icon="server",
-        description="Configureer de nieuwe deployment",
-        visible=lambda data: data.get("restore_mode") == "new",
-        editables=editables,
-        layout=[
-            "deployments[0]/name",
-            "deployments[0]/clone-from",
-            "deployments[0]/subdomain",
-            "deployments[0]/base-domain",
-            "deployments[0]/base-domain:custom",
-            "deployments[0]/domain-format",
-        ],
-        summary_fn=_new_deployment_summary,
-    )
-
-
-RESTORE_NEW_DEPLOYMENT_SECTION = _build_restore_new_deployment_section()
+    return [
+        dataclasses.replace(info, visible=_restore_new_visible),
+        dataclasses.replace(components, visible=_restore_new_visible),
+        dataclasses.replace(domain, visible=_restore_new_visible),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -835,29 +820,41 @@ RESTORE_NEW_DEPLOYMENT_SECTION = _build_restore_new_deployment_section()
 # ---------------------------------------------------------------------------
 
 
-def build_deployment_add_info_section(deployment_index: int) -> FormSection:
-    """Build the info section for adding a new deployment (name + clone-from).
+def build_deployment_add_info_section(
+    deployment_index: int,
+    *,
+    include_clone_from: bool = True,
+) -> FormSection:
+    """Build the info section for adding a new deployment.
 
     Overrides readonly_on_edit on the name visualizer so the name field
     is editable even though the modal wizard uses edit_mode=True.
+
+    Args:
+        include_clone_from: When False, omits the clone-from field (used
+            by the restore flow where the source is already selected).
     """
-    editables = _materialize_new_deployment_fields(deployment_index, _NEW_DEPLOYMENT_INFO_VISUALIZERS)
+    visualizers = _NEW_DEPLOYMENT_INFO_VISUALIZERS if include_clone_from else [DEPLOYMENT_NAME]
+    editables = _materialize_new_deployment_fields(deployment_index, visualizers)
 
     # The name visualizer has readonly_on_edit=True - override for add flows
     name_vis = editables[0]
     editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
 
+    layout = [f"deployments[{deployment_index}]/name"]
+    if include_clone_from:
+        layout.append(f"deployments[{deployment_index}]/clone-from")
+
     return FormSection(
         section_id=f"add-deployment-info-{deployment_index}",
         title="Deployment informatie",
         icon="server",
-        description="Kies een naam en optioneel een bron-deployment om van te klonen",
+        description="Kies een naam en optioneel een bron-deployment om van te klonen"
+        if include_clone_from
+        else "Kies een naam voor de nieuwe deployment",
         enforcer=UniqueDeploymentNameEnforcer(deployment_index=deployment_index),
         editables=editables,
-        layout=[
-            f"deployments[{deployment_index}]/name",
-            f"deployments[{deployment_index}]/clone-from",
-        ],
+        layout=layout,
         summary_fn=lambda data, idx=deployment_index: _new_deployment_summary(data, idx),
     )
 
@@ -1002,6 +999,11 @@ def build_backup_schedule_section(deployment_index: int) -> FormSection:
         pfh = create_project_file_handler()
         return bool(pfh.get_deployment_backup_labels(yaml_data, dep_name))
 
+    async def _notify_backup_scheduler(request: Any) -> None:
+        scheduler = getattr(request.app.state, "backup_scheduler", None)
+        if scheduler:
+            await scheduler.trigger_check()
+
     return FormSection(
         section_id=f"backup-schedule-{deployment_index}",
         title="Backup schema instellen",
@@ -1018,6 +1020,7 @@ def build_backup_schedule_section(deployment_index: int) -> FormSection:
         guard=_has_backupable_services,
         guard_message="Deze deployment gebruikt geen services die geback-upt kunnen worden.",
         post_save_action="save_only",
+        after_save=_notify_backup_scheduler,
     )
 
 

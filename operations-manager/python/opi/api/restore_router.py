@@ -755,6 +755,7 @@ async def restore_project_pvc(
                 access_modes=access_modes,
                 snapshot_id=body.snapshot_id,
                 backup_enabled=target_storage.get("backup", True),
+                project_name=project_name,
             )
 
             if not result.success:
@@ -888,6 +889,7 @@ async def _restore_snapshot(
                 project_data,
                 project_file_handler,
                 backup_manager,
+                project_name=project_name,
             )
         case ResourceType.DATABASE:
             return await _restore_database(
@@ -925,6 +927,7 @@ async def _restore_pvc(
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
     backup_manager: Any,
+    project_name: str | None = None,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a PVC from snapshot."""
     file_generation = (
@@ -961,6 +964,7 @@ async def _restore_pvc(
         access_modes=access_modes,
         snapshot_id=snapshot.snapshot_id,
         backup_enabled=backup_enabled,
+        project_name=project_name,
     )
 
     detail = PVCRestoreDetail(
@@ -1811,6 +1815,7 @@ async def _restore_pvc_with_versioning(
         access_modes=access_modes,
         snapshot_id=snapshot_id,
         backup_enabled=backup_enabled,
+        project_name=project_name,
     )
 
     if not result.success:
