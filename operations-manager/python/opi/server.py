@@ -160,10 +160,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                     await _backup_scheduler.start()
                     app.state.backup_scheduler = _backup_scheduler
                 except Exception as e:
-                    logger.error(f"Failed to start backup scheduler: {e}")
+                    logger.error("Failed to start backup scheduler: %s", e)
 
         except Exception as e:
-            logger.error(f"Failed to start task worker: {e}")
+            logger.error("Failed to start task worker: %s", e)
     else:
         # Frontend-only mode: still create task_service for API endpoints
         try:

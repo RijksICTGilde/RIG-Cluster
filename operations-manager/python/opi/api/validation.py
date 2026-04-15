@@ -122,6 +122,6 @@ async def validate_api_payload(
         raise HTTPException(status_code=422, detail=detail)
 
     if convert:
-        return convert_fields(payload, validators)
+        return convert_fields(payload, validators, context_data=context)
 
     return payload
