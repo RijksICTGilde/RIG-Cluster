@@ -20,7 +20,11 @@ data:
 
       # Scrape pods with prometheus.io/scrape annotation
       # Namespace discovery is handled by Capsule Proxy (tenant-scoped)
+      # Sends Authorization: Bearer <token> header so apps can validate scrape requests
       - job_name: 'kubernetes-pods'
+        authorization:
+          type: Bearer
+          credentials_file: /etc/prometheus/secrets/metrics-auth/token
         kubernetes_sd_configs:
           - role: pod
         relabel_configs:
