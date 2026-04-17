@@ -81,15 +81,20 @@ class TestDeleteResourcesForDeployment:
         mock_connector.delete_user = AsyncMock(return_value={"status": "deleted", "message": "ok"})
         db_manager._postgres_connector = mock_connector
 
-        result = await db_manager.delete_resources_for_deployment(project_data, deployment)
+        await db_manager.delete_resources_for_deployment(project_data, deployment)
 
-        # Verify delete_database was called with ONLY database_name
-        mock_connector.delete_database.assert_called_once()
-        call_kwargs = mock_connector.delete_database.call_args
-        assert "host" not in (call_kwargs.kwargs or {})
-        assert "admin_username" not in (call_kwargs.kwargs or {})
-        assert "admin_password" not in (call_kwargs.kwargs or {})
-        assert call_kwargs == call(database_name="test_project_pr_123")
+        # Verify every delete_database call used ONLY database_name (no admin kwargs).
+        # Note: the deletion scans for versioned databases beyond the YAML generation,
+        # so delete_database is called multiple times (base name + versioned variants).
+        assert mock_connector.delete_database.call_count >= 1
+        called_names = []
+        for call_args in mock_connector.delete_database.call_args_list:
+            assert "host" not in (call_args.kwargs or {})
+            assert "admin_username" not in (call_args.kwargs or {})
+            assert "admin_password" not in (call_args.kwargs or {})
+            assert set(call_args.kwargs.keys()) == {"database_name"}
+            called_names.append(call_args.kwargs["database_name"])
+        assert "test_project_pr_123" in called_names
 
         # Verify delete_user was called with ONLY username
         mock_connector.delete_user.assert_called_once()
@@ -131,7 +136,11 @@ class TestDeleteResourcesForDeployment:
 
         assert result["success"] is True
         assert len(result["errors"]) == 0
-        assert len(result["operations"]) == 2
+        # Versioned database cleanup scans beyond YAML generation, so there are
+        # multiple database_deletion operations plus one database_user_deletion.
+        types = [op["type"] for op in result["operations"]]
+        assert types.count("database_user_deletion") == 1
+        assert types.count("database_deletion") >= 1
 
     @pytest.mark.asyncio
     async def test_not_found_database_is_not_error(self):
