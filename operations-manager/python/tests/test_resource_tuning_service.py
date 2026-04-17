@@ -93,11 +93,13 @@ class TestTuneDeploymentResources:
         mock_get_from_git.return_value = (project_data, "my-project.yaml", mock_git_connector)
 
         mock_connector = AsyncMock()
-        mock_connector.custom_query.side_effect = [
-            [],  # max: no data
-            [],  # avg: no data
-            [{"value": [0, "1"]}],  # OOM kill detected
-        ]
+        mock_connector.custom_query = MagicMock(
+            side_effect=[
+                [],  # max: no data
+                [],  # avg: no data
+                [{"value": [0, "1"]}],  # OOM kill detected
+            ]
+        )
         mock_get_connector.return_value = mock_connector
         mock_reprocess.return_value = True
 
@@ -132,7 +134,7 @@ class TestTuneDeploymentResources:
         mock_get_from_git.return_value = (project_data, "my-project.yaml", mock_git_connector)
 
         mock_connector = AsyncMock()
-        mock_connector.custom_query.return_value = []
+        mock_connector.custom_query = MagicMock(return_value=[])
         mock_get_connector.return_value = mock_connector
 
         result = await tune_deployment_resources("my-project")

@@ -11,9 +11,13 @@ class TestFormatDutchDate:
     """Tests for format_dutch_date."""
 
     def test_iso_timestamp_basic(self):
-        """Should format a basic ISO timestamp in Dutch."""
+        """Should format a basic ISO timestamp in Dutch.
+
+        Output is converted from UTC to Europe/Amsterdam. January is CET (UTC+1),
+        so 17:14 UTC displays as 18:14.
+        """
         result = format_dutch_date("2026-01-14T17:14:00Z")
-        assert result == "14 januari 2026 17:14"
+        assert result == "14 januari 2026 18:14"
 
     def test_iso_timestamp_without_time(self):
         """Should format without time when include_time=False."""
@@ -76,12 +80,16 @@ class TestFormatDutchDate:
         assert "juni" in result
 
     def test_datetime_object(self):
-        """Should handle datetime objects directly."""
+        """Should handle datetime objects directly.
+
+        Output is converted from UTC to Europe/Amsterdam. December is CET (UTC+1),
+        so 10:00 UTC displays as 11:00.
+        """
         from datetime import UTC, datetime
 
         dt = datetime(2026, 12, 25, 10, 0, tzinfo=UTC)
         result = format_dutch_date(dt)
-        assert result == "25 december 2026 10:00"
+        assert result == "25 december 2026 11:00"
 
 
 class TestGetServiceName:
