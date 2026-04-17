@@ -320,7 +320,7 @@ class TestKeyValueConverterEncryption:
         yaml_data = {"config": {"age-public-key": FAKE_PUBLIC_KEY}}
 
         with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED) as mock:
-            result = conv.write("DB_HOST=localhost", yaml_data=yaml_data)
+            result = conv.write("DB_HOST=localhost", context_data=yaml_data)
 
         mock.assert_called_once_with("DB_HOST=localhost", FAKE_PUBLIC_KEY)
         assert "BEGIN AGE ENCRYPTED FILE" in str(result)
@@ -331,7 +331,7 @@ class TestKeyValueConverterEncryption:
         yaml_data = {"config": {"age-public-key": FAKE_PUBLIC_KEY}}
 
         with patch("opi.utils.age.encrypt_age_content_sync") as mock:
-            result = conv.write(FAKE_AGE_ENCRYPTED, yaml_data=yaml_data)
+            result = conv.write(FAKE_AGE_ENCRYPTED, context_data=yaml_data)
 
         mock.assert_not_called()
         assert result == FAKE_AGE_ENCRYPTED
@@ -343,9 +343,9 @@ class TestKeyValueConverterEncryption:
         assert result == "SECRET=value"
 
     def test_write_string_without_public_key_returns_plain(self):
-        """Without a project public key in yaml_data, value is returned as-is."""
+        """Without a project public key in context_data, value is returned as-is."""
         conv = KeyValueConverter(fmt="env", write_as="string")
-        result = conv.write("SECRET=value", yaml_data={"config": {}})
+        result = conv.write("SECRET=value", context_data={"config": {}})
         assert result == "SECRET=value"
 
     def test_write_dict_mode_does_not_encrypt(self):
@@ -354,7 +354,7 @@ class TestKeyValueConverterEncryption:
         yaml_data = {"config": {"age-public-key": FAKE_PUBLIC_KEY}}
 
         with patch("opi.utils.age.encrypt_age_content_sync") as mock:
-            result = conv.write("KEY=value", yaml_data=yaml_data)
+            result = conv.write("KEY=value", context_data=yaml_data)
 
         mock.assert_not_called()
         assert isinstance(result, dict)

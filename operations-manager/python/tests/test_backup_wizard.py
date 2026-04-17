@@ -749,7 +749,6 @@ class TestRestoreTargetTemplate:
         }
         html = self._render(templates, context)
         assert "Nieuwe deployment aanmaken" in html
-        assert "production" in html
         assert "volgende stap" in html
 
     def test_htmx_attributes_on_mode_toggle(self, templates) -> None:
@@ -880,68 +879,68 @@ class TestBackupItemsSplitting:
 
 
 # ---------------------------------------------------------------------------
-# RESTORE_NEW_DEPLOYMENT_SECTION tests
+# build_restore_new_deployment_sections tests
 # ---------------------------------------------------------------------------
 
 
-class TestRestoreNewDeploymentSection:
-    """Tests for RESTORE_NEW_DEPLOYMENT_SECTION configuration."""
+class TestRestoreNewDeploymentSections:
+    """Tests for build_restore_new_deployment_sections (info + components + domain)."""
 
-    def test_section_exists(self) -> None:
-        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+    def test_returns_three_sections(self) -> None:
+        from opi.forms.visualizers.wizard_sections import build_restore_new_deployment_sections
 
-        assert RESTORE_NEW_DEPLOYMENT_SECTION.section_id == "restore-new-deployment"
+        sections = build_restore_new_deployment_sections(0)
+        assert len(sections) == 3
 
-    def test_section_has_editables(self) -> None:
-        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+    def test_each_section_visibility_new_mode(self) -> None:
+        from opi.forms.visualizers.wizard_sections import build_restore_new_deployment_sections
 
-        assert len(RESTORE_NEW_DEPLOYMENT_SECTION.editables) == 6
+        for section in build_restore_new_deployment_sections(0):
+            assert callable(section.visible)
+            assert section.visible({"restore_mode": "new"}) is True  # type: ignore[operator]
 
-    def test_section_visibility_new_mode(self) -> None:
-        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+    def test_each_section_visibility_existing_mode(self) -> None:
+        from opi.forms.visualizers.wizard_sections import build_restore_new_deployment_sections
 
-        visible_fn = RESTORE_NEW_DEPLOYMENT_SECTION.visible
-        assert callable(visible_fn)
-        assert visible_fn({"restore_mode": "new"}) is True
+        for section in build_restore_new_deployment_sections(0):
+            assert callable(section.visible)
+            assert section.visible({"restore_mode": "existing"}) is False  # type: ignore[operator]
 
-    def test_section_visibility_existing_mode(self) -> None:
-        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+    def test_each_section_visibility_no_mode(self) -> None:
+        from opi.forms.visualizers.wizard_sections import build_restore_new_deployment_sections
 
-        visible_fn = RESTORE_NEW_DEPLOYMENT_SECTION.visible
-        assert callable(visible_fn)
-        assert visible_fn({"restore_mode": "existing"}) is False
-
-    def test_section_visibility_no_mode(self) -> None:
-        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
-
-        visible_fn = RESTORE_NEW_DEPLOYMENT_SECTION.visible
-        assert callable(visible_fn)
-        assert visible_fn({}) is False
+        for section in build_restore_new_deployment_sections(0):
+            assert callable(section.visible)
+            assert section.visible({}) is False  # type: ignore[operator]
 
     def test_editables_have_materialized_paths(self) -> None:
         """Editables should use [0] not [*] in their paths."""
-        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+        from opi.forms.visualizers.wizard_sections import build_restore_new_deployment_sections
 
-        for vis in RESTORE_NEW_DEPLOYMENT_SECTION.editables:
-            path = vis.editable.yaml_path
-            assert "[*]" not in path, f"Editable {path} still has wildcard"
-            assert "[0]" in path, f"Editable {path} not materialized to [0]"
+        for section in build_restore_new_deployment_sections(0):
+            for vis in section.editables:
+                path = vis.editable.yaml_path
+                assert "[*]" not in path, f"Editable {path} still has wildcard"
+                assert "[0]" in path, f"Editable {path} not materialized to [0]"
 
-    def test_layout_uses_index_0(self) -> None:
-        from opi.forms.visualizers.wizard_sections import RESTORE_NEW_DEPLOYMENT_SECTION
+    def test_info_section_excludes_clone_from(self) -> None:
+        """Restore flow's info section should not include the clone-from field."""
+        from opi.forms.visualizers.wizard_sections import build_restore_new_deployment_sections
 
-        layout = RESTORE_NEW_DEPLOYMENT_SECTION.layout
-        assert isinstance(layout, list)
-        for item in layout:
-            if isinstance(item, str):
-                assert "[0]" in item
+        info_section = build_restore_new_deployment_sections(0)[0]
+        paths = [vis.editable.yaml_path for vis in info_section.editables]
+        assert not any("clone-from" in p for p in paths)
 
-    def test_section_in_restore_flow(self) -> None:
-        from opi.forms.visualizers.flows import MODAL_RESTORE_FLOW
+    def test_sections_in_restore_flow(self) -> None:
+        from opi.forms.visualizers.flows import build_restore_flow
 
-        section_ids = [s.section_id for s in MODAL_RESTORE_FLOW.sections]
-        assert "restore-new-deployment" in section_ids
-        assert section_ids.index("restore-new-deployment") == 2
+        flow = build_restore_flow(0)
+        section_ids = [s.section_id for s in flow.sections]
+        # Expected order: restore-select, restore-target, then new-deployment sections
+        assert section_ids[0] == "restore-select"
+        assert section_ids[1] == "restore-target"
+        assert any("add-deployment-info" in sid for sid in section_ids[2:])
+        assert any("add-deployment-components" in sid for sid in section_ids[2:])
 
 
 class TestRestoreNewDeploymentSummary:
