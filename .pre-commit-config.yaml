@@ -34,16 +34,23 @@ repos:
         files: ^operations-manager/python/.*\.(html|html\.j2)$
         pass_filenames: false
 
-      - id: pyright
-        name: pyright
-        entry: uv run --directory operations-manager/python pyright
+      # Pre-push hooks: run before `git push`, not on every commit.
+      # Install once with: pre-commit install --hook-type pre-push
+      #
+      # pytest excludes tests/integration (slow, ~5 min) — CI runs those. The
+      # unit subset is ~45s locally and catches the failures we saw today.
+      - id: pytest
+        name: pytest (unit tests)
+        entry: uv run --directory operations-manager/python pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q --tb=line -m "not slow and not e2e and not requires_infra and not sandbox"
         language: system
         files: ^operations-manager/python/.*\.py$
         pass_filenames: false
+        stages: [pre-push]
 
-      - id: djlint
-        name: djlint
-        entry: uv run --directory operations-manager/python djlint --lint opi/templates/
+      - id: pip-audit
+        name: pip-audit (dependency CVEs)
+        entry: uv run --directory operations-manager/python pip-audit --strict --desc --skip-editable -s osv
         language: system
-        files: ^operations-manager/python/.*\.(html|html\.j2)$
+        files: ^operations-manager/python/(pyproject\.toml|uv\.lock)$
         pass_filenames: false
+        stages: [pre-push]
