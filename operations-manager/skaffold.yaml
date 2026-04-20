@@ -32,19 +32,19 @@ build:
         strip: 'operations-manager/python/static/'
       # Sync local jinja-roos-components for development
       - src: '../jinja-roos-components/src/jinja_roos_components/**/*.py'
-        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components
+        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components
         strip: '../jinja-roos-components/src/jinja_roos_components/'
       - src: '../jinja-roos-components/src/jinja_roos_components/static/**/*'
-        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components/static
+        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components/static
         strip: '../jinja-roos-components/src/jinja_roos_components/static/'
       - src: '../jinja-roos-components/src/jinja_roos_components/templates/**/*'
-        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components/templates
+        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components/templates
         strip: '../jinja-roos-components/src/jinja_roos_components/templates/'
       - src: '../jinja-roos-components/src/jinja_roos_components/definitions/*.json'
-        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components/definitions
+        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components/definitions
         strip: '../jinja-roos-components/src/jinja_roos_components/definitions/'
       - src: '../jinja-roos-components/src/jinja_roos_components/*.json'
-        dest: /usr/local/lib/python3.13/site-packages/jinja_roos_components
+        dest: /usr/local/lib/python3.14/site-packages/jinja_roos_components
         strip: '../jinja-roos-components/src/jinja_roos_components/'
 
 deploy:

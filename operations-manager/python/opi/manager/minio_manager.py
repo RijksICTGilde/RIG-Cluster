@@ -1,9 +1,12 @@
 """MinIO service manager for handling object storage resources."""
 
+from __future__ import annotations
+
 import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from opi.manager.project_manager import ProjectManager
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector

@@ -5,6 +5,8 @@ PVCs) for deferred deletion. Resources are held until the reconciliation job con
 they are both orphaned and past the configured grace period.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import uuid
