@@ -68,4 +68,4 @@ deployments:
       - reference: web-app
         image: "nginx:latest"
       - reference: worker
-        image: "python:3.13-slim"
+        image: "python:3.14-slim"

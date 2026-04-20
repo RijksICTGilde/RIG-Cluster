@@ -102,7 +102,7 @@ deployments:
       - reference: frontend
         image: "nginx:latest"
       - reference: api
-        image: "python:3.13-slim"
+        image: "python:3.14-slim"
 
 backup:
   enabled: true

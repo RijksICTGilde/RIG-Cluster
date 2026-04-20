@@ -1,5 +1,7 @@
 """Redis service manager for handling Redis cache resources."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any

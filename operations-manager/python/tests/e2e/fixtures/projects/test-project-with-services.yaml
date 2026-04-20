@@ -35,4 +35,4 @@ deployments:
     repository: main-repo
     components:
       - reference: backend
-        image: "python:3.13-slim"
+        image: "python:3.14-slim"

@@ -26,7 +26,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends skopeo
 ```
 
-Skopeo is in Debian repos (python:3.13-slim base). Simpler than downloading a static binary.
+Skopeo is in Debian repos (python:3.14-slim base). Simpler than downloading a static binary.
 
 ### 2. Config settings
 **File**: `operations-manager/python/opi/core/config.py` - Add to `Settings` class:
