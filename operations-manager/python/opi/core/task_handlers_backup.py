@@ -95,8 +95,8 @@ async def handle_backup(
                 try:
                     infra_results = await backup_manager.backup_namespace(infra_namespace)
                     total_results += len(infra_results)
-                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
-                    logger.warning("Failed to backup infra namespace %s: %s", infra_namespace, e)
+                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError):
+                    logger.exception("Failed to backup infra namespace %s", infra_namespace)
         except (ValueError, RuntimeError, OSError, ConnectionError) as e:
             all_success = False
             progress.fail_subtask(pvc_subtask, str(e))
