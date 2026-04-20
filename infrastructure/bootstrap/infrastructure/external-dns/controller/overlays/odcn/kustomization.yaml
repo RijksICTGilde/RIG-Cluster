@@ -20,6 +20,11 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --domain-filter=rijksapp.dev
+      # TransIP enforces RFC 1035 strictly: a CNAME cannot coexist with any
+      # other record at the same name. Place the ownership TXT at a sibling.
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --txt-prefix=edns-
       # Use Capsule Proxy for tenant-scoped ingress watching
       - op: add
         path: /spec/template/spec/containers/0/env/-
