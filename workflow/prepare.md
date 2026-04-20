@@ -9,7 +9,7 @@ cd operations-manager/python
 uv sync --all-groups        # installs all dependencies (main + test + dev)
 ```
 
-This creates `.venv/` with Python 3.13 and all packages. uv handles the venv automatically — no manual `python -m venv` needed.
+This creates `.venv/` with Python 3.14 and all packages. uv handles the venv automatically — no manual `python -m venv` needed.
 
 ## Playwright (for E2E tests)
 
