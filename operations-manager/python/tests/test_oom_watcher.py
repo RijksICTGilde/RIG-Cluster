@@ -354,6 +354,32 @@ class TestCreateHealthCheckCallback:
 
     @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
     @pytest.mark.asyncio
+    async def test_oom_with_crashloop_pre_grace_emits_oom_failure(self, mock_check):
+        """When OOM and CrashLoopBackOff are co-detected, emit the OOM failure even
+        before the grace period. The crash loop proves the lastState.terminated data
+        is current, so the grace period's stale-data concern doesn't apply. Without
+        this, pods that OOM on boot (tiny memory limit) get reported only as
+        CrashLoopBackOff and auto-tune never runs.
+        """
+        mock_check.return_value = [
+            PodHealthResult(
+                "comp-a",
+                oom_detected=True,
+                crash_loop_detected=True,
+                crash_loop_message="CrashLoopBackOff: back-off 5m",
+            )
+        ]
+        callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=30)
+
+        with pytest.raises(DeploymentHealthError) as exc_info:
+            await callback(5)  # well under grace period
+
+        types = {f.failure_type for f in exc_info.value.failures}
+        assert "oom" in types, "OOM must be reported so auto-tune runs"
+        assert "crash_loop" in types
+
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
     async def test_no_raise_when_healthy(self, mock_check):
         mock_check.return_value = []
         callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=5)
