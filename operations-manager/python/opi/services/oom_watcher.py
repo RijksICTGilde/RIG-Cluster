@@ -569,7 +569,12 @@ def create_health_check_callback(
                 except Exception as log_err:
                     logger.debug("Failed to capture logs for %s: %s", health.component_name, log_err)
 
-            if health.oom_detected and check_oom:
+            # The grace period guards against stale lastState from a prior pod. That
+            # concern doesn't apply when the container is actively crash-looping now —
+            # the OOM is guaranteed to be from the current lifecycle. Without this
+            # exception, pods that OOM instantly on boot (e.g. 25Mi limit) get reported
+            # only as CrashLoopBackOff and the auto-tune path never runs.
+            if health.oom_detected and (check_oom or health.crash_loop_detected):
                 has_oom = True
                 failures.append(
                     ComponentFailure(
