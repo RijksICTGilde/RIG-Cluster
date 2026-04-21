@@ -284,15 +284,14 @@ class PrometheusConnector:
 
         return overview
 
-    def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def custom_query(self, query: str) -> list[dict[str, Any]]:
         """
         Execute a custom PromQL query.
 
-        Args:
-            query: The PromQL query to execute.
-
-        Returns:
-            List of metric results.
+        Declared async to match GrafanaPrometheusConnector.custom_query so callers
+        can await a single interface regardless of METRICS_BACKEND. The underlying
+        prometheus_api_client is sync; the call blocks the loop for the request,
+        which is acceptable here because metrics queries are low-frequency.
         """
         self._ensure_connected()
 
