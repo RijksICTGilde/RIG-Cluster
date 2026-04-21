@@ -271,17 +271,12 @@ class TestGetProjectDataDeepCopy:
 
 
 def _mock_prometheus_with_usage(max_mb, avg_mb, has_oom=False):
-    """Create a mock Prometheus connector returning specific memory values.
-
-    ``custom_query`` is a sync method on PrometheusConnector, so we use MagicMock
-    for it (AsyncMock would return an unawaited coroutine that the sync callsite
-    tries to iterate, raising ``'coroutine' object is not iterable``).
-    """
+    """Create a mock Prometheus connector returning specific memory values."""
     mock = AsyncMock()
     max_bytes = max_mb * 1024 * 1024
     avg_bytes = avg_mb * 1024 * 1024
 
-    def custom_query(query):
+    async def custom_query(query):
         if "max_over_time" in query:
             return [{"value": [0, str(max_bytes)]}] if max_mb > 0 else []
         if "avg_over_time" in query:
@@ -290,7 +285,7 @@ def _mock_prometheus_with_usage(max_mb, avg_mb, has_oom=False):
             return [{"value": [0, "1"]}] if has_oom else []
         return []
 
-    mock.custom_query = MagicMock(side_effect=custom_query)
+    mock.custom_query.side_effect = custom_query
     return mock
 
 
