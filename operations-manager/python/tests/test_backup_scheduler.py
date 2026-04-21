@@ -49,9 +49,9 @@ class TestScheduleIntervals:
 # ---------------------------------------------------------------------------
 
 
-def _make_scheduler() -> BackupScheduler:
+def _make_scheduler() -> tuple[BackupScheduler, AsyncMock]:
     task_service = AsyncMock()
-    return BackupScheduler(task_service=task_service, cluster="local")
+    return BackupScheduler(task_service=task_service, cluster="local"), task_service
 
 
 @freeze_time(_FROZEN_TIME)
@@ -63,62 +63,83 @@ class TestIsBackupDue:
     _monthly_rrule: ClassVar[dict[str, str]] = {"FREQ": "MONTHLY", "BYMONTHDAY": "1", "BYHOUR": "2", "BYMINUTE": "0"}
 
     def test_no_previous_backup_is_due(self) -> None:
-        scheduler = _make_scheduler()
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value=None)
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "DAILY", self._daily_rrule)) is True
 
     def test_recent_daily_backup_not_due(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         one_hour_ago = datetime.now(tz=UTC) - timedelta(hours=1)
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": one_hour_ago})
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": one_hour_ago})
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "DAILY", self._daily_rrule)) is False
 
     def test_old_daily_backup_is_due(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         old = datetime.now(tz=UTC) - timedelta(hours=25)
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": old})
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": old})
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "DAILY", self._daily_rrule)) is True
 
     def test_recent_weekly_backup_not_due(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         three_days_ago = datetime.now(tz=UTC) - timedelta(days=3)
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": three_days_ago})
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": three_days_ago})
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "WEEKLY", self._weekly_rrule)) is False
 
     def test_old_weekly_backup_is_due(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         old = datetime.now(tz=UTC) - timedelta(days=8)
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": old})
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": old})
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "WEEKLY", self._weekly_rrule)) is True
 
     def test_monthly_boundary(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         exactly_30_days = datetime.now(tz=UTC) - timedelta(days=30)
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": exactly_30_days})
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": exactly_30_days})
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "MONTHLY", self._monthly_rrule)) is True
 
     def test_unknown_schedule_not_due(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, _ = _make_scheduler()
         rrule: dict[str, str] = {"FREQ": "YEARLY"}
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "YEARLY", rrule)) is False
 
     def test_completed_at_none_is_due(self) -> None:
-        scheduler = _make_scheduler()
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": None})
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": None})
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "DAILY", self._daily_rrule)) is True
 
     def test_completed_at_iso_string(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         old = datetime.now(tz=UTC) - timedelta(hours=25)
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": old.isoformat()})
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": old.isoformat()})
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "DAILY", self._daily_rrule)) is True
 
     def test_completed_at_naive_datetime(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         old = datetime.now(tz=UTC) - timedelta(hours=25)
         naive = old.replace(tzinfo=None)
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": naive})
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": naive})
         assert asyncio.run(scheduler._is_backup_due("proj", "prod", "DAILY", self._daily_rrule)) is True
+
+
+_OUTSIDE_WINDOW_TIME = datetime(2026, 3, 25, 8, 40, 0, tzinfo=UTC)
+
+
+@freeze_time(_OUTSIDE_WINDOW_TIME)
+class TestIsBackupDueOutsideWindow:
+    """Frozen at 08:40 UTC - outside the ±60 min window of BYHOUR=2."""
+
+    _daily_rrule: ClassVar[dict[str, str]] = {"FREQ": "DAILY", "BYHOUR": "2", "BYMINUTE": "0"}
+
+    def test_no_previous_backup_not_due_outside_window(self) -> None:
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value=None)
+        assert asyncio.run(scheduler._is_backup_due("proj", "prod", "DAILY", self._daily_rrule)) is False
+
+    def test_old_backup_not_due_outside_window(self) -> None:
+        scheduler, task_service = _make_scheduler()
+        old = datetime.now(tz=UTC) - timedelta(hours=48)
+        task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": old})
+        assert asyncio.run(scheduler._is_backup_due("proj", "prod", "DAILY", self._daily_rrule)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +176,8 @@ class TestCheckAndSchedule:
             asyncio.run(scheduler._check_and_schedule())
 
     def test_skips_project_without_backup_enabled(self) -> None:
-        scheduler = _make_scheduler()
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(
             backup_enabled=False,
             deployments=[
@@ -164,41 +185,41 @@ class TestCheckAndSchedule:
             ],
         )
         self._run(scheduler, [project])
-        scheduler._task_service.create_task.assert_not_called()
+        task_service.create_task.assert_not_called()
 
     def test_skips_deployment_on_wrong_cluster(self) -> None:
-        scheduler = _make_scheduler()
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(
             deployments=[
                 {"name": "prod", "cluster": "other-cluster", "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"}}
             ]
         )
         self._run(scheduler, [project])
-        scheduler._task_service.create_task.assert_not_called()
+        task_service.create_task.assert_not_called()
 
     def test_skips_deployment_without_schedule(self) -> None:
-        scheduler = _make_scheduler()
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(deployments=[{"name": "prod", "cluster": "local"}])
         self._run(scheduler, [project])
-        scheduler._task_service.create_task.assert_not_called()
+        task_service.create_task.assert_not_called()
 
     def test_skips_invalid_schedule(self) -> None:
-        scheduler = _make_scheduler()
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(deployments=[{"name": "prod", "cluster": "local", "backup": {"schedule": "yearly"}}])
         self._run(scheduler, [project])
-        scheduler._task_service.create_task.assert_not_called()
+        task_service.create_task.assert_not_called()
 
     def test_creates_task_for_due_deployment(self) -> None:
-        scheduler = _make_scheduler()
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(
             deployments=[{"name": "prod", "cluster": "local", "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"}}]
         )
         self._run(scheduler, [project])
-        scheduler._task_service.create_task.assert_called_once_with(
+        task_service.create_task.assert_called_once_with(
             task_type=TaskType.BACKUP,
             project_name="test-project",
             deployment_name="prod",
@@ -213,8 +234,8 @@ class TestCheckAndSchedule:
         )
 
     def test_processes_multiple_deployments(self) -> None:
-        scheduler = _make_scheduler()
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
+        scheduler, task_service = _make_scheduler()
+        task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(
             deployments=[
                 {"name": "prod", "cluster": "local", "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"}},
@@ -226,21 +247,21 @@ class TestCheckAndSchedule:
             ]
         )
         self._run(scheduler, [project])
-        assert scheduler._task_service.create_task.call_count == 2
+        assert task_service.create_task.call_count == 2
 
     def test_skips_project_without_data(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         project = MagicMock()
         project.data = None
         self._run(scheduler, [project])
-        scheduler._task_service.create_task.assert_not_called()
+        task_service.create_task.assert_not_called()
 
     def test_skips_project_without_name(self) -> None:
-        scheduler = _make_scheduler()
+        scheduler, task_service = _make_scheduler()
         project = MagicMock()
         project.data = {"backup": {"enabled": True}}
         self._run(scheduler, [project])
-        scheduler._task_service.create_task.assert_not_called()
+        task_service.create_task.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -33,6 +33,24 @@ _FREQ_INTERVALS: dict[str, int] = {
 # Public alias with lowercase keys for external consumers (tests, API)
 SCHEDULE_INTERVALS: dict[str, int] = {k.lower(): v for k, v in _FREQ_INTERVALS.items()}
 
+# Allow triggering within ±60 minutes of the configured BYHOUR:BYMINUTE.
+_WINDOW_MINUTES = 60
+
+
+def _within_preferred_window(rrule: dict[str, str], now: datetime) -> bool:
+    """Return True when `now` is within ±60 min of the RRULE's BYHOUR:BYMINUTE."""
+    byhour = rrule.get("BYHOUR", "2")
+    byminute = rrule.get("BYMINUTE", "0")
+    preferred_hour = int(byhour) if str(byhour).isdigit() else 2
+    preferred_minute = int(byminute) if str(byminute).isdigit() else 0
+
+    preferred_minutes = preferred_hour * 60 + preferred_minute
+    current_minutes = now.hour * 60 + now.minute
+    diff = abs(current_minutes - preferred_minutes)
+    # Handle midnight wrap-around
+    diff = min(diff, 1440 - diff)
+    return diff <= _WINDOW_MINUTES
+
 
 class BackupScheduler:
     """Periodically checks for deployments that need automatic backups."""
@@ -140,6 +158,14 @@ class BackupScheduler:
         if interval_seconds is None:
             return False
 
+        now = datetime.now(tz=UTC)
+
+        # Gate on the preferred time window (±60 min around BYHOUR:BYMINUTE).
+        # Applies to both first-run and recurring runs so backups only fire
+        # near the configured hour, not whenever the scheduler happens to tick.
+        if not _within_preferred_window(rrule, now):
+            return False
+
         last_task = await self._task_service.get_last_completed_task(
             task_type=TaskType.BACKUP,
             project_name=project_name,
@@ -159,31 +185,8 @@ class BackupScheduler:
         if completed_at.tzinfo is None:
             completed_at = completed_at.replace(tzinfo=UTC)
 
-        now = datetime.now(tz=UTC)
         elapsed = (now - completed_at).total_seconds()
-
-        if elapsed < interval_seconds:
-            return False
-
-        # Check preferred time window: only trigger within 1 hour of the
-        # configured BYHOUR:BYMINUTE. This prevents backups from firing
-        # immediately when the interval elapses during daytime.
-        byhour = rrule.get("BYHOUR", "2")
-        byminute = rrule.get("BYMINUTE", "0")
-        preferred_hour = int(byhour) if str(byhour).isdigit() else 2
-        preferred_minute = int(byminute) if str(byminute).isdigit() else 0
-        current_hour = now.hour
-        current_minute = now.minute
-
-        # Calculate minutes since midnight for both
-        preferred_minutes = preferred_hour * 60 + preferred_minute
-        current_minutes = current_hour * 60 + current_minute
-        diff = abs(current_minutes - preferred_minutes)
-        # Handle midnight wrap-around
-        diff = min(diff, 1440 - diff)
-
-        # Allow a 60-minute window around the preferred time
-        return diff <= 60
+        return elapsed >= interval_seconds
 
     async def _create_backup_task(
         self,

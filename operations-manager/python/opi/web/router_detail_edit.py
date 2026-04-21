@@ -620,6 +620,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # Inject backup/restore context (cluster deployments) for manual backup/restore flows
     if _is_backup_restore_flow(flow_id):
         backup_context = await _build_backup_restore_context_async(flow_id, project_name, project_data)
+        # Preselect the deployment the caller is viewing (URL hash), not deployments[0]
+        requested_dep = request.query_params.get("deployment", "").strip()
+        if requested_dep:
+            cluster_deps = backup_context.get("_cluster_deployments", [])
+            if any(d.get("name") == requested_dep for d in cluster_deps):
+                backup_context["_selected_deployment"] = requested_dep
         state.template_data.update(backup_context)
 
     # Mark all sections with data as completed (for step indicator)
