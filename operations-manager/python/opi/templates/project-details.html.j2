@@ -1750,7 +1750,7 @@
      * --------------------------------------------------------------- */
     let isEditSubmitting = false;
 
-    function openEditModal(flowId, title) {
+    function openEditModal(flowId, title, params) {
         isEditSubmitting = false;
 
         // Set title text (icon is already in the DOM via Jinja preprocessing)
@@ -1772,8 +1772,14 @@
         document.getElementById('edit-section-modal').classList.add('is-open');
         document.body.style.overflow = 'hidden';
 
-        // Fetch first step from server-driven modal wizard
-        fetch('/projects/{{ project.name }}/modal-wizard/' + flowId, {
+        // Fetch first step from server-driven modal wizard.
+        // When the caller needs to scope the flow to a specific deployment (e.g. backup),
+        // they pass that via `params` — no URL-hash sniffing, no global lookups.
+        let url = '/projects/{{ project.name }}/modal-wizard/' + flowId;
+        if (params && Object.keys(params).length > 0) {
+            url += '?' + new URLSearchParams(params).toString();
+        }
+        fetch(url, {
             credentials: 'same-origin',
         })
         .then(function(response) {

@@ -9,12 +9,16 @@
     - _cluster_deployments: list of dicts with keys: name, namespace
     - _current_cluster: str
     - _source_deployment: str (deployment name from selected backup run)
+    - _selected_deployment: str (deployment the user was viewing when they
+      opened the modal — used as the target_deployment default so a careless
+      submit doesn't restore into deployments[0])
     - _restore_mode: str ("existing" or "new", default "existing")
     - _project_name: str
 #}
 {% set deployments = _cluster_deployments | default([]) %}
 {% set restore_mode = _restore_mode | default("existing") %}
 {% set source_deployment = _source_deployment | default("") %}
+{% set default_target = _selected_deployment | default(deployments[0].name if deployments else "") %}
 
 <div id="restore-target-content">
 <c-layout-flow gap="lg">
@@ -53,7 +57,7 @@
         {% for dep in deployments %}
         <label class="rvo-radio-option" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; margin-bottom: 8px; cursor: pointer;">
             <input type="radio" name="target_deployment" value="{{ dep.name }}"
-                   {% if loop.first %}checked{% endif %}
+                   {% if dep.name == default_target %}checked{% endif %}
                    style="margin: 0;" />
             <div>
                 <strong>{{ dep.name }}</strong>
