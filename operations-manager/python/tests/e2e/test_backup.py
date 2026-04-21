@@ -54,11 +54,16 @@ class TestBackupSection:
         assert heading.first.is_visible()
 
     def test_backup_buttons_visible(self, modal: EditModalHelper) -> None:
-        """Backup aanmaken and Backup schema buttons should be visible."""
+        """Backup aanmaken and schedule edit buttons should be visible.
+
+        The schedule button label varies: "Schema instellen" when the deployment
+        has no schedule yet, "Schema wijzigen" when it does.
+        """
         _switch_to_deployments_tab(modal.page)
         tab = modal.page.locator("#tab-deployments")
         assert tab.locator("text=Backup aanmaken").first.is_visible()
-        assert tab.locator("text=Backup schema").first.is_visible()
+        schedule_button = tab.locator("text=/Schema (instellen|wijzigen)/").first
+        assert schedule_button.is_visible()
 
     def test_schedule_display_shows_daily_rrule(self, modal: EditModalHelper) -> None:
         """The RRULE schedule should render as 'Dagelijks rond 02:00' via the rrule_schedule filter."""
