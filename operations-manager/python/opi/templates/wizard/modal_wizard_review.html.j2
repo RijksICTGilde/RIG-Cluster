@@ -44,6 +44,7 @@
         </c-layout-flow>
         {% endif %}
 
+        {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
         {% for section in section_summaries %}
         <c-card outline="true" padding="md">
             <div class="wizard-review__section">
@@ -54,7 +55,7 @@
                     </c-heading>
                     <c-button kind="tertiary" size="sm" label="Bewerken"
                               showIcon="before" icon="bewerken"
-                              hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ section.section_id }}"
+                              hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ section.section_id }}{{ _token_qs }}"
                               hx-target="#edit-section-inner" hx-swap="innerHTML" />
                 </div>
                 <div class="wizard-review__section-content">
@@ -89,11 +90,11 @@
 
         <div class="wizard-step__actions-right">
             <c-button kind="secondary" label="Vorige" showIcon="before" icon="delta-naar-links"
-                      hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ steps.last }}"
+                      hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ steps.last }}{{ _token_qs }}"
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
             <c-button kind="primary" label="{{ action_label }}"
                       showIcon="before" icon="publicatie"
-                      hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/confirm"
+                      hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/confirm{{ _token_qs }}"
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
         </div>
     </div>

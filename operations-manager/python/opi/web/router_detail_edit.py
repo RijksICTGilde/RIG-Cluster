@@ -34,10 +34,10 @@ from opi.forms.wizard.resolver import (
     resolve_active_sections,
 )
 from opi.forms.wizard.session import (
-    clear_modal_wizard_state,
-    get_modal_wizard_state,
-    init_modal_wizard_state,
-    save_modal_wizard_state,
+    clear_modal_state_by_token,
+    get_modal_state_by_token,
+    init_modal_state_tokenized,
+    save_modal_state_by_token,
 )
 from opi.web.router_wizard import (
     _empty_sequence_item,
@@ -52,6 +52,14 @@ if TYPE_CHECKING:
     from opi.forms.wizard.state import WizardState
 
 logger = logging.getLogger(__name__)
+
+_SESSION_EXPIRED = "Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw."
+
+
+def _get_wizard_token(request: Request) -> str | None:
+    """Extract the modal wizard token from query params."""
+    return request.query_params.get("_wizard_token")
+
 
 detail_edit_router = APIRouter(prefix="/projects", tags=["detail-edit"])
 
@@ -373,7 +381,8 @@ def _determine_flow_action(flow: FormFlow, active_sections: list[FormSection]) -
 
 
 def _render_modal_step(
-    request: Request,
+    wizard_token: str | None,
+    state: WizardState,
     flow_id: str,
     section: FormSection,
     step_html: str,
@@ -382,13 +391,6 @@ def _render_modal_step(
     global_errors: list[str] | None = None,
 ) -> str:
     """Render the modal wizard step template and return processed HTML."""
-    state = get_modal_wizard_state(request)
-    if not state:
-        raise HTTPException(
-            status_code=400,
-            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
-
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     active_sections = resolve_active_sections(flow, state.step_data)
     section_meta = get_section_metadata(active_sections)
@@ -396,12 +398,12 @@ def _render_modal_step(
 
     templates = get_templates()
     context = {
-        "request": request,
         "steps": steps,
         "flow_id": flow_id,
         "section": section,
         "step_html": step_html,
         "project_name": project_name,
+        "wizard_token": wizard_token,
         "errors": errors or {},
         "global_errors": global_errors or [],
         "step_base_url": f"/projects/{project_name}/modal-wizard/{flow_id}/step/",
@@ -484,7 +486,8 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
         raise HTTPException(status_code=400, detail="Ongeldige reeks-actie")
 
     # Prefer wizard state data if modal wizard is active
-    state = get_modal_wizard_state(request)
+    wizard_token = body.pop("_wizard_token", None) or _get_wizard_token(request)
+    state = get_modal_state_by_token(wizard_token)
     base_data = state.get_merged_data() if state else project_data
 
     processor = EditableFormProcessor()
@@ -586,8 +589,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     first_step = active_section_ids[0]
 
     # Initialize modal wizard state
-    state = init_modal_wizard_state(
-        request,
+    wizard_token, state = init_modal_state_tokenized(
         flow_id=flow_id,
         first_step=first_step,
         active_sections=active_section_ids,
@@ -601,6 +603,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # use it to resolve context (e.g. deployment name from path, component
     # services, etc.).  Step data merges on top during get_merged_data().
     state.template_data = dict(project_data)
+    state.template_data["_wizard_token"] = wizard_token
 
     # Store is_new flag so _detect_list_target can distinguish add vs edit
     if flow_id.startswith("modal-edit-component-") and flow_context.get("is_new"):
@@ -632,7 +635,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     for section_id in active_section_ids:
         if step_data.get(section_id):
             state.mark_completed(section_id)
-    save_modal_wizard_state(request, state)
+    save_modal_state_by_token(wizard_token, state)
 
     # Render first step
     section = _get_section_from_flow(flow, first_step)
@@ -640,7 +643,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
-    rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+    rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
@@ -650,24 +653,22 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
     """Load a step (for back-navigation)."""
     _require_project_edit_access(request, project_name)
 
-    state = get_modal_wizard_state(request)
+    wizard_token = _get_wizard_token(request)
+    state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != flow_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
+        raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     section = _get_section_from_flow(flow, section_id)
 
     state.current_step = section_id
-    save_modal_wizard_state(request, state)
+    save_modal_state_by_token(wizard_token, state)
 
     yaml_data = state.get_merged_data()
 
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
-    rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+    rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
@@ -680,13 +681,11 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     else:
         _require_project_edit_access(request, project_name)
 
-    state = get_modal_wizard_state(request)
+    wizard_token = _get_wizard_token(request)
+    state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (step=%s)", project_name, flow_id, section_id)
-        raise HTTPException(
-            status_code=400,
-            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
+        raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     section = _get_section_from_flow(flow, section_id)
@@ -699,6 +698,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             detail="Verwacht JSON body (json-enc extensie niet geladen?)",
         )
     body = await request.json()
+    body.pop("_wizard_token", None)  # Strip token from form data
 
     # Handle sequence actions inline
     seq_action = body.pop("_seq_action", None)
@@ -731,7 +731,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
         smart_set_value(merged, str(seq_path), items)
         step_html = _render_section_html(section, merged, locked_services=None)
-        rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+        rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
     submitted_data = _pad_sparse_submission(body, flow_id, section_id)
@@ -748,9 +748,9 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             yaml_data,
             edit_mode=True,
         )
-        save_modal_wizard_state(request, state)
+        save_modal_state_by_token(wizard_token, state)
         step_html = _render_section_html(section, submitted_yaml, locked_services=None)
-        rendered = _render_modal_step(request, flow_id, section, step_html, project_name)
+        rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
     # Backup/restore sections have no editables - store raw form data directly
@@ -796,7 +796,8 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         if errors or section_global_errors:
             step_html = _render_section_html(section, submitted_yaml, errors=errors, locked_services=None)
             rendered = _render_modal_step(
-                request,
+                wizard_token,
+                state,
                 flow_id,
                 section,
                 step_html,
@@ -842,22 +843,22 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             if suffix.isdigit():
                 _seed_components_for_new_deployment(state, int(suffix))
 
-        save_modal_wizard_state(request, state)
+        save_modal_state_by_token(wizard_token, state)
 
         yaml_data = state.get_merged_data()
 
         step_html = _render_section_html(next_section, yaml_data, locked_services=None)
-        rendered = _render_modal_step(request, flow_id, next_section, step_html, project_name)
+        rendered = _render_modal_step(wizard_token, state, flow_id, next_section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
     # All steps completed - show review if flow requires it
     if flow.show_review:
-        save_modal_wizard_state(request, state)
-        return _render_modal_review(request, project_name, flow_id, active_sections, state)
+        save_modal_state_by_token(wizard_token, state)
+        return _render_modal_review(wizard_token, project_name, flow_id, active_sections, state)
 
     # No review needed - do the final submit
-    save_modal_wizard_state(request, state)
-    return await _modal_do_submit(request, project_name, flow_id)
+    save_modal_state_by_token(wizard_token, state)
+    return await _modal_do_submit(request, wizard_token, project_name, flow_id)
 
 
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/skip", response_class=HTMLResponse)
@@ -869,14 +870,12 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
     else:
         _require_project_edit_access(request, project_name)
 
-    state = get_modal_wizard_state(request)
+    wizard_token = _get_wizard_token(request)
+    state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != flow_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
+        raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
-    return await _modal_do_submit(request, project_name, flow_id)
+    return await _modal_do_submit(request, wizard_token, project_name, flow_id)
 
 
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/confirm", response_class=HTMLResponse)
@@ -888,14 +887,12 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
     else:
         _require_project_edit_access(request, project_name)
 
-    state = get_modal_wizard_state(request)
+    wizard_token = _get_wizard_token(request)
+    state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != flow_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
+        raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
-    return await _modal_do_submit(request, project_name, flow_id)
+    return await _modal_do_submit(request, wizard_token, project_name, flow_id)
 
 
 @detail_edit_router.get(
@@ -907,24 +904,22 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
     """HTMX endpoint: re-render the backup step partial when deployment changes."""
     _require_project_member_access(request, project_name)
 
-    state = get_modal_wizard_state(request)
+    wizard_token = _get_wizard_token(request)
+    state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != "modal-backup":
-        raise HTTPException(
-            status_code=400,
-            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
+        raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     selected = request.query_params.get("deployment_name", "")
     if state.template_data:
         state.template_data["_selected_deployment"] = selected
-        save_modal_wizard_state(request, state)
+        save_modal_state_by_token(wizard_token, state)
 
     flow = get_flow("modal-backup")
     section = _get_section_from_flow(flow, "backup-select")
     yaml_data = state.get_merged_data()
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
-    rendered = _render_modal_step(request, "modal-backup", section, step_html, project_name)
+    rendered = _render_modal_step(wizard_token, state, "modal-backup", section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
@@ -937,31 +932,29 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
     """HTMX endpoint: re-render the restore target step when mode changes."""
     _require_project_member_access(request, project_name)
 
-    state = get_modal_wizard_state(request)
+    wizard_token = _get_wizard_token(request)
+    state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != "modal-restore":
-        raise HTTPException(
-            status_code=400,
-            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
+        raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     restore_mode = request.query_params.get("restore_mode", "existing")
     if state.template_data:
         state.template_data["_restore_mode"] = restore_mode
 
     _enrich_restore_target_context(state)
-    save_modal_wizard_state(request, state)
+    save_modal_state_by_token(wizard_token, state)
 
     flow = get_flow("modal-restore")
     section = _get_section_from_flow(flow, "restore-target")
     yaml_data = state.get_merged_data()
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
-    rendered = _render_modal_step(request, "modal-restore", section, step_html, project_name)
+    rendered = _render_modal_step(wizard_token, state, "modal-restore", section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
 def _render_modal_review(
-    request: Request,
+    wizard_token: str | None,
     project_name: str,
     flow_id: str,
     active_sections,
@@ -1014,10 +1007,10 @@ def _render_modal_review(
     templates = get_templates()
     rendered = templates.get_template("wizard/modal_wizard_review.html.j2").render(
         {
-            "request": request,
             "steps": steps,
             "flow_id": flow_id,
             "project_name": project_name,
+            "wizard_token": wizard_token,
             "section_summaries": section_summaries,
             "action_label": "Bevestigen en verwerken",
             "warnings": warnings,
@@ -1031,6 +1024,7 @@ def _render_modal_review(
 
 async def _modal_do_submit(
     request: Request,
+    wizard_token: str | None,
     project_name: str,
     flow_id: str,
 ) -> HTMLResponse:
@@ -1038,12 +1032,9 @@ async def _modal_do_submit(
     from opi.handlers.project_file_handler import save_project_file
     from opi.services.project_service import get_project_service
 
-    state = get_modal_wizard_state(request)
+    state = get_modal_state_by_token(wizard_token)
     if not state:
-        raise HTTPException(
-            status_code=400,
-            detail="Sorry, dit had niet mogen gebeuren. Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
+        raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
 
@@ -1058,7 +1049,9 @@ async def _modal_do_submit(
 
     # Backup/restore flows skip project file modification
     if action in ("trigger_backup", "trigger_restore"):
-        return await _handle_backup_restore_submit(request, project_name, flow_id, action, state, templates)
+        return await _handle_backup_restore_submit(
+            request, wizard_token, project_name, flow_id, action, state, templates
+        )
 
     # Merge all step data
     merged_data = state.get_merged_data()
@@ -1161,11 +1154,11 @@ async def _modal_do_submit(
         if process_components:
             rendered = str(process_components(rendered))
 
-        clear_modal_wizard_state(request)
+        clear_modal_state_by_token(wizard_token)
         return HTMLResponse(content=rendered)
 
     # save_only
-    clear_modal_wizard_state(request)
+    clear_modal_state_by_token(wizard_token)
     rendered = templates.get_template("wizard/modal_wizard_success.html.j2").render({})
     process_components = templates.env.filters.get("process_components")
     if process_components:
@@ -1186,6 +1179,7 @@ async def _modal_do_submit(
 
 async def _handle_backup_restore_submit(
     request: Request,
+    wizard_token: str | None,
     project_name: str,
     flow_id: str,
     action: str,
@@ -1291,7 +1285,7 @@ async def _handle_backup_restore_submit(
     if process_components:
         rendered = str(process_components(rendered))
 
-    clear_modal_wizard_state(request)
+    clear_modal_state_by_token(wizard_token)
     return HTMLResponse(content=rendered)
 
 

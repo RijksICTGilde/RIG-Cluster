@@ -338,7 +338,11 @@ def create_app() -> FastAPI:
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(MaintenanceMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
-    app.add_middleware(SecurityHeadersMiddleware, keycloak_url=settings.KEYCLOAK_URL)
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        keycloak_url=settings.KEYCLOAK_URL,
+        prometheus_url=settings.PROMETHEUS_EXTERNAL_URL or settings.PROMETHEUS_URL,
+    )
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
 
     # Flow ID middleware - runs first (outermost) to tag all log lines for this request

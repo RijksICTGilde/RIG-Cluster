@@ -25,18 +25,23 @@ class TestSecurityHeadersMiddleware:
         mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
         assert mw._extract_origin("https://keycloak.kind") == "https://keycloak.kind"
 
+    @staticmethod
+    def _make_mw(keycloak_host: str = "", prometheus_host: str = "") -> SecurityHeadersMiddleware:
+        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
+        mw._keycloak_host = keycloak_host
+        mw._prometheus_host = prometheus_host
+        return mw
+
     def test_csp_includes_keycloak(self):
         """CSP connect-src and form-action include Keycloak origin."""
-        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
-        mw._keycloak_host = "https://keycloak.example.com"
+        mw = self._make_mw(keycloak_host="https://keycloak.example.com")
         csp = mw._build_csp()
         assert "connect-src 'self' https://keycloak.example.com" in csp
         assert "form-action 'self' https://keycloak.example.com" in csp
 
     def test_csp_without_keycloak(self):
         """CSP works without Keycloak URL."""
-        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
-        mw._keycloak_host = ""
+        mw = self._make_mw()
         csp = mw._build_csp()
         assert "connect-src 'self'" in csp
         assert "form-action 'self'" in csp
@@ -45,32 +50,44 @@ class TestSecurityHeadersMiddleware:
 
     def test_csp_includes_jsdelivr(self):
         """CSP script-src includes jsdelivr for Chart.js."""
-        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
-        mw._keycloak_host = ""
+        mw = self._make_mw()
         csp = mw._build_csp()
         assert "https://cdn.jsdelivr.net" in csp
 
     def test_csp_includes_unpkg(self):
         """CSP script-src includes unpkg.com for HTMX (loaded by jinja-roos-components)."""
-        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
-        mw._keycloak_host = ""
+        mw = self._make_mw()
         csp = mw._build_csp()
         assert "https://unpkg.com" in csp
 
     def test_csp_img_src_includes_keycloak(self):
         """CSP img-src includes Keycloak origin for auth redirects."""
-        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
-        mw._keycloak_host = "https://keycloak.example.com"
+        mw = self._make_mw(keycloak_host="https://keycloak.example.com")
         csp = mw._build_csp()
         assert "img-src" in csp
         assert "https://keycloak.example.com" in csp.split("img-src")[1].split(";")[0]
 
     def test_csp_frame_ancestors_none(self):
         """CSP blocks framing via frame-ancestors 'none'."""
-        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
-        mw._keycloak_host = ""
+        mw = self._make_mw()
         csp = mw._build_csp()
         assert "frame-ancestors 'none'" in csp
+
+    def test_csp_frame_src_includes_prometheus(self):
+        """CSP frame-src allows the Prometheus origin so the metrics explorer
+        iframe can load the external Prometheus UI."""
+        mw = self._make_mw(prometheus_host="https://prometheus.example.com")
+        csp = mw._build_csp()
+        assert "frame-src 'self' https://prometheus.example.com" in csp
+
+    def test_csp_frame_src_without_prometheus(self):
+        """Without a configured Prometheus URL, frame-src is still emitted with
+        just 'self' so iframes of same-origin content keep working and the
+        directive is explicit rather than falling back to default-src."""
+        mw = self._make_mw()
+        csp = mw._build_csp()
+        assert "frame-src 'self'" in csp
+        assert "frame-src 'self' " not in csp
 
 
 class TestSecurityHeadersIntegration:

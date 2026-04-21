@@ -24,10 +24,10 @@ from opi.forms.wizard.resolver import (
     resolve_active_sections,
 )
 from opi.forms.wizard.session import (
-    clear_modal_wizard_state,
-    get_modal_wizard_state,
-    init_modal_wizard_state,
-    save_modal_wizard_state,
+    clear_modal_state_by_token,
+    get_modal_state_by_token,
+    init_modal_state_tokenized,
+    save_modal_state_by_token,
 )
 from opi.handlers.project_file_handler import save_project_file
 from opi.services.project_service import get_project_service
@@ -89,7 +89,8 @@ def _render_section_html(
 
 
 def _render_modal_step(
-    request: Request,
+    wizard_token: str | None,
+    state: Any,
     section: Any,
     step_html: str,
     project_name: str,
@@ -97,13 +98,6 @@ def _render_modal_step(
     global_errors: list[str] | None = None,
 ) -> str:
     """Render the modal wizard step wrapper."""
-    state = get_modal_wizard_state(request)
-    if not state:
-        raise HTTPException(
-            status_code=400,
-            detail="Wizard sessie verlopen. Sluit dit venster en probeer opnieuw.",
-        )
-
     flow = get_flow(FLOW_ID)
     active_sections = resolve_active_sections(flow, state.step_data)
     section_meta = get_section_metadata(active_sections)
@@ -111,12 +105,12 @@ def _render_modal_step(
 
     templates = get_templates()
     context = {
-        "request": request,
         "steps": steps,
         "flow_id": FLOW_ID,
         "section": section,
         "step_html": step_html,
         "project_name": project_name,
+        "wizard_token": wizard_token,
         "errors": errors or {},
         "global_errors": global_errors or [],
         "step_base_url": f"/admin/subdomains/{project_name}/modal-wizard/{FLOW_ID}/step/",
@@ -244,8 +238,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # Seed wizard state with approval items
     seed_data: dict[str, Any] = {"_approval_items": approval_items}
 
-    state = init_modal_wizard_state(
-        request,
+    wizard_token, state = init_modal_state_tokenized(
         flow_id=flow_id,
         first_step=first_section.section_id,
         active_sections=[first_section.section_id],
@@ -253,12 +246,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     )
     state.step_data = {first_section.section_id: seed_data}
     state.template_data = {"_admin_email": user.get("email", "")}
-    save_modal_wizard_state(request, state)
+    save_modal_state_by_token(wizard_token, state)
 
     yaml_data = state.get_merged_data()
     step_html = _render_section_html(first_section, yaml_data)
 
-    rendered = _render_modal_step(request, first_section, step_html, project_name)
+    rendered = _render_modal_step(wizard_token, state, first_section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
@@ -274,7 +267,8 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     if flow_id != FLOW_ID:
         raise HTTPException(status_code=404, detail="Onbekende flow")
 
-    state = get_modal_wizard_state(request)
+    wizard_token = request.query_params.get("_wizard_token")
+    state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (state=%s)", project_name, flow_id, state)
         raise HTTPException(
@@ -291,19 +285,20 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             detail="Verwacht JSON body (json-enc extensie niet geladen?)",
         )
     body = await request.json()
+    body.pop("_wizard_token", None)
 
     # No editables — store raw form data directly (same pattern as backup/restore)
     state.store_step_data(section_id, body)
     state.mark_completed(section_id)
-    save_modal_wizard_state(request, state)
+    save_modal_state_by_token(wizard_token, state)
 
     # Single-section flow: no review, go straight to submit
-    return await _do_submit(request, user, project_name)
+    return await _do_submit(request, wizard_token, user, project_name)
 
 
-async def _do_submit(request: Request, user: dict, project_name: str) -> HTMLResponse:
+async def _do_submit(request: Request, wizard_token: str | None, user: dict, project_name: str) -> HTMLResponse:
     """Execute the final approval submission."""
-    state = get_modal_wizard_state(request)
+    state = get_modal_state_by_token(wizard_token)
     if not state:
         raise HTTPException(
             status_code=400,
@@ -370,5 +365,5 @@ async def _do_submit(request: Request, user: dict, project_name: str) -> HTMLRes
     if process_components:
         rendered = str(process_components(rendered))
 
-    clear_modal_wizard_state(request)
+    clear_modal_state_by_token(wizard_token)
     return HTMLResponse(content=rendered)

@@ -26,9 +26,10 @@ if TYPE_CHECKING:
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security response headers to every HTTP response."""
 
-    def __init__(self, app, *, keycloak_url: str = "") -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, app, *, keycloak_url: str = "", prometheus_url: str = "") -> None:  # type: ignore[no-untyped-def]
         super().__init__(app)
         self._keycloak_host = self._extract_origin(keycloak_url)
+        self._prometheus_host = self._extract_origin(prometheus_url)
 
     @staticmethod
     def _extract_origin(url: str) -> str:
@@ -42,11 +43,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     def _build_csp(self) -> str:
         keycloak = f" {self._keycloak_host}" if self._keycloak_host else ""
+        prometheus = f" {self._prometheus_host}" if self._prometheus_host else ""
 
         # Inline styles: ROOS components render style attributes; 'unsafe-inline' required.
         # Inline scripts: HTMX event handlers are inline; 'unsafe-inline' required.
         # cdn.jsdelivr.net: Chart.js loaded from CDN on project-details page.
         # unpkg.com: HTMX loaded from CDN by jinja-roos-components.
+        # frame-src: metrics explorer embeds the Prometheus UI in an iframe.
         parts = [
             "default-src 'self'",
             "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com",
@@ -55,6 +58,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "font-src 'self'",
             f"connect-src 'self'{keycloak}",
             f"form-action 'self'{keycloak}",
+            f"frame-src 'self'{prometheus}",
             "frame-ancestors 'none'",
             "base-uri 'self'",
         ]

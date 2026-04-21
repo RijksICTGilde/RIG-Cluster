@@ -29,7 +29,7 @@
             <label class="rvo-radio-option" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; cursor: pointer;{% if restore_mode == 'existing' %} background: var(--rvo-color-hemelblauw-100); border-color: var(--rvo-color-hemelblauw);{% endif %}">
                 <input type="radio" name="restore_mode" value="existing"
                        {% if restore_mode == "existing" %}checked{% endif %}
-                       hx-get="/projects/{{ _project_name }}/modal-wizard/modal-restore/select-restore-mode?restore_mode=existing"
+                       hx-get="/projects/{{ _project_name }}/modal-wizard/modal-restore/select-restore-mode?restore_mode=existing{% if _wizard_token %}&amp;_wizard_token={{ _wizard_token }}{% endif %}"
                        hx-target="#edit-section-inner"
                        hx-swap="innerHTML"
                        style="margin: 0;" />
@@ -38,7 +38,7 @@
             <label class="rvo-radio-option" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; cursor: pointer;{% if restore_mode == 'new' %} background: var(--rvo-color-hemelblauw-100); border-color: var(--rvo-color-hemelblauw);{% endif %}">
                 <input type="radio" name="restore_mode" value="new"
                        {% if restore_mode == "new" %}checked{% endif %}
-                       hx-get="/projects/{{ _project_name }}/modal-wizard/modal-restore/select-restore-mode?restore_mode=new"
+                       hx-get="/projects/{{ _project_name }}/modal-wizard/modal-restore/select-restore-mode?restore_mode=new{% if _wizard_token %}&amp;_wizard_token={{ _wizard_token }}{% endif %}"
                        hx-target="#edit-section-inner"
                        hx-swap="innerHTML"
                        style="margin: 0;" />
