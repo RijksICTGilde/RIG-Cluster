@@ -117,6 +117,8 @@ def mock_settings() -> Any:
         mock_settings.OIDC_DISABLED = True
         mock_settings.ENABLE_GIT_MONITOR = False
         mock_settings.KEYCLOAK_URL = ""
+        mock_settings.PROMETHEUS_EXTERNAL_URL = ""
+        mock_settings.PROMETHEUS_URL = ""
         yield mock_settings
 
 
