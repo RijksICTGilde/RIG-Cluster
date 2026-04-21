@@ -104,8 +104,18 @@ class TestSchedulerPicksUpYamlSchedule:
     """Scheduler reads RRULE from project YAML and creates backup tasks."""
 
     def _run_scheduler(self, scheduler: BackupScheduler, projects: list) -> None:
+        """Run one scheduler tick.
+
+        Bypasses the ±60-minute BYHOUR:BYMINUTE window gate — these tests
+        verify scheduler pickup of the YAML schedule, not the time window
+        logic (which has its own tests). Without bypassing it, tests that
+        run outside each schedule's window would spuriously fail.
+        """
         projects_dict = {p.data["name"]: p for p in projects if p.data and p.data.get("name")}
-        with patch("opi.services.project_service.get_project_service") as mock_get:
+        with (
+            patch("opi.services.project_service.get_project_service") as mock_get,
+            patch("opi.core.backup_scheduler._within_preferred_window", return_value=True),
+        ):
             mock_get.return_value.get_all_projects.return_value = projects_dict
             asyncio.run(scheduler._check_and_schedule())
 
@@ -641,7 +651,10 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"webshop": project}
-        with patch("opi.services.project_service.get_project_service") as mock_get:
+        with (
+            patch("opi.services.project_service.get_project_service") as mock_get,
+            patch("opi.core.backup_scheduler._within_preferred_window", return_value=True),
+        ):
             mock_get.return_value.get_all_projects.return_value = projects_dict
             _run(scheduler._check_and_schedule())
 

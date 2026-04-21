@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -33,6 +34,10 @@ logger = logging.getLogger(__name__)
 SESSION_KEY = "wizard_token"
 """Cookie key - holds only a short UUID, not the full state."""
 
+# Tokens are generated as uuid.uuid4().hex — exactly 32 lowercase hex chars.
+# Reject anything else to prevent path traversal via user-supplied tokens.
+_TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
+
 _STORE_DIR: str | None = None
 
 
@@ -45,7 +50,20 @@ def _get_store_dir() -> str:
     return _STORE_DIR
 
 
+def _is_valid_token(token: object) -> bool:
+    """Token must match the uuid4 hex format we generate in save_wizard_state."""
+    return isinstance(token, str) and bool(_TOKEN_RE.fullmatch(token))
+
+
 def _store_path(token: str) -> Path:
+    """Resolve the on-disk path for a token.
+
+    Raises ValueError if the token is not a well-formed uuid4 hex string.
+    This defends against path traversal when tokens arrive via HTMX request
+    params (query string / hidden input), which are attacker-controllable.
+    """
+    if not _is_valid_token(token):
+        raise ValueError(f"invalid wizard token: {token!r}")
     return Path(_get_store_dir()) / f"{token}.json"
 
 
@@ -135,6 +153,10 @@ def init_wizard_state(
 
 def _load_state_by_token(token: str) -> WizardState | None:
     """Load wizard state by token directly (no session needed)."""
+    if not _is_valid_token(token):
+        logger.warning("Rejected malformed wizard token: %r", token)
+        return None
+
     path = _store_path(token)
     if not path.exists():
         return None
@@ -157,14 +179,14 @@ def get_modal_state_by_token(token: str | None) -> WizardState | None:
 
 def save_modal_state_by_token(token: str | None, state: WizardState) -> None:
     """Save modal wizard state by token."""
-    if not token:
+    if not token or not _is_valid_token(token):
         return
     _store_path(token).write_text(json.dumps(state.to_dict()))
 
 
 def clear_modal_state_by_token(token: str | None) -> None:
     """Delete the state file for the given token."""
-    if not token:
+    if not token or not _is_valid_token(token):
         return
     path = _store_path(token)
     if path.exists():
