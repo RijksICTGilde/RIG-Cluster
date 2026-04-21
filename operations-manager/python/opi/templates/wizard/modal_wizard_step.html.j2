@@ -45,12 +45,17 @@
     {% endif %}
 
     {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
+    {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
     <form id="modal-wizard-form"
           autocomplete="off"
           hx-ext="json-enc"
-          hx-post="{{ _step_url_prefix }}{{ section.section_id }}"
+          hx-post="{{ _step_url_prefix }}{{ section.section_id }}{{ _token_qs }}"
           hx-target="#edit-section-inner"
           hx-swap="innerHTML">
+
+        {% if wizard_token %}
+        <input type="hidden" name="_wizard_token" value="{{ wizard_token }}" />
+        {% endif %}
 
         <div class="wizard-step__fields" id="edit-section-content">
             {{ step_html | safe }}
@@ -59,7 +64,7 @@
         <div class="wizard-step__actions" id="edit-section-actions">
             {% if not steps.is_first %}
             <c-button kind="secondary" label="Vorige" showIcon="before" icon="delta-naar-links"
-                      hx-get="{{ _step_url_prefix }}{{ steps.prev }}"
+                      hx-get="{{ _step_url_prefix }}{{ steps.prev }}{{ _token_qs }}"
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
             {% else %}
             <c-button type="button" kind="tertiary" label="Annuleren" @click="closeEditModal()" />

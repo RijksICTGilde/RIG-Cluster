@@ -39,7 +39,7 @@
             id="deployment_name"
             name="deployment_name"
             class="rvo-select"
-            hx-get="/projects/{{ _project_name }}/modal-wizard/modal-backup/select-deployment"
+            hx-get="/projects/{{ _project_name }}/modal-wizard/modal-backup/select-deployment{% if _wizard_token %}?_wizard_token={{ _wizard_token }}{% endif %}"
             hx-target="#edit-section-inner"
             hx-include="[name='deployment_name']"
             style="width: 100%; padding: 8px 12px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; font-size: 0.95rem;"
