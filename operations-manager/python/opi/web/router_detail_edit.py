@@ -215,6 +215,27 @@ def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[st
     return {}
 
 
+def _fully_owned_list_keys(flow: Any) -> set[str]:
+    """Top-level list keys that an editable fully owns (bare yaml_path, no index).
+
+    Such keys must not be duplicated into ``state.template_data`` because
+    ``step_data`` already carries the authoritative list; a shadow copy in
+    template_data causes ``get_merged_data`` to silently retain items that
+    the user removed (merge-by-index never shrinks).
+
+    Indexed paths like ``deployments[0]/name`` are *not* fully owned — those
+    sections contribute partial fields and still need merge-by-index against
+    the template baseline.
+    """
+    owned: set[str] = set()
+    for section in flow.sections:
+        for vis in section.editables:
+            path = vis.editable.yaml_path
+            if "/" not in path and "[" not in path:
+                owned.add(path)
+    return owned
+
+
 def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str = "") -> dict[str, Any]:
     """Pad sparse arrays collapsed by json-enc's cleanArrays.
 
@@ -602,7 +623,14 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # The full project data is the domain object — providers and converters
     # use it to resolve context (e.g. deployment name from path, component
     # services, etc.).  Step data merges on top during get_merged_data().
-    state.template_data = dict(project_data)
+    #
+    # Editables whose yaml_path points *directly* at a top-level list (e.g.
+    # USERS_SEQUENCE at "users", COMPONENTS_SEQUENCE at "components") fully
+    # own that list — step_data already carries the complete value. Keeping
+    # a copy in template_data would cause get_merged_data's merge-by-index
+    # to silently retain items the user removed in the UI.
+    owned = _fully_owned_list_keys(flow)
+    state.template_data = {k: v for k, v in project_data.items() if k not in owned}
     state.template_data["_wizard_token"] = wizard_token
 
     # Store is_new flag so _detect_list_target can distinguish add vs edit

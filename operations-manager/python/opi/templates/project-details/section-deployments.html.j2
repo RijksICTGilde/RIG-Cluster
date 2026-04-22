@@ -1,6 +1,8 @@
-{# Deployments Section - one card per deployment, no outer wrapper #}
+{# Deployments Section - one card per deployment, no outer wrapper.
+   Display alphabetically; keep the original YAML index for edit-modal flow_ids. #}
 {% if project.deployments %}
-    {% for deployment in project.deployments %}
+    {% for deployment in project.deployments | sort(attribute='name') %}
+    {% set original_index = project.deployments.index(deployment) %}
     <div class="deployment-section" id="deployment-{{ deployment.name }}"
          {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
     <c-card class="deployment-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
@@ -12,9 +14,9 @@
                 <div class="deployment-actions">
                     {% if user_role in ['admin', 'owner'] %}
                     <c-button kind="secondary" size="sm" label="Bewerken" showIcon="before" icon="bewerken"
-                        @click="openEditModal('modal-edit-deployment-{{ loop.index0 }}', 'Deployment bewerken - {{ deployment.name }}')" />
+                        @click="openEditModal('modal-edit-deployment-{{ original_index }}', 'Deployment bewerken - {{ deployment.name }}')" />
                     <c-button kind="secondary" size="sm" label="Webadres" showIcon="before" icon="wereldbol"
-                        @click="openEditModal('modal-edit-domain-{{ loop.index0 }}', 'Webadres bewerken - {{ deployment.name }}')" />
+                        @click="openEditModal('modal-edit-domain-{{ original_index }}', 'Webadres bewerken - {{ deployment.name }}')" />
                     <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
                         @click="showDangerConfirmation('deployment', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt verwijderen? Dit verwijdert alle bijbehorende Kubernetes resources en ArgoCD configuratie.')" />
                     {% endif %}
@@ -26,7 +28,7 @@
             <div class="deployment-components">
                 <c-heading type="h4" textContent="Components" />
                 <div class="component-list">
-                    {% for component in deployment.components %}
+                    {% for component in deployment.components | sort(attribute='reference') %}
                     <div class="component-item">
                         <c-icon icon="puzzel" size="md" color="donkerblauw" />
                         <div class="component-details">
@@ -125,7 +127,7 @@
             {# Deployment Configuration Variables - hidden while determining approach for secret display #}
 
             {# User Configuration Variables for components in this deployment #}
-            {% set deployment_components = deployment.components %}
+            {% set deployment_components = deployment.components | sort(attribute='reference') %}
             {% if deployment_components %}
             {% set has_user_vars = false %}
             {% for component in deployment_components %}
