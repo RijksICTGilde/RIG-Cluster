@@ -44,7 +44,7 @@
         <div class="deployment-global-selector">
             <label for="global-deployment-selector"><strong>Deployment:</strong></label>
             <select id="global-deployment-selector" class="deployment-select" onchange="switchDeployment(this.value)">
-                {% for deployment in project.deployments %}
+                {% for deployment in project.deployments | sort(attribute='name') %}
                 <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
                 {% endfor %}
             </select>

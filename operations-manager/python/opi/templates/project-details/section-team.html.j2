@@ -11,7 +11,7 @@
         <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>
 
         <c-grid columns="three" gap="md">
-            {% for user in project.users %}
+            {% for user in project.users | sort(attribute='email') %}
             <c-card padding="md" outline="true" backgroundColor="grijs-050">
                 <c-layout-row gap="md" verticalSpacing="center">
                     <div style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--rvo-color-hemelblauw); color: white; font-weight: 600; font-size: 1.125rem;">
