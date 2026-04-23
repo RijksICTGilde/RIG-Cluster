@@ -2,9 +2,12 @@
 
 All long-running operations return 202 Accepted immediately with a task ID.
 Clients must poll /api/tasks/{task_id} for status and results.
+
+Read-only GET endpoints return deployment state directly (no task queue).
 """
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -31,7 +34,12 @@ from opi.api.task_models import (
     UpdateImageResult,
     UpsertDeploymentResult,
 )
-from opi.api.v2.models import AsyncTaskAcceptedResponse
+from opi.api.v2.models import (
+    AsyncTaskAcceptedResponse,
+    DeploymentComponentDetail,
+    DeploymentDetail,
+    DeploymentListResponse,
+)
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
@@ -39,8 +47,17 @@ from opi.api.validation import (
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
 )
+from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
+from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
-from opi.utils.naming import sanitize_kubernetes_name
+from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.project_service import get_project_service
+from opi.utils.naming import (
+    HostnameFormat,
+    generate_public_url,
+    get_component_ingress_map,
+    sanitize_kubernetes_name,
+)
 from opi.utils.project_utils import validate_project_name
 
 logger = logging.getLogger(__name__)
@@ -68,8 +85,178 @@ def _accepted_response(task: dict, task_type: str) -> JSONResponse:
     )
 
 
+def _compute_deployment_urls(
+    deployment: dict[str, Any],
+    project_name: str,
+    project_data: dict[str, Any],
+) -> dict[str, str]:
+    """Compute public URLs for a deployment's components.
+
+    Uses the same ingress-map logic as the web UI detail page.
+    Only components with the publish-on-web service get URLs.
+    """
+    cluster = deployment.get("cluster", "")
+    urls: dict[str, str] = {}
+
+    try:
+        ingress_postfix = get_ingress_postfix(cluster)
+        use_https = get_ingress_tls_enabled(cluster)
+    except KeyError, ValueError:
+        logger.debug("Could not resolve ingress config for cluster '%s'", cluster)
+        return urls
+
+    subdomain = deployment.get("subdomain")
+    base_domain = deployment.get("base-domain")
+    hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+    domain_format = deployment.get("domain-format")
+    deployment_name = deployment["name"]
+    project_file_handler = ProjectFileHandler()
+
+    for component in deployment.get("components", []):
+        component_name = component.get("reference")
+        if not component_name:
+            continue
+
+        has_publish = project_file_handler.extract_component_publish_on_web(project_data, component_name)
+        if not has_publish:
+            continue
+
+        ingress_map = get_component_ingress_map(
+            component_name=component_name,
+            deployment_name=deployment_name,
+            project_name=project_name,
+            ingress_postfix=ingress_postfix,
+            subdomain=subdomain,
+            base_domain=base_domain,
+            hostname_format=hostname_format,
+            domain_format=domain_format,
+            project_data=project_data,
+            cluster=cluster,
+        )
+        hostname = next(iter(ingress_map.values()), None)
+        if hostname:
+            urls[component_name] = generate_public_url(hostname, use_https)
+
+    return urls
+
+
+def _build_deployment_detail(
+    deployment: dict[str, Any],
+    project_name: str,
+    project_data: dict[str, Any],
+) -> DeploymentDetail:
+    """Build a DeploymentDetail from a deployment dict in the project file."""
+    components = [
+        DeploymentComponentDetail(
+            reference=c.get("reference", ""),
+            image=c.get("image", ""),
+            image_pull_policy=c.get("imagePullPolicy", "Always"),
+        )
+        for c in deployment.get("components", [])
+    ]
+
+    urls = _compute_deployment_urls(deployment, project_name, project_data)
+
+    return DeploymentDetail(
+        name=deployment.get("name", ""),
+        project=project_name,
+        cluster=deployment.get("cluster", ""),
+        namespace=deployment.get("namespace", ""),
+        subdomain=deployment.get("subdomain"),
+        components=components,
+        urls=urls,
+    )
+
+
 # ---------------------------------------------------------------------------
-# Endpoints
+# Read-only endpoints
+# ---------------------------------------------------------------------------
+
+
+@v2_router.get(
+    "/projects/{project_name}/deployments",
+    tags=["v2", "deployments"],
+    response_model=DeploymentListResponse,
+)
+@validate_api_token
+async def list_deployments_v2(
+    request: Request,
+    project_name: str,
+) -> JSONResponse:
+    """List deployments in a project with components, images, and computed URLs.
+
+    Returns only deployments targeting the current cluster.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    project_data: dict[str, Any] = project.data
+    current_cluster = settings.CLUSTER_MANAGER
+    deployments = [d for d in project_data.get("deployments", []) if d.get("cluster") == current_cluster]
+
+    details = [_build_deployment_detail(depl, project_name, project_data) for depl in deployments]
+
+    return JSONResponse(
+        content=DeploymentListResponse(
+            project=project_name,
+            cluster=current_cluster,
+            deployments=details,
+        ).model_dump(),
+    )
+
+
+@v2_router.get(
+    "/projects/{project_name}/deployments/{deployment_name}",
+    tags=["v2", "deployments"],
+    response_model=DeploymentDetail,
+)
+@validate_api_token
+async def get_deployment_v2(
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+) -> JSONResponse:
+    """Get a single deployment with components, images, and computed URLs.
+
+    Returns the current state of a deployment as defined in the project file,
+    with computed public URLs for components that have publish-on-web.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    project_data: dict[str, Any] = project.data
+    current_cluster = settings.CLUSTER_MANAGER
+
+    deployment = next(
+        (
+            d
+            for d in project_data.get("deployments", [])
+            if d.get("name") == deployment_name and d.get("cluster") == current_cluster
+        ),
+        None,
+    )
+    if not deployment:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Deployment '{deployment_name}' not found in project '{project_name}' on cluster '{current_cluster}'",
+        )
+
+    detail = _build_deployment_detail(deployment, project_name, project_data)
+    return JSONResponse(content=detail.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Mutation endpoints
 # ---------------------------------------------------------------------------
 
 

@@ -21,3 +21,39 @@ class AsyncTaskAcceptedResponse(BaseModel):
             }
         }
     }
+
+
+# ---------------------------------------------------------------------------
+# Read-only deployment detail models
+# ---------------------------------------------------------------------------
+
+
+class DeploymentComponentDetail(BaseModel):
+    """Component within a deployment, including image reference."""
+
+    reference: str = Field(..., description="Component name reference")
+    image: str = Field(..., description="Container image URL")
+    image_pull_policy: str = Field(default="Always", description="Image pull policy")
+
+
+class DeploymentDetail(BaseModel):
+    """Full deployment state as returned by the GET endpoints."""
+
+    name: str = Field(..., description="Deployment name")
+    project: str = Field(..., description="Project name")
+    cluster: str = Field(..., description="Target cluster")
+    namespace: str = Field(..., description="Kubernetes namespace")
+    subdomain: str | None = Field(default=None, description="DNS subdomain override")
+    components: list[DeploymentComponentDetail] = Field(default_factory=list, description="Component references")
+    urls: dict[str, str] = Field(
+        default_factory=dict,
+        description="Computed public URLs, keyed by component name",
+    )
+
+
+class DeploymentListResponse(BaseModel):
+    """Response for GET /projects/{project_name}/deployments."""
+
+    project: str
+    cluster: str
+    deployments: list[DeploymentDetail] = Field(default_factory=list)
