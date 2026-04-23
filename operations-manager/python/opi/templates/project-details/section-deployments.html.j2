@@ -118,7 +118,8 @@
                         size="sm"
                         showIcon="after"
                         icon="externe-link"
-                        @click="window.open('{{ link.url }}', '_blank')" />
+                        data-url="{{ link.url }}"
+                        @click="window.open(this.dataset.url, '_blank')" />
                     {% endfor %}
                 </c-layout-flow>
             </c-layout-flow>
