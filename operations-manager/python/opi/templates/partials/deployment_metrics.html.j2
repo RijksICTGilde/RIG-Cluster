@@ -12,7 +12,7 @@
 </div>
 {% if deployment.components %}
 <div class="metrics-grid">
-    {% for component in deployment.components %}
+    {% for component in deployment.components | sort(attribute='reference') %}
     {% set component_name = component.reference %}
     {% set m = metrics.get(component_name, {}) %}
     <c-card class="metrics-component-card" padding="lg" backgroundColor="grijs-050" outline="true">

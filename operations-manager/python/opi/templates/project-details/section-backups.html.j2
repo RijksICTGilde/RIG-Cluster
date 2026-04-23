@@ -12,9 +12,9 @@
         </div>
 
         {% set cluster_loop = namespace(first_shown=true) %}
-        {% for deployment in project.deployments %}
+        {% for deployment in project.deployments | sort(attribute='name') %}
             {% if deployment.cluster == current_cluster %}
-            {% set dep_idx = loop.index0 %}
+            {% set dep_idx = project.deployments.index(deployment) %}
             {% set dep_backup = deployment.get('backup', {}) if deployment.get('backup') is mapping else {} %}
             {% set dep_schedule = dep_backup.get('schedule', '') %}
             {% set backups = deployment_backups.get(deployment.name, []) %}

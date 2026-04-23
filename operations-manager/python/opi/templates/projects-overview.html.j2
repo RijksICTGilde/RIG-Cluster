@@ -86,7 +86,7 @@
                                 <div class="team-info">
                                     <div class="team-count">{{ project.users|length }} {% if project.users|length == 1 %}lid{% else %}leden{% endif %}</div>
                                     <div class="team-avatars">
-                                        {% for user in project.users[:3] %}
+                                        {% for user in (project.users | sort(attribute='email'))[:3] %}
                                             <span class="avatar">{{ user.email[:2]|upper }}</span>
                                         {% endfor %}
                                         {% if project.users|length > 3 %}
