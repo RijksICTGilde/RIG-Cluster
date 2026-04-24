@@ -841,6 +841,8 @@ class KeycloakManager:
                     await self._ensure_realm_authentication_flow(realm_name, keycloak_url, config)
                     # Always ensure IdP and platform client have correct URLs (idempotent)
                     await self._ensure_idp_and_platform_client_configuration(project_name, cluster, keycloak_url)
+                    # Always reconcile identity providers from YAML template (idempotent diff-based)
+                    await self._ensure_realm_identity_providers(project_name, cluster, realm_name, keycloak_url, config)
                     # Always ensure clients from YAML template are created (idempotent)
                     await self._ensure_realm_clients(
                         project_name, cluster, realm_name, keycloak_url, config, ingress_hosts
@@ -1363,6 +1365,58 @@ class KeycloakManager:
         # Process clients (idempotent - skips existing clients)
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_clients(yaml_path, context)
+
+    async def _ensure_realm_identity_providers(
+        self,
+        project_name: str,
+        cluster: str,
+        realm_name: str,
+        keycloak_url: str,
+        config: dict[str, Any],
+    ) -> None:
+        """
+        Ensure identity providers from the YAML template are reconciled for an existing realm.
+
+        This runs platformClients + identityProviders sections through the YAML handler,
+        which is idempotent: the federation client's existing secret is reused, and the
+        IDP config is only written when a real diff exists (e.g. a new flag like
+        backchannelSupported landed in the template).
+        """
+        template_name = config.get("template", "sso-only")
+        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
+
+        if not yaml_path.exists():
+            logger.warning(f"Template {template_name} not found, skipping identity provider reconciliation")
+            return
+
+        logger.info(f"Ensuring identity providers for realm {realm_name} using template {template_name}")
+
+        keycloak = await create_keycloak_connector(
+            keycloak_url=keycloak_url,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+
+        platform_client_id = generate_project_platform_client_id(project_name, cluster)
+
+        context = {
+            "project_name": project_name,
+            "cluster": cluster,
+            "keycloak_url": keycloak_url,
+            "platform_realm_name": settings.KEYCLOAK_DEFAULT_REALM,
+            "project_realm_name": realm_name,
+            "project_display_name": f"{project_name} ({cluster})",
+            "platform_client_id": platform_client_id,
+            "realm_name": realm_name,
+            "realm_display_name": f"{project_name} ({cluster})",
+        }
+
+        user_variables = config.get("variables", {})
+        if isinstance(user_variables, dict):
+            context.update(user_variables)
+
+        handler = KeycloakYamlHandler(keycloak)
+        await handler.ensure_identity_providers(yaml_path, context)
 
     async def _ensure_idp_and_platform_client_configuration(
         self,

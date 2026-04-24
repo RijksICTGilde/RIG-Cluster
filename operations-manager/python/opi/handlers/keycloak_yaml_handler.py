@@ -91,6 +91,32 @@ class KeycloakYamlHandler:
 
         await self._process_browser_flow(config.get("browserFlow"), variables)
 
+    async def ensure_identity_providers(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
+        """Ensure identity providers are correctly configured (idempotent).
+
+        Processes platformClients first so the IDP config block can reference
+        captured client_id/client_secret outputs, then processes identityProviders.
+
+        Args:
+            yaml_path: Path to YAML configuration file
+            context: Dictionary of variables for substitution (must include realm_name)
+        """
+        logger.info(f"Ensuring identity providers from {yaml_path}")
+
+        config = self._load_yaml(yaml_path)
+        variables = {**config.get("variables", {}), **context}
+
+        platform_clients_section = config.get("platformClients")
+        if platform_clients_section:
+            await self._process_platform_clients(platform_clients_section, variables)
+
+        idp_section = config.get("identityProviders")
+        if idp_section:
+            await self._process_identity_providers(idp_section, variables)
+            logger.info("Identity providers configuration completed")
+        else:
+            logger.debug("No identityProviders section in configuration")
+
     async def ensure_clients(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
         """Ensure clients are correctly configured (idempotent).
 
@@ -351,7 +377,24 @@ class KeycloakYamlHandler:
             provider_id = item.get("providerId", "oidc")
             logger.info(f"Adding {provider_id} identity provider: {alias} to realm {realm_name}")
 
+            # Keys consumed by named parameters - remaining config entries flow through as overrides
+            saml_named_keys = {
+                "idpEntityId",
+                "singleSignOnServiceUrl",
+                "singleLogoutServiceUrl",
+                "nameIDPolicyFormat",
+                "principalType",
+                "signingCertificate",
+                "entityId",
+                "validateSignature",
+                "wantAssertionsSigned",
+                "wantAssertionsEncrypted",
+                "syncMode",
+            }
+            oidc_named_keys = {"clientId", "clientSecret", "discoveryUrl"}
+
             if provider_id == "saml":
+                saml_overrides = {k: v for k, v in config.items() if k not in saml_named_keys}
                 # SAML identity provider
                 await self.keycloak.add_saml_identity_provider(
                     realm_name=realm_name,
@@ -373,8 +416,10 @@ class KeycloakYamlHandler:
                     sync_mode=config.get("syncMode", "FORCE"),
                     enabled=item.get("enabled", True),
                     update_profile_first_login=item.get("updateProfileFirstLogin", "off"),
+                    config_overrides=saml_overrides,
                 )
             else:
+                oidc_overrides = {k: v for k, v in config.items() if k not in oidc_named_keys}
                 # OIDC identity provider (default)
                 await self.keycloak.add_identity_provider(
                     realm_name=realm_name,
@@ -385,6 +430,7 @@ class KeycloakYamlHandler:
                     discovery_url=config.get("discoveryUrl"),
                     authenticate_by_default=item.get("authenticateByDefault", True),
                     update_profile_first_login=item.get("updateProfileFirstLogin", "off"),
+                    config_overrides=oidc_overrides,
                 )
 
             # Process mappers if present

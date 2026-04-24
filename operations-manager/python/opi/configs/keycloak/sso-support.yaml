@@ -46,6 +46,8 @@ identityProviders:
       clientSecret: "{{ platform_client.client_secret }}"
       discoveryUrl: "{{ keycloak_url }}/realms/{{ platform_realm_name }}/.well-known/openid-configuration"
       syncMode: "INHERIT"
+      # Frontchannel logout so the browser carries the SAML LogoutRequest all the way to BZK
+      backchannelSupported: "false"
     mappers:
       - name: "email-to-username"
         identityProviderMapper: "oidc-username-idp-mapper"
@@ -126,6 +128,8 @@ clients:
     redirectUris:
       - "https://{{ operations_manager_domain }}/invite/*"
       - "http://{{ operations_manager_domain }}/invite/*"
+    postLogoutRedirectUris:
+      - "+"
     webOrigins:
       - "https://{{ operations_manager_domain }}"
       - "http://{{ operations_manager_domain }}"
