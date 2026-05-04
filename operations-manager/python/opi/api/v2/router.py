@@ -6,6 +6,7 @@ Clients must poll /api/tasks/{task_id} for status and results.
 Read-only GET endpoints return deployment state directly (no task queue).
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -39,6 +40,8 @@ from opi.api.v2.models import (
     DeploymentComponentDetail,
     DeploymentDetail,
     DeploymentListResponse,
+    DeploymentStatus,
+    StatusError,
 )
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -47,13 +50,17 @@ from opi.api.validation import (
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
 )
+from opi.connectors.argo import ArgoConnector, create_argo_connector
+from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
 from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.deployment_diagnostics import gather_component_logs, gather_deployment_errors
 from opi.services.project_service import get_project_service
 from opi.utils.naming import (
     HostnameFormat,
+    generate_argocd_application_name,
     generate_public_url,
     get_component_ingress_map,
     sanitize_kubernetes_name,
@@ -140,17 +147,135 @@ def _compute_deployment_urls(
     return urls
 
 
+def _extract_deployment_status(status_data: dict[str, Any] | None) -> DeploymentStatus | None:
+    """Build a DeploymentStatus from an ArgoCD Application payload.
+
+    Returns None when the cluster has no Application yet for this deployment,
+    or when the payload is missing the minimum sync/health fields.
+    """
+    if not status_data:
+        return None
+
+    status = status_data.get("status", {}) or {}
+    sync = status.get("sync", {}) or {}
+    health = status.get("health", {}) or {}
+    operation_state = status.get("operationState", {}) or {}
+
+    sync_status = sync.get("status")
+    health_status = health.get("status")
+    if not sync_status or not health_status:
+        return None
+
+    return DeploymentStatus(
+        sync_status=sync_status,
+        health_status=health_status,
+        revision=sync.get("revision") or None,
+        last_synced_at=operation_state.get("finishedAt") or status.get("reconciledAt"),
+    )
+
+
+async def _fetch_one_deployment_status(
+    *,
+    project_name: str,
+    deployment: dict[str, Any],
+    argo: ArgoConnector,
+    kubectl: KubectlConnector,
+    log_lines: int,
+) -> DeploymentStatus | None:
+    """Fetch status for a single deployment, plus errors+logs when unhealthy."""
+    deployment_name = deployment["name"]
+    app_name = generate_argocd_application_name(project_name, deployment_name)
+    status_data = await argo.get_application_status(app_name)
+
+    status = _extract_deployment_status(status_data)
+    if status is None or status.health_status == "Healthy":
+        return status
+
+    base_namespace = deployment.get("namespace", "")
+    cluster = deployment.get("cluster", "")
+    raw_errors = await gather_deployment_errors(
+        argo=argo,
+        kubectl=kubectl,
+        app_name=app_name,
+        base_namespace=base_namespace,
+        cluster=cluster,
+        deployment_name=deployment_name,
+        status_data=status_data or {},
+    )
+    component_names = [c.get("reference", "") for c in deployment.get("components", []) if c.get("reference")]
+    logs = await gather_component_logs(
+        kubectl=kubectl,
+        base_namespace=base_namespace,
+        cluster=cluster,
+        deployment_name=deployment_name,
+        component_names=component_names,
+        tail_lines=log_lines,
+    )
+    return status.model_copy(
+        update={"errors": [StatusError(**e) for e in raw_errors], "logs": logs},
+    )
+
+
+async def _fetch_deployment_statuses(
+    project_name: str,
+    deployments: list[dict[str, Any]],
+    log_lines: int = 50,
+) -> dict[str, DeploymentStatus | None]:
+    """Fetch live status for each deployment in parallel.
+
+    Raises HTTPException(503) if the cluster status backend (ArgoCD) is
+    unreachable, login fails, or any per-deployment fetch raises — we
+    cannot return partial truth.
+
+    A 404 for a specific Application is normal (deployment not yet picked
+    up) and yields None for that deployment.
+    """
+    if not deployments:
+        return {}
+
+    try:
+        argo = create_argo_connector()
+    except Exception as exc:
+        logger.warning("ArgoCD connector init failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Deployment status backend is unreachable") from exc
+
+    if argo.auth_token is None:
+        logger.warning("ArgoCD login failed (no auth token after init)")
+        raise HTTPException(status_code=503, detail="Deployment status backend is unreachable")
+
+    kubectl = create_kubectl_connector()
+
+    try:
+        results = await asyncio.gather(
+            *[
+                _fetch_one_deployment_status(
+                    project_name=project_name,
+                    deployment=d,
+                    argo=argo,
+                    kubectl=kubectl,
+                    log_lines=log_lines,
+                )
+                for d in deployments
+            ]
+        )
+    except Exception as exc:
+        logger.warning("Deployment status fetch failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Deployment status backend is unreachable") from exc
+
+    return {d["name"]: result for d, result in zip(deployments, results, strict=True)}
+
+
 def _build_deployment_detail(
     deployment: dict[str, Any],
     project_name: str,
     project_data: dict[str, Any],
+    status: DeploymentStatus | None,
 ) -> DeploymentDetail:
     """Build a DeploymentDetail from a deployment dict in the project file."""
     components = [
         DeploymentComponentDetail(
             reference=c.get("reference", ""),
             image=c.get("image", ""),
-            image_pull_policy=c.get("imagePullPolicy", "Always"),
         )
         for c in deployment.get("components", [])
     ]
@@ -165,6 +290,7 @@ def _build_deployment_detail(
         subdomain=deployment.get("subdomain"),
         components=components,
         urls=urls,
+        status=status,
     )
 
 
@@ -182,6 +308,7 @@ def _build_deployment_detail(
 async def list_deployments_v2(
     request: Request,
     project_name: str,
+    log_lines: int = Query(50, ge=1, le=500, include_in_schema=False),
 ) -> JSONResponse:
     """List deployments in a project with components, images, and computed URLs.
 
@@ -197,9 +324,15 @@ async def list_deployments_v2(
 
     project_data: dict[str, Any] = project.data
     current_cluster = settings.CLUSTER_MANAGER
-    deployments = [d for d in project_data.get("deployments", []) if d.get("cluster") == current_cluster]
+    deployments = [
+        d for d in project_data.get("deployments", []) if d.get("cluster") == current_cluster and d.get("name")
+    ]
 
-    details = [_build_deployment_detail(depl, project_name, project_data) for depl in deployments]
+    statuses = await _fetch_deployment_statuses(project_name, deployments, log_lines=log_lines)
+
+    details = [
+        _build_deployment_detail(depl, project_name, project_data, statuses.get(depl["name"])) for depl in deployments
+    ]
 
     return JSONResponse(
         content=DeploymentListResponse(
@@ -220,6 +353,7 @@ async def get_deployment_v2(
     request: Request,
     project_name: str,
     deployment_name: str,
+    log_lines: int = Query(50, ge=1, le=500, include_in_schema=False),
 ) -> JSONResponse:
     """Get a single deployment with components, images, and computed URLs.
 
@@ -251,7 +385,8 @@ async def get_deployment_v2(
             detail=f"Deployment '{deployment_name}' not found in project '{project_name}' on cluster '{current_cluster}'",
         )
 
-    detail = _build_deployment_detail(deployment, project_name, project_data)
+    statuses = await _fetch_deployment_statuses(project_name, [deployment], log_lines=log_lines)
+    detail = _build_deployment_detail(deployment, project_name, project_data, statuses.get(deployment_name))
     return JSONResponse(content=detail.model_dump())
 
 

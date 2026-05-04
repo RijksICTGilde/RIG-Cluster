@@ -33,7 +33,36 @@ class DeploymentComponentDetail(BaseModel):
 
     reference: str = Field(..., description="Component name reference")
     image: str = Field(..., description="Container image URL")
-    image_pull_policy: str = Field(default="Always", description="Image pull policy")
+
+
+class StatusError(BaseModel):
+    """A single error or warning entry surfaced from the cluster."""
+
+    resource: str = Field(..., description="Kind/name (e.g. 'Pod/frontend-abc') or 'Event/<obj>' for events")
+    message: str = Field(..., description="Human-readable error message")
+    timestamp: str | None = Field(default=None, description="ISO timestamp if known")
+
+
+class DeploymentStatus(BaseModel):
+    """Live reconciliation status for a deployment, sourced from the cluster."""
+
+    sync_status: str = Field(..., description="Sync status (e.g. Synced, OutOfSync)")
+    health_status: str = Field(..., description="Health status (e.g. Healthy, Degraded, Progressing)")
+    revision: str | None = Field(
+        default=None, description="Git revision (full SHA) last reconciled; null if never reconciled"
+    )
+    last_synced_at: str | None = Field(
+        default=None,
+        description="ISO timestamp of the last reconciliation against git; null if never synced",
+    )
+    errors: list[StatusError] = Field(
+        default_factory=list,
+        description="Cluster-side error entries; populated only when health_status is not Healthy",
+    )
+    logs: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Per-component log tail (component name -> lines); populated only when health_status is not Healthy",
+    )
 
 
 class DeploymentDetail(BaseModel):
@@ -48,6 +77,10 @@ class DeploymentDetail(BaseModel):
     urls: dict[str, str] = Field(
         default_factory=dict,
         description="Computed public URLs, keyed by component name",
+    )
+    status: DeploymentStatus | None = Field(
+        default=None,
+        description="Live reconciliation status; null if the deployment is not yet known to the cluster",
     )
 
 
