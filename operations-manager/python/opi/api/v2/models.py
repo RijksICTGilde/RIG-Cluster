@@ -5,30 +5,25 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 
-class SyncStatus(StrEnum):
-    """ArgoCD sync status. Unknown is the catch-all for novel/unrecognized values."""
+class DeploymentStatus(StrEnum):
+    """Overall deployment state.
 
-    Synced = "Synced"
-    OutOfSync = "OutOfSync"
-    Unknown = "Unknown"
-
-
-class HealthStatus(StrEnum):
-    """ArgoCD health status. Unknown is the catch-all for novel/unrecognized values."""
+    A single enum covering everything a caller wants to switch on. Argo's
+    two orthogonal dimensions (sync, health) are collapsed using a
+    worst-of-both priority: Degraded/Suspended/Missing > OutOfSync >
+    Progressing > Healthy. Pending and Unavailable are *our* states for
+    "we have no data," distinct from Argo's own Unknown.
+    """
 
     Healthy = "Healthy"
-    Progressing = "Progressing"
     Degraded = "Degraded"
+    Progressing = "Progressing"
+    OutOfSync = "OutOfSync"  # cluster is running, but drifted from git
     Suspended = "Suspended"
     Missing = "Missing"
-    Unknown = "Unknown"
-
-
-class StatusReason(StrEnum):
-    """Why ``status`` is null when it is. Set on DeploymentDetail, not on DeploymentStatus."""
-
     Pending = "Pending"  # cluster has no Application yet (not yet reconciled)
-    Unavailable = "Unavailable"  # status backend reachable but this deployment's fetch raised
+    Unavailable = "Unavailable"  # status fetch failed (only in list endpoint)
+    Unknown = "Unknown"  # status backend itself reports Unknown
 
 
 class ErrorCategory(StrEnum):
@@ -89,32 +84,12 @@ class StatusError(BaseModel):
     category: ErrorCategory = Field(..., description="Programmatic category for filtering, grouping, colorizing")
     explanation: str | None = Field(
         default=None,
-        description="Human-friendly explanation of the category and what to do next; null when the category has no canned guidance (e.g. Unknown)",
-    )
-    timestamp: str | None = Field(default=None, description="ISO timestamp if known")
-
-
-class DeploymentStatus(BaseModel):
-    """Live reconciliation status for a deployment, sourced from the cluster."""
-
-    sync_status: SyncStatus = Field(..., description="Sync status")
-    health_status: HealthStatus = Field(..., description="Health status")
-    revision: str | None = Field(
-        default=None, description="Git revision (full SHA) last reconciled; null if never reconciled"
-    )
-    last_synced_at: str | None = Field(
-        default=None,
         description=(
-            "ISO timestamp of the last reconciliation attempt against git, regardless of "
-            "outcome. Combine with sync_status to know whether that attempt succeeded; for "
-            "a Degraded deployment this can be the time of a failed sync, not a healthy one. "
-            "Null if no reconciliation has ever happened."
+            "Human-friendly explanation of the category and what to do next; "
+            "null when the category has no canned guidance (e.g. Unknown)"
         ),
     )
-    errors: list[StatusError] = Field(
-        default_factory=list,
-        description="Cluster-side error entries; populated only when health_status is not Healthy",
-    )
+    timestamp: str | None = Field(default=None, description="ISO timestamp if known")
 
 
 class DeploymentDetail(BaseModel):
@@ -130,13 +105,29 @@ class DeploymentDetail(BaseModel):
         default_factory=dict,
         description="Computed public URLs, keyed by component name",
     )
-    status: DeploymentStatus | None = Field(
-        default=None,
-        description="Live reconciliation status; null if not available — see status_reason",
+    status: DeploymentStatus = Field(
+        ...,
+        description="Overall deployment state. Always present; check value to render.",
     )
-    status_reason: StatusReason | None = Field(
+    sync_revision: str | None = Field(
         default=None,
-        description="Why status is null. Set only when status is null; null otherwise.",
+        description="Git revision (full SHA) the cluster last reconciled; null if never reconciled",
+    )
+    last_synced_at: str | None = Field(
+        default=None,
+        description=(
+            "ISO timestamp of the last reconciliation attempt against git, regardless of outcome. "
+            "Combine with status to know whether that attempt succeeded; for a Degraded "
+            "deployment this can be the time of a failed sync, not a healthy one. "
+            "Null if no reconciliation has ever happened."
+        ),
+    )
+    errors: list[StatusError] = Field(
+        default_factory=list,
+        description=(
+            "Cluster-side error entries; populated only when status indicates a problem "
+            "(Degraded, OutOfSync, Suspended, Missing). Empty otherwise."
+        ),
     )
 
 

@@ -37,18 +37,24 @@ Each deployment includes:
 | `subdomain` | DNS subdomain override (if set) |
 | `components` | List of component references, each with `reference` and `image` |
 | `urls` | Computed public URLs keyed by component name (only for components with `publish-on-web`) |
-| `status` | Live reconciliation status (see below) — `null` if not available; check `status_reason` |
-| `status_reason` | Why `status` is null. `Pending` (cluster has no Application yet), `Unavailable` (status fetch failed in the list endpoint). `null` when `status` is set. |
+| `status` | Single enum covering all states (see values below). Always present. |
+| `sync_revision` | Git revision (full SHA) the cluster last reconciled — `null` if never reconciled |
+| `last_synced_at` | ISO timestamp of the last reconciliation **attempt**, regardless of outcome. Combine with `status` to know whether that attempt succeeded — for a `Degraded` deployment this can be the time of a failed sync. `null` if never synced |
+| `errors` | List of cluster-side error entries — empty when `status` is `Healthy`, `Pending`, `Unavailable`, or `Unknown` |
 
-`status` sub-object:
+`status` values:
 
-| Field | Description |
+| Value | Meaning |
 |---|---|
-| `sync_status` | Sync status (`Synced`, `OutOfSync`, ...) |
-| `health_status` | Health status (`Healthy`, `Degraded`, `Progressing`, ...) |
-| `revision` | Full git SHA last reconciled — `null` if never reconciled |
-| `last_synced_at` | ISO timestamp of the last reconciliation **attempt**, regardless of outcome. Combine with `sync_status` to know whether that attempt succeeded — for a `Degraded` deployment this can be the time of a failed sync. `null` if never synced |
-| `errors` | List of cluster-side error entries — empty when `health_status` is `Healthy` |
+| `Healthy` | Synced and Healthy — running the desired state, all probes passing |
+| `Degraded` | One or more resources unhealthy (worst-of-both wins over sync state) |
+| `Progressing` | Mid-rollout, not yet stabilized |
+| `OutOfSync` | Cluster is running, but drifted from the desired state in git |
+| `Suspended` | Reconciliation paused |
+| `Missing` | Resources expected but not found |
+| `Pending` | The cluster has no `Application` for this deployment yet — normal in the gap between commit and reconciliation |
+| `Unavailable` | The status fetch failed for this specific deployment (only emitted by the list endpoint) |
+| `Unknown` | The backend reported `Unknown` or returned a value we don't recognize |
 
 Each `errors` entry has:
 
@@ -87,13 +93,10 @@ The list view returns the same per-deployment shape as the single view (it is a 
     "frontend": "https://production-my-project.rijksapps.nl",
     "api": "https://api-production-my-project.rijksapps.nl"
   },
-  "status": {
-    "sync_status": "Synced",
-    "health_status": "Healthy",
-    "revision": "abc123def456789",
-    "last_synced_at": "2026-04-22T12:00:00Z",
-    "errors": []
-  }
+  "status": "Healthy",
+  "sync_revision": "abc123def456789",
+  "last_synced_at": "2026-04-22T12:00:00Z",
+  "errors": []
 }
 ```
 
@@ -103,27 +106,37 @@ The list view returns the same per-deployment shape as the single view (it is a 
 {
   "name": "production",
   "...": "...",
-  "status": {
-    "sync_status": "OutOfSync",
-    "health_status": "Degraded",
-    "revision": "deadbeefcafe",
-    "last_synced_at": "2026-04-22T11:00:00Z",
-    "errors": [
-      {
-        "resource": "Pod/frontend-abc-7c9d8f-xxxxx",
-        "message": "Back-off pulling image ghcr.io/org/frontend:v2 — manifest unknown",
-        "category": "ImagePull",
-        "explanation": "The container image could not be pulled. Check the image name, tag, and registry credentials.",
-        "timestamp": "2026-04-22T10:55:00Z"
-      },
-      {
-        "resource": "Event/frontend-abc-7c9d8f-xxxxx",
-        "message": "[Failed] Failed to pull image ...",
-        "category": "ImagePull",
-        "explanation": "The container image could not be pulled. Check the image name, tag, and registry credentials."
-      }
-    ]
-  }
+  "status": "Degraded",
+  "sync_revision": "deadbeefcafe",
+  "last_synced_at": "2026-04-22T11:00:00Z",
+  "errors": [
+    {
+      "resource": "Pod/frontend-abc-7c9d8f-xxxxx",
+      "message": "Back-off pulling image ghcr.io/org/frontend:v2 — manifest unknown",
+      "category": "ImagePull",
+      "explanation": "The container image could not be pulled. Check the image name, tag, and registry credentials.",
+      "timestamp": "2026-04-22T10:55:00Z"
+    },
+    {
+      "resource": "Event/frontend-abc-7c9d8f-xxxxx",
+      "message": "[Failed] Failed to pull image ...",
+      "category": "ImagePull",
+      "explanation": "The container image could not be pulled. Check the image name, tag, and registry credentials."
+    }
+  ]
+}
+```
+
+### Example response (not yet known to the cluster)
+
+```json
+{
+  "name": "production",
+  "...": "...",
+  "status": "Pending",
+  "sync_revision": null,
+  "last_synced_at": null,
+  "errors": []
 }
 ```
 
@@ -146,11 +159,21 @@ URLs are computed from the project file using the same naming utilities as the w
 
 ## How status is sourced
 
-The `status` sub-object reports what the cluster has actually reconciled, queried per request. Today this is sourced from the ArgoCD `Application` for each deployment; the schema is intentionally backend-neutral so the source can change without breaking callers.
+`status` reports what the cluster has actually reconciled, queried per request. Today this is sourced from the ArgoCD `Application` for each deployment, but the schema is intentionally backend-neutral so the source can change without breaking callers.
 
-`last_synced_at` is the timestamp of the last reconciliation **attempt** — succeeded or failed. Combined with `revision`, it tells callers "we are running commit `<revision>` as of `<last_synced_at>`" only when `sync_status` is `Synced`. For a `Degraded` deployment, `last_synced_at` may be the time of a failed sync attempt, not a healthy one. (See follow-up issue for splitting into `last_attempt_at` + `last_success_at`.)
+ArgoCD exposes two orthogonal dimensions — `sync.status` (Synced/OutOfSync) and `health.status` (Healthy/Degraded/Progressing/Suspended/Missing) — which we collapse into a single value:
 
-When `health_status` is anything other than `Healthy`, the response also includes `errors[]`: aggregated from the ArgoCD `Application` (resources, conditions, sync result), the resource tree (Pod / ReplicaSet messages — where `ImagePullBackOff` / `CrashLoopBackOff` etc. surface), and recent namespace events. Healthy deployments skip this fetch to keep responses small and fast.
+```
+Degraded / Suspended / Missing  →  use that (worst-of-both wins)
+OutOfSync                        →  "OutOfSync"  (cluster is running, but drifted from git)
+Progressing                      →  "Progressing"
+Healthy                          →  "Healthy"
+otherwise                        →  "Unknown"
+```
+
+`last_synced_at` is the timestamp of the last reconciliation **attempt** — succeeded or failed. Combined with `sync_revision`, it tells callers "we are running commit `<sync_revision>` as of `<last_synced_at>`" only when `status` is `Healthy`. For a `Degraded` deployment, `last_synced_at` may be the time of a failed sync attempt, not a healthy one. (See follow-up issue for splitting into `last_attempt_at` + `last_success_at`.)
+
+When `status` indicates a problem (`Degraded`, `OutOfSync`, `Suspended`, `Missing`), the response also includes `errors[]`: aggregated from the ArgoCD `Application` (resources, conditions, sync result), the resource tree (Pod / ReplicaSet messages — where `ImagePullBackOff` / `CrashLoopBackOff` etc. surface), and recent namespace events. Healthy / Pending / Unavailable / Unknown deployments skip this fetch to keep responses small and fast.
 
 The diagnostics gathering logic is shared with the web UI via `opi/services/deployment_diagnostics.py`, so both surfaces report the same view of "what's broken."
 
@@ -160,9 +183,9 @@ The two endpoints have different strictness, deliberately:
 
 - **Single-deployment endpoint** (`GET /deployments/{name}`): strict. Any failure to fetch status — backend unreachable, login failed, or this deployment's fetch raised — returns **`503 Service Unavailable`**. There's only one resource being asked about; partial truth is misleading.
 
-- **List endpoint** (`GET /deployments`): lenient on per-deployment failures. The whole-backend-down case (login failed, can't reach Argo at all) still returns **`503`**, but if the backend is reachable and one deployment's fetch raises, that deployment is returned with `status: null` and `status_reason: "Unavailable"`. The other deployments are returned normally. This keeps a CLI's `list` working through partial outages.
+- **List endpoint** (`GET /deployments`): lenient on per-deployment failures. The whole-backend-down case (login failed, can't reach Argo at all) still returns **`503`**, but if the backend is reachable and one deployment's fetch raises, that deployment is returned with `status: "Unavailable"`. The other deployments are returned normally. This keeps a CLI's `list` working through partial outages.
 
-If the backend is reachable but does not yet know about a deployment (Argo has no `Application` for it yet), `status` is `null` with `status_reason: "Pending"`. This is normal during the gap between project file commit and reconciliation.
+If the backend is reachable but does not yet know about a deployment (Argo has no `Application` for it yet), `status` is `"Pending"`. This is normal during the gap between project file commit and reconciliation.
 
 ## Why this exists
 

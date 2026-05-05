@@ -245,21 +245,21 @@ class TestListDeployments:
         assert prod["subdomain"] == "production"
         assert prod["project"] == "test-project"
 
-    def test_deployment_contains_status_subobject(self, client: TestClient) -> None:
+    def test_deployment_status_collapses_argo_dimensions(self, client: TestClient) -> None:
         response = client.get(
             "/api/v2/projects/test-project/deployments",
             headers={"X-API-Key": API_KEY},
         )
         data = response.json()
         prod = next(d for d in data["deployments"] if d["name"] == "production")
-        assert prod["status"]["sync_status"] == "Synced"
-        assert prod["status"]["health_status"] == "Healthy"
-        assert prod["status"]["revision"] == "abc123def456789"
-        assert prod["status"]["last_synced_at"] == "2026-04-22T12:00:00Z"
+        # Argo Synced + Healthy -> single status: "Healthy"
+        assert prod["status"] == "Healthy"
+        assert prod["sync_revision"] == "abc123def456789"
+        assert prod["last_synced_at"] == "2026-04-22T12:00:00Z"
 
         staging = next(d for d in data["deployments"] if d["name"] == "staging")
-        assert staging["status"]["sync_status"] == "OutOfSync"
-        assert staging["status"]["health_status"] == "Progressing"
+        # Argo OutOfSync + Progressing -> "OutOfSync" wins (drift > Progressing)
+        assert staging["status"] == "OutOfSync"
 
     def test_healthy_deployment_has_empty_errors(self, client: TestClient) -> None:
         """Healthy deployments skip diagnostics; errors is empty."""
@@ -269,7 +269,7 @@ class TestListDeployments:
         )
         data = response.json()
         prod = next(d for d in data["deployments"] if d["name"] == "production")
-        assert prod["status"]["errors"] == []
+        assert prod["errors"] == []
 
     def test_requires_auth(self, client: TestClient) -> None:
         response = client.get("/api/v2/projects/test-project/deployments")
@@ -329,11 +329,10 @@ class TestListDeployments:
         data = response.json()
         prod = next(d for d in data["deployments"] if d["name"] == "production")
         staging = next(d for d in data["deployments"] if d["name"] == "staging")
-        assert prod["status"] is not None
-        assert prod["status"]["sync_status"] == "Synced"
-        assert prod["status_reason"] is None
-        assert staging["status"] is None
-        assert staging["status_reason"] == "Unavailable"
+        assert prod["status"] == "Healthy"
+        assert staging["status"] == "Unavailable"
+        assert staging["sync_revision"] is None
+        assert staging["last_synced_at"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -369,22 +368,19 @@ class TestGetDeployment:
         for url in data["urls"].values():
             assert url.startswith("http://")
 
-    def test_returns_status_subobject(self, client: TestClient) -> None:
+    def test_returns_flat_status_fields(self, client: TestClient) -> None:
         response = client.get(
             "/api/v2/projects/test-project/deployments/production",
             headers={"X-API-Key": API_KEY},
         )
         data = response.json()
-        assert data["status"]["sync_status"] == "Synced"
-        assert data["status"]["health_status"] == "Healthy"
-        assert data["status"]["revision"] == "abc123def456789"
-        assert data["status"]["last_synced_at"] == "2026-04-22T12:00:00Z"
-        assert data["status"]["errors"] == []
+        assert data["status"] == "Healthy"
+        assert data["sync_revision"] == "abc123def456789"
+        assert data["last_synced_at"] == "2026-04-22T12:00:00Z"
+        assert data["errors"] == []
 
-    def test_app_not_yet_known_returns_null_status_with_pending_reason(
-        self, mock_settings: Any, mock_project_service: Any
-    ) -> None:
-        """When the cluster has no Application yet, status is null with reason Pending."""
+    def test_app_not_yet_known_returns_pending(self, mock_settings: Any, mock_project_service: Any) -> None:
+        """When the cluster has no Application yet, status is Pending."""
         from opi.server import create_app
 
         app: FastAPI = create_app()
@@ -403,8 +399,10 @@ class TestGetDeployment:
             )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] is None
-        assert data["status_reason"] == "Pending"
+        assert data["status"] == "Pending"
+        assert data["sync_revision"] is None
+        assert data["last_synced_at"] is None
+        assert data["errors"] == []
 
     def test_status_backend_unreachable_returns_503(self, mock_settings: Any, mock_project_service: Any) -> None:
         """If the status backend login fails (no auth_token), endpoint returns 503."""
@@ -485,13 +483,13 @@ class TestGetDeployment:
                 headers={"X-API-Key": API_KEY},
             )
         assert response.status_code == 200
-        status = response.json()["status"]
-        assert status["health_status"] == "Degraded"
+        data = response.json()
+        # Argo OutOfSync + Degraded -> "Degraded" wins (worst-of-both)
+        assert data["status"] == "Degraded"
 
-        errors_by_resource = {e["resource"]: e for e in status["errors"]}
+        errors_by_resource = {e["resource"]: e for e in data["errors"]}
         assert "Pod/frontend-abc" in errors_by_resource
         assert "ComparisonError" in errors_by_resource
-        assert "logs" not in status
 
         # Pod/frontend-abc has "ImagePullBackOff" message → ImagePull category
         pod_err = errors_by_resource["Pod/frontend-abc"]

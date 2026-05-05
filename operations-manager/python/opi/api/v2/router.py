@@ -8,7 +8,7 @@ Read-only GET endpoints return deployment state directly (no task queue).
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -41,10 +41,7 @@ from opi.api.v2.models import (
     DeploymentDetail,
     DeploymentListResponse,
     DeploymentStatus,
-    HealthStatus,
     StatusError,
-    StatusReason,
-    SyncStatus,
 )
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -150,78 +147,88 @@ def _compute_deployment_urls(
     return urls
 
 
-def _safe_sync_status(raw: str | None) -> SyncStatus:
-    """Map an Argo sync.status value to our enum, defaulting to Unknown for novel values."""
-    if not raw:
-        return SyncStatus.Unknown
-    try:
-        return SyncStatus(raw)
-    except ValueError:
-        logger.debug("Unknown Argo sync status %r — falling back to Unknown", raw)
-        return SyncStatus.Unknown
+class _LiveStatus(NamedTuple):
+    """Internal aggregate of what we know about a deployment's live state.
+
+    Always populated; sentinel values (Pending, Unavailable, Unknown) cover
+    the cases where we don't have real Argo data.
+    """
+
+    status: DeploymentStatus
+    revision: str | None
+    last_synced_at: str | None
+    errors: list[StatusError]
 
 
-def _safe_health_status(raw: str | None) -> HealthStatus:
-    """Map an Argo health.status value to our enum, defaulting to Unknown for novel values."""
-    if not raw:
-        return HealthStatus.Unknown
-    try:
-        return HealthStatus(raw)
-    except ValueError:
-        logger.debug("Unknown Argo health status %r — falling back to Unknown", raw)
-        return HealthStatus.Unknown
+def _collapse_argo_status(sync_raw: str | None, health_raw: str | None) -> DeploymentStatus:
+    """Collapse Argo's (sync, health) into a single overall status.
+
+    Priority: bad health states win > OutOfSync > Progressing > Healthy.
+    Unknown/novel values fall through to DeploymentStatus.Unknown.
+    """
+    if health_raw in ("Degraded", "Suspended", "Missing"):
+        return DeploymentStatus(health_raw)
+    if sync_raw == "OutOfSync":
+        return DeploymentStatus.OutOfSync
+    if health_raw == "Progressing":
+        return DeploymentStatus.Progressing
+    if health_raw == "Healthy":
+        return DeploymentStatus.Healthy
+    return DeploymentStatus.Unknown
 
 
-def _extract_deployment_status(status_data: dict[str, Any] | None) -> DeploymentStatus | None:
-    """Build a DeploymentStatus from an ArgoCD Application payload.
+def _extract_live_status(status_data: dict[str, Any] | None) -> _LiveStatus:
+    """Build a _LiveStatus from an ArgoCD Application payload.
 
-    Returns None when the cluster has no Application yet for this deployment,
-    or when the payload is missing both sync and health.
+    Returns ``status=Pending`` when the cluster has no Application yet.
+    Errors are populated by the caller after a separate gather step;
+    this function does not call out.
     """
     if not status_data:
-        return None
+        return _LiveStatus(DeploymentStatus.Pending, None, None, [])
 
     status = status_data.get("status", {}) or {}
     sync = status.get("sync", {}) or {}
     health = status.get("health", {}) or {}
     operation_state = status.get("operationState", {}) or {}
 
-    if not sync.get("status") and not health.get("status"):
-        return None
-
-    return DeploymentStatus(
-        sync_status=_safe_sync_status(sync.get("status")),
-        health_status=_safe_health_status(health.get("status")),
+    return _LiveStatus(
+        status=_collapse_argo_status(sync.get("status"), health.get("status")),
         revision=sync.get("revision") or None,
         last_synced_at=operation_state.get("finishedAt") or status.get("reconciledAt"),
+        errors=[],
     )
 
 
-async def _fetch_one_deployment_status(
+_PROBLEM_STATUSES = frozenset(
+    {
+        DeploymentStatus.Degraded,
+        DeploymentStatus.OutOfSync,
+        DeploymentStatus.Suspended,
+        DeploymentStatus.Missing,
+    }
+)
+
+
+async def _fetch_one_live_status(
     *,
     project_name: str,
     deployment: dict[str, Any],
     argo: ArgoConnector,
     kubectl: KubectlConnector,
-) -> tuple[DeploymentStatus | None, StatusReason | None]:
-    """Fetch status for a single deployment, plus errors when unhealthy.
+) -> _LiveStatus:
+    """Fetch live status for a single deployment, including errors when in a problem state.
 
-    Returns ``(status, reason)``:
-      - ``(DeploymentStatus, None)`` — status is known
-      - ``(None, Pending)`` — Argo has no Application for this deployment yet
-
-    Raises on per-deployment fetch failures; the caller decides whether to
-    catch (lenient list) or propagate (strict single-deployment endpoint).
+    Raises on per-deployment fetch failures; callers decide whether to catch
+    (lenient list) or propagate (strict single).
     """
     deployment_name = deployment["name"]
     app_name = generate_argocd_application_name(project_name, deployment_name)
     status_data = await argo.get_application_status(app_name)
 
-    status = _extract_deployment_status(status_data)
-    if status is None:
-        return None, StatusReason.Pending
-    if status.health_status == HealthStatus.Healthy:
-        return status, None
+    live = _extract_live_status(status_data)
+    if live.status not in _PROBLEM_STATUSES:
+        return live
 
     raw_errors = await gather_deployment_errors(
         argo=argo,
@@ -232,12 +239,12 @@ async def _fetch_one_deployment_status(
         deployment_name=deployment_name,
         status_data=status_data or {},
     )
-    typed_errors: list[StatusError] = []
-    for raw in raw_errors:
-        category, explanation = categorize_error(raw["resource"], raw["message"])
-        typed_errors.append(StatusError(**raw, category=category, explanation=explanation))
-    enriched = status.model_copy(update={"errors": typed_errors})
-    return enriched, None
+    typed_errors = [
+        StatusError(**raw, category=cat, explanation=expl)
+        for raw in raw_errors
+        for cat, expl in [categorize_error(raw["resource"], raw["message"])]
+    ]
+    return live._replace(errors=typed_errors)
 
 
 async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
@@ -259,25 +266,27 @@ async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
     return argo, create_kubectl_connector()
 
 
-async def _fetch_deployment_statuses_lenient(
+def _unavailable() -> _LiveStatus:
+    """The "we couldn't fetch" sentinel for lenient list mode."""
+    return _LiveStatus(DeploymentStatus.Unavailable, None, None, [])
+
+
+async def _fetch_live_statuses_lenient(
     project_name: str,
     deployments: list[dict[str, Any]],
-) -> dict[str, tuple[DeploymentStatus | None, StatusReason | None]]:
+) -> dict[str, _LiveStatus]:
     """Fetch status for many deployments. Per-deployment failures yield Unavailable.
 
-    Used by the list endpoint. The whole-backend-down case still returns 503
-    via _connect_status_backend.
+    The whole-backend-down case still returns 503 via _connect_status_backend.
     """
     if not deployments:
         return {}
 
     argo, kubectl = await _connect_status_backend()
 
-    async def _safe_one(
-        deployment: dict[str, Any],
-    ) -> tuple[DeploymentStatus | None, StatusReason | None]:
+    async def _safe_one(deployment: dict[str, Any]) -> _LiveStatus:
         try:
-            return await _fetch_one_deployment_status(
+            return await _fetch_one_live_status(
                 project_name=project_name, deployment=deployment, argo=argo, kubectl=kubectl
             )
         except Exception as exc:
@@ -287,23 +296,23 @@ async def _fetch_deployment_statuses_lenient(
                 deployment.get("name"),
                 exc,
             )
-            return None, StatusReason.Unavailable
+            return _unavailable()
 
     results = await asyncio.gather(*[_safe_one(d) for d in deployments])
     return {d["name"]: result for d, result in zip(deployments, results, strict=True)}
 
 
-async def _fetch_one_deployment_status_strict(
+async def _fetch_one_live_status_strict(
     project_name: str,
     deployment: dict[str, Any],
-) -> tuple[DeploymentStatus | None, StatusReason | None]:
+) -> _LiveStatus:
     """Fetch status for a single deployment. Raises 503 on any fetch failure.
 
     Used by the single-deployment endpoint where partial truth is misleading.
     """
     argo, kubectl = await _connect_status_backend()
     try:
-        return await _fetch_one_deployment_status(
+        return await _fetch_one_live_status(
             project_name=project_name, deployment=deployment, argo=argo, kubectl=kubectl
         )
     except Exception as exc:
@@ -320,10 +329,9 @@ def _build_deployment_detail(
     deployment: dict[str, Any],
     project_name: str,
     project_data: dict[str, Any],
-    status_with_reason: tuple[DeploymentStatus | None, StatusReason | None],
+    live: _LiveStatus,
 ) -> DeploymentDetail:
     """Build a DeploymentDetail from a deployment dict in the project file."""
-    status, reason = status_with_reason
     components = [
         DeploymentComponentDetail(
             reference=c.get("reference", ""),
@@ -342,8 +350,10 @@ def _build_deployment_detail(
         subdomain=deployment.get("subdomain"),
         components=components,
         urls=urls,
-        status=status,
-        status_reason=reason if status is None else None,
+        status=live.status,
+        sync_revision=live.revision,
+        last_synced_at=live.last_synced_at,
+        errors=live.errors,
     )
 
 
@@ -380,10 +390,10 @@ async def list_deployments_v2(
         d for d in project_data.get("deployments", []) if d.get("cluster") == current_cluster and d.get("name")
     ]
 
-    statuses = await _fetch_deployment_statuses_lenient(project_name, deployments)
+    statuses = await _fetch_live_statuses_lenient(project_name, deployments)
 
     details = [
-        _build_deployment_detail(depl, project_name, project_data, statuses.get(depl["name"], (None, None)))
+        _build_deployment_detail(depl, project_name, project_data, statuses.get(depl["name"], _unavailable()))
         for depl in deployments
     ]
 
@@ -437,8 +447,8 @@ async def get_deployment_v2(
             detail=f"Deployment '{deployment_name}' not found in project '{project_name}' on cluster '{current_cluster}'",
         )
 
-    status_with_reason = await _fetch_one_deployment_status_strict(project_name, deployment)
-    detail = _build_deployment_detail(deployment, project_name, project_data, status_with_reason)
+    live = await _fetch_one_live_status_strict(project_name, deployment)
+    detail = _build_deployment_detail(deployment, project_name, project_data, live)
     return JSONResponse(content=detail.model_dump())
 
 
