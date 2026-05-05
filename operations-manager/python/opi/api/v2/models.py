@@ -104,7 +104,11 @@ class DeploymentDetail(BaseModel):
     )
     status: DeploymentStatus | None = Field(
         default=None,
-        description="Live reconciliation status; null if the deployment is not yet known to the cluster",
+        description="Live reconciliation status; null if not available — see status_reason",
+    )
+    status_reason: StatusReason | None = Field(
+        default=None,
+        description="Why status is null. Set only when status is null; null otherwise.",
     )
 
 

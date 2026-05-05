@@ -289,6 +289,52 @@ class TestListDeployments:
         )
         assert response.status_code == 401  # auth fails first — no project = no key match
 
+    def test_partial_failure_marks_one_unavailable_returns_others(
+        self, mock_settings: Any, mock_project_service: Any
+    ) -> None:
+        """List endpoint is lenient: one deployment's fetch raising doesn't 503 the whole list.
+
+        The broken one comes back with status=null, status_reason=Unavailable.
+        """
+        from opi.server import create_app
+        from opi.utils.naming import generate_argocd_application_name
+
+        app: FastAPI = create_app()
+        prod_app = generate_argocd_application_name("test-project", "production")
+        staging_app = generate_argocd_application_name("test-project", "staging")
+
+        async def _flaky_status(app_name: str | None = None) -> dict[str, Any] | None:
+            if app_name == staging_app:
+                raise RuntimeError("connection reset")
+            return ARGO_STATUS_PRODUCTION if app_name == prod_app else None
+
+        argo_mock = MagicMock()
+        argo_mock.auth_token = "fake-token"
+        argo_mock.get_application_status = AsyncMock(side_effect=_flaky_status)
+        argo_mock.get_application_resource_tree = AsyncMock(return_value=[])
+
+        with (
+            patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
+            patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
+            patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
+            patch("opi.api.v2.router.create_kubectl_connector", return_value=_make_kubectl_mock()),
+        ):
+            client = TestClient(app)
+            response = client.get(
+                "/api/v2/projects/test-project/deployments",
+                headers={"X-API-Key": API_KEY},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        prod = next(d for d in data["deployments"] if d["name"] == "production")
+        staging = next(d for d in data["deployments"] if d["name"] == "staging")
+        assert prod["status"] is not None
+        assert prod["status"]["sync_status"] == "Synced"
+        assert prod["status_reason"] is None
+        assert staging["status"] is None
+        assert staging["status_reason"] == "Unavailable"
+
 
 # ---------------------------------------------------------------------------
 # Get single deployment
@@ -335,16 +381,20 @@ class TestGetDeployment:
         assert data["status"]["last_synced_at"] == "2026-04-22T12:00:00Z"
         assert data["status"]["errors"] == []
 
-    def test_app_not_yet_known_returns_null_status(self, mock_settings: Any, mock_project_service: Any) -> None:
-        """When the cluster has no Application yet for the deployment, status is null."""
+    def test_app_not_yet_known_returns_null_status_with_pending_reason(
+        self, mock_settings: Any, mock_project_service: Any
+    ) -> None:
+        """When the cluster has no Application yet, status is null with reason Pending."""
         from opi.server import create_app
 
         app: FastAPI = create_app()
         argo_mock = _make_argo_mock({})  # all apps return None (404)
+        kubectl_mock = _make_kubectl_mock()
         with (
             patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
             patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
             patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
+            patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
         ):
             client = TestClient(app)
             response = client.get(
@@ -354,6 +404,7 @@ class TestGetDeployment:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] is None
+        assert data["status_reason"] == "Pending"
 
     def test_status_backend_unreachable_returns_503(self, mock_settings: Any, mock_project_service: Any) -> None:
         """If the status backend login fails (no auth_token), endpoint returns 503."""

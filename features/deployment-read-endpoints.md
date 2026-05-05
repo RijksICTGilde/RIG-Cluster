@@ -37,7 +37,8 @@ Each deployment includes:
 | `subdomain` | DNS subdomain override (if set) |
 | `components` | List of component references, each with `reference` and `image` |
 | `urls` | Computed public URLs keyed by component name (only for components with `publish-on-web`) |
-| `status` | Live reconciliation status (see below) — `null` if the deployment is not yet known to the cluster |
+| `status` | Live reconciliation status (see below) — `null` if not available; check `status_reason` |
+| `status_reason` | Why `status` is null. `Pending` (cluster has no Application yet), `Unavailable` (status fetch failed in the list endpoint). `null` when `status` is set. |
 
 `status` sub-object:
 
@@ -141,9 +142,15 @@ When `health_status` is anything other than `Healthy`, the response also include
 
 The diagnostics gathering logic is shared with the web UI via `opi/services/deployment_diagnostics.py`, so both surfaces report the same view of "what's broken."
 
-If the status backend is unreachable (login fails or any per-deployment fetch raises), both endpoints return **`503 Service Unavailable`** rather than partial state — the caller cannot distinguish "no status" from "backend down" otherwise.
+### Failure modes
 
-If the backend is reachable but does not yet know about a deployment, `status` is returned as `null`. This is normal during the gap between project file commit and reconciliation.
+The two endpoints have different strictness, deliberately:
+
+- **Single-deployment endpoint** (`GET /deployments/{name}`): strict. Any failure to fetch status — backend unreachable, login failed, or this deployment's fetch raised — returns **`503 Service Unavailable`**. There's only one resource being asked about; partial truth is misleading.
+
+- **List endpoint** (`GET /deployments`): lenient on per-deployment failures. The whole-backend-down case (login failed, can't reach Argo at all) still returns **`503`**, but if the backend is reachable and one deployment's fetch raises, that deployment is returned with `status: null` and `status_reason: "Unavailable"`. The other deployments are returned normally. This keeps a CLI's `list` working through partial outages.
+
+If the backend is reachable but does not yet know about a deployment (Argo has no `Application` for it yet), `status` is `null` with `status_reason: "Pending"`. This is normal during the gap between project file commit and reconciliation.
 
 ## Why this exists
 
