@@ -104,7 +104,12 @@ class DeploymentStatus(BaseModel):
     )
     last_synced_at: str | None = Field(
         default=None,
-        description="ISO timestamp of the last reconciliation against git; null if never synced",
+        description=(
+            "ISO timestamp of the last reconciliation attempt against git, regardless of "
+            "outcome. Combine with sync_status to know whether that attempt succeeded; for "
+            "a Degraded deployment this can be the time of a failed sync, not a healthy one. "
+            "Null if no reconciliation has ever happened."
+        ),
     )
     errors: list[StatusError] = Field(
         default_factory=list,

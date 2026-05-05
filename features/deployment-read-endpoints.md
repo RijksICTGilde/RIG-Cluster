@@ -47,7 +47,7 @@ Each deployment includes:
 | `sync_status` | Sync status (`Synced`, `OutOfSync`, ...) |
 | `health_status` | Health status (`Healthy`, `Degraded`, `Progressing`, ...) |
 | `revision` | Full git SHA last reconciled — `null` if never reconciled |
-| `last_synced_at` | ISO timestamp of the last reconciliation against git — `null` if never synced |
+| `last_synced_at` | ISO timestamp of the last reconciliation **attempt**, regardless of outcome. Combine with `sync_status` to know whether that attempt succeeded — for a `Degraded` deployment this can be the time of a failed sync. `null` if never synced |
 | `errors` | List of cluster-side error entries — empty when `health_status` is `Healthy` |
 
 Each `errors` entry has:
@@ -148,7 +148,7 @@ URLs are computed from the project file using the same naming utilities as the w
 
 The `status` sub-object reports what the cluster has actually reconciled, queried per request. Today this is sourced from the ArgoCD `Application` for each deployment; the schema is intentionally backend-neutral so the source can change without breaking callers.
 
-`last_synced_at` is the timestamp of the last reconciliation against git — combined with `revision`, it tells callers "we are running commit `<revision>` as of `<last_synced_at>`," which is what most "where is my deploy?" debugging needs.
+`last_synced_at` is the timestamp of the last reconciliation **attempt** — succeeded or failed. Combined with `revision`, it tells callers "we are running commit `<revision>` as of `<last_synced_at>`" only when `sync_status` is `Synced`. For a `Degraded` deployment, `last_synced_at` may be the time of a failed sync attempt, not a healthy one. (See follow-up issue for splitting into `last_attempt_at` + `last_success_at`.)
 
 When `health_status` is anything other than `Healthy`, the response also includes `errors[]`: aggregated from the ArgoCD `Application` (resources, conditions, sync result), the resource tree (Pod / ReplicaSet messages — where `ImagePullBackOff` / `CrashLoopBackOff` etc. surface), and recent namespace events. Healthy deployments skip this fetch to keep responses small and fast.
 
