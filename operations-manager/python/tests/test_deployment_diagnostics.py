@@ -6,7 +6,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.services.deployment_diagnostics import gather_deployment_errors
+from opi.api.v2.models import ErrorCategory
+from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 
 
 def _argo_mock(tree_nodes: list[dict[str, Any]] | None = None, raises: bool = False) -> MagicMock:
@@ -285,3 +286,54 @@ class TestGatherDeploymentErrors:
         op_err = next(e for e in errors if e["resource"] == "SyncOperation")
         assert op_err["message"] == "could not apply"
         assert op_err["timestamp"] == "2026-04-22T11:00:00Z"
+
+
+# ---------------------------------------------------------------------------
+# categorize_error
+# ---------------------------------------------------------------------------
+
+
+class TestCategorizeError:
+    """Mapping (resource, message) -> (ErrorCategory, explanation)."""
+
+    @pytest.mark.parametrize(
+        ("resource", "message", "expected"),
+        [
+            ("Pod/x", "Back-off pulling image foo: manifest unknown", ErrorCategory.ImagePull),
+            ("Pod/x", "ImagePullBackOff", ErrorCategory.ImagePull),
+            ("Pod/x", "ErrImagePull: not found", ErrorCategory.ImagePull),
+            ("Pod/x", "Back-off restarting failed container", ErrorCategory.CrashLoop),
+            ("Pod/x", "CrashLoopBackOff", ErrorCategory.CrashLoop),
+            ("Pod/x", "OOMKilled", ErrorCategory.OutOfMemory),
+            ("Pod/x", "container killed due to out of memory", ErrorCategory.OutOfMemory),
+            ("Pod/x", "Liveness probe failed: HTTP 500", ErrorCategory.HealthCheck),
+            ("Pod/x", "Readiness probe failed", ErrorCategory.HealthCheck),
+            ("Pod/x", "Startup probe failed", ErrorCategory.HealthCheck),
+            ("SyncOperation", "Sync operation failed", ErrorCategory.SyncFailed),
+            ("Ingress/x", "SyncFailed: not allowed", ErrorCategory.SyncFailed),
+            ("ComparisonError", "manifest invalid", ErrorCategory.ComparisonError),
+            ("Pod/x", "some unrelated message", ErrorCategory.Unknown),
+        ],
+    )
+    def test_pattern_matching(self, resource: str, message: str, expected: ErrorCategory) -> None:
+        category, _ = categorize_error(resource, message)
+        assert category is expected
+
+    def test_known_categories_have_explanation(self) -> None:
+        representative: dict[ErrorCategory, tuple[str, str]] = {
+            ErrorCategory.ImagePull: ("Pod/x", "ImagePullBackOff"),
+            ErrorCategory.CrashLoop: ("Pod/x", "CrashLoopBackOff"),
+            ErrorCategory.OutOfMemory: ("Pod/x", "OOMKilled"),
+            ErrorCategory.HealthCheck: ("Pod/x", "Liveness probe failed"),
+            ErrorCategory.SyncFailed: ("SyncOperation", "Sync operation failed"),
+            ErrorCategory.ComparisonError: ("ComparisonError", "manifest invalid"),
+            ErrorCategory.Unknown: ("Pod/x", "totally unrelated"),
+        }
+        for category, (resource, message) in representative.items():
+            actual_category, explanation = categorize_error(resource, message)
+            assert actual_category is category, f"{category}: got {actual_category}"
+            if category is ErrorCategory.Unknown:
+                assert explanation is None
+            else:
+                assert explanation is not None
+                assert len(explanation) > 0

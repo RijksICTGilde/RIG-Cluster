@@ -488,10 +488,20 @@ class TestGetDeployment:
         status = response.json()["status"]
         assert status["health_status"] == "Degraded"
 
-        error_resources = {e["resource"] for e in status["errors"]}
-        assert "Pod/frontend-abc" in error_resources
-        assert "ComparisonError" in error_resources
+        errors_by_resource = {e["resource"]: e for e in status["errors"]}
+        assert "Pod/frontend-abc" in errors_by_resource
+        assert "ComparisonError" in errors_by_resource
         assert "logs" not in status
+
+        # Pod/frontend-abc has "ImagePullBackOff" message → ImagePull category
+        pod_err = errors_by_resource["Pod/frontend-abc"]
+        assert pod_err["category"] == "ImagePull"
+        assert pod_err["explanation"] is not None
+        assert "image" in pod_err["explanation"].lower()
+        # ComparisonError resource → ComparisonError category
+        cmp_err = errors_by_resource["ComparisonError"]
+        assert cmp_err["category"] == "ComparisonError"
+        assert cmp_err["explanation"] is not None
 
     def test_deployment_not_found(self, client: TestClient) -> None:
         response = client.get(

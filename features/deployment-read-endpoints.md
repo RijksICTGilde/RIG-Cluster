@@ -50,7 +50,15 @@ Each deployment includes:
 | `last_synced_at` | ISO timestamp of the last reconciliation against git — `null` if never synced |
 | `errors` | List of cluster-side error entries — empty when `health_status` is `Healthy` |
 
-Each `errors` entry: `{ resource: str, message: str, timestamp: str? }`. The `resource` is `Kind/name` (e.g. `Pod/frontend-abc`) for cluster resources, `Event/<obj>` for namespace events, or a condition type name.
+Each `errors` entry has:
+
+| Field | Description |
+|---|---|
+| `resource` | `Kind/name` (e.g. `Pod/frontend-abc`) for cluster resources, `Event/<obj>` for namespace events, or a condition type name |
+| `message` | The raw cluster message — for automation, regex matching, correlation |
+| `category` | Programmatic category for filtering / grouping / colorizing. One of: `ImagePull`, `CrashLoop`, `OutOfMemory`, `HealthCheck`, `SyncFailed`, `ComparisonError`, `Unknown` |
+| `explanation` | Human-friendly description of the category and what to do next; `null` for `Unknown` |
+| `timestamp` | ISO timestamp if known |
 
 For component logs, use the existing `GET /api/logs/{project_name}` (HTTP) or `WS /api/logs/stream/{project_name}` (WebSocket) endpoints. Logs are intentionally not embedded in this response: they don't belong to "status" semantically, and the existing log endpoints already serve that need.
 
@@ -104,11 +112,15 @@ The list view returns the same per-deployment shape as the single view (it is a 
       {
         "resource": "Pod/frontend-abc-7c9d8f-xxxxx",
         "message": "Back-off pulling image ghcr.io/org/frontend:v2 — manifest unknown",
+        "category": "ImagePull",
+        "explanation": "The container image could not be pulled. Check the image name, tag, and registry credentials.",
         "timestamp": "2026-04-22T10:55:00Z"
       },
       {
         "resource": "Event/frontend-abc-7c9d8f-xxxxx",
-        "message": "[Failed] Failed to pull image ..."
+        "message": "[Failed] Failed to pull image ...",
+        "category": "ImagePull",
+        "explanation": "The container image could not be pulled. Check the image name, tag, and registry credentials."
       }
     ]
   }

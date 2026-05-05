@@ -31,6 +31,24 @@ class StatusReason(StrEnum):
     Unavailable = "Unavailable"  # status backend reachable but this deployment's fetch raised
 
 
+class ErrorCategory(StrEnum):
+    """Programmatic categorization of a cluster error. Use ``message`` for the raw text.
+
+    Categories are intentionally broader than literal Kubernetes reasons (e.g.
+    ``ImagePull`` covers ``ImagePullBackOff``, ``ErrImagePull``, manifest-unknown
+    pulls, etc.) so app-level categories can be added later without breaking
+    consumers tied to specific K8s state names.
+    """
+
+    ImagePull = "ImagePull"
+    CrashLoop = "CrashLoop"
+    OutOfMemory = "OutOfMemory"
+    HealthCheck = "HealthCheck"
+    SyncFailed = "SyncFailed"
+    ComparisonError = "ComparisonError"
+    Unknown = "Unknown"
+
+
 class AsyncTaskAcceptedResponse(BaseModel):
     """Standard 202 Accepted response for all V2 async endpoints."""
 
@@ -67,7 +85,12 @@ class StatusError(BaseModel):
     """A single error or warning entry surfaced from the cluster."""
 
     resource: str = Field(..., description="Kind/name (e.g. 'Pod/frontend-abc') or 'Event/<obj>' for events")
-    message: str = Field(..., description="Human-readable error message")
+    message: str = Field(..., description="Raw cluster message — for automation, regex matching, correlation")
+    category: ErrorCategory = Field(..., description="Programmatic category for filtering, grouping, colorizing")
+    explanation: str | None = Field(
+        default=None,
+        description="Human-friendly explanation of the category and what to do next; null when the category has no canned guidance (e.g. Unknown)",
+    )
     timestamp: str | None = Field(default=None, description="ISO timestamp if known")
 
 

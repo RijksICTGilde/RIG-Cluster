@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
 
 if TYPE_CHECKING:
@@ -20,6 +21,57 @@ if TYPE_CHECKING:
     from opi.connectors.kubectl import KubectlConnector
 
 logger = logging.getLogger(__name__)
+
+
+_CATEGORY_EXPLANATIONS: dict[ErrorCategory, str] = {
+    ErrorCategory.ImagePull: (
+        "The container image could not be pulled. Check the image name, tag, and registry credentials."
+    ),
+    ErrorCategory.CrashLoop: (
+        "The container starts but exits or crashes repeatedly. Inspect the container's own logs for the cause."
+    ),
+    ErrorCategory.OutOfMemory: (
+        "The container ran out of memory and was killed. Increase the memory limit or reduce memory usage."
+    ),
+    ErrorCategory.HealthCheck: (
+        "The container is running but failing health checks. Check liveness/readiness probe configuration."
+    ),
+    ErrorCategory.SyncFailed: (
+        "The cluster could not apply the desired state. "
+        "Check the synced manifest for errors and the operation message for details."
+    ),
+    ErrorCategory.ComparisonError: (
+        "The cluster could not compare the desired and live state. Often a manifest validation error."
+    ),
+}
+
+
+def categorize_error(resource: str, message: str) -> tuple[ErrorCategory, str | None]:
+    """Map a (resource, message) pair to an ErrorCategory and human explanation.
+
+    Order matters: more specific keywords are checked before broader ones.
+    Returns (Unknown, None) when no pattern matches.
+    """
+    msg_lower = message.lower()
+
+    if resource == "SyncOperation" or (resource.startswith("Event/") and "syncfailed" in msg_lower):
+        category = ErrorCategory.SyncFailed
+    elif resource == "ComparisonError":
+        category = ErrorCategory.ComparisonError
+    elif "imagepullbackoff" in msg_lower or "errimagepull" in msg_lower or "back-off pulling image" in msg_lower:
+        category = ErrorCategory.ImagePull
+    elif "oomkilled" in msg_lower or "out of memory" in msg_lower or "outofmemory" in msg_lower:
+        category = ErrorCategory.OutOfMemory
+    elif "crashloopbackoff" in msg_lower or "back-off restarting" in msg_lower:
+        category = ErrorCategory.CrashLoop
+    elif "liveness probe" in msg_lower or "readiness probe" in msg_lower or "startup probe" in msg_lower:
+        category = ErrorCategory.HealthCheck
+    elif "syncfailed" in msg_lower or "sync operation failed" in msg_lower:
+        category = ErrorCategory.SyncFailed
+    else:
+        category = ErrorCategory.Unknown
+
+    return category, _CATEGORY_EXPLANATIONS.get(category)
 
 
 async def gather_deployment_errors(

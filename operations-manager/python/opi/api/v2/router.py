@@ -59,7 +59,7 @@ from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.handlers.project_file_handler import ProjectFileHandler
-from opi.services.deployment_diagnostics import gather_deployment_errors
+from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.project_service import get_project_service
 from opi.utils.naming import (
     HostnameFormat,
@@ -232,7 +232,11 @@ async def _fetch_one_deployment_status(
         deployment_name=deployment_name,
         status_data=status_data or {},
     )
-    enriched = status.model_copy(update={"errors": [StatusError(**e) for e in raw_errors]})
+    typed_errors: list[StatusError] = []
+    for raw in raw_errors:
+        category, explanation = categorize_error(raw["resource"], raw["message"])
+        typed_errors.append(StatusError(**raw, category=category, explanation=explanation))
+    enriched = status.model_copy(update={"errors": typed_errors})
     return enriched, None
 
 
