@@ -59,10 +59,6 @@ class DeploymentStatus(BaseModel):
         default_factory=list,
         description="Cluster-side error entries; populated only when health_status is not Healthy",
     )
-    logs: dict[str, list[str]] = Field(
-        default_factory=dict,
-        description="Per-component log tail (component name -> lines); populated only when health_status is not Healthy",
-    )
 
 
 class DeploymentDetail(BaseModel):

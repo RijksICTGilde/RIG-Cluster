@@ -1,4 +1,4 @@
-"""Pure-data diagnostics for deployments: errors and logs.
+"""Pure-data diagnostics for deployments.
 
 This module is the single source of truth for "what is broken with this
 deployment" — used by both the web UI (which adds presentation) and the
@@ -10,12 +10,10 @@ and logs at debug level. The returned shape is always valid.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import get_prefixed_namespace
-from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
     from opi.connectors.argo import ArgoConnector
@@ -142,39 +140,3 @@ async def gather_deployment_errors(
         errors.append(op_entry)
 
     return errors
-
-
-async def gather_component_logs(
-    *,
-    kubectl: KubectlConnector,
-    base_namespace: str,
-    cluster: str,
-    deployment_name: str,
-    component_names: list[str],
-    tail_lines: int = 50,
-) -> dict[str, list[str]]:
-    """Fetch tail logs per component.
-
-    Components are looked up by the K8s ``app`` label, which equals
-    ``generate_unique_name(deployment_name, component_name)`` (set by the
-    deployment manifest template). All components are fetched in parallel.
-
-    Returns ``{component_name: [log lines]}``. Components with no pods or
-    fetch errors map to an empty list.
-    """
-    if not component_names:
-        return {}
-
-    k8s_ns = get_prefixed_namespace(cluster, base_namespace)
-
-    async def _one(component_name: str) -> tuple[str, list[str]]:
-        app_label = generate_unique_name(deployment_name, component_name)
-        try:
-            lines = await kubectl.get_deployment_logs(app_label, k8s_ns, lines=tail_lines)
-        except Exception as exc:
-            logger.debug("Could not fetch logs for %s/%s: %s", deployment_name, component_name, exc)
-            return component_name, []
-        return component_name, lines
-
-    results = await asyncio.gather(*[_one(name) for name in component_names])
-    return dict(results)

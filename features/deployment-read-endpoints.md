@@ -48,13 +48,10 @@ Each deployment includes:
 | `revision` | Full git SHA last reconciled — `null` if never reconciled |
 | `last_synced_at` | ISO timestamp of the last reconciliation against git — `null` if never synced |
 | `errors` | List of cluster-side error entries — empty when `health_status` is `Healthy` |
-| `logs` | Per-component log tail (component name → list of lines) — empty when `health_status` is `Healthy` |
 
 Each `errors` entry: `{ resource: str, message: str, timestamp: str? }`. The `resource` is `Kind/name` (e.g. `Pod/frontend-abc`) for cluster resources, `Event/<obj>` for namespace events, or a condition type name.
 
-### Query parameters
-
-- `log_lines` (optional, default `50`, capped at `500`) — number of log lines per component when fetching diagnostics. Hidden from the OpenAPI schema. Ignored when the deployment is healthy (no logs are fetched).
+For component logs, use the existing `GET /api/logs/{project_name}` (HTTP) or `WS /api/logs/stream/{project_name}` (WebSocket) endpoints. Logs are intentionally not embedded in this response: they don't belong to "status" semantically, and the existing log endpoints already serve that need.
 
 The list view returns the same per-deployment shape as the single view (it is a filtered slice, not a reduced projection).
 
@@ -86,13 +83,12 @@ The list view returns the same per-deployment shape as the single view (it is a 
     "health_status": "Healthy",
     "revision": "abc123def456789",
     "last_synced_at": "2026-04-22T12:00:00Z",
-    "errors": [],
-    "logs": {}
+    "errors": []
   }
 }
 ```
 
-### Example response (unhealthy deployment)
+### Example response (deployment not running correctly)
 
 ```json
 {
@@ -113,11 +109,7 @@ The list view returns the same per-deployment shape as the single view (it is a 
         "resource": "Event/frontend-abc-7c9d8f-xxxxx",
         "message": "[Failed] Failed to pull image ..."
       }
-    ],
-    "logs": {
-      "frontend": ["log line 1", "log line 2"],
-      "api": ["api log..."]
-    }
+    ]
   }
 }
 ```
@@ -145,14 +137,9 @@ The `status` sub-object reports what the cluster has actually reconciled, querie
 
 `last_synced_at` is the timestamp of the last reconciliation against git — combined with `revision`, it tells callers "we are running commit `<revision>` as of `<last_synced_at>`," which is what most "where is my deploy?" debugging needs.
 
-When `health_status` is anything other than `Healthy`, the response also includes:
+When `health_status` is anything other than `Healthy`, the response also includes `errors[]`: aggregated from the ArgoCD `Application` (resources, conditions, sync result), the resource tree (Pod / ReplicaSet messages — where `ImagePullBackOff` / `CrashLoopBackOff` etc. surface), and recent namespace events. Healthy deployments skip this fetch to keep responses small and fast.
 
-- `errors`: aggregated from the ArgoCD `Application` (resources, conditions, sync result), the resource tree (Pod / ReplicaSet messages — where `ImagePullBackOff` / `CrashLoopBackOff` etc. surface), and recent namespace events.
-- `logs`: a tail of recent log lines per component, fetched via `kubectl`. Tail size is controlled by the optional `log_lines` query param (default `50`, max `500`).
-
-Healthy deployments skip both fetches to keep responses small and fast.
-
-The diagnostics gathering logic (errors only — logs are V2-API-only) is shared with the web UI via `opi/services/deployment_diagnostics.py`, so both surfaces report the same view of "what's broken."
+The diagnostics gathering logic is shared with the web UI via `opi/services/deployment_diagnostics.py`, so both surfaces report the same view of "what's broken."
 
 If the status backend is unreachable (login fails or any per-deployment fetch raises), both endpoints return **`503 Service Unavailable`** rather than partial state — the caller cannot distinguish "no status" from "backend down" otherwise.
 

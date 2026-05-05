@@ -146,18 +146,10 @@ def _make_argo_mock(
 
 
 def _make_kubectl_mock(
-    logs_by_label: dict[str, list[str]] | None = None,
     events: list[dict[str, str]] | None = None,
 ) -> MagicMock:
-    """Build a mock KubectlConnector for log + event fetches."""
-    logs_map = logs_by_label or {}
+    """Build a mock KubectlConnector for namespace event fetches."""
     mock = MagicMock()
-
-    async def _logs(app_label: str, _ns: str, lines: int = 50) -> list[str]:
-        del lines
-        return logs_map.get(app_label, [])
-
-    mock.get_deployment_logs = AsyncMock(side_effect=_logs)
     mock.get_namespace_events = AsyncMock(return_value=events or [])
     return mock
 
@@ -269,8 +261,8 @@ class TestListDeployments:
         assert staging["status"]["sync_status"] == "OutOfSync"
         assert staging["status"]["health_status"] == "Progressing"
 
-    def test_healthy_deployment_has_empty_errors_and_logs(self, client: TestClient) -> None:
-        """Healthy deployments skip diagnostics; errors and logs are empty."""
+    def test_healthy_deployment_has_empty_errors(self, client: TestClient) -> None:
+        """Healthy deployments skip diagnostics; errors is empty."""
         response = client.get(
             "/api/v2/projects/test-project/deployments",
             headers={"X-API-Key": API_KEY},
@@ -278,7 +270,6 @@ class TestListDeployments:
         data = response.json()
         prod = next(d for d in data["deployments"] if d["name"] == "production")
         assert prod["status"]["errors"] == []
-        assert prod["status"]["logs"] == {}
 
     def test_requires_auth(self, client: TestClient) -> None:
         response = client.get("/api/v2/projects/test-project/deployments")
@@ -343,7 +334,6 @@ class TestGetDeployment:
         assert data["status"]["revision"] == "abc123def456789"
         assert data["status"]["last_synced_at"] == "2026-04-22T12:00:00Z"
         assert data["status"]["errors"] == []
-        assert data["status"]["logs"] == {}
 
     def test_app_not_yet_known_returns_null_status(self, mock_settings: Any, mock_project_service: Any) -> None:
         """When the cluster has no Application yet for the deployment, status is null."""
@@ -403,12 +393,10 @@ class TestGetDeployment:
             )
         assert response.status_code == 503
 
-    def test_unhealthy_deployment_populates_errors_and_logs(
-        self, mock_settings: Any, mock_project_service: Any
-    ) -> None:
-        """Degraded deployments include errors from the resource tree and per-component logs."""
+    def test_unhealthy_deployment_populates_errors(self, mock_settings: Any, mock_project_service: Any) -> None:
+        """Degraded deployments include errors from the resource tree and conditions."""
         from opi.server import create_app
-        from opi.utils.naming import generate_argocd_application_name, generate_unique_name
+        from opi.utils.naming import generate_argocd_application_name
 
         app: FastAPI = create_app()
         app_name = generate_argocd_application_name("test-project", "production")
@@ -432,13 +420,7 @@ class TestGetDeployment:
             status_by_app={app_name: argo_status},
             tree_by_app={app_name: tree},
         )
-        kubectl_mock = _make_kubectl_mock(
-            logs_by_label={
-                generate_unique_name("production", "frontend"): ["frontend log line 1", "frontend log line 2"],
-                generate_unique_name("production", "api"): ["api log line"],
-                generate_unique_name("production", "worker"): [],
-            }
-        )
+        kubectl_mock = _make_kubectl_mock()
         with (
             patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
             patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
@@ -458,51 +440,7 @@ class TestGetDeployment:
         error_resources = {e["resource"] for e in status["errors"]}
         assert "Pod/frontend-abc" in error_resources
         assert "ComparisonError" in error_resources
-
-        assert status["logs"]["frontend"] == ["frontend log line 1", "frontend log line 2"]
-        assert status["logs"]["api"] == ["api log line"]
-        assert status["logs"]["worker"] == []
-
-    def test_log_lines_query_param_passed_to_kubectl(self, mock_settings: Any, mock_project_service: Any) -> None:
-        """The hidden log_lines param is forwarded to kubectl.get_deployment_logs."""
-        from opi.server import create_app
-        from opi.utils.naming import generate_argocd_application_name
-
-        app: FastAPI = create_app()
-        app_name = generate_argocd_application_name("test-project", "production")
-        argo_status = {
-            "status": {
-                "sync": {"status": "OutOfSync", "revision": "x"},
-                "health": {"status": "Degraded"},
-            }
-        }
-        argo_mock = _make_argo_mock(status_by_app={app_name: argo_status})
-        kubectl_mock = _make_kubectl_mock()
-        with (
-            patch("opi.api.v2.router.get_ingress_postfix", return_value=".local.test"),
-            patch("opi.api.v2.router.get_ingress_tls_enabled", return_value=False),
-            patch("opi.api.v2.router.create_argo_connector", return_value=argo_mock),
-            patch("opi.api.v2.router.create_kubectl_connector", return_value=kubectl_mock),
-            patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="rig-test-project"),
-        ):
-            client = TestClient(app)
-            response = client.get(
-                "/api/v2/projects/test-project/deployments/production?log_lines=200",
-                headers={"X-API-Key": API_KEY},
-            )
-        assert response.status_code == 200
-        # Each call uses positional (label, ns) + keyword lines=N
-        assert kubectl_mock.get_deployment_logs.called
-        for call in kubectl_mock.get_deployment_logs.call_args_list:
-            assert call.kwargs.get("lines") == 200
-
-    def test_log_lines_above_cap_returns_422(self, client: TestClient) -> None:
-        """log_lines > 500 is rejected by FastAPI validation."""
-        response = client.get(
-            "/api/v2/projects/test-project/deployments/production?log_lines=600",
-            headers={"X-API-Key": API_KEY},
-        )
-        assert response.status_code == 422
+        assert "logs" not in status
 
     def test_deployment_not_found(self, client: TestClient) -> None:
         response = client.get(

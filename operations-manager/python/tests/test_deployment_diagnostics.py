@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.services.deployment_diagnostics import gather_component_logs, gather_deployment_errors
+from opi.services.deployment_diagnostics import gather_deployment_errors
 
 
 def _argo_mock(tree_nodes: list[dict[str, Any]] | None = None, raises: bool = False) -> MagicMock:
@@ -20,22 +20,13 @@ def _argo_mock(tree_nodes: list[dict[str, Any]] | None = None, raises: bool = Fa
 
 def _kubectl_mock(
     events: list[dict[str, str]] | None = None,
-    logs_by_label: dict[str, list[str]] | None = None,
     events_raises: bool = False,
-    logs_raises: bool = False,
 ) -> MagicMock:
     mock = MagicMock()
     if events_raises:
         mock.get_namespace_events = AsyncMock(side_effect=RuntimeError("kubectl events down"))
     else:
         mock.get_namespace_events = AsyncMock(return_value=events or [])
-
-    async def _logs(app_label: str, _ns: str, lines: int = 50) -> list[str]:
-        if logs_raises:
-            raise RuntimeError("kubectl logs down")
-        return (logs_by_label or {}).get(app_label, [])
-
-    mock.get_deployment_logs = AsyncMock(side_effect=_logs)
     return mock
 
 
@@ -294,85 +285,3 @@ class TestGatherDeploymentErrors:
         op_err = next(e for e in errors if e["resource"] == "SyncOperation")
         assert op_err["message"] == "could not apply"
         assert op_err["timestamp"] == "2026-04-22T11:00:00Z"
-
-
-# ---------------------------------------------------------------------------
-# gather_component_logs
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-class TestGatherComponentLogs:
-    """Behaviour of gather_component_logs."""
-
-    async def test_returns_logs_keyed_by_component_name(self) -> None:
-        # K8s app label = generate_unique_name(deployment_name, component_name)
-        from opi.utils.naming import generate_unique_name
-
-        kubectl = _kubectl_mock(
-            logs_by_label={
-                generate_unique_name("prod", "frontend"): ["line1", "line2"],
-                generate_unique_name("prod", "api"): ["api line"],
-            }
-        )
-        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
-            logs = await gather_component_logs(
-                kubectl=kubectl,
-                base_namespace="ns",
-                cluster="local",
-                deployment_name="prod",
-                component_names=["frontend", "api"],
-            )
-        assert logs == {"frontend": ["line1", "line2"], "api": ["api line"]}
-
-    async def test_missing_component_logs_default_to_empty(self) -> None:
-        kubectl = _kubectl_mock(logs_by_label={})
-        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
-            logs = await gather_component_logs(
-                kubectl=kubectl,
-                base_namespace="ns",
-                cluster="local",
-                deployment_name="prod",
-                component_names=["frontend"],
-            )
-        assert logs == {"frontend": []}
-
-    async def test_log_fetch_failure_yields_empty_list(self) -> None:
-        kubectl = _kubectl_mock(logs_raises=True)
-        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
-            logs = await gather_component_logs(
-                kubectl=kubectl,
-                base_namespace="ns",
-                cluster="local",
-                deployment_name="prod",
-                component_names=["frontend", "api"],
-            )
-        assert logs == {"frontend": [], "api": []}
-
-    async def test_empty_component_list_returns_empty_dict(self) -> None:
-        kubectl = _kubectl_mock()
-        logs = await gather_component_logs(
-            kubectl=kubectl,
-            base_namespace="ns",
-            cluster="local",
-            deployment_name="prod",
-            component_names=[],
-        )
-        assert logs == {}
-        kubectl.get_deployment_logs.assert_not_called()
-
-    async def test_tail_lines_passed_through(self) -> None:
-        kubectl = _kubectl_mock(logs_by_label={})
-        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
-            await gather_component_logs(
-                kubectl=kubectl,
-                base_namespace="ns",
-                cluster="local",
-                deployment_name="prod",
-                component_names=["frontend"],
-                tail_lines=200,
-            )
-        _, kwargs = kubectl.get_deployment_logs.call_args
-        # get_deployment_logs is called positionally (label, ns) with lines as kwarg
-        args = kubectl.get_deployment_logs.call_args.args
-        assert kwargs.get("lines") == 200 or (len(args) >= 3 and args[2] == 200)
