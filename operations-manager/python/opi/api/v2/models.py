@@ -1,6 +1,34 @@
 """V2 API response models for async task endpoints."""
 
+from enum import StrEnum
+
 from pydantic import BaseModel, Field
+
+
+class SyncStatus(StrEnum):
+    """ArgoCD sync status. Unknown is the catch-all for novel/unrecognized values."""
+
+    Synced = "Synced"
+    OutOfSync = "OutOfSync"
+    Unknown = "Unknown"
+
+
+class HealthStatus(StrEnum):
+    """ArgoCD health status. Unknown is the catch-all for novel/unrecognized values."""
+
+    Healthy = "Healthy"
+    Progressing = "Progressing"
+    Degraded = "Degraded"
+    Suspended = "Suspended"
+    Missing = "Missing"
+    Unknown = "Unknown"
+
+
+class StatusReason(StrEnum):
+    """Why ``status`` is null when it is. Set on DeploymentDetail, not on DeploymentStatus."""
+
+    Pending = "Pending"  # cluster has no Application yet (not yet reconciled)
+    Unavailable = "Unavailable"  # status backend reachable but this deployment's fetch raised
 
 
 class AsyncTaskAcceptedResponse(BaseModel):
@@ -46,8 +74,8 @@ class StatusError(BaseModel):
 class DeploymentStatus(BaseModel):
     """Live reconciliation status for a deployment, sourced from the cluster."""
 
-    sync_status: str = Field(..., description="Sync status (e.g. Synced, OutOfSync)")
-    health_status: str = Field(..., description="Health status (e.g. Healthy, Degraded, Progressing)")
+    sync_status: SyncStatus = Field(..., description="Sync status")
+    health_status: HealthStatus = Field(..., description="Health status")
     revision: str | None = Field(
         default=None, description="Git revision (full SHA) last reconciled; null if never reconciled"
     )

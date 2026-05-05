@@ -41,7 +41,9 @@ from opi.api.v2.models import (
     DeploymentDetail,
     DeploymentListResponse,
     DeploymentStatus,
+    HealthStatus,
     StatusError,
+    SyncStatus,
 )
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
@@ -147,11 +149,33 @@ def _compute_deployment_urls(
     return urls
 
 
+def _safe_sync_status(raw: str | None) -> SyncStatus:
+    """Map an Argo sync.status value to our enum, defaulting to Unknown for novel values."""
+    if not raw:
+        return SyncStatus.Unknown
+    try:
+        return SyncStatus(raw)
+    except ValueError:
+        logger.debug("Unknown Argo sync status %r — falling back to Unknown", raw)
+        return SyncStatus.Unknown
+
+
+def _safe_health_status(raw: str | None) -> HealthStatus:
+    """Map an Argo health.status value to our enum, defaulting to Unknown for novel values."""
+    if not raw:
+        return HealthStatus.Unknown
+    try:
+        return HealthStatus(raw)
+    except ValueError:
+        logger.debug("Unknown Argo health status %r — falling back to Unknown", raw)
+        return HealthStatus.Unknown
+
+
 def _extract_deployment_status(status_data: dict[str, Any] | None) -> DeploymentStatus | None:
     """Build a DeploymentStatus from an ArgoCD Application payload.
 
     Returns None when the cluster has no Application yet for this deployment,
-    or when the payload is missing the minimum sync/health fields.
+    or when the payload is missing both sync and health.
     """
     if not status_data:
         return None
@@ -161,14 +185,12 @@ def _extract_deployment_status(status_data: dict[str, Any] | None) -> Deployment
     health = status.get("health", {}) or {}
     operation_state = status.get("operationState", {}) or {}
 
-    sync_status = sync.get("status")
-    health_status = health.get("status")
-    if not sync_status or not health_status:
+    if not sync.get("status") and not health.get("status"):
         return None
 
     return DeploymentStatus(
-        sync_status=sync_status,
-        health_status=health_status,
+        sync_status=_safe_sync_status(sync.get("status")),
+        health_status=_safe_health_status(health.get("status")),
         revision=sync.get("revision") or None,
         last_synced_at=operation_state.get("finishedAt") or status.get("reconciledAt"),
     )
@@ -187,7 +209,7 @@ async def _fetch_one_deployment_status(
     status_data = await argo.get_application_status(app_name)
 
     status = _extract_deployment_status(status_data)
-    if status is None or status.health_status == "Healthy":
+    if status is None or status.health_status == HealthStatus.Healthy:
         return status
 
     raw_errors = await gather_deployment_errors(
