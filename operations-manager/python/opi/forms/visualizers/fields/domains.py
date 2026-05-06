@@ -52,6 +52,7 @@ DOMAIN_CUSTOM_BASE_DOMAIN = EditableVisualizer(
     label="Eigen domein",
     placeholder="voorbeeld.nl",
     help_text="Voer uw eigen domeinnaam in. U bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
+    attributes={"data-rerender": "true"},
 )
 
 DOMAIN_ROOT_COMPONENT = EditableVisualizer(
