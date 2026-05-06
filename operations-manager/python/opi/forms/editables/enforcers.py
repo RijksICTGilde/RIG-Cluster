@@ -238,7 +238,15 @@ class DomainConfigEnforcer:
 
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
         if "{subdomain}" in template and not subdomain:
-            raise ValueError("Een subdomein is vereist voor het gekozen URL-formaat")
+            # Field-level required validation only fires when the field is
+            # rendered. If the user changed domain-format to one that needs a
+            # subdomain but never filled it (or the field was hidden when
+            # processed), surface the error against the subdomain input so it
+            # is visible — not against the parent group path.
+            raise FieldError(
+                f"deployments[{self.deployment_index}]/subdomain",
+                "Een subdomein is vereist voor het gekozen URL-formaat",
+            )
 
         # Check if domain format (with dots) is compatible with the selected domain
         if actual_domain and "." in domain_format:
@@ -255,11 +263,31 @@ class DomainConfigEnforcer:
                     f"Kies een ander URL-formaat of een ander domein."
                 )
 
-        # Check custom domain approval for non-platform domains
+        # Check custom domain approval for non-platform domains. Mirrors the
+        # subdomain pattern below: a ticked "Domein aanvragen" checkbox lets
+        # the submission through, an existing "requested" status lets it
+        # through, "denied" hard-fails, and any other unapproved state
+        # surfaces as a non-blocking warning prompting the user to tick the
+        # request checkbox.
         if actual_domain and base_domain == "__custom__" and actual_domain.lower() not in supported:
+            domain_field = f"deployments[{self.deployment_index}]/base-domain:custom"
             is_allowed, error_msg = is_domain_allowed_for_project(actual_domain, value)
             if not is_allowed:
-                raise ValueError(error_msg)
+                domain_config = get_project_allowed_domain_config(value, actual_domain)
+                status = domain_config.get("status") if isinstance(domain_config, dict) else None
+                request_checked = bool(dep.get("_request-domain"))
+                if status is None and request_checked:
+                    pass  # User is requesting this domain — allow through
+                elif status == "requested":
+                    pass  # Already requested — allow through
+                elif status == "denied":
+                    msg = error_msg or f"Het domein '{actual_domain}' is afgewezen."
+                    raise FieldError(domain_field, msg)
+                else:
+                    raise FieldWarning(
+                        domain_field,
+                        f"Gebruik van het domein '{actual_domain}' is op aanvraag.",
+                    )
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:

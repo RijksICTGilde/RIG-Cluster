@@ -92,9 +92,11 @@
             <c-button kind="secondary" label="Vorige" showIcon="before" icon="delta-naar-links"
                       hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ steps.last }}{{ _token_qs }}"
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
+            {% if wizard_token %}<input type="hidden" id="modal-wizard-confirm-token" name="_wizard_token" value="{{ wizard_token }}" />{% endif %}
             <c-button kind="primary" label="{{ action_label }}"
                       showIcon="before" icon="publicatie"
                       hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/confirm{{ _token_qs }}"
+                      {% if wizard_token %}hx-include="#modal-wizard-confirm-token"{% endif %}
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
         </div>
     </div>

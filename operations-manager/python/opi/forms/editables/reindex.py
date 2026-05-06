@@ -84,6 +84,17 @@ def materialize_wildcard_editable(ed: Editable, index: int) -> Editable:
         show_when = copy.copy(show_when)
         show_when.deployment_index = index  # type: ignore[attr-defined]
 
+    # Clone enforcer with updated deployment_index if it has one — without this,
+    # group-level enforcers (e.g. DomainConfigEnforcer) keep their default
+    # deployment_index=0 and validate the wrong deployment when editing
+    # deployments[1+].
+    enforcer = ed.enforcer
+    if enforcer and hasattr(enforcer, "deployment_index"):
+        import copy
+
+        enforcer = copy.copy(enforcer)
+        enforcer.deployment_index = index  # type: ignore[attr-defined]
+
     return dataclasses.replace(
         ed,
         yaml_path=_replace(ed.yaml_path) or ed.yaml_path,
@@ -92,6 +103,7 @@ def materialize_wildcard_editable(ed: Editable, index: int) -> Editable:
         children=children,
         generator=generator,
         show_when=show_when,
+        enforcer=enforcer,
     )
 
 

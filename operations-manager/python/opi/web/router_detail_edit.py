@@ -61,6 +61,36 @@ def _get_wizard_token(request: Request) -> str | None:
     return request.query_params.get("_wizard_token")
 
 
+async def _get_wizard_token_with_body(request: Request) -> str | None:
+    """Like _get_wizard_token, but also looks in the request body.
+
+    HTMX may strip query strings from POST URLs depending on how the c-button is
+    rendered, so callers that have no preceding form (review/confirm, skip) read
+    the token from hx-include / hx-vals as form data or JSON, falling back to
+    the query.
+    """
+    token = request.query_params.get("_wizard_token")
+    if token:
+        return token
+
+    content_type = request.headers.get("content-type", "")
+    try:
+        if "application/json" in content_type:
+            body = await request.json()
+            if isinstance(body, dict):
+                value = body.get("_wizard_token")
+                if isinstance(value, str) and value:
+                    return value
+        elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+            form = await request.form()
+            value = form.get("_wizard_token")
+            if isinstance(value, str) and value:
+                return value
+    except Exception:
+        return None
+    return None
+
+
 detail_edit_router = APIRouter(prefix="/projects", tags=["detail-edit"])
 
 
@@ -898,9 +928,10 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
     else:
         _require_project_edit_access(request, project_name)
 
-    wizard_token = _get_wizard_token(request)
+    wizard_token = await _get_wizard_token_with_body(request)
     state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != flow_id:
+        logger.warning("Modal wizard session lost for %s/%s (skip)", project_name, flow_id)
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     return await _modal_do_submit(request, wizard_token, project_name, flow_id)
@@ -915,9 +946,10 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
     else:
         _require_project_edit_access(request, project_name)
 
-    wizard_token = _get_wizard_token(request)
+    wizard_token = await _get_wizard_token_with_body(request)
     state = get_modal_state_by_token(wizard_token)
     if not state or state.flow_id != flow_id:
+        logger.warning("Modal wizard session lost for %s/%s (confirm)", project_name, flow_id)
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     return await _modal_do_submit(request, wizard_token, project_name, flow_id)
