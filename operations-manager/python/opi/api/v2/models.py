@@ -1,6 +1,47 @@
 """V2 API response models for async task endpoints."""
 
+from enum import StrEnum
+
 from pydantic import BaseModel, Field
+
+
+class DeploymentStatus(StrEnum):
+    """Overall deployment state.
+
+    A single enum covering everything a caller wants to switch on. Argo's
+    two orthogonal dimensions (sync, health) are collapsed using a
+    worst-of-both priority: Degraded/Suspended/Missing > OutOfSync >
+    Progressing > Healthy. Pending and Unavailable are *our* states for
+    "we have no data," distinct from Argo's own Unknown.
+    """
+
+    Healthy = "Healthy"
+    Degraded = "Degraded"
+    Progressing = "Progressing"
+    OutOfSync = "OutOfSync"  # cluster is running, but drifted from git
+    Suspended = "Suspended"
+    Missing = "Missing"
+    Pending = "Pending"  # cluster has no Application yet (not yet reconciled)
+    Unavailable = "Unavailable"  # status fetch failed (only in list endpoint)
+    Unknown = "Unknown"  # status backend itself reports Unknown
+
+
+class ErrorCategory(StrEnum):
+    """Programmatic categorization of a cluster error. Use ``message`` for the raw text.
+
+    Categories are intentionally broader than literal Kubernetes reasons (e.g.
+    ``ImagePull`` covers ``ImagePullBackOff``, ``ErrImagePull``, manifest-unknown
+    pulls, etc.) so app-level categories can be added later without breaking
+    consumers tied to specific K8s state names.
+    """
+
+    ImagePull = "ImagePull"
+    CrashLoop = "CrashLoop"
+    OutOfMemory = "OutOfMemory"
+    HealthCheck = "HealthCheck"
+    SyncFailed = "SyncFailed"
+    ComparisonError = "ComparisonError"
+    Unknown = "Unknown"
 
 
 class AsyncTaskAcceptedResponse(BaseModel):
@@ -33,7 +74,22 @@ class DeploymentComponentDetail(BaseModel):
 
     reference: str = Field(..., description="Component name reference")
     image: str = Field(..., description="Container image URL")
-    image_pull_policy: str = Field(default="Always", description="Image pull policy")
+
+
+class StatusError(BaseModel):
+    """A single error or warning entry surfaced from the cluster."""
+
+    resource: str = Field(..., description="Kind/name (e.g. 'Pod/frontend-abc') or 'Event/<obj>' for events")
+    message: str = Field(..., description="Raw cluster message — for automation, regex matching, correlation")
+    category: ErrorCategory = Field(..., description="Programmatic category for filtering, grouping, colorizing")
+    explanation: str | None = Field(
+        default=None,
+        description=(
+            "Human-friendly explanation of the category and what to do next; "
+            "null when the category has no canned guidance (e.g. Unknown)"
+        ),
+    )
+    timestamp: str | None = Field(default=None, description="ISO timestamp if known")
 
 
 class DeploymentDetail(BaseModel):
@@ -48,6 +104,30 @@ class DeploymentDetail(BaseModel):
     urls: dict[str, str] = Field(
         default_factory=dict,
         description="Computed public URLs, keyed by component name",
+    )
+    status: DeploymentStatus = Field(
+        ...,
+        description="Overall deployment state. Always present; check value to render.",
+    )
+    sync_revision: str | None = Field(
+        default=None,
+        description="Git revision (full SHA) the cluster last reconciled; null if never reconciled",
+    )
+    last_synced_at: str | None = Field(
+        default=None,
+        description=(
+            "ISO timestamp of the last reconciliation attempt against git, regardless of outcome. "
+            "Combine with status to know whether that attempt succeeded; for a Degraded "
+            "deployment this can be the time of a failed sync, not a healthy one. "
+            "Null if no reconciliation has ever happened."
+        ),
+    )
+    errors: list[StatusError] = Field(
+        default_factory=list,
+        description=(
+            "Cluster-side error entries; populated only when status indicates a problem "
+            "(Degraded, OutOfSync, Suspended, Missing). Empty otherwise."
+        ),
     )
 
 
