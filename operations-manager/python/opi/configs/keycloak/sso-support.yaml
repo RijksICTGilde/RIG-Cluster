@@ -45,7 +45,7 @@ identityProviders:
       clientId: "{{ platform_client.client_id }}"
       clientSecret: "{{ platform_client.client_secret }}"
       discoveryUrl: "{{ keycloak_url }}/realms/{{ platform_realm_name }}/.well-known/openid-configuration"
-      syncMode: "INHERIT"
+      syncMode: "IMPORT"
       # Frontchannel logout so the browser carries the SAML LogoutRequest all the way to BZK
       backchannelSupported: "false"
     mappers:

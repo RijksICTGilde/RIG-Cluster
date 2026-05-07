@@ -1013,7 +1013,7 @@ class KeycloakConnector:
             want_assertions_signed: Require signed assertions
             want_assertions_encrypted: Require encrypted assertions
             authenticate_by_default: Auto-redirect to this IDP on login
-            sync_mode: Sync mode for attributes (FORCE, IMPORT, INHERIT)
+            sync_mode: Sync mode for attributes (FORCE, IMPORT, LEGACY)
             enabled: Whether the IDP is enabled
             update_profile_first_login: Whether to show profile update on first login (default: "off")
 
