@@ -35,6 +35,7 @@ from opi.connectors.subdomain import SubdomainConnector, ensure_domain_requests
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_ca_certificate_config,
+    get_external_dns_target_for_hostname,
     get_ingress_cluster_issuer,
     get_ingress_ip_whitelist,
     get_ingress_postfix,
@@ -4747,6 +4748,9 @@ class ProjectManager:
                                     "issuer_name": ingress_issuer_name,  # Namespace-scoped Issuer (for external domains)
                                     "cluster_issuer": ingress_cluster_issuer,  # ClusterIssuer (for cluster domains)
                                     "tls_secret_name": generate_tls_secret_name(ingress_name),
+                                    "external_dns_target": get_external_dns_target_for_hostname(
+                                        cluster, ingress_hostname
+                                    ),
                                 }
                             )
 
@@ -4805,6 +4809,7 @@ class ProjectManager:
                                 "issuer_name": root_issuer_name,
                                 "cluster_issuer": root_cluster_issuer,
                                 "tls_secret_name": generate_tls_secret_name(root_ingress_name),
+                                "external_dns_target": get_external_dns_target_for_hostname(cluster, root_hostname),
                             }
                         )
 
@@ -4870,6 +4875,7 @@ class ProjectManager:
                                 "issuer_name": bare_issuer_name,
                                 "cluster_issuer": bare_cluster_issuer,
                                 "tls_secret_name": generate_tls_secret_name(bare_ingress_name),
+                                "external_dns_target": get_external_dns_target_for_hostname(cluster, bare_hostname),
                             }
                         )
 
