@@ -61,6 +61,12 @@ metadata:
 {% elif cluster_issuer %}
     cert-manager.io/cluster-issuer: {{ cluster_issuer }}
 {% endif %}
+{% if external_dns_target %}
+    # ============================================================
+    # External-DNS target - overrides the default LB-status hostname
+    # ============================================================
+    external-dns.alpha.kubernetes.io/target: {{ external_dns_target }}
+{% endif %}
 spec:
   rules:
     - host: {{ hostname }}

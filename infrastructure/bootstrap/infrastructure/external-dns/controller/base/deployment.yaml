@@ -34,7 +34,7 @@ spec:
             - --log-level=info
             - --log-format=text
             - --interval=1m
-            - --policy=upsert-only
+            - --policy=sync
           env:
             - name: TRANSIP_ACCOUNT_NAME
               valueFrom:

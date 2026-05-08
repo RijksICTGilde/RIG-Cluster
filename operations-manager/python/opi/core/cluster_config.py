@@ -129,7 +129,13 @@ CLUSTER_CONFIG = {
         },
         "nice_url": {
             "supported_domains": [
-                {"domain": "rijks.app", "supports_dots": True, "issuer": "letsencrypt", "restricted_subdomains": True},
+                {
+                    "domain": "rijks.app",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                    "external_dns_target": "router.rijks.app",
+                },
                 {
                     "domain": "rijksapps.nl",
                     "supports_dots": True,
@@ -141,12 +147,14 @@ CLUSTER_CONFIG = {
                     "supports_dots": True,
                     "issuer": "letsencrypt",
                     "restricted_subdomains": True,
+                    "external_dns_target": "router.rijksapp.nl",
                 },
                 {
                     "domain": "rijksapp.dev",
                     "supports_dots": True,
                     "issuer": "letsencrypt",
                     "restricted_subdomains": True,
+                    "external_dns_target": "router.rijksapp.dev",
                 },
             ],
         },
@@ -832,6 +840,41 @@ def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
         for entry in nice_url_config.get("supported_domains", []):
             if isinstance(entry, dict) and entry.get("domain") == domain:
                 return entry.get("issuer")
+    return None
+
+
+def get_external_dns_target_for_hostname(cluster_name: str, hostname: str) -> str | None:
+    """
+    Get the external-dns target for a hostname, based on the cluster's configured base domains.
+
+    Walks the cluster's supported_domains and returns the configured external_dns_target
+    of the most specific domain that the hostname falls under. Returns None when no
+    configured domain matches (e.g. for hostnames in the cluster's default postfix zone,
+    which gets its DNS via the OpenShift router and does not need an explicit target).
+
+    Args:
+        cluster_name: Name of the cluster
+        hostname: The hostname to resolve (e.g., "myproject.rijksapp.nl")
+
+    Returns:
+        Target hostname for the external-dns annotation, or None if none configured.
+    """
+    nice_url_config = get_nice_url_config(cluster_name)
+    if nice_url_config is None:
+        return None
+
+    candidates = [
+        entry
+        for entry in nice_url_config.get("supported_domains", [])
+        if isinstance(entry, dict) and entry.get("external_dns_target")
+    ]
+    # Sort longest domain first so more specific bases match before less specific ones.
+    candidates.sort(key=lambda e: -len(e["domain"]))
+
+    for entry in candidates:
+        domain = entry["domain"]
+        if hostname == domain or hostname.endswith("." + domain):
+            return entry["external_dns_target"]
     return None
 
 
