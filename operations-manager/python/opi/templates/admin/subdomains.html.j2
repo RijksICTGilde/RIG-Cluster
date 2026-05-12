@@ -232,8 +232,10 @@
         document.body.style.overflow = '';
     }
 
-    // Alias for wizard step template compatibility
+    // Aliases for wizard step / progress / success template compatibility
+    // (those templates assume the project-details modal helpers are in scope).
     function closeEditModal() { closeApprovalModal(); }
+    function closeEditModalAndReload() { closeApprovalModal(); window.location.reload(); }
 
     // Close on escape key
     document.addEventListener('keydown', function(e) {
