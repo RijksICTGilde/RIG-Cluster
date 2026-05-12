@@ -226,20 +226,14 @@
         });
     }
 
-    function closeApprovalModal() {
-        document.getElementById('approval-backdrop').classList.remove('is-open');
-        document.getElementById('approval-modal').classList.remove('is-open');
-        document.body.style.overflow = '';
-    }
+    // closeEditModal / closeEditModalAndReload come from
+    // /static/js/edit_modal.js (loaded globally by base.html.j2). The
+    // approval modal participates in that system because it carries
+    // ``.edit-section-modal`` / ``.edit-section-backdrop`` classes.
+    function closeApprovalModal() { closeEditModal(); }
 
-    // Aliases for wizard step / progress / success template compatibility
-    // (those templates assume the project-details modal helpers are in scope).
-    function closeEditModal() { closeApprovalModal(); }
-    function closeEditModalAndReload() { closeApprovalModal(); window.location.reload(); }
-
-    // Close on escape key
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') closeApprovalModal();
+        if (e.key === 'Escape') closeEditModal();
     });
 </script>
 {% endblock %}

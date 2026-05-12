@@ -1747,11 +1747,13 @@
 
     /* ---------------------------------------------------------------
      * Edit Section Modal - server-driven wizard via HTMX
+     *
+     * The submit-in-flight flag lives on ``window`` in
+     * /static/js/edit_modal.js so the shared close helpers can read it.
      * --------------------------------------------------------------- */
-    let isEditSubmitting = false;
 
     function openEditModal(flowId, title, params) {
-        isEditSubmitting = false;
+        window.isEditSubmitting = false;
 
         // Set title text (icon is already in the DOM via Jinja preprocessing)
         document.getElementById('edit-section-title-text').textContent = title;
@@ -1798,37 +1800,20 @@
         });
     }
 
-    function closeEditModal() {
-        isEditSubmitting = false;
-        document.getElementById('edit-section-backdrop').classList.remove('is-open');
-        document.getElementById('edit-section-modal').classList.remove('is-open');
-        document.body.style.overflow = '';
-    }
-
-    function closeEditModalAndReload() {
-        isEditSubmitting = false;
-        document.getElementById('edit-section-backdrop').classList.remove('is-open');
-        document.getElementById('edit-section-modal').classList.remove('is-open');
-        document.body.style.overflow = '';
-        window.location.reload();
-    }
-
-    function handleEditBackdropClick() {
-        if (!isEditSubmitting) {
-            closeEditModal();
-        }
-    }
+    /* closeEditModal / closeEditModalAndReload / handleEditBackdropClick and
+       the global ``isEditSubmitting`` flag live in /static/js/edit_modal.js so
+       they are in scope on every page that mounts the wizard. */
 
     /* -- HTMX integration: detect progress view and track submit state -- */
 
     document.addEventListener('htmx:afterSwap', function(evt) {
         var progressView = evt.detail.target.querySelector('.edit-progress-view');
         if (progressView) {
-            isEditSubmitting = true;
+            window.isEditSubmitting = true;
         }
         var progressActions = evt.detail.target.querySelector('.edit-progress-actions');
         if (progressActions) {
-            isEditSubmitting = false;
+            window.isEditSubmitting = false;
         }
     });
 
@@ -1839,7 +1824,7 @@
 
     // Escape key closes edit modal
     document.addEventListener('keydown', function(event) {
-        if (event.key === 'Escape' && !isEditSubmitting) {
+        if (event.key === 'Escape' && !window.isEditSubmitting) {
             var modal = document.getElementById('edit-section-modal');
             if (modal.classList.contains('is-open')) {
                 closeEditModal();
