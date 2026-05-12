@@ -282,11 +282,16 @@ class EditableFormProcessor:
             ed = vis.editable
             if vis.readonly or (vis.readonly_on_edit and edit_mode):
                 continue
-            if not should_render_editable(vis, result, siblings=editables) and _read_submitted(submitted, ed) is None:
-                # The dependency may not be met in the old data yet (e.g.
-                # first-time creation of a backup schedule), but if the
-                # browser submitted a value the field was visible in the UI
-                # and must be processed — so only skip if nothing was submitted.
+            if not should_render_editable(vis, result, siblings=editables):
+                # When ``show_when`` no longer holds against the in-progress
+                # ``result`` the field is conceptually hidden; processing it
+                # anyway would let stale form data clobber the now-current
+                # state. The dependency-providing editable is expected to
+                # appear earlier in this list (and has therefore already
+                # written its new value into ``result``), so this check
+                # reflects the user's latest intent — matching the strict
+                # skip that ``_process_sequence_json`` already does at
+                # line 461 for in-sequence children.
                 continue
 
             if vis.widget == WidgetType.GROUP:

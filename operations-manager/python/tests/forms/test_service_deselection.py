@@ -300,6 +300,66 @@ def test_topleveL_sequence_renders_children_with_virtual_path() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deselect_drops_stale_config_posted_at_virtual_path() -> None:
+    """Real-world deselection: form posts stale PS config alongside the
+    new (PS-less) selection. Because the checkbox change rerender fires
+    *before* the server gets a chance to re-render and drop the now-hidden
+    config inputs, the browser ships the stale _services-config payload.
+
+    The processor must skip editables whose ``show_when`` no longer holds
+    against the updated result, otherwise the persistent-storage config is
+    written back into ``services{persistent-storage}/config`` and the
+    smart-set silently re-adds the service to the selection list.
+    """
+    editables = _materialize_virt_editables(0)
+    processor = EditableFormProcessor()
+
+    # User deselected persistent-storage but the still-rendered config
+    # inputs come along under the virtual ``_services-config`` path.
+    submitted = {
+        "components": [
+            {
+                "name": "frontend",
+                "services": ["publish-on-web"],
+                "_services-config": [
+                    {"persistent-storage": {"config": [{"name": "data"}]}},
+                ],
+            },
+        ],
+    }
+    yaml_data: dict[str, Any] = {
+        "components": [
+            {
+                "name": "frontend",
+                "services": [
+                    "publish-on-web",
+                    {"persistent-storage": {"config": [{"name": "data"}]}},
+                ],
+            },
+        ],
+    }
+
+    result, errors = await processor.process_json_submission(
+        submitted,
+        editables,
+        yaml_data,
+        edit_mode=True,
+    )
+
+    assert not errors, f"Unexpected validation errors: {errors}"
+    comp_services = result["components"][0]["services"]
+    service_names: list[str] = []
+    for svc in comp_services:
+        if isinstance(svc, str):
+            service_names.append(svc)
+        elif isinstance(svc, dict):
+            service_names.extend(svc.keys())
+    assert "persistent-storage" not in service_names, (
+        f"persistent-storage should have been removed by deselection; got: {comp_services}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_topleveL_sequence_reads_children_from_virtual_path() -> None:
     """Submission under the virtual ``_services-config`` path must be read."""
     editables = _materialize_virt_editables(0)
