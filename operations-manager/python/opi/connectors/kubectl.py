@@ -768,7 +768,9 @@ class KubectlConnector:
         Args:
             deployment_name: Name of the deployment
             namespace: Namespace containing the deployment
-            lines: Number of historical lines to retrieve initially (default: 100)
+            lines: Number of historical lines to retrieve initially. Pass 0
+                on reattach so the follower only streams NEW output and does
+                not re-dump the same stored tail every backoff cycle.
 
         Returns:
             Subprocess with stdout stream, or None if failed to start
@@ -777,7 +779,7 @@ class KubectlConnector:
             logger.error("kubectl connection is not available for log streaming")
             return None
 
-        logger.debug(f"Starting log stream for deployment {deployment_name} in namespace {namespace}")
+        logger.debug(f"Starting log stream for deployment {deployment_name} in namespace {namespace} (tail={lines})")
 
         try:
             # Use label selector instead of deployment/ to only require pod permissions
@@ -799,7 +801,7 @@ class KubectlConnector:
                 env=self.env,
             )
 
-            logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid})")
+            logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid}, tail={lines})")
             return process
 
         except Exception as e:

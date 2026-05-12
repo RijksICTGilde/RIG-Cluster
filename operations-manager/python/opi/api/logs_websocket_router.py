@@ -473,10 +473,15 @@ async def stream_logs(
 
         await send_message(websocket, "status", status="streaming", message="Log streaming started")
 
-        # Pace reattach attempts so a permanently-broken pod doesn't have us
-        # spawning kubectl in a tight loop.
+        # Pace reattach attempts so a permanently-broken pod (CrashLoopBackOff
+        # where kubectl logs -f exits within milliseconds) doesn't have us
+        # spawning kubectl every few seconds in a tight loop. We back off
+        # exponentially up to a cap when consecutive attaches die immediately.
         REATTACH_MIN_INTERVAL_SECONDS = 5.0
+        REATTACH_MAX_INTERVAL_SECONDS = 30.0
+        REATTACH_QUICK_EXIT_THRESHOLD_SECONDS = 1.0
         last_reattach_at = 0.0
+        consecutive_quick_exits = 0
 
         async def drain_stdout() -> None:
             """Drain subprocess stdout into bounded queue, dropping oldest when full.
@@ -487,7 +492,7 @@ async def stream_logs(
             WebSocket — that way the user keeps seeing logs across pod
             restarts, matching the Argo UI's behaviour.
             """
-            nonlocal running, process, last_reattach_at
+            nonlocal running, process, last_reattach_at, consecutive_quick_exits
             while running:
                 async with process_lock:
                     current_process = process
@@ -518,16 +523,19 @@ async def stream_logs(
                 # looping (the snapshot may be a process that's already been
                 # replaced by a component-switch).
                 should_reattach = False
+                exited_quickly = False
                 async with process_lock:
                     if process is not None and process.returncode is not None:
+                        # If kubectl exited within ~1s the matched pod has no
+                        # active container (CrashLoopBackOff backoff window);
+                        # back off so we don't spawn a fresh kubectl every 5s
+                        # only to have it dump the same stored tail and exit.
+                        exited_quickly = (time.monotonic() - last_reattach_at) < REATTACH_QUICK_EXIT_THRESHOLD_SECONDS
                         logger.info(
                             f"kubectl log stream for {current_k8s_name} exited "
-                            f"(code {process.returncode}); will reattach"
+                            f"(code {process.returncode}); will reattach "
+                            f"(quick_exit={exited_quickly})"
                         )
-                        # Best-effort surface a marker so the user knows logs
-                        # may resume from a fresh pod restart.
-                        with contextlib.suppress(asyncio.QueueFull):
-                            log_queue.put_nowait(b"--- waiting for next container ---")
                         process = None
                         should_reattach = True
 
@@ -535,9 +543,18 @@ async def stream_logs(
                     await asyncio.sleep(0.5)
                     continue
 
-                # Throttle reattach attempts.
+                # Exponential backoff when consecutive attaches die instantly
+                # (typically pod sitting in CrashLoopBackOff backoff window).
+                if exited_quickly:
+                    consecutive_quick_exits += 1
+                else:
+                    consecutive_quick_exits = 0
+                backoff = min(
+                    REATTACH_MIN_INTERVAL_SECONDS * (2 ** max(0, consecutive_quick_exits - 1)),
+                    REATTACH_MAX_INTERVAL_SECONDS,
+                )
                 now = time.monotonic()
-                wait = REATTACH_MIN_INTERVAL_SECONDS - (now - last_reattach_at)
+                wait = backoff - (now - last_reattach_at)
                 if wait > 0:
                     await asyncio.sleep(wait)
 
@@ -546,11 +563,14 @@ async def stream_logs(
 
                 # Spawn the new follower OUTSIDE the lock so we don't block
                 # stderr draining or component-switching during the kubectl
-                # fork; then swap atomically.
+                # fork; then swap atomically. Use --tail=0 (no historical
+                # dump) so each reattach only streams *new* output. Without
+                # this, every backoff cycle would re-emit the same N lines
+                # of the stored tail, drowning the WebSocket in duplicates.
                 new_process = await kubectl.stream_deployment_logs(
                     deployment_name=current_k8s_name,
                     namespace=namespace,
-                    lines=lines,
+                    lines=0,
                 )
                 last_reattach_at = time.monotonic()
                 async with process_lock:
