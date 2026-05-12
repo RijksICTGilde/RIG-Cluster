@@ -760,9 +760,10 @@ class KubectlConnector:
         Uses label selector instead of deployment/ to avoid needing deployment
         get permissions - only requires pods and pods/log permissions.
 
-        This returns a subprocess that streams logs in real-time. The caller
-        is responsible for reading from process.stdout and terminating the
-        process when done.
+        Returns a subprocess that streams logs in real-time. The caller is
+        responsible for reading from process.stdout, terminating the process
+        when done, and restarting it if it exits (which it does for pods in
+        CrashLoopBackOff or after the matched pod terminates).
 
         Args:
             deployment_name: Name of the deployment
@@ -798,34 +799,51 @@ class KubectlConnector:
                 env=self.env,
             )
 
-            # Wait briefly to see if process exits immediately (no running pods)
-            await asyncio.sleep(0.5)
-            if process.returncode is not None:
-                logger.info(f"Log stream exited immediately for {deployment_name}, trying previous container logs")
-                # Try --previous without -f (incompatible flags)
-                prev_cmd = [
-                    "kubectl",
-                    "logs",
-                    "-l",
-                    f"app={deployment_name}",
-                    "-n",
-                    namespace,
-                    f"--tail={lines}",
-                    "--previous",
-                ]
-                process = await asyncio.create_subprocess_exec(
-                    *prev_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=self.env,
-                )
-
             logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid})")
             return process
 
         except Exception as e:
             logger.error(f"Error starting log stream for {deployment_name}: {e}")
             return None
+
+    async def get_previous_container_logs(self, deployment_name: str, namespace: str, lines: int = 100) -> str | None:
+        """Best-effort one-shot fetch of the previous container's logs.
+
+        Used to seed the log stream so the user sees what the prior container
+        instance output before it crashed (CrashLoopBackOff). Returns None if
+        there is no previous container or the fetch fails — callers should
+        treat absence as non-fatal.
+        """
+        if not KubectlConnector.isConnected:
+            return None
+        cmd = [
+            "kubectl",
+            "logs",
+            "-l",
+            f"app={deployment_name}",
+            "-n",
+            namespace,
+            f"--tail={lines}",
+            "--previous",
+            "--ignore-errors",
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self.env,
+            )
+            stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
+        except TimeoutError:
+            logger.warning(f"Timed out fetching previous logs for {deployment_name} in {namespace}")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to fetch previous logs for {deployment_name}: {e}")
+            return None
+        if not stdout:
+            return None
+        return stdout.decode("utf-8", errors="replace")
 
     # Event object prefixes and reasons that are infrastructure noise —
     # not actionable by project users.

@@ -426,6 +426,40 @@ async def stream_logs(
         # Use a lock to coordinate process access between tasks
         process_lock = asyncio.Lock()
 
+        def _seed_previous_container_logs(deployment_label: str, previous: str | None) -> None:
+            """Push the previous container's stored logs into the queue with a
+            visible separator. Best-effort: silently no-op when nothing is
+            available (fresh pod, no prior container).
+            """
+            if not previous:
+                return
+            lines_iter = [ln for ln in previous.splitlines() if ln]
+            if not lines_iter:
+                return
+            header = f"--- previous container ({deployment_label}) ---".encode()
+            footer = b"--- end of previous container ---"
+            with contextlib.suppress(asyncio.QueueFull):
+                log_queue.put_nowait(header)
+            for raw_line in lines_iter:
+                line_bytes = raw_line.encode("utf-8", errors="replace")
+                if log_queue.full():
+                    with contextlib.suppress(asyncio.QueueEmpty):
+                        log_queue.get_nowait()
+                with contextlib.suppress(asyncio.QueueFull):
+                    log_queue.put_nowait(line_bytes)
+            with contextlib.suppress(asyncio.QueueFull):
+                log_queue.put_nowait(footer)
+
+        # Best-effort: seed the queue with the previous container's logs so the
+        # user sees the crash that preceded the current container (Argo-like UX
+        # for CrashLoopBackOff pods).
+        previous_logs = await kubectl.get_previous_container_logs(
+            deployment_name=current_k8s_name,
+            namespace=namespace,
+            lines=lines,
+        )
+        _seed_previous_container_logs(current_k8s_name, previous_logs)
+
         process = await kubectl.stream_deployment_logs(
             deployment_name=current_k8s_name,
             namespace=namespace,
@@ -439,9 +473,21 @@ async def stream_logs(
 
         await send_message(websocket, "status", status="streaming", message="Log streaming started")
 
+        # Pace reattach attempts so a permanently-broken pod doesn't have us
+        # spawning kubectl in a tight loop.
+        REATTACH_MIN_INTERVAL_SECONDS = 5.0
+        last_reattach_at = 0.0
+
         async def drain_stdout() -> None:
-            """Drain subprocess stdout into bounded queue, dropping oldest when full."""
-            nonlocal running
+            """Drain subprocess stdout into bounded queue, dropping oldest when full.
+
+            When the kubectl subprocess exits (which happens when a pod's last
+            container terminates, e.g. CrashLoopBackOff between restarts), we
+            reattach with a fresh `kubectl logs -f` instead of tearing down the
+            WebSocket — that way the user keeps seeing logs across pod
+            restarts, matching the Argo UI's behaviour.
+            """
+            nonlocal running, process, last_reattach_at
             while running:
                 async with process_lock:
                     current_process = process
@@ -459,22 +505,64 @@ async def stream_logs(
                     await asyncio.sleep(1.0)
                     continue
 
-                if not line:
-                    # Check if subprocess has died (EOF on pipe)
-                    async with process_lock:
-                        if process and process.returncode is not None:
-                            logger.warning(f"kubectl log stream process exited with code {process.returncode}")
-                            running = False
-                            break
+                if line:
+                    # Sliding window: drop oldest line when queue is full
+                    if log_queue.full():
+                        with contextlib.suppress(asyncio.QueueEmpty):
+                            log_queue.get_nowait()
+                    with contextlib.suppress(asyncio.QueueFull):
+                        log_queue.put_nowait(line)
+                    continue
+
+                # EOF on stdout — decide whether to reattach or just keep
+                # looping (the snapshot may be a process that's already been
+                # replaced by a component-switch).
+                should_reattach = False
+                async with process_lock:
+                    if process is not None and process.returncode is not None:
+                        logger.info(
+                            f"kubectl log stream for {current_k8s_name} exited "
+                            f"(code {process.returncode}); will reattach"
+                        )
+                        # Best-effort surface a marker so the user knows logs
+                        # may resume from a fresh pod restart.
+                        with contextlib.suppress(asyncio.QueueFull):
+                            log_queue.put_nowait(b"--- waiting for next container ---")
+                        process = None
+                        should_reattach = True
+
+                if not should_reattach:
                     await asyncio.sleep(0.5)
                     continue
 
-                # Sliding window: drop oldest line when queue is full
-                if log_queue.full():
-                    with contextlib.suppress(asyncio.QueueEmpty):
-                        log_queue.get_nowait()
-                with contextlib.suppress(asyncio.QueueFull):
-                    log_queue.put_nowait(line)
+                # Throttle reattach attempts.
+                now = time.monotonic()
+                wait = REATTACH_MIN_INTERVAL_SECONDS - (now - last_reattach_at)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+
+                if not running:
+                    break
+
+                # Spawn the new follower OUTSIDE the lock so we don't block
+                # stderr draining or component-switching during the kubectl
+                # fork; then swap atomically.
+                new_process = await kubectl.stream_deployment_logs(
+                    deployment_name=current_k8s_name,
+                    namespace=namespace,
+                    lines=lines,
+                )
+                last_reattach_at = time.monotonic()
+                async with process_lock:
+                    if not running or process is not None:
+                        # Either we are shutting down, or a component switch
+                        # already installed a fresh process — discard ours.
+                        if new_process is not None:
+                            with contextlib.suppress(ProcessLookupError):
+                                new_process.terminate()
+                    elif new_process is not None:
+                        process = new_process
+                        logger.info(f"Reattached log stream for {current_k8s_name} (PID {new_process.pid})")
 
         async def drain_stderr() -> None:
             """Drain subprocess stderr into bounded queue, dropping oldest when full."""
