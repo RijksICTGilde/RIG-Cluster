@@ -540,11 +540,23 @@ class FormRenderer:
         edit_mode: bool,
         provider_context: dict[str, Any] | None = None,
     ) -> FormField:
-        """Build a FormField for a sequence editable with item children."""
+        """Build a FormField for a sequence editable with item children.
+
+        When the sequence carries a ``virtualize`` mapping, the form path is
+        rewritten to the virtual segment (e.g. ``services`` → ``_services-config``)
+        and the same mapping is propagated to each non-sequence child via
+        ``parent_virtualize`` — mirroring ``_build_nested_sequence_field`` so the
+        modal-edit-component flow (which flattens nested sequences to the top
+        level) doesn't collide with the sibling service-selection list.
+        """
+        from opi.forms.editables.editable import apply_virtualize
         from opi.forms.editables.service_path import smart_get_value
         from opi.forms.visualizers.bridge import editable_to_form_field, should_render_editable
 
         ed = editable.editable
+        virt = ed.virtualize
+        # Always read items from the REAL path; only the form-side name uses
+        # the virtual segment.
         items = smart_get_value(yaml_data, ed.yaml_path) or []
         if not isinstance(items, list):
             items = []
@@ -553,15 +565,17 @@ class FormRenderer:
         while len(items) < ed.min_items:
             items.append({})
 
+        form_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
         seq_field = FormField(
-            name=ed.yaml_path,
-            path=ed.yaml_path,
+            name=form_path,
+            path=form_path,
             schema_type=list,
             widget_type="sequence",
             label=editable.label or "",
             description=editable.description,
             min_items=ed.min_items,
             max_items=ed.max_items,
+            virtualize=virt,
         )
 
         # Detect per-item reference exclusion for ComponentReferenceOptionsProvider
@@ -602,12 +616,13 @@ class FormRenderer:
                         index=index,
                         edit_mode=edit_mode,
                         provider_context=item_context,
+                        parent_virtualize=virt,
                     )
                     item_children.append(child_field)
 
             item_field = FormField(
-                name=f"{ed.yaml_path}[{index}]",
-                path=f"{ed.yaml_path}[{index}]",
+                name=f"{form_path}[{index}]",
+                path=f"{form_path}[{index}]",
                 schema_type=dict,
                 widget_type="sequence_item",
                 label=f"Item {index + 1}",

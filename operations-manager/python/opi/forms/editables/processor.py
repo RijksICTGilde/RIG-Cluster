@@ -452,6 +452,14 @@ class EditableFormProcessor:
                     if last_seg in original_items[i]:
                         result_items[i][last_seg] = copy.deepcopy(original_items[i][last_seg])
 
+        # When the sequence itself declares ``virtualize`` (e.g.
+        # PERSISTENT_STORAGE_SEQUENCE in the modal-edit-component flow where
+        # it is flattened to the top level), propagate that mapping to each
+        # non-sequence child so the form submission is read from the virtual
+        # ``_services-config{…}`` path rather than the real ``services{…}``
+        # one — which would collide with the sibling service-selection list.
+        seq_virt = ed.virtualize
+
         seq_children_json = vis.children or []
         for index in range(len(items)):
             for child_vis in seq_children_json:
@@ -472,12 +480,16 @@ class EditableFormProcessor:
                     )
                 elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
-                    value = _coerce_to_list(get_value(submitted, concrete_path))
+                    virt = child_ed.virtualize or seq_virt
+                    read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
+                    value = _coerce_to_list(get_value(submitted, read_path))
+                    if not value and virt and read_path != concrete_path:
+                        value = _coerce_to_list(get_value(submitted, concrete_path))
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
-                    virt = child_ed.virtualize
+                    virt = child_ed.virtualize or seq_virt
                     read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
                     value = get_value(submitted, read_path)
                     # Fall back to real path when merged data has no virtual key
