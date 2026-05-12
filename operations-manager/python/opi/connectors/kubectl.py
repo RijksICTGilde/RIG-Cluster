@@ -808,45 +808,6 @@ class KubectlConnector:
             logger.error(f"Error starting log stream for {deployment_name}: {e}")
             return None
 
-    async def get_previous_container_logs(self, deployment_name: str, namespace: str, lines: int = 100) -> str | None:
-        """Best-effort one-shot fetch of the previous container's logs.
-
-        Used to seed the log stream so the user sees what the prior container
-        instance output before it crashed (CrashLoopBackOff). Returns None if
-        there is no previous container or the fetch fails — callers should
-        treat absence as non-fatal.
-        """
-        if not KubectlConnector.isConnected:
-            return None
-        cmd = [
-            "kubectl",
-            "logs",
-            "-l",
-            f"app={deployment_name}",
-            "-n",
-            namespace,
-            f"--tail={lines}",
-            "--previous",
-            "--ignore-errors",
-        ]
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=self.env,
-            )
-            stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
-        except TimeoutError:
-            logger.warning(f"Timed out fetching previous logs for {deployment_name} in {namespace}")
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to fetch previous logs for {deployment_name}: {e}")
-            return None
-        if not stdout:
-            return None
-        return stdout.decode("utf-8", errors="replace")
-
     # Event object prefixes and reasons that are infrastructure noise —
     # not actionable by project users.
     _IGNORED_EVENT_PREFIXES = ("cm-acme-",)

@@ -282,74 +282,53 @@ class TestConnectionLimits(unittest.IsolatedAsyncioTestCase):
 
 
 class TestRateLimiter(unittest.IsolatedAsyncioTestCase):
-    """Test cases for the rate limiter."""
+    """The RateLimiter now waits for tokens instead of dropping lines, so a
+    long traceback dumped in one burst is delivered in full while sustained
+    output is still capped at ``rate``."""
 
-    async def test_rate_limiter_allows_burst(self):
-        """Test that rate limiter allows burst of messages."""
+    async def test_burst_returns_immediately(self):
+        """The first ``burst`` acquires should complete without sleeping."""
         from opi.api.logs_websocket_router import RateLimiter
 
         limiter = RateLimiter(rate=10, burst=5)
+        loop = asyncio.get_event_loop()
 
-        # Should allow burst, acquire returns (allowed, dropped_count)
+        started = loop.time()
         for _ in range(5):
-            allowed, dropped = limiter.acquire()
-            self.assertTrue(allowed)
-            self.assertEqual(dropped, 0)  # No dropped messages yet
+            await limiter.acquire()
+        elapsed = loop.time() - started
 
-    async def test_rate_limiter_blocks_after_burst(self):
-        """Test that rate limiter blocks after burst is exhausted."""
+        self.assertLess(elapsed, 0.05, f"burst should be near-instant, took {elapsed:.3f}s")
+
+    async def test_after_burst_paces_to_rate(self):
+        """Acquires beyond the burst should pace to roughly ``1/rate`` seconds."""
         from opi.api.logs_websocket_router import RateLimiter
 
-        limiter = RateLimiter(rate=10, burst=5)
+        limiter = RateLimiter(rate=20, burst=2)  # 50ms per token after burst
+        loop = asyncio.get_event_loop()
 
-        # Exhaust burst
-        for _ in range(5):
-            limiter.acquire()
+        # Drain the burst first
+        for _ in range(2):
+            await limiter.acquire()
 
-        # Should be blocked
-        allowed, dropped = limiter.acquire()
-        self.assertFalse(allowed)
-        self.assertEqual(dropped, 0)  # Not returned when blocked
+        started = loop.time()
+        for _ in range(4):  # 4 additional tokens at 20/s ≈ 200ms
+            await limiter.acquire()
+        elapsed = loop.time() - started
 
-    async def test_rate_limiter_refills(self):
-        """Test that rate limiter refills over time."""
+        self.assertGreaterEqual(elapsed, 0.15)
+        self.assertLess(elapsed, 0.4)
+
+    async def test_no_lines_dropped_under_burst(self):
+        """Every awaited acquire must eventually succeed — no silent drops."""
         from opi.api.logs_websocket_router import RateLimiter
 
-        limiter = RateLimiter(rate=100, burst=5)  # Fast refill for testing
-
-        # Exhaust burst
-        for _ in range(5):
-            limiter.acquire()
-
-        # Wait a bit for refill
-        await asyncio.sleep(0.1)
-
-        # Should be allowed again
-        allowed, _dropped = limiter.acquire()
-        self.assertTrue(allowed)
-
-    async def test_rate_limiter_tracks_dropped_messages(self):
-        """Test that rate limiter tracks how many messages were dropped."""
-        from opi.api.logs_websocket_router import RateLimiter
-
-        limiter = RateLimiter(rate=10, burst=3)
-
-        # Exhaust burst
-        for _ in range(3):
-            limiter.acquire()
-
-        # These should be blocked and tracked
-        for _ in range(5):
-            allowed, _dropped = limiter.acquire()
-            self.assertFalse(allowed)
-
-        # Wait for refill
-        await asyncio.sleep(0.2)
-
-        # Now we should get the dropped count
-        allowed, dropped = limiter.acquire()
-        self.assertTrue(allowed)
-        self.assertEqual(dropped, 5)  # 5 messages were dropped
+        limiter = RateLimiter(rate=50, burst=3)
+        succeeded = 0
+        for _ in range(10):
+            await limiter.acquire()
+            succeeded += 1
+        self.assertEqual(succeeded, 10)
 
 
 class TestLogSanitization(unittest.TestCase):

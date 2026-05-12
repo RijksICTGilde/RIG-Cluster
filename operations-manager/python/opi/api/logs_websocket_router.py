@@ -216,37 +216,36 @@ async def _unregister_connection(user_email: str, websocket: WebSocket) -> None:
 
 
 class RateLimiter:
-    """Simple token bucket rate limiter for log messages."""
+    """Token bucket rate limiter that paces (rather than drops) bursts.
+
+    Originally this dropped any line that exceeded the burst, which silently
+    truncated long startup tracebacks dumped in one go by ``kubectl logs``.
+    The bucket now blocks the caller until a token is available, so every
+    line is eventually delivered while sustained output is still capped at
+    ``rate`` messages/sec.
+    """
 
     def __init__(self, rate: float, burst: int = 10):
-        self.rate = rate  # messages per second
+        self.rate = rate  # messages per second (sustained cap)
         self.burst = burst
         self.tokens = float(burst)
-        self.last_update = time.monotonic()  # Use monotonic instead of deprecated get_event_loop
-        self._dropped_count = 0
+        self.last_update = time.monotonic()
 
-    def acquire(self) -> tuple[bool, int]:
-        """
-        Try to acquire a token.
+    async def acquire(self) -> None:
+        """Block until a token is available, then consume one."""
+        while True:
+            now = time.monotonic()
+            elapsed = now - self.last_update
+            self.last_update = now
+            self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
 
-        Returns:
-            Tuple of (allowed: bool, dropped_since_last_success: int)
-        """
-        now = time.monotonic()
-        elapsed = now - self.last_update
-        self.last_update = now
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return
 
-        # Add tokens based on time elapsed
-        self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
-
-        if self.tokens >= 1:
-            self.tokens -= 1
-            dropped = self._dropped_count
-            self._dropped_count = 0
-            return True, dropped
-        else:
-            self._dropped_count += 1
-            return False, 0
+            # Sleep just long enough for the next token to appear.
+            deficit = 1 - self.tokens
+            await asyncio.sleep(deficit / self.rate)
 
 
 def _sanitize_log_line(line: str) -> str:
@@ -426,40 +425,6 @@ async def stream_logs(
         # Use a lock to coordinate process access between tasks
         process_lock = asyncio.Lock()
 
-        def _seed_previous_container_logs(deployment_label: str, previous: str | None) -> None:
-            """Push the previous container's stored logs into the queue with a
-            visible separator. Best-effort: silently no-op when nothing is
-            available (fresh pod, no prior container).
-            """
-            if not previous:
-                return
-            lines_iter = [ln for ln in previous.splitlines() if ln]
-            if not lines_iter:
-                return
-            header = f"--- previous container ({deployment_label}) ---".encode()
-            footer = b"--- end of previous container ---"
-            with contextlib.suppress(asyncio.QueueFull):
-                log_queue.put_nowait(header)
-            for raw_line in lines_iter:
-                line_bytes = raw_line.encode("utf-8", errors="replace")
-                if log_queue.full():
-                    with contextlib.suppress(asyncio.QueueEmpty):
-                        log_queue.get_nowait()
-                with contextlib.suppress(asyncio.QueueFull):
-                    log_queue.put_nowait(line_bytes)
-            with contextlib.suppress(asyncio.QueueFull):
-                log_queue.put_nowait(footer)
-
-        # Best-effort: seed the queue with the previous container's logs so the
-        # user sees the crash that preceded the current container (Argo-like UX
-        # for CrashLoopBackOff pods).
-        previous_logs = await kubectl.get_previous_container_logs(
-            deployment_name=current_k8s_name,
-            namespace=namespace,
-            lines=lines,
-        )
-        _seed_previous_container_logs(current_k8s_name, previous_logs)
-
         process = await kubectl.stream_deployment_logs(
             deployment_name=current_k8s_name,
             namespace=namespace,
@@ -631,18 +596,10 @@ async def stream_logs(
                 if paused:
                     continue
 
-                # Rate limiting with notification
-                allowed, dropped = rate_limiter.acquire()
-                if not allowed:
-                    continue
-
-                # Notify if messages were dropped
-                if dropped > 0:
-                    await send_message(
-                        websocket,
-                        "warning",
-                        message=f"Rate limited: {dropped} log lines skipped",
-                    )
+                # Pace output without dropping. Bursty traceback dumps from
+                # ``kubectl logs`` are delivered in full; sustained output is
+                # still capped at ``rate`` messages/sec.
+                await rate_limiter.acquire()
 
                 decoded_line = line.decode("utf-8", errors="replace").rstrip()
                 sanitized_line = _sanitize_log_line(decoded_line)
@@ -676,22 +633,11 @@ async def stream_logs(
                 except TimeoutError:
                     continue
 
-                # Apply rate limiting to stderr as well
-                allowed, dropped = stderr_rate_limiter.acquire()
-                if not allowed:
-                    continue
+                await stderr_rate_limiter.acquire()
 
                 stderr_text = line.decode("utf-8", errors="replace").rstrip()
                 sanitized_text = _sanitize_log_line(stderr_text)
                 logger.warning(f"kubectl stderr: {sanitized_text}")
-
-                # Notify if stderr messages were dropped
-                if dropped > 0:
-                    await send_message(
-                        websocket,
-                        "warning",
-                        message=f"Rate limited: {dropped} stderr lines skipped",
-                    )
 
                 await send_message(
                     websocket,
