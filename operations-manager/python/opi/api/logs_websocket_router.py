@@ -623,6 +623,15 @@ async def stream_logs(
         # Separate rate limiter for stderr to prevent stderr flooding bypass
         stderr_rate_limiter = RateLimiter(rate=MAX_MESSAGES_PER_SECOND, burst=20)
 
+        # kubectl emits these on stderr whenever the upstream container
+        # terminates while -f is following — which is expected (and frequent)
+        # for CrashLoopBackOff pods, where every reattach cycle ends this
+        # way. Forwarding them to the WebSocket added a "[STDERR] error:
+        # unexpected EOF" line to the panel every 5-30 seconds, which the
+        # user can't do anything about. Keep logging them server-side, but
+        # don't pollute the client view.
+        _BENIGN_KUBECTL_STDERR_SUBSTRINGS = ("unexpected EOF",)
+
         async def read_stderr() -> None:
             """Read stderr from bounded queue and forward warnings."""
             nonlocal running
@@ -638,6 +647,9 @@ async def stream_logs(
                 stderr_text = line.decode("utf-8", errors="replace").rstrip()
                 sanitized_text = _sanitize_log_line(stderr_text)
                 logger.warning(f"kubectl stderr: {sanitized_text}")
+
+                if any(s in sanitized_text for s in _BENIGN_KUBECTL_STDERR_SUBSTRINGS):
+                    continue
 
                 await send_message(
                     websocket,
