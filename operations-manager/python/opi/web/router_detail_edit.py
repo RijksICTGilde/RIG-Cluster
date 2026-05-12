@@ -806,6 +806,13 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             yaml_data,
             edit_mode=True,
         )
+        # Drop values for editables whose ``depends_on`` no longer holds —
+        # e.g. when the user deselects ``persistent-storage`` the still-rendered
+        # config inputs come along in the POST body; without this they would
+        # be written back into ``services{persistent-storage}/config`` and the
+        # smart-set silently re-adds the service to the selection list. Matches
+        # what the create wizard does in ``router_wizard.submit_step``.
+        processor.clear_hidden_depends_on(section.editables, submitted_yaml)
         save_modal_state_by_token(wizard_token, state)
         step_html = _render_section_html(section, submitted_yaml, locked_services=None)
         rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
@@ -834,6 +841,12 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             edit_mode=True,
             enforcer_context=enforcer_ctx,
         )
+
+        # Drop now-hidden dependent values so stale config doesn't re-add a
+        # deselected service via ``smart_set_value`` on the next merge. See the
+        # rerender path above and ``router_wizard.submit_step`` for the same
+        # call in the create wizard.
+        processor.clear_hidden_depends_on(section.editables, submitted_yaml)
 
         # Auto-add service dependencies
         if section_id == "services-edit" and isinstance(submitted_yaml.get("services"), list):
