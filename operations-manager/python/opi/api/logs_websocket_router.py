@@ -277,7 +277,7 @@ async def stream_logs(
     project_name: str,
     deployment: str = Query(..., description="Deployment name"),
     component: str = Query(..., description="Component reference name"),
-    lines: int = Query(100, description="Initial historical lines", ge=1, le=1000),
+    lines: int = Query(250, description="Initial historical lines", ge=1, le=1000),
 ) -> None:
     """
     WebSocket endpoint for streaming deployment logs in real-time.

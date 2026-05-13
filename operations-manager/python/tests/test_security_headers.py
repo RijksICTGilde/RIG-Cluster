@@ -158,22 +158,7 @@ class TestSecurityTxt:
         app = create_app()
         return TestClient(app, raise_server_exceptions=False)
 
-    def test_security_txt_exists(self, client: TestClient):
-        """security.txt endpoint returns 200."""
-        response = client.get("/.well-known/security.txt")
-        assert response.status_code == 200
-
-    def test_security_txt_content_type(self, client: TestClient):
-        """security.txt has text/plain content type."""
-        response = client.get("/.well-known/security.txt")
-        assert "text/plain" in response.headers["content-type"]
-
-    def test_security_txt_has_contact(self, client: TestClient):
-        """security.txt contains a Contact field."""
-        response = client.get("/.well-known/security.txt")
-        assert "Contact:" in response.text
-
-    def test_security_txt_has_expires(self, client: TestClient):
-        """security.txt contains an Expires field."""
-        response = client.get("/.well-known/security.txt")
-        assert "Expires:" in response.text
+    def test_security_txt_redirects_to_ncsc(self, client: TestClient):
+        response = client.get("/.well-known/security.txt", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "https://www.ncsc.nl/.well-known/security.txt"
