@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -406,16 +406,14 @@ def create_app() -> FastAPI:
         """Serve favicon from the expected root path."""
         return FileResponse(favicon_path, media_type="image/x-icon")
 
-    # security.txt for responsible disclosure (internet.nl compliance)
-    @app.get("/.well-known/security.txt", include_in_schema=False, response_class=PlainTextResponse)
-    async def security_txt() -> PlainTextResponse:
-        """Serve security.txt for vulnerability disclosure per RFC 9116."""
-        content = (
-            "Contact: mailto:rig-platform@rijksoverheid.nl\n"
-            "Expires: 2027-01-01T00:00:00.000Z\n"
-            "Preferred-Languages: nl, en\n"
+    # security.txt: redirect to NCSC central file per Rijksoverheid guidance
+    # https://www.ncsc.nl/.well-known/security.txt
+    @app.get("/.well-known/security.txt", include_in_schema=False)
+    async def security_txt() -> RedirectResponse:
+        return RedirectResponse(
+            url="https://www.ncsc.nl/.well-known/security.txt",
+            status_code=302,
         )
-        return PlainTextResponse(content, media_type="text/plain")
 
     # Liveness probe - always OK (keeps the pod alive)
     @app.get("/health", include_in_schema=False, response_class=JSONResponse)

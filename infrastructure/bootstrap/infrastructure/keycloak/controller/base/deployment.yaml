@@ -50,7 +50,7 @@ spec:
               name: tmp-volume
       containers:
         - name: keycloak
-          image: quay.io/keycloak/keycloak:25.0.1
+          image: quay.io/keycloak/keycloak:25.0.6
           args:
             ["start", "--proxy-headers=forwarded", "--hostname-strict=false", "--spi-theme-welcome-theme=nl-design-system" ]
           env:
