@@ -421,8 +421,9 @@ The Keycloak connector provides methods for all operations:
 **Client Operations:**
 - `create_oidc_client()` - Create generic OIDC clients
 - `create_deployment_client()` - Create deployment-specific clients
-- `create_federation_client()` - Create federation clients for SSO
 - `find_client_by_client_id()` - Find clients by ID
+
+> Federation clients for SSO (the `platformClients` YAML section) are created directly by `KeycloakYamlHandler._process_platform_clients` via `admin.create_client`, with no dedicated connector method. All client fields are driven by YAML; the handler also generates the secret and reconciles existing clients on conflict.
 
 **Identity Provider Operations:**
 - `add_identity_provider()` - Add OIDC/SAML identity providers

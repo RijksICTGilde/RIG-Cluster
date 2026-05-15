@@ -31,6 +31,12 @@ identityProviders:
       nameIDPolicyFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
       principalType: "SUBJECT"
       syncMode: "FORCE"
+      # When Keycloak has no session for the user and initiates a fresh SAML
+      # AuthnRequest to BZK, include ForceAuthn=true so BZK re-prompts for
+      # credentials instead of silently returning an assertion from its own
+      # cached session. Makes "logout from the rig-platform side" actually
+      # mean "next login requires explicit BZK authentication".
+      forceAuthn: "true"
       # SP Entity ID - our Keycloak's identifier for SSO-Rijk registration
       entityId: "{{ saml_sp_entity_id }}"
       # SSO-Rijk signing certificate (from their metadata)
