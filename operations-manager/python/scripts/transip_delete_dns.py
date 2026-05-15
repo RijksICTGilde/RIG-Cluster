@@ -57,7 +57,7 @@ def get_token(account: str, key_pem: bytes, label: str) -> str:
     if not isinstance(private_key, RSAPrivateKey):
         raise SystemExit("Expected an RSA private key for TransIP API auth.")
     signature = private_key.sign(body, padding.PKCS1v15(), hashes.SHA512())
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310 - API_BASE is hardcoded https://
         f"{API_BASE}/auth",
         data=body,
         method="POST",
@@ -66,21 +66,21 @@ def get_token(account: str, key_pem: bytes, label: str) -> str:
             "Signature": base64.b64encode(signature).decode(),
         },
     )
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req) as resp:  # noqa: S310 - API_BASE is hardcoded https://
         return json.loads(resp.read())["token"]
 
 
 def list_records(token: str, zone: str) -> list[dict]:
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310 - API_BASE is hardcoded https://
         f"{API_BASE}/domains/{zone}/dns",
         headers={"Authorization": f"Bearer {token}"},
     )
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req) as resp:  # noqa: S310 - API_BASE is hardcoded https://
         return json.loads(resp.read())["dnsEntries"]
 
 
 def delete_record(token: str, zone: str, record: dict) -> None:
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310 - API_BASE is hardcoded https://
         f"{API_BASE}/domains/{zone}/dns",
         data=json.dumps({"dnsEntry": record}).encode(),
         method="DELETE",
@@ -89,7 +89,7 @@ def delete_record(token: str, zone: str, record: dict) -> None:
             "Authorization": f"Bearer {token}",
         },
     )
-    with urllib.request.urlopen(req):
+    with urllib.request.urlopen(req):  # noqa: S310 - API_BASE is hardcoded https://
         pass  # 204 No Content on success
 
 
