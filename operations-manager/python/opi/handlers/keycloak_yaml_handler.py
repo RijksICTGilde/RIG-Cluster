@@ -586,11 +586,12 @@ class KeycloakYamlHandler:
             )
 
     async def _process_platform_clients(self, clients_section: Any, variables: dict[str, Any]) -> None:
-        """Process platformClients section (federation clients in platform realm).
+        """Process platformClients section (federation clients in the platform realm).
 
-        Args:
-            clients_section: Platform clients YAML section
-            variables: Context variables
+        Mirrors _process_clients but creates clients in the YAML-supplied platform
+        realm rather than the context's project realm, and captures the created
+        client_id + client_secret as an output under `as:` so downstream sections
+        (notably the project realm's OIDC IdP) can reference them.
         """
         if not clients_section:
             return
@@ -599,23 +600,95 @@ class KeycloakYamlHandler:
         for item in items:
             realm_name = item.get("realm")
             client_id = item.get("clientId")
-            as_name = item.get("as")  # Capture output with this name
+            as_name = item.get("as")
 
             if not realm_name or not client_id:
                 logger.warning("Platform client missing 'realm' or 'clientId', skipping")
                 continue
 
-            logger.info(f"Creating federation client: {client_id} in realm {realm_name}")
-            result = await self.keycloak.create_federation_client(
-                client_id=client_id, redirect_uris=item.get("redirectUris", []), realm_name=realm_name
-            )
+            logger.info(f"Creating platform client: {client_id} in realm {realm_name}")
 
-            # Capture output if 'as' key is present
-            if as_name and result:
-                self.outputs[as_name] = result
-                logger.debug(
-                    f"Captured output as '{as_name}': {list(result.keys()) if isinstance(result, dict) else type(result)}"
-                )
+            client_data = self._build_client_data_from_yaml(item)
+
+            try:
+                self.keycloak.admin.change_current_realm(realm_name)
+
+                try:
+                    self.keycloak.admin.create_client(payload=client_data)
+                    logger.info(f"Created platform client '{client_id}' in realm '{realm_name}'")
+                except Exception as e:
+                    if "409" in str(e) or "Conflict" in str(e):
+                        logger.info(
+                            f"Platform client '{client_id}' already exists in realm '{realm_name}', reconciling"
+                        )
+                        await self._update_existing_client(realm_name, client_id, client_data)
+                        # Existing client may have a different secret; fetch the current one
+                        # so downstream references resolve to a working credential.
+                        existing = await self.keycloak.find_client_by_client_id(client_id, realm_name)
+                        if existing:
+                            self.keycloak.admin.change_current_realm(realm_name)
+                            client_data["secret"] = await self.keycloak.get_client_secret(existing["id"], realm_name)
+                    else:
+                        raise
+
+                self.keycloak.admin.change_current_realm("master")
+
+            except Exception as e:
+                logger.error(f"Failed to create/update platform client '{client_id}': {e}")
+                self.keycloak.admin.change_current_realm("master")
+                raise
+
+            if as_name:
+                output = {
+                    "client_id": client_id,
+                    "client_secret": client_data.get("secret"),
+                    "realm": realm_name,
+                }
+                self.outputs[as_name] = output
+                logger.debug(f"Captured output as '{as_name}': {list(output.keys())}")
+
+    @staticmethod
+    def _build_client_data_from_yaml(item: dict[str, Any]) -> dict[str, Any]:
+        """Build a Keycloak client representation from a YAML client definition.
+
+        Honors all common client fields declared in YAML and generates a secret
+        for confidential clients. Used by both platform and regular client flows
+        to keep YAML as the single source of truth.
+        """
+        import secrets
+        import string
+
+        client_id = item["clientId"]
+        client_data: dict[str, Any] = {
+            "clientId": client_id,
+            "name": item.get("name", client_id),
+            "protocol": item.get("protocol", "openid-connect"),
+            "enabled": item.get("enabled", True),
+            "publicClient": item.get("publicClient", False),
+            "standardFlowEnabled": item.get("standardFlowEnabled", True),
+            "implicitFlowEnabled": item.get("implicitFlowEnabled", False),
+            "directAccessGrantsEnabled": item.get("directAccessGrantsEnabled", False),
+            "serviceAccountsEnabled": item.get("serviceAccountsEnabled", False),
+        }
+
+        if "redirectUris" in item:
+            redirect_uris = [uri for uri in item["redirectUris"] if uri is not None]
+            if redirect_uris:
+                client_data["redirectUris"] = redirect_uris
+
+        if "webOrigins" in item:
+            web_origins = [origin for origin in item["webOrigins"] if origin is not None]
+            if web_origins:
+                client_data["webOrigins"] = web_origins
+
+        if "attributes" in item and isinstance(item["attributes"], dict):
+            client_data["attributes"] = dict(item["attributes"])
+
+        if not client_data["publicClient"]:
+            alphabet = string.ascii_letters + string.digits
+            client_data["secret"] = "".join(secrets.choice(alphabet) for _ in range(32))
+
+        return client_data
 
     async def _process_clients(self, clients_section: Any, variables: dict[str, Any]) -> None:
         """Process clients section.
@@ -747,15 +820,16 @@ class KeycloakYamlHandler:
                 raise
 
     async def _update_existing_client(self, realm_name: str, client_id: str, client_data: dict[str, Any]) -> None:
-        """Update an existing client with new redirect URIs and web origins.
+        """Reconcile an existing client against YAML-driven client_data.
 
-        This is used to fix clients that were created with incorrect URLs
-        (e.g., missing protocol prefix) during project refresh.
+        Compares the supplied YAML-derived client_data against the stored client and
+        issues a partial update for fields that drifted. Scalar fields (name, enabled),
+        list fields (redirectUris, webOrigins), and the attributes map are all reconciled.
 
         Args:
-            realm_name: Realm name
+            realm_name: Realm name (for logging only; caller is expected to have switched).
             client_id: Client ID (the clientId field, not internal ID)
-            client_data: New client data containing redirectUris and webOrigins
+            client_data: YAML-derived client data
         """
         try:
             # Find existing client by clientId
@@ -770,35 +844,38 @@ class KeycloakYamlHandler:
                 logger.warning(f"Could not find existing client '{client_id}' to update")
                 return
 
-            # Build update payload with only the fields we want to update
             update_data: dict[str, Any] = {}
+            changed_keys: list[str] = []
 
-            # Update redirect URIs if provided
-            if "redirectUris" in client_data:
-                update_data["redirectUris"] = client_data["redirectUris"]
+            # Scalar fields: only update if drift
+            for field in ("name", "enabled"):
+                if field in client_data and client_data[field] != existing_client.get(field):
+                    update_data[field] = client_data[field]
+                    changed_keys.append(field)
 
-            # Update web origins if provided
-            if "webOrigins" in client_data:
-                update_data["webOrigins"] = client_data["webOrigins"]
+            # List fields: compare as sets (order-insensitive)
+            for field in ("redirectUris", "webOrigins"):
+                if field in client_data:
+                    expected = set(client_data[field])
+                    existing = set(existing_client.get(field) or [])
+                    if expected != existing:
+                        update_data[field] = client_data[field]
+                        changed_keys.append(field)
 
-            # Update attributes (includes PKCE settings)
+            # Attributes: merge YAML on top of existing; record which keys actually drifted
             if "attributes" in client_data:
-                # Merge with existing attributes
-                existing_attrs = existing_client.get("attributes", {})
-                existing_attrs.update(client_data["attributes"])
-                update_data["attributes"] = existing_attrs
+                existing_attrs = existing_client.get("attributes", {}) or {}
+                drifted_attrs = {k: v for k, v in client_data["attributes"].items() if existing_attrs.get(k) != v}
+                if drifted_attrs:
+                    update_data["attributes"] = {**existing_attrs, **client_data["attributes"]}
+                    changed_keys.extend(f"attributes.{k}" for k in drifted_attrs)
 
             if not update_data:
-                logger.debug(f"No fields to update for client '{client_id}'")
+                logger.debug(f"Client '{client_id}' in realm '{realm_name}' is already in sync")
                 return
 
-            # Update the client
             self.keycloak.admin.update_client(client_id=existing_client["id"], payload=update_data)
-            logger.info(
-                f"Updated client '{client_id}' in realm '{realm_name}': "
-                f"redirectUris={update_data.get('redirectUris', 'unchanged')}, "
-                f"webOrigins={update_data.get('webOrigins', 'unchanged')}"
-            )
+            logger.info(f"Updated client '{client_id}' in realm '{realm_name}': changed_keys={sorted(changed_keys)}")
 
         except Exception as e:
             logger.error(f"Failed to update existing client '{client_id}': {e}")

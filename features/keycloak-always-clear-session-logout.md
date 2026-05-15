@@ -48,7 +48,7 @@ config:
 ```
 
 - `singleLogoutServiceUrl` — where Keycloak sends the SAML `LogoutRequest`. Points at this endpoint with the IdP's own alias as the last path segment.
-- `downstreamLogoutUrl` — passthrough config key, read at runtime via `realm.getIdentityProviderByAlias(alias).getConfig()`. `KeycloakYamlHandler` passes arbitrary `config:` keys through unfiltered (see `keycloak_yaml_handler.py:381–397`).
+- `downstreamLogoutUrl` — passthrough config key, read at runtime via `realm.getIdentityProviderByAlias(alias).getConfig()`. `KeycloakYamlHandler._process_identity_providers` passes arbitrary `config:` keys through unfiltered.
 
 ## Current use
 
@@ -92,6 +92,54 @@ Before flipping the SLO URL on the target IdP:
    - The browser lands on the upstream logout page.
    - The user's Keycloak session no longer appears in `GET /admin/realms/<realm>/users/{id}/sessions`.
    - A subsequent visit to a protected app requires re-authentication (no stale cookie).
+
+## Downstream propagation: clearing ZAD realm sessions too
+
+The shim only terminates the session in the realm where it runs (typically `rig-platform`). User sessions in downstream realms (e.g. `wies-odcn-production`) that federate to `rig-platform` via OIDC are separate session records and would otherwise linger.
+
+To kill those too, the **federation client in `rig-platform`** (the OIDC client that each project realm uses to talk to `rig-platform`) is configured under `platformClients` in `sso-support.yaml` / `sso-only.yaml`:
+
+```yaml
+attributes:
+  backchannel.logout.url: "{{ keycloak_url }}/realms/{{ project_realm_name }}/protocol/openid-connect/logout/backchannel-logout"
+  backchannel.logout.session.required: "true"
+  post.logout.redirect.uris: "+"
+```
+
+When the shim calls `AuthenticationManager.backchannelLogout` on the `rig-platform` user session, Keycloak walks that user's client sessions and POSTs an OIDC `logout_token` to every client with `backchannel.logout.url` set. Each downstream realm receives this at its standard OIDC backchannel-logout endpoint and clears its user session locally.
+
+This is independent of the `backchannelSupported=false` setting on the `rig-platform-oidc` IdP in ZAD realms — that setting governs the *upstream* (ZAD → rig-platform) logout direction; the federation-client attribute governs the *downstream* (rig-platform → ZAD) direction.
+
+### Why we explicitly store `issuer` on `rig-platform-oidc`
+
+The `rig-platform-oidc` IdP in each ZAD realm carries an explicit `issuer` field:
+
+```yaml
+issuer: "{{ keycloak_url }}/realms/{{ platform_realm_name }}"
+```
+
+This duplicates information that *should* be auto-resolved from `discoveryUrl`. We set it explicitly because **Keycloak's runtime resolution of the issuer from `discoveryUrl` fails at backchannel-logout token verification time**, even when the discovery URL itself returns the correct issuer claim. The symptom is a `LogoutToken verification with identity provider failed` event in the receiving realm and a lingering user session despite a successful POST. Storing the issuer directly on the IdP bypasses the lookup and verification succeeds.
+
+Verified in production 2026-05-15: manually setting the field on one IdP via the admin UI immediately fixed verification; this commit makes the fix declarative across all project realms.
+
+The chain continues recursively: a ZAD realm receiving the backchannel logout will in turn notify any of its own clients that have `backchannel.logout.url` configured. App-side clients are out of scope for this feature — adding them is a per-app concern.
+
+## Companion: ForceAuthn upstream
+
+Clearing local sessions is only half the picture — if BZK retains its own cookie, the next login to any of our apps would silently SSO through to BZK and re-issue local sessions without prompting the user. To prevent that, `sso-rijk` is configured with `forceAuthn: "true"`:
+
+```yaml
+config:
+  forceAuthn: "true"
+```
+
+This adds `ForceAuthn="true"` to every SAML AuthnRequest. BZK re-prompts the user even if it holds a session. Critically, this only fires when Keycloak itself has no session for the user — SSO between our apps via the rig-platform session continues to be silent.
+
+Effective combined behavior:
+- Logout → local Keycloak sessions cleared (this endpoint + the backchannel chain).
+- Next visit to any app → no rig-platform session → SAML AuthnRequest to BZK with ForceAuthn=true → BZK re-prompts.
+
+Caveat: BZK must honor the standard SAML `ForceAuthn` attribute. If their implementation ignores it, this no-ops and the silent-auth window persists.
 
 ## Related
 

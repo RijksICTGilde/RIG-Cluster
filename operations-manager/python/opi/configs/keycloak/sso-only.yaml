@@ -20,6 +20,14 @@ platformClients:
     implicitFlowEnabled: false
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: false
+    # OIDC backchannel logout: when the user's rig-platform session ends, Keycloak
+    # POSTs a logout_token to this URL so the project realm clears its user session
+    # too. Required for end-to-end logout across the federation chain, paired with
+    # the always-clear-session-logout shim on the sso-rijk IdP.
+    attributes:
+      backchannel.logout.url: "{{ keycloak_url }}/realms/{{ project_realm_name }}/protocol/openid-connect/logout/backchannel-logout"
+      backchannel.logout.session.required: "true"
+      post.logout.redirect.uris: "+"
 
 # Project realm with SSO-only authentication
 realms:
@@ -42,6 +50,10 @@ identityProviders:
       clientId: "{{ platform_client.client_id }}"
       clientSecret: "{{ platform_client.client_secret }}"
       discoveryUrl: "{{ keycloak_url }}/realms/{{ platform_realm_name }}/.well-known/openid-configuration"
+      # Explicitly store the issuer so OIDC backchannel-logout token verification
+      # works. Without it, Keycloak's auto-resolution from discoveryUrl fails at
+      # verification time and logout_tokens are rejected as invalid_token.
+      issuer: "{{ keycloak_url }}/realms/{{ platform_realm_name }}"
       syncMode: "IMPORT"
       # Frontchannel logout so the browser carries the SAML LogoutRequest all the way to BZK
       backchannelSupported: "false"
