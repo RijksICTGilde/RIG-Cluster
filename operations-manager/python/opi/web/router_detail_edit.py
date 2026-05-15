@@ -1129,11 +1129,12 @@ async def _modal_do_submit(
     # Merge all step data
     merged_data = state.get_merged_data()
 
-    # Strip transient fields — they participate in form state but must
-    # not persist to the saved project file.
+    # Collect editables for hook execution and the late transient strip.
+    # Transients are intentionally preserved on merged_data here so that
+    # PRE_SAVE hooks (e.g. SubdomainRequestHook reading ``_request-subdomain``)
+    # see them after the list-item merge into ``existing_data``.
     processor = EditableFormProcessor()
     all_editables = [ed for section in active_sections for ed in section.editables]
-    processor.strip_transients_from(merged_data, all_editables)
 
     # Strip template-only keys: template_data provides context for rendering
     # and validation (e.g. config for AGE decryption, existing_deployment_names
@@ -1190,8 +1191,32 @@ async def _modal_do_submit(
     for section in active_sections:
         processor.apply_dependent_generators(section.editables, existing_data)
 
-    # Strip transient fields (e.g. _target_deployments) that participated
-    # in form state / post_merge hooks but must not persist to YAML.
+    # PRE_SAVE hooks: run while transients are still available so that hooks
+    # such as SubdomainRequestHook can read ``_request-subdomain`` and append
+    # the corresponding entry to ``domains.allowed-subdomains``. Mirrors the
+    # equivalent block in router_wizard.py.
+    from opi.forms.editables.editable import Editable, FormState, WidgetType
+    from opi.forms.editables.hooks import StripTransientsHook
+    from opi.forms.editables.lifecycle import run_hooks
+    from opi.forms.editables.resolvers import build_resolver_map
+    from opi.forms.visualizers.visualizer import EditableVisualizer
+
+    strip_hook_editable = EditableVisualizer(
+        editable=Editable(
+            yaml_path="_system/strip-transients",
+            hooks={FormState.PRE_SAVE: StripTransientsHook(all_editables)},
+        ),
+        widget=WidgetType.HIDDEN,
+        label="",
+    )
+    hook_context = {
+        "project_name": project_name,
+        "resolvers": build_resolver_map(all_editables),
+    }
+    await run_hooks(FormState.PRE_SAVE, [*all_editables, strip_hook_editable], existing_data, hook_context)
+
+    # Defensive: ensure any transients not stripped by the PRE_SAVE chain
+    # are still removed before save.
     for section in active_sections:
         processor.strip_transients_from(existing_data, section.editables)
 

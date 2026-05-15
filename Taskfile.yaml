@@ -1180,6 +1180,18 @@ tasks:
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
+  publish-haproxy-redirect:
+    desc: "Build and publish the haproxy-redirect image to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/haproxy-redirect
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: haproxy-redirect
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          PLATFORMS: linux/amd64,linux/arm64
+
   build-postgresql-image:
     desc: "Build and load PostgreSQL image with dictionary files into kind cluster"
     cmds:
@@ -1478,7 +1490,7 @@ tasks:
         echo "🔨 Building Keycloak custom mapper..."
         cd keycloak-migration/custom-mapper
         mvn clean package
-        echo "✅ JAR built: keycloak-migration/custom-mapper/target/keycloak-saml-nameid-mapper-1.0.0.jar"
+        echo "✅ JAR built: keycloak-migration/custom-mapper/target/keycloak-saml-nameid-mapper-1.1.0.jar"
     silent: false
 
   test-keycloak-custom-mapper:
@@ -1514,7 +1526,7 @@ tasks:
 
         cd keycloak-migration/custom-mapper
 
-        VERSION="v1.0.0"
+        VERSION="v1.1.0"
         REPO="RijksICTGilde/RIG-Cluster"
 
         # Check if release already exists
@@ -1528,13 +1540,13 @@ tasks:
           --repo "$REPO" \
           --title "Keycloak SAML NameID Mapper $VERSION" \
           --notes "Custom Keycloak mapper for extracting SAML NameID to user attributes using unrestricted XPath" \
-          target/keycloak-saml-nameid-mapper-1.0.0.jar
+          target/keycloak-saml-nameid-mapper-1.1.0.jar
 
         echo ""
         echo "✅ Keycloak custom mapper published successfully!"
-        echo "📥 Download URL: https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.0.0.jar"
+        echo "📥 Download URL: https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.1.0.jar"
         echo ""
-        echo "Verify with: curl -sI https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.0.0.jar"
+        echo "Verify with: curl -sI https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.1.0.jar"
     silent: false
 
   export-keycloak-users:
