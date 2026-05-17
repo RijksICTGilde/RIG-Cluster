@@ -62,6 +62,10 @@ spec:
             secretKeyRef:
               name: prometheus-metrics-auth
               key: token
+        - name: LOG_ERRORS_TO_FILE
+          value: "true"
+        - name: LOG_ERRORS_FILE_PATH
+          value: "/data/logs/errors.log"
         volumeMounts:
         - name: kube-api-access
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount

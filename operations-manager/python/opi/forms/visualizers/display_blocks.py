@@ -4,20 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.connectors.subdomain import is_deployment_domain_approved
+from opi.core import config as opi_config
+from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_format
 
 
 def _get_default_domain() -> str:
-    """Return the first supported domain for the current cluster."""
-    from opi.core.cluster_config import CLUSTER_CONFIG
-    from opi.core.config import settings
-
-    cluster = settings.CLUSTER_MANAGER
+    """Return the ingress postfix domain for the current cluster (the cluster default)."""
+    cluster = opi_config.settings.CLUSTER_MANAGER
     if cluster and cluster in CLUSTER_CONFIG:
-        raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
-        if raw:
-            entry = raw[0]
-            return entry["domain"] if isinstance(entry, dict) else entry
+        postfix = CLUSTER_CONFIG[cluster].get("ingress_postfix", "")
+        if postfix:
+            return postfix.lstrip(".")
     return "domein.nl"
 
 
@@ -58,9 +57,42 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
 
     project_name = yaml_data.get("name") or "projectid"
 
-    # Get component names from yaml_data
-    components = yaml_data.get("components", [])
-    component_names = [comp["name"] for comp in components if isinstance(comp, dict) and comp.get("name")]
+    # Get component names scoped to this deployment.
+    # In edit mode (deployment has components list), filter to components
+    # assigned to this deployment that have the publish-on-web service.
+    # In create mode (no deployment components yet, no services configured),
+    # show all project-level component names as a preview.
+    dep_components = dep.get("components", [])
+    dep_component_refs = {c["reference"] for c in dep_components if isinstance(c, dict) and c.get("reference")}
+
+    all_components = yaml_data.get("components", [])
+
+    # Detect whether any component has services configured at all.
+    # During the create wizard, services haven't been assigned yet.
+    any_services_configured = any(
+        (isinstance(c, dict) and (c.get("services") or c.get("uses-services"))) for c in all_components
+    )
+
+    component_names: list[str] = []
+    for comp in all_components:
+        if not isinstance(comp, dict) or not comp.get("name"):
+            continue
+        name = comp["name"]
+        # Filter to deployment's components (skip filter if deployment has no component list yet)
+        if dep_component_refs and name not in dep_component_refs:
+            continue
+        # Filter to components with publish-on-web service (skip filter during create wizard)
+        if any_services_configured:
+            comp_services = comp.get("services", []) + comp.get("uses-services", [])
+            service_names = []
+            for s in comp_services:
+                if isinstance(s, str):
+                    service_names.append(s)
+                elif isinstance(s, dict):
+                    service_names.extend(s.keys())
+            if "publish-on-web" not in service_names:
+                continue
+        component_names.append(name)
 
     if not component_names:
         component_names = ["component"]
@@ -104,4 +136,16 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
         )
         urls.append({"component": f"{root_component} (root)", "url": short_url})
 
-    return {"urls": urls, "has_urls": bool(urls)}
+    # Bare domain URL when a component is selected for expose-on-bare-domain
+    bare_domain_component = dep.get("expose-component-on-bare-domain")
+    if bare_domain_component and domain:
+        urls.append({"component": f"{bare_domain_component} (kaal domein)", "url": domain})
+
+    # Check if domain or subdomain needs approval
+    needs_approval = False
+    cluster = opi_config.settings.CLUSTER_MANAGER
+    effective_domain = domain if base_domain != "__custom__" else custom_domain
+    if effective_domain and cluster:
+        needs_approval = not is_deployment_domain_approved(yaml_data, effective_domain, subdomain or None, cluster)
+
+    return {"urls": urls, "has_urls": bool(urls), "needs_approval": needs_approval}

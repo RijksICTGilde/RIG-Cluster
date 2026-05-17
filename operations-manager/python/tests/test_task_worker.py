@@ -37,6 +37,7 @@ def mock_worker_settings() -> Any:
         s.TASK_WORKER_MAX_ATTEMPTS = 3
         s.TASK_WORKER_CLEANUP_RETENTION_HOURS = 72
         s.TASK_WORKER_CONCURRENCY = 1
+        s.TASK_WORKER_MAX_DURATION = 1800
         yield s
 
 

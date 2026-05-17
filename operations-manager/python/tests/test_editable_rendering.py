@@ -184,9 +184,9 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 13 children: storage sequences hidden (no storage services),
-        # path/rewrite-path always visible
-        assert len(first_item.children) == 13
+        # 12 children: storage sequences hidden (no storage services),
+        # path (with nested match/rewrite) always visible
+        assert len(first_item.children) == 12
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -209,9 +209,9 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 14 children: storage sequence visible (persistent-storage enabled),
-        # path/rewrite-path always visible
-        assert len(first_item.children) == 14
+        # 13 children: storage sequence visible (persistent-storage enabled),
+        # path (with nested match/rewrite) always visible
+        assert len(first_item.children) == 13
 
 
 class TestNestedSequenceRendering:
@@ -414,7 +414,7 @@ class TestDomainSectionRendering:
         )
         assert "URL-formaat" in html
 
-    def test_domain_section_has_group_editable_with_five_children(self):
+    def test_domain_section_has_group_editable_with_six_children(self):
         from opi.forms.editables.editable import WidgetType
         from opi.forms.visualizers.wizard_sections import DOMAIN_SECTION
 
@@ -422,8 +422,8 @@ class TestDomainSectionRendering:
         assert len(DOMAIN_SECTION.editables) == 1
         group = DOMAIN_SECTION.editables[0]
         assert group.widget == WidgetType.GROUP
-        # Group wraps 5 child domain fields
-        assert len(group.children) == 5
+        # Group wraps 8 child domain fields (including expose-component-on-bare-domain, request-subdomain)
+        assert len(group.children) == 8
 
 
 class TestConditionalVisibility:

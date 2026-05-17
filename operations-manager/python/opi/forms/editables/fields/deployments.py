@@ -7,6 +7,10 @@ from opi.forms.editables.converters import (
     CloneFromConverter,
     CustomDomainSelectConverter,
     KeyValueConverter,
+    RRuleDayConverter,
+    RRuleFrequencyConverter,
+    RRuleMonthDayConverter,
+    RRuleTimeConverter,
 )
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
@@ -14,6 +18,7 @@ from opi.forms.editables.validators import (
     CustomDomainValidator,
     DomainFormatValidator,
     KeyValueValidator,
+    PathValidator,
     SubdomainValidator,
 )
 
@@ -57,6 +62,53 @@ DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(
     remove_when_none=True,
 )
 
+DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/schedule",
+    values_provider="BackupScheduleFrequencyOptionsProvider",
+    converter=RRuleFrequencyConverter(),
+    remove_when_none=True,
+)
+DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/schedule:time",
+    transient=True,
+    values_provider="BackupScheduleTimeOptionsProvider",
+    converter=RRuleTimeConverter(),
+    depends_on="deployments[*]/backup/schedule",
+)
+DEPLOYMENT_BACKUP_SCHEDULE_DAY_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/schedule:day",
+    transient=True,
+    values_provider="BackupScheduleDayOptionsProvider",
+    converter=RRuleDayConverter(),
+    depends_on="deployments[*]/backup/schedule",
+    show_when={"value": ["WEEKLY"]},
+)
+DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/schedule:monthday",
+    transient=True,
+    values_provider="BackupScheduleMonthDayOptionsProvider",
+    converter=RRuleMonthDayConverter(),
+    depends_on="deployments[*]/backup/schedule",
+    show_when={"value": ["MONTHLY"]},
+)
+DEPLOYMENT_BACKUP_RESOURCE_TYPES_EDITABLE = Editable(
+    yaml_path="deployments[*]/backup/resource_types",
+    values_provider="BackupResourceTypesOptionsProvider",
+    depends_on="deployments[*]/backup/schedule",
+)
+
+# Manual backup editables (transient — not saved to YAML)
+BACKUP_DEPLOYMENT_NAME_EDITABLE = Editable(
+    yaml_path="deployment_name",
+    transient=True,
+    values_provider="BackupDeploymentOptionsProvider",
+)
+BACKUP_RESOURCE_TYPES_EDITABLE = Editable(
+    yaml_path="resource_types",
+    transient=True,
+    values_provider="BackupResourceTypesOptionsProvider",
+)
+
 DEPLOYMENT_COMP_REFERENCE_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/reference",
     required=True,
@@ -66,12 +118,27 @@ DEPLOYMENT_COMP_IMAGE_EDITABLE = Editable(yaml_path="deployments[*]/components[*
 DEPLOYMENT_COMP_PULL_POLICY_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/imagePullPolicy", values_provider="PullPolicyOptionsProvider"
 )
-DEPLOYMENT_COMP_PATH_EDITABLE = Editable(yaml_path="deployments[*]/components[*]/paths")
-DEPLOYMENT_COMP_REWRITE_PATH_EDITABLE = Editable(yaml_path="deployments[*]/components[*]/rewrite-path")
+DEPLOYMENT_COMP_PATH_MATCH_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/path[*]/match",
+    validator=PathValidator(),
+)
+DEPLOYMENT_COMP_PATH_REWRITE_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/path[*]/rewrite",
+    validator=PathValidator(),
+    remove_when_none=True,
+)
+DEPLOYMENT_COMP_PATH_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/path",
+    children=[
+        DEPLOYMENT_COMP_PATH_MATCH_EDITABLE,
+        DEPLOYMENT_COMP_PATH_REWRITE_EDITABLE,
+    ],
+)
 DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/user-env-vars",
     converter=KeyValueConverter(fmt="env", write_as="string"),
     validator=KeyValueValidator(),
+    remove_when_none=True,
 )
 
 DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
@@ -82,7 +149,6 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
         DEPLOYMENT_COMP_IMAGE_EDITABLE,
         DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
         DEPLOYMENT_COMP_PATH_EDITABLE,
-        DEPLOYMENT_COMP_REWRITE_PATH_EDITABLE,
         DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
     ],
 )
@@ -99,6 +165,11 @@ DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
         DEPLOYMENT_DOMAIN_MODE_EDITABLE,
         DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
         DEPLOYMENT_CLONE_FROM_EDITABLE,
+        DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE,
+        DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE,
+        DEPLOYMENT_BACKUP_SCHEDULE_DAY_EDITABLE,
+        DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY_EDITABLE,
+        DEPLOYMENT_BACKUP_RESOURCE_TYPES_EDITABLE,
         DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     ],
 )

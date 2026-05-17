@@ -968,7 +968,7 @@ class TestYamlNoAnchors:
     leading to revision history leaking across deployments.
     """
 
-    def test_save_project_file_no_anchors(self, tmp_path: "Any") -> None:
+    def test_save_project_file_no_anchors(self, tmp_path: Any) -> None:
         """save_project_file must never write YAML anchors/aliases."""
         shared_services = [
             {"reference": "postgresql-database", "config": {"generation": 1}},
@@ -990,7 +990,7 @@ class TestYamlNoAnchors:
         assert "&id" not in content, f"YAML anchors found in output:\n{content}"
         assert "*id" not in content, f"YAML aliases found in output:\n{content}"
 
-    def test_save_project_file_preserves_data_for_both_deployments(self, tmp_path: "Any") -> None:
+    def test_save_project_file_preserves_data_for_both_deployments(self, tmp_path: Any) -> None:
         """Both deployments must have full services data after save (no aliases)."""
         shared_services = [
             {"reference": "postgresql-database", "config": {"generation": 1}},

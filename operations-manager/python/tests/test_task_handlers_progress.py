@@ -438,10 +438,10 @@ class TestHandleRefreshDeployment:
                 return_value=mock_project_service,
             ),
             patch(CREATE_PM_PATH, return_value=mock_pm),
-            pytest.raises(RuntimeError, match="Failed to process"),
         ):
-            await handle_refresh_deployment(payload, progress)
+            result = await handle_refresh_deployment(payload, progress)
 
+        assert result["status"] == "failed"
         progress.fail_task.assert_called_once()
         progress.fail_project.assert_called_once()
 
@@ -520,6 +520,7 @@ class TestHandleUpsertDeployment:
             task_progress_manager=progress,
             deployment_name="dev",
             force_clone=False,
+            argocd_resources_changed=True,
         )
 
         # Web addresses reported

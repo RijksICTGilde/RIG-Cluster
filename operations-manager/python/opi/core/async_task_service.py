@@ -7,9 +7,10 @@ import socket
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from opi.core.database_pool import DatabasePool
+if TYPE_CHECKING:
+    from opi.core.database_pool import DatabasePool
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,8 @@ class TaskType(StrEnum):
     ADD_COMPONENT = "add_component"
     ADD_COMPONENT_TO_DEPLOYMENT = "add_component_to_deployment"
     ADD_SERVICE = "add_service"
+    BACKUP = "backup"
+    RESTORE = "restore"
 
 
 class AsyncTaskStatus(StrEnum):
@@ -50,7 +53,7 @@ class AsyncTaskStatus(StrEnum):
 _JSONB_COLUMNS = {"payload", "result", "subtasks"}
 
 
-def _row_to_dict(row: Any) -> dict:
+def _row_to_dict(row: Any) -> dict | None:
     """Convert an asyncpg Record to a dict with serializable types.
 
     UUID objects are converted to strings, datetime objects to ISO format
@@ -89,6 +92,7 @@ class AsyncTaskService:
         cluster: str,
         payload: dict,
         created_by: str | None = None,
+        max_attempts: int | None = None,
     ) -> dict:
         """Create a new async task, or return an existing active task if one matches.
 
@@ -126,30 +130,62 @@ class AsyncTaskService:
                 task_type,
             )
             if existing is not None:
-                logger.info(
-                    "Dedup: returning existing %s task %s for %s/%s (status=%s)",
+                # Compare payloads: if the new request has different parameters
+                # (e.g. different image tag), create a new task that queues behind
+                # the running one.  Only dedup when the payload is identical.
+                existing_payload = existing["payload"]
+                if isinstance(existing_payload, str):
+                    existing_payload = json.loads(existing_payload)
+                if existing_payload == payload:
+                    logger.info(
+                        "Dedup: returning existing %s task %s for %s/%s (status=%s, identical payload)",
+                        task_type,
+                        existing["id"],
+                        project_name,
+                        deployment_name,
+                        existing["status"],
+                    )
+                    return _row_to_dict(existing)
+                else:
+                    logger.info(
+                        "Dedup: existing %s task %s for %s/%s has different payload, creating new queued task",
+                        task_type,
+                        existing["id"],
+                        project_name,
+                        deployment_name,
+                    )
+
+            if max_attempts is not None:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO async_tasks
+                        (task_type, project_name, deployment_name, cluster, payload, created_by, max_attempts)
+                    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+                    RETURNING *
+                    """,
                     task_type,
-                    existing["id"],
                     project_name,
                     deployment_name,
-                    existing["status"],
+                    cluster,
+                    json.dumps(payload),
+                    created_by,
+                    max_attempts,
                 )
-                return _row_to_dict(existing)
-
-            row = await conn.fetchrow(
-                """
-                INSERT INTO async_tasks
-                    (task_type, project_name, deployment_name, cluster, payload, created_by)
-                VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                RETURNING *
-                """,
-                task_type,
-                project_name,
-                deployment_name,
-                cluster,
-                json.dumps(payload),
-                created_by,
-            )
+            else:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO async_tasks
+                        (task_type, project_name, deployment_name, cluster, payload, created_by)
+                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+                    RETURNING *
+                    """,
+                    task_type,
+                    project_name,
+                    deployment_name,
+                    cluster,
+                    json.dumps(payload),
+                    created_by,
+                )
             logger.info(
                 "Created task %s type=%s for %s/%s on cluster %s",
                 row["id"],
@@ -162,7 +198,11 @@ class AsyncTaskService:
         finally:
             await self._pool.release(conn)
 
-    async def claim_next_task(self, cluster: str) -> dict | None:
+    async def claim_next_task(
+        self,
+        cluster: str,
+        type_concurrency_limits: dict[str, int] | None = None,
+    ) -> dict | None:
         """Claim the next pending task for the given cluster.
 
         Uses SELECT ... FOR UPDATE SKIP LOCKED to safely claim a task without
@@ -170,6 +210,9 @@ class AsyncTaskService:
 
         Args:
             cluster: The cluster to claim a task for.
+            type_concurrency_limits: Optional mapping of task_type -> max concurrent
+                tasks. When a task type has reached its limit, pending tasks of that
+                type are skipped until a slot opens up.
 
         Returns:
             A dict representing the claimed task, or None if no task is available.
@@ -177,15 +220,50 @@ class AsyncTaskService:
         conn = await self._pool.acquire()
         try:
             async with conn.transaction():
+                # Build optional per-type concurrency filter
+                type_limit_sql = ""
+                params: list[Any] = [cluster]
+                if type_concurrency_limits:
+                    # For each limited type, add a condition that skips pending
+                    # tasks of that type when the limit is already reached.
+                    conditions = []
+                    for task_type, max_concurrent in type_concurrency_limits.items():
+                        idx_type = len(params) + 1
+                        idx_limit = len(params) + 2
+                        conditions.append(
+                            f"""NOT (
+                                t.task_type = ${idx_type}
+                                AND (
+                                    SELECT COUNT(*) FROM async_tasks tc
+                                    WHERE tc.task_type = ${idx_type}
+                                      AND tc.status IN ('claimed', 'running')
+                                ) >= ${idx_limit}
+                            )"""
+                        )
+                        params.extend([task_type, max_concurrent])
+                    type_limit_sql = "AND " + " AND ".join(conditions)
+
+                # Claim the next pending task, but skip tasks where another
+                # task for the same project/deployment is already in-flight.
+                # This prevents concurrent processing of the same deployment
+                # which could cause race conditions in git/ArgoCD operations.
                 row = await conn.fetchrow(
-                    """
-                    SELECT id FROM async_tasks
-                    WHERE status = 'pending' AND cluster = $1
-                    ORDER BY created_at ASC
+                    f"""
+                    SELECT id FROM async_tasks t
+                    WHERE t.status = 'pending' AND t.cluster = $1
+                      AND NOT EXISTS (
+                          SELECT 1 FROM async_tasks running
+                          WHERE running.project_name = t.project_name
+                            AND running.deployment_name IS NOT DISTINCT FROM t.deployment_name
+                            AND running.status IN ('claimed', 'running')
+                            AND running.id != t.id
+                      )
+                      {type_limit_sql}
+                    ORDER BY t.created_at ASC
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
                     """,
-                    cluster,
+                    *params,
                 )
                 if row is None:
                     return None
@@ -267,7 +345,7 @@ class AsyncTaskService:
 
         if current_step is not None:
             set_clauses.append(f"current_step = ${param_idx}")
-            params.append(current_step)
+            params.append(current_step[:255] if len(current_step) > 255 else current_step)
             param_idx += 1
 
         if progress_percent is not None:
@@ -369,6 +447,10 @@ class AsyncTaskService:
             attempt_count: Current attempt number (before increment).
             max_attempts: Maximum number of allowed attempts.
         """
+        # Truncate to fit the DB column (varchar 255)
+        if len(error_message) > 255:
+            error_message = error_message[:252] + "..."
+
         conn = await self._pool.acquire()
         try:
             if attempt_count < max_attempts:
@@ -637,6 +719,44 @@ class AsyncTaskService:
                     project_name,
                     uuid.UUID(task_id),
                 )
+            if row is None:
+                return None
+            return _row_to_dict(row)
+        finally:
+            await self._pool.release(conn)
+
+    async def get_last_completed_task(
+        self,
+        task_type: str,
+        project_name: str,
+        deployment_name: str | None = None,
+    ) -> dict | None:
+        """Get the most recently completed task matching the given criteria.
+
+        Args:
+            task_type: The task type to filter on.
+            project_name: The project name to filter on.
+            deployment_name: Optional deployment name for more specific matching.
+
+        Returns:
+            A dict representing the task, or None if no matching task exists.
+        """
+        conn = await self._pool.acquire()
+        try:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM async_tasks
+                WHERE task_type = $1
+                  AND project_name = $2
+                  AND deployment_name IS NOT DISTINCT FROM $3
+                  AND status = 'completed'
+                ORDER BY completed_at DESC
+                LIMIT 1
+                """,
+                task_type,
+                project_name,
+                deployment_name,
+            )
             if row is None:
                 return None
             return _row_to_dict(row)

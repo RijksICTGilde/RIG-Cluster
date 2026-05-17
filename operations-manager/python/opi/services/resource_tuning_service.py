@@ -9,20 +9,24 @@ and by the OOM watcher (oom_watcher).
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from io import StringIO
 from typing import Any
 
-from ruamel.yaml import YAML
-
-from opi.connectors.git import create_git_connector_for_project_files
+from opi.connectors.git import GitConnector, create_git_connector_for_project_files
+from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
-from opi.core.cluster_config import get_min_memory_limit_mi, get_prefixed_namespace
+from opi.core.cluster_config import (
+    get_max_memory_limit_mi,
+    get_max_memory_request_mi,
+    get_min_memory_limit_mi,
+    get_prefixed_namespace,
+)
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.project_manager import create_project_manager
 from opi.services.project_service import get_project_service
 from opi.services.resource_analyzer import _k8s_memory_to_mb, _mb_to_k8s_memory, compute_memory_recommendation
 from opi.utils.naming import generate_unique_name
+from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 logger = logging.getLogger(__name__)
 
@@ -38,23 +42,22 @@ class TuneResult:
 
 @dataclass
 class MemoryCheckResult:
-    """Per-component result of a memory overprovision check."""
+    """Per-component result of a memory check (overprovision or OOM)."""
 
     component: str
     current_limit: str
     recommended_limit: str
     saving_mb: float
+    oom_detected: bool = False
 
 
 def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
     """
-    Get a deep copy of project data and filename from the project service.
+    Get a deep copy of project data and filename from the project service cache.
 
-    Returns a copy to prevent in-place modifications from affecting the
-    project service's cached data (which contains encrypted secrets).
-
-    Args:
-        project_name: Name of the project
+    Suitable for read-only operations. For write operations that will commit
+    back to git, use ``get_project_data_from_git`` instead to avoid
+    overwriting fields that changed since the cache was populated.
 
     Returns:
         Tuple of (project_data_copy, filename)
@@ -76,8 +79,49 @@ def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
     return copy.deepcopy(project.data), project.filename
 
 
+async def get_project_data_from_git(project_name: str) -> tuple[dict[str, Any], str, GitConnector]:
+    """
+    Read the latest project data directly from git.
+
+    Unlike ``get_project_data`` (which reads from the in-memory cache),
+    this clones the projects repository and parses the YAML file on disk.
+    This prevents stale cache data from silently overwriting fields that
+    were added or changed since the last project processing run.
+
+    The caller is responsible for closing the returned GitConnector.
+
+    Returns:
+        Tuple of (project_data, filename, git_connector)
+
+    Raises:
+        ValueError: If project not found or YAML file missing/invalid
+    """
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+
+    if not project:
+        raise ValueError(f"Project '{project_name}' not found")
+
+    filename = project.filename
+    git_connector = await create_git_connector_for_project_files(project_name)
+
+    file_path = f"projects/{filename}"
+    content = await git_connector.read_file_content(file_path)
+    project_data = load_yaml_from_string(content)
+
+    if not project_data:
+        await git_connector.close()
+        raise ValueError(f"Failed to parse YAML for project '{project_name}' from git")
+
+    return project_data, filename, git_connector
+
+
 async def commit_project_yaml(
-    project_name: str, filename: str, project_data: dict[str, Any], commit_message: str
+    project_name: str,
+    filename: str,
+    project_data: dict[str, Any],
+    commit_message: str,
+    git_connector: GitConnector | None = None,
 ) -> None:
     """
     Write updated project data back to git and commit.
@@ -87,25 +131,30 @@ async def commit_project_yaml(
         filename: Project YAML filename
         project_data: Updated project data dict
         commit_message: Git commit message
+        git_connector: Optional existing connector to reuse (caller manages lifecycle)
     """
 
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    stream = StringIO()
-    yaml.dump(project_data, stream)
-    updated_yaml = stream.getvalue()
+    updated_yaml = dump_yaml_to_string(project_data)
 
-    git_connector = await create_git_connector_for_project_files(project_name)
+    owns_connector = git_connector is None
+    if owns_connector:
+        git_connector = await create_git_connector_for_project_files(project_name)
     try:
         file_path = f"projects/{filename}"
         await git_connector.add_file(file_path, updated_yaml)
         await git_connector.commit_and_push(commit_message)
         logger.info(f"Committed project YAML changes: {commit_message}")
     finally:
-        await git_connector.close()
+        if owns_connector:
+            await git_connector.close()
 
 
-async def trigger_reprocessing(project_name: str, filename: str, deployment_name: str | None = None) -> bool:
+async def trigger_reprocessing(
+    project_name: str,
+    filename: str,
+    deployment_name: str | None = None,
+    argocd_resources_changed: bool = True,
+) -> bool:
     """
     Trigger project reprocessing via the standard pipeline.
 
@@ -113,6 +162,8 @@ async def trigger_reprocessing(project_name: str, filename: str, deployment_name
         project_name: Name of the project
         filename: Project YAML filename
         deployment_name: Optional specific deployment to reprocess
+        argocd_resources_changed: Whether ArgoCD Application/AppProject manifests
+            may have changed.  False for operations like resource tuning.
 
     Returns:
         True if reprocessing succeeded
@@ -122,6 +173,7 @@ async def trigger_reprocessing(project_name: str, filename: str, deployment_name
         result = await project_manager.process_project_from_git(
             f"projects/{filename}",
             deployment_name=deployment_name,
+            argocd_resources_changed=argocd_resources_changed,
         )
         return bool(result)
     finally:
@@ -141,7 +193,7 @@ class _ComponentAnalysis:
     has_oom_kills: bool
 
 
-def _analyze_component_resources(
+async def _analyze_component_resources(
     connector: Any,
     file_handler: ProjectFileHandler,
     project_data: dict[str, Any],
@@ -149,15 +201,32 @@ def _analyze_component_resources(
     component_ref: str,
     namespace: str,
     cluster: str,
+    kubectl: KubectlConnector | None = None,
 ) -> _ComponentAnalysis | None:
     """
     Query Prometheus and compute a memory recommendation for a single component.
 
     Returns:
         _ComponentAnalysis with current state and recommendation, or None
-        if no recommendation (no data or within threshold).
+        if no recommendation (no data, within threshold, or deployment unhealthy).
     """
     unique_name = generate_unique_name(dep_name, component_ref)
+
+    # Skip unhealthy deployments — their low memory usage is misleading
+    if kubectl is not None and KubectlConnector.isConnected:
+        try:
+            conditions = await kubectl.get_deployment_conditions(namespace, unique_name)
+            if conditions is not None:
+                available = next((c for c in conditions if c.get("type") == "Available"), None)
+                if available and available.get("status") != "True":
+                    reason = available.get("reason", "unknown")
+                    logger.info(
+                        f"Skipping {unique_name}: deployment is not available "
+                        f"(reason: {reason}), memory data would be misleading"
+                    )
+                    return None
+        except Exception as e:
+            logger.warning(f"Failed to check deployment health for {unique_name}: {e}")
     window_hours = settings.RESOURCE_TUNING_WINDOW_HOURS
     buffer_percent = settings.RESOURCE_TUNING_MEMORY_BUFFER_PERCENT
     threshold_percent = settings.RESOURCE_TUNING_THRESHOLD_PERCENT
@@ -181,7 +250,7 @@ def _analyze_component_resources(
             f'container="app"}}'
             f"[{window_hours}h])"
         )
-        max_results = connector.custom_query(max_query)
+        max_results = await connector.custom_query(max_query)
         if max_results:
             for result in max_results:
                 value = float(result.get("value", [0, 0])[1])
@@ -194,7 +263,7 @@ def _analyze_component_resources(
             f'container="app"}}'
             f"[{window_hours}h])"
         )
-        avg_results = connector.custom_query(avg_query)
+        avg_results = await connector.custom_query(avg_query)
         if avg_results:
             for result in avg_results:
                 value = float(result.get("value", [0, 0])[1])
@@ -212,7 +281,7 @@ def _analyze_component_resources(
             f'namespace="{namespace}", '
             f'pod=~"{unique_name}.*"}}'
         )
-        oom_results = connector.custom_query(oom_query)
+        oom_results = await connector.custom_query(oom_query)
         has_oom_kills = bool(oom_results)
     except Exception as e:
         logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")
@@ -240,6 +309,8 @@ def _analyze_component_resources(
         threshold_percent=threshold_percent,
         has_oom_kills=has_oom_kills,
         min_memory_mi=get_min_memory_limit_mi(cluster),
+        max_memory_mi=get_max_memory_limit_mi(cluster),
+        max_memory_request_mi=get_max_memory_request_mi(cluster),
     )
 
     if recommendation is None:
@@ -251,18 +322,46 @@ def _analyze_component_resources(
     if oom_floor_mb is not None:
         new_limit_mb = _k8s_memory_to_mb(new_limit)
         if new_limit_mb < oom_floor_mb:
-            logger.info(
-                f"OOM floor {oom_floor_mb:.0f}Mi prevents reducing limit for {component_ref} "
-                f"in deployment {dep_name} (recommendation was {new_limit})"
-            )
-            # If the current limit already matches the floor, no change needed
-            if current_limit_mb <= oom_floor_mb:
-                return None
-            new_limit = _mb_to_k8s_memory(oom_floor_mb)
-            new_request_mb = _k8s_memory_to_mb(new_request)
-            if new_request_mb > oom_floor_mb:
-                new_request = new_limit
-            reason += f" (clamped to OOM floor {new_limit})"
+            if has_oom_kills and current_limit_mb <= oom_floor_mb:
+                # Still OOM-killing at the floor — the floor itself is too low.
+                # Bump above it using the sliding factor.
+                if oom_floor_mb < 64:
+                    floor_factor = 3.0
+                elif oom_floor_mb < 256:
+                    floor_factor = 2.0
+                else:
+                    floor_factor = 1.5
+                new_floor = oom_floor_mb * floor_factor
+                max_memory = float(get_max_memory_limit_mi(cluster))
+                if new_floor > max_memory:
+                    new_floor = max_memory
+                    logger.warning(
+                        f"OOM auto-tune for {component_ref} in {dep_name} hit max limit "
+                        f"({max_memory:.0f}Mi) — manual intervention required"
+                    )
+                ratio = current_request_mb / current_limit_mb if current_limit_mb > 0 else 1.0
+                max_request = float(get_max_memory_request_mi(cluster))
+                new_limit = _mb_to_k8s_memory(new_floor)
+                new_request = _mb_to_k8s_memory(min(new_floor * ratio, max_request))
+                reason = f"OOM at floor {oom_floor_mb:.0f}Mi — bumping to {new_floor:.0f}Mi ({floor_factor:.1f}x)"
+                logger.info(
+                    f"OOM floor {oom_floor_mb:.0f}Mi is too low for {component_ref} "
+                    f"in deployment {dep_name}, bumping to {new_limit}"
+                )
+            else:
+                logger.info(
+                    f"OOM floor {oom_floor_mb:.0f}Mi prevents reducing limit for {component_ref} "
+                    f"in deployment {dep_name} (recommendation was {new_limit})"
+                )
+                # If the current limit already matches the floor, no change needed
+                if current_limit_mb <= oom_floor_mb:
+                    return None
+                new_limit = _mb_to_k8s_memory(oom_floor_mb)
+                max_request = float(get_max_memory_request_mi(cluster))
+                new_request_mb = _k8s_memory_to_mb(new_request)
+                if new_request_mb > min(oom_floor_mb, max_request):
+                    new_request = _mb_to_k8s_memory(min(oom_floor_mb, max_request))
+                reason += f" (clamped to OOM floor {new_limit})"
 
     return _ComponentAnalysis(
         current_resources=current_resources,
@@ -275,7 +374,7 @@ def _analyze_component_resources(
     )
 
 
-def check_deployment_resources(
+async def check_deployment_resources(
     project_name: str,
     deployment_name: str,
 ) -> list[MemoryCheckResult]:
@@ -297,10 +396,11 @@ def check_deployment_resources(
     file_handler = ProjectFileHandler()
 
     try:
-        connector = get_metrics_connector()
+        connector = await get_metrics_connector()
     except Exception:
         return []
 
+    kubectl = KubectlConnector()
     results: list[MemoryCheckResult] = []
 
     deployments = project_data.get("deployments", [])
@@ -320,8 +420,15 @@ def check_deployment_resources(
             if not component_ref:
                 continue
 
-            analysis = _analyze_component_resources(
-                connector, file_handler, project_data, deployment_name, component_ref, namespace, cluster
+            analysis = await _analyze_component_resources(
+                connector,
+                file_handler,
+                project_data,
+                deployment_name,
+                component_ref,
+                namespace,
+                cluster,
+                kubectl=kubectl,
             )
             if analysis is None:
                 continue
@@ -330,7 +437,17 @@ def check_deployment_resources(
             new_limit_mb = _k8s_memory_to_mb(analysis.new_limit)
             saving_mb = current_limit_mb - new_limit_mb
 
-            if saving_mb > 0:
+            if analysis.has_oom_kills:
+                results.append(
+                    MemoryCheckResult(
+                        component=component_ref,
+                        current_limit=analysis.current_resources["limits_memory"],
+                        recommended_limit=analysis.new_limit,
+                        saving_mb=saving_mb,
+                        oom_detected=True,
+                    )
+                )
+            elif saving_mb > 0:
                 results.append(
                     MemoryCheckResult(
                         component=component_ref,
@@ -346,6 +463,7 @@ def check_deployment_resources(
 async def tune_deployment_resources(
     project_name: str,
     deployment_name: str | None = None,
+    skip_reprocessing: bool = False,
 ) -> TuneResult:
     """
     Query Prometheus, compute recommendations, commit YAML, trigger reprocess.
@@ -353,6 +471,9 @@ async def tune_deployment_resources(
     Args:
         project_name: Name of the project
         deployment_name: Optional specific deployment to tune
+        skip_reprocessing: If True, only commit the YAML changes without
+            triggering reprocessing.  Use when the caller will queue a
+            separate task for reprocessing (e.g. OOM detection during deploy).
 
     Returns:
         TuneResult with changes, unchanged components, and whether refresh was triggered
@@ -361,111 +482,146 @@ async def tune_deployment_resources(
         ValueError: If project not found or has no data
         RuntimeError: If metrics backend is unavailable
     """
-    project_data, filename = get_project_data(project_name)
+    # Read fresh from git to avoid overwriting fields that changed since
+    # the in-memory cache was last populated.
+    project_data, filename, git_connector = await get_project_data_from_git(project_name)
     file_handler = ProjectFileHandler()
 
     try:
-        connector = get_metrics_connector()
-    except Exception as e:
-        raise RuntimeError(f"Metrics backend unavailable: {e}") from e
+        try:
+            connector = await get_metrics_connector()
+        except Exception as e:
+            raise RuntimeError(f"Metrics backend unavailable: {e}") from e
 
-    changes: list[dict[str, str]] = []
-    unchanged: list[str] = []
+        kubectl = KubectlConnector()
+        changes: list[dict[str, str]] = []
+        unchanged: list[str] = []
 
-    deployments = project_data.get("deployments", [])
-    for dep in deployments:
-        dep_name = dep.get("name", "")
-        if deployment_name and dep_name != deployment_name:
-            continue
-
-        base_namespace = dep.get("namespace")
-        cluster = dep.get("cluster")
-        if not base_namespace or not cluster:
-            logger.warning(f"Deployment '{dep_name}' missing namespace or cluster, skipping")
-            continue
-
-        namespace = get_prefixed_namespace(cluster, base_namespace)
-
-        components = dep.get("components", [])
-        for comp in components:
-            component_ref = comp.get("reference", "")
-            if not component_ref:
+        deployments = project_data.get("deployments", [])
+        for dep in deployments:
+            dep_name = dep.get("name", "")
+            if deployment_name and dep_name != deployment_name:
                 continue
 
-            analysis = _analyze_component_resources(
-                connector, file_handler, project_data, dep_name, component_ref, namespace, cluster
-            )
-            if analysis is None:
-                unchanged.append(component_ref)
+            base_namespace = dep.get("namespace")
+            cluster = dep.get("cluster")
+            if not base_namespace or not cluster:
+                logger.warning(f"Deployment '{dep_name}' missing namespace or cluster, skipping")
                 continue
 
-            # Apply the change at deployment-component level
-            file_handler.set_deployment_component_resources(
-                project_data,
-                dep_name,
-                component_ref,
-                {
-                    "limits_memory": analysis.new_limit,
-                    "requests_memory": analysis.new_request,
-                },
-            )
+            namespace = get_prefixed_namespace(cluster, base_namespace)
 
-            # Update base component definition so new deployments inherit
-            # a realistic starting point. The OOM watcher will bump up any
-            # deployment that actually needs more memory.
-            base_resources = file_handler.extract_component_resources(project_data, component_ref)
-            base_updates: dict[str, str] = {}
-            if analysis.new_request != base_resources["requests_memory"]:
-                base_updates["requests_memory"] = analysis.new_request
-            if analysis.new_limit != base_resources["limits_memory"]:
-                base_updates["limits_memory"] = analysis.new_limit
-            if base_updates:
-                file_handler.set_component_resources(project_data, component_ref, base_updates)
+            components = dep.get("components", [])
+            for comp in components:
+                component_ref = comp.get("reference", "")
+                if not component_ref:
+                    continue
 
-            # Write resource history at both levels
-            source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"
-            now = datetime.now(UTC).isoformat()
-            deployment_history_entry: dict[str, Any] = {
-                "timestamp": now,
-                "limits": {"memory": analysis.new_limit},
-                "source": source,
-                "reason": analysis.reason,
-            }
-            file_handler.append_deployment_component_resource_history(
-                project_data, dep_name, component_ref, deployment_history_entry
-            )
-            component_history_entry: dict[str, Any] = {
-                "timestamp": now,
-                "limits": {"memory": analysis.new_limit},
-                "source": source,
-                "deployment": dep_name,
-                "reason": analysis.reason,
-            }
-            file_handler.append_component_resource_history(project_data, component_ref, component_history_entry)
+                analysis = await _analyze_component_resources(
+                    connector,
+                    file_handler,
+                    project_data,
+                    dep_name,
+                    component_ref,
+                    namespace,
+                    cluster,
+                    kubectl=kubectl,
+                )
+                if analysis is None:
+                    unchanged.append(component_ref)
+                    continue
 
-            changes.append(
-                {
-                    "component": component_ref,
-                    "deployment": dep_name,
-                    "previous_limits_memory": analysis.current_resources["limits_memory"],
-                    "new_limits_memory": analysis.new_limit,
-                    "previous_requests_memory": analysis.current_resources["requests_memory"],
-                    "new_requests_memory": analysis.new_request,
-                    "max_observed_memory_mb": f"{analysis.max_observed_mb:.0f}",
-                    "avg_observed_memory_mb": f"{analysis.avg_observed_mb:.0f}",
-                    "has_oom_kills": str(analysis.has_oom_kills),
+                # Skip if recommendation matches current values (avoids duplicate history entries
+                # when the tuner keeps hitting the max cap)
+                if (
+                    analysis.new_limit == analysis.current_resources["limits_memory"]
+                    and analysis.new_request == analysis.current_resources["requests_memory"]
+                ):
+                    logger.info(
+                        f"Skipping {component_ref} in {dep_name}: recommendation matches current "
+                        f"({analysis.new_limit} limit, {analysis.new_request} request)"
+                    )
+                    unchanged.append(component_ref)
+                    continue
+
+                # Apply the change at deployment-component level
+                file_handler.set_deployment_component_resources(
+                    project_data,
+                    dep_name,
+                    component_ref,
+                    {
+                        "limits_memory": analysis.new_limit,
+                        "requests_memory": analysis.new_request,
+                    },
+                )
+
+                # Update base component definition so new deployments inherit
+                # a realistic starting point. The OOM watcher will bump up any
+                # deployment that actually needs more memory.
+                # Always write both request and limit together to keep them consistent.
+                base_resources = file_handler.extract_component_resources(project_data, component_ref)
+                if (
+                    analysis.new_request != base_resources["requests_memory"]
+                    or analysis.new_limit != base_resources["limits_memory"]
+                ):
+                    file_handler.set_component_resources(
+                        project_data,
+                        component_ref,
+                        {
+                            "requests_memory": analysis.new_request,
+                            "limits_memory": analysis.new_limit,
+                        },
+                    )
+
+                # Write resource history at both levels
+                source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"
+                now = datetime.now(UTC).isoformat()
+                deployment_history_entry: dict[str, Any] = {
+                    "timestamp": now,
+                    "limits": {"memory": analysis.new_limit},
+                    "source": source,
                     "reason": analysis.reason,
                 }
-            )
+                file_handler.append_deployment_component_resource_history(
+                    project_data, dep_name, component_ref, deployment_history_entry
+                )
+                component_history_entry: dict[str, Any] = {
+                    "timestamp": now,
+                    "limits": {"memory": analysis.new_limit},
+                    "source": source,
+                    "deployment": dep_name,
+                    "reason": analysis.reason,
+                }
+                file_handler.append_component_resource_history(project_data, component_ref, component_history_entry)
 
-    # If changes were made, commit and reprocess
-    deployment_refresh_triggered = False
-    if changes:
-        component_names = [c["component"] for c in changes]
-        commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
+                changes.append(
+                    {
+                        "component": component_ref,
+                        "deployment": dep_name,
+                        "previous_limits_memory": analysis.current_resources["limits_memory"],
+                        "new_limits_memory": analysis.new_limit,
+                        "previous_requests_memory": analysis.current_resources["requests_memory"],
+                        "new_requests_memory": analysis.new_request,
+                        "max_observed_memory_mb": f"{analysis.max_observed_mb:.0f}",
+                        "avg_observed_memory_mb": f"{analysis.avg_observed_mb:.0f}",
+                        "has_oom_kills": str(analysis.has_oom_kills),
+                        "reason": analysis.reason,
+                    }
+                )
 
-        await commit_project_yaml(project_name, filename, project_data, commit_msg)
-        deployment_refresh_triggered = await trigger_reprocessing(project_name, filename, deployment_name)
+        # If changes were made, commit and optionally reprocess
+        deployment_refresh_triggered = False
+        if changes:
+            component_names = [c["component"] for c in changes]
+            commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
+
+            await commit_project_yaml(project_name, filename, project_data, commit_msg, git_connector=git_connector)
+            if not skip_reprocessing:
+                deployment_refresh_triggered = await trigger_reprocessing(
+                    project_name, filename, deployment_name, argocd_resources_changed=False
+                )
+    finally:
+        await git_connector.close()
 
     return TuneResult(
         changes=changes,

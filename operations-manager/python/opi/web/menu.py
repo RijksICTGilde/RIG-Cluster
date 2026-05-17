@@ -5,12 +5,19 @@ This module provides functions for generating navigation menu items
 that are used across different web routes.
 """
 
+import logging
 from typing import Any
 
+from opi.services.project_service import get_project_service
 
-def get_menu_items(user: dict[str, Any] | None = None) -> list[dict[str, str]]:
+logger = logging.getLogger(__name__)
+
+
+def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[dict[str, str]]:
     """
     Get the menu items for the navigation bar.
+
+    Admin status is determined automatically from the user's email.
 
     Args:
         user: User information dictionary from session (optional)
@@ -37,6 +44,20 @@ def get_menu_items(user: dict[str, Any] | None = None) -> list[dict[str, str]]:
         {"label": "Architecture", "link": "/architecture", "icon": "info"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
     ]
+
+    # Auto-detect admin status from user email
+    is_admin = False
+    if user and user.get("email"):
+        try:
+            project_service = get_project_service()
+            is_admin = project_service.is_admin(user["email"].lower())
+        except Exception:
+            logger.debug("Could not check admin status for menu", exc_info=True)
+
+    if is_admin:
+        menu_items.append({"label": "Gebruikersbeheer", "link": "/admin/users", "icon": "user"})
+        menu_items.append({"label": "Gebruik & Kosten", "link": "/admin/usage", "icon": "grafiek"})
+        menu_items.append({"label": "Domeinen", "link": "/admin/subdomains", "icon": "link"})
 
     # Add user-specific menu items
     if user:

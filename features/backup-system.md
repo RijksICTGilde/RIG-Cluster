@@ -13,6 +13,7 @@ The backup system provides:
 - **Label-based selection** of PVCs to backup
 - **Backup all mode** for Helm/external projects without labels
 - **Resource type tagging** for filtering snapshots by type (pvc, database, bucket)
+- **Scheduled backups** per deployment (daily/weekly/monthly) - see [scheduled-backups.md](scheduled-backups.md)
 
 ## Architecture
 

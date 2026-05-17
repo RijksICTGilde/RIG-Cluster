@@ -139,9 +139,10 @@ class ArgoConnector:
                 ssl_context.verify_mode = ssl.CERT_NONE
 
             connector = aiohttp.TCPConnector(ssl=ssl_context)
+            request_timeout = aiohttp.ClientTimeout(total=30)
 
             async with (
-                aiohttp.ClientSession(connector=connector) as session,
+                aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
                 session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
             ):
                 # Check if we got redirected to HTTPS
@@ -294,7 +295,7 @@ class ArgoConnector:
         status_url = f"{self._actual_base_url}/api/v1/applications/{app_name}"
 
         try:
-            status_code, response_text = await self._make_authenticated_request("GET", status_url)
+            status_code, response_text = await self._make_authenticated_request("GET", status_url, timeout_seconds=10)
 
             if status_code == 200:
                 status_data = json.loads(response_text)
@@ -338,7 +339,7 @@ class ArgoConnector:
         tree_url = f"{self._actual_base_url}/api/v1/applications/{app_name}/resource-tree"
 
         try:
-            status_code, response_text = await self._make_authenticated_request("GET", tree_url)
+            status_code, response_text = await self._make_authenticated_request("GET", tree_url, timeout_seconds=5)
 
             if status_code == 200:
                 tree_data = json.loads(response_text)
@@ -420,7 +421,7 @@ class ArgoConnector:
         refresh_url = f"{self._actual_base_url}/api/v1/applications/{app_name}?refresh={refresh_param}"
 
         try:
-            status_code, response_text = await self._make_authenticated_request("GET", refresh_url)
+            status_code, response_text = await self._make_authenticated_request("GET", refresh_url, timeout_seconds=120)
 
             if status_code == 200:
                 logger.info(f"Successfully triggered {refresh_type} refresh for application: {app_name}")

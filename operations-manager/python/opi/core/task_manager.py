@@ -57,16 +57,17 @@ class ProjectInfo:
     namespace: str | None = None
     web_addresses: dict[str, str] | None = None  # component_name -> web_address
     completed_at: datetime | None = None  # when project reached terminal status
+    error: str | None = None
 
 
 # Simple in-memory storage for projects only
 _projects: dict[str, ProjectInfo] = {}
 # Store TaskProgressManager instances per project
-_project_managers: dict[str, "TaskProgressManager"] = {}
+_project_managers: dict[str, TaskProgressManager] = {}
 # Track active monitoring tasks to prevent duplicate monitoring loops per project
-_active_monitoring_tasks: dict[str, "asyncio.Task[None]"] = {}
+_active_monitoring_tasks: dict[str, asyncio.Task[None]] = {}
 # Track active application monitoring tasks
-_active_app_monitoring_tasks: dict[str, "asyncio.Task[None]"] = {}
+_active_app_monitoring_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 class TaskProgressManager:
@@ -144,6 +145,7 @@ class TaskProgressManager:
         """Mark the entire project as failed."""
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.FAILED
+            _projects[self.project_id].error = error
             _projects[self.project_id].completed_at = datetime.now(tz=UTC)
 
     def set_namespace(self, namespace: str) -> None:
@@ -409,7 +411,7 @@ async def _monitor_task_progress(task_id: str) -> None:
     await _monitor_project_progress(task_id)
 
 
-async def monitor_argocd_deployment(task_id: str, project_name: str, progress_manager: "TaskProgressManager") -> None:
+async def monitor_argocd_deployment(task_id: str, project_name: str, progress_manager: TaskProgressManager) -> None:
     """
     Monitor ArgoCD application synchronization and deployment.
 

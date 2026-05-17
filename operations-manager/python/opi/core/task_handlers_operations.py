@@ -298,7 +298,6 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
         Dict matching the V1 sync response structure with status, message,
         project info, urls, and processing details.
     """
-    from typing import Any
 
     from opi.manager.project_manager import create_project_manager
     from opi.services.project_service import get_project_service
@@ -398,10 +397,21 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             logger.warning("Deployment refresh failed: %s/%s", project_name, deployment_name)
             progress.fail_task(deploy_task, error_msg)
             progress.fail_project(error_msg)
-            raise RuntimeError(error_msg)
+
+            component_failures = project_manager.get_component_failures()
+            return {
+                "status": "failed",
+                "message": error_msg,
+                "project": {"name": project_name, "file_path": project_file_path},
+                "processing": {
+                    "status": "failed",
+                    "error": error_msg,
+                    **({"component_failures": component_failures} if component_failures else {}),
+                },
+            }
 
     except Exception as exc:
-        if not isinstance(exc, ValueError | RuntimeError):
+        if not isinstance(exc, ValueError):
             progress.fail_project(str(exc))
         raise
     finally:
@@ -424,7 +434,6 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
     Returns:
         Dict with status, message, project info, urls, and processing details.
     """
-    from typing import Any
 
     from opi.manager.project_manager import create_project_manager
     from opi.services.project_service import get_project_service
@@ -502,11 +511,21 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
             logger.warning("Project refresh failed: %s", project_name)
             progress.fail_task(process_task, error_msg)
             progress.fail_project(error_msg)
-            original = project_manager.get_processing_exception()
-            raise RuntimeError(error_msg) from original
+
+            component_failures = project_manager.get_component_failures()
+            return {
+                "status": "failed",
+                "message": error_msg,
+                "project": {"name": project_name, "file_path": project_file_path},
+                "processing": {
+                    "status": "failed",
+                    "error": error_msg,
+                    **({"component_failures": component_failures} if component_failures else {}),
+                },
+            }
 
     except Exception as exc:
-        if not isinstance(exc, ValueError | RuntimeError):
+        if not isinstance(exc, ValueError):
             progress.fail_project(str(exc))
         raise
     finally:

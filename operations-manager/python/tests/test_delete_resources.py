@@ -81,15 +81,20 @@ class TestDeleteResourcesForDeployment:
         mock_connector.delete_user = AsyncMock(return_value={"status": "deleted", "message": "ok"})
         db_manager._postgres_connector = mock_connector
 
-        result = await db_manager.delete_resources_for_deployment(project_data, deployment)
+        await db_manager.delete_resources_for_deployment(project_data, deployment)
 
-        # Verify delete_database was called with ONLY database_name
-        mock_connector.delete_database.assert_called_once()
-        call_kwargs = mock_connector.delete_database.call_args
-        assert "host" not in (call_kwargs.kwargs or {})
-        assert "admin_username" not in (call_kwargs.kwargs or {})
-        assert "admin_password" not in (call_kwargs.kwargs or {})
-        assert call_kwargs == call(database_name="test_project_pr_123")
+        # Verify every delete_database call used ONLY database_name (no admin kwargs).
+        # Note: the deletion scans for versioned databases beyond the YAML generation,
+        # so delete_database is called multiple times (base name + versioned variants).
+        assert mock_connector.delete_database.call_count >= 1
+        called_names = []
+        for call_args in mock_connector.delete_database.call_args_list:
+            assert "host" not in (call_args.kwargs or {})
+            assert "admin_username" not in (call_args.kwargs or {})
+            assert "admin_password" not in (call_args.kwargs or {})
+            assert set(call_args.kwargs.keys()) == {"database_name"}
+            called_names.append(call_args.kwargs["database_name"])
+        assert "test_project_pr_123" in called_names
 
         # Verify delete_user was called with ONLY username
         mock_connector.delete_user.assert_called_once()
@@ -131,7 +136,11 @@ class TestDeleteResourcesForDeployment:
 
         assert result["success"] is True
         assert len(result["errors"]) == 0
-        assert len(result["operations"]) == 2
+        # Versioned database cleanup scans beyond YAML generation, so there are
+        # multiple database_deletion operations plus one database_user_deletion.
+        types = [op["type"] for op in result["operations"]]
+        assert types.count("database_user_deletion") == 1
+        assert types.count("database_deletion") >= 1
 
     @pytest.mark.asyncio
     async def test_not_found_database_is_not_error(self):
@@ -186,10 +195,11 @@ class TestDeleteDeploymentClientRealm:
         realm_changes: list[str] = []
         connector.admin.change_current_realm = MagicMock(side_effect=lambda r: realm_changes.append(r))
 
-        # Mock find_client_by_client_id to return a client
+        # Mock find_client_by_client_id to return a confidential client and a public client
         # (this method internally switches to master before returning)
         mock_client = {"id": "internal-uuid-123", "clientId": "test-project-pr-123"}
-        connector.find_client_by_client_id = AsyncMock(return_value=mock_client)
+        mock_public_client = {"id": "internal-uuid-456", "clientId": "test-project-pr-123-public"}
+        connector.find_client_by_client_id = AsyncMock(side_effect=[mock_client, mock_public_client])
 
         # Mock delete_client to succeed
         connector.admin.delete_client = MagicMock()
@@ -200,27 +210,21 @@ class TestDeleteDeploymentClientRealm:
             realm_name="test-project-odcn-production",
         )
 
-        # The realm must be set to the project realm BEFORE delete_client is called.
-        # Sequence should be:
-        # 1. change_current_realm("test-project-odcn-production") - initial switch
-        # 2. find_client_by_client_id (internally switches to master)
-        # 3. change_current_realm("test-project-odcn-production") - re-switch after find
-        # 4. delete_client
-        # 5. change_current_realm("master") - cleanup
+        # Verify both clients were deleted
+        connector.admin.delete_client.assert_any_call(client_id="internal-uuid-123")
+        connector.admin.delete_client.assert_any_call(client_id="internal-uuid-456")
+        assert connector.admin.delete_client.call_count == 2
 
-        # Verify the realm was set to project realm right before delete
+        # Verify the realm was set to project realm before each delete
         assert "test-project-odcn-production" in realm_changes, (
             f"Project realm was never set. Realm changes: {realm_changes}"
         )
 
-        # The last realm change before delete_client should be the project realm
-        # Find the index where delete_client was called relative to realm changes
-        connector.admin.delete_client.assert_called_once_with(client_id="internal-uuid-123")
-
         # After the initial switch, find_client returns (which switched to master internally),
-        # then we must see another switch to project realm before the final switch to master
-        assert realm_changes.count("test-project-odcn-production") >= 2, (
-            f"Expected at least 2 switches to project realm (initial + before delete). Realm changes: {realm_changes}"
+        # then we must see switches to project realm before each delete
+        assert realm_changes.count("test-project-odcn-production") >= 3, (
+            f"Expected at least 3 switches to project realm (initial + before each delete). "
+            f"Realm changes: {realm_changes}"
         )
 
     @pytest.mark.asyncio
@@ -240,3 +244,28 @@ class TestDeleteDeploymentClientRealm:
 
         assert result is False
         connector.admin.delete_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_client_without_public_client(self):
+        """Should delete only the confidential client when public client doesn't exist."""
+        from opi.connectors.keycloak import KeycloakConnector
+
+        connector = KeycloakConnector.__new__(KeycloakConnector)
+        connector.admin = MagicMock()
+
+        realm_changes: list[str] = []
+        connector.admin.change_current_realm = MagicMock(side_effect=lambda r: realm_changes.append(r))
+
+        mock_client = {"id": "internal-uuid-123", "clientId": "test-project-pr-123"}
+        connector.find_client_by_client_id = AsyncMock(side_effect=[mock_client, None])
+
+        connector.admin.delete_client = MagicMock()
+
+        result = await connector.delete_deployment_client(
+            deployment_name="pr-123",
+            project_name="test-project",
+            realm_name="test-project-realm",
+        )
+
+        assert result is True
+        connector.admin.delete_client.assert_called_once_with(client_id="internal-uuid-123")

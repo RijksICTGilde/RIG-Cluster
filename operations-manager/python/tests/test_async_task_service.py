@@ -98,14 +98,15 @@ async def test_create_task(
     mock_pool.release.assert_awaited_once_with(mock_connection)
 
 
-async def test_create_task_dedup(
+async def test_create_task_dedup_identical_payload(
     task_service: AsyncTaskService,
     mock_pool: MagicMock,
     mock_connection: AsyncMock,
 ) -> None:
-    """When an active task already exists, create_task returns the existing one."""
+    """When an active task with identical payload exists, return the existing one."""
     mock_pool.acquire.return_value = mock_connection
-    existing_row = _make_task_row(status="running")
+    payload = {"image": "nginx:latest"}
+    existing_row = _make_task_row(status="running", payload=payload)
     mock_connection.fetchrow = AsyncMock(return_value=existing_row)
 
     result = await task_service.create_task(
@@ -113,13 +114,42 @@ async def test_create_task_dedup(
         project_name="test-project",
         deployment_name="main",
         cluster="test-cluster",
-        payload={"image": "nginx:latest"},
+        payload=payload,
     )
 
     assert result["task_id"] == str(existing_row["id"])
     assert result["status"] == "running"
     # Only the dedup SELECT should have been called, no INSERT
     mock_connection.fetchrow.assert_awaited_once()
+    mock_pool.release.assert_awaited_once_with(mock_connection)
+
+
+async def test_create_task_dedup_different_payload(
+    task_service: AsyncTaskService,
+    mock_pool: MagicMock,
+    mock_connection: AsyncMock,
+) -> None:
+    """When an active task with different payload exists, create a new queued task."""
+    mock_pool.acquire.return_value = mock_connection
+    existing_row = _make_task_row(status="running", payload={"image": "nginx:1.0"})
+    new_row = _make_task_row(status="pending", payload={"image": "nginx:2.0"})
+    # First fetchrow: dedup check returns existing task
+    # Second fetchrow: INSERT returns new task
+    mock_connection.fetchrow = AsyncMock(side_effect=[existing_row, new_row])
+
+    result = await task_service.create_task(
+        task_type="upsert_deployment",
+        project_name="test-project",
+        deployment_name="main",
+        cluster="test-cluster",
+        payload={"image": "nginx:2.0"},
+    )
+
+    # Should have created a new task, not returned the existing one
+    assert result["task_id"] == str(new_row["id"])
+    assert result["status"] == "pending"
+    # Both dedup SELECT and INSERT should have been called
+    assert mock_connection.fetchrow.await_count == 2
     mock_pool.release.assert_awaited_once_with(mock_connection)
 
 

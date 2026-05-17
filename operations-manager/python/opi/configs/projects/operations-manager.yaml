@@ -5,4 +5,4 @@ description: RIG Platform Operations Manager
 services:
   - keycloak:
       config:
-        template: sso-only
+        template: sso-support

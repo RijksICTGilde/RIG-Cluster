@@ -5,13 +5,16 @@ PVCs) for deferred deletion. Resources are held until the reconciliation job con
 they are both orphaned and past the configured grace period.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from opi.core.database_pool import DatabasePool
+if TYPE_CHECKING:
+    from opi.core.database_pool import DatabasePool
 
 logger = logging.getLogger(__name__)
 

@@ -13,6 +13,8 @@
   Optional:
     - tasks: list of task dicts (name, status, subtasks)
     - error: str | None
+    - component_failures: list of failure dicts (component, deployment, failure_type, message, logs) | None
+    - project_name: str | None (for linking to detail page)
     - container_id: str (default: "task-progress-{{ task_id }}")
     - success_message: str (default: "Wijzigingen succesvol verwerkt!")
     - on_complete: str | None (JavaScript to run on Ok click, e.g. "location.reload()")
@@ -34,7 +36,7 @@
     {% if status == "completed" %}
     <p class="edit-progress-step rvo-text--groen-700">{{ _success_msg }}</p>
     {% elif status == "failed" %}
-    <p class="edit-progress-step edit-progress-error">Verwerking mislukt: {{ error or "Onbekende fout" }}</p>
+    {% include "partials/_component_failures.html.j2" %}
     {% else %}
     <p class="edit-progress-step">{{ current_step }}</p>
     {% endif %}

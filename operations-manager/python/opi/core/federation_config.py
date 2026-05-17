@@ -39,7 +39,7 @@ class FederationRegistry:
         self._local_cluster = local_cluster
 
     @classmethod
-    def from_settings(cls, federation_peers_json: str, local_cluster: str) -> "FederationRegistry":
+    def from_settings(cls, federation_peers_json: str, local_cluster: str) -> FederationRegistry:
         """Parse a JSON array of peer configs and return a registry.
 
         Args:

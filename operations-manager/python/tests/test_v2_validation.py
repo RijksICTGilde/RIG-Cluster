@@ -364,7 +364,7 @@ class TestAddComponentValidation:
         "memory_limit",
         [
             pytest.param("16Mi", id="below-min-16Mi"),
-            pytest.param("2Gi", id="above-max-2Gi"),
+            pytest.param("8Gi", id="above-max-8Gi"),
             pytest.param("bogus", id="bogus-value"),
         ],
     )

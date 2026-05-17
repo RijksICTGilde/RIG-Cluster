@@ -1,6 +1,6 @@
 {# ArgoCD Status for the currently selected deployment (Deployments tab) #}
 {% if argocd_available and project.deployments %}
-{% for deployment in project.deployments %}
+{% for deployment in project.deployments | sort(attribute='name') %}
 <div class="deployment-section" id="argocd-{{ deployment.name }}"
      {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
 

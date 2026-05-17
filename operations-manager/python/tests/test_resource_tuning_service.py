@@ -51,16 +51,24 @@ class TestTuneDeploymentResources:
     """Tests for tune_deployment_resources service function."""
 
     @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_max_memory_limit_mi", return_value=4096)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-my-project")
     @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.commit_project_yaml", new_callable=AsyncMock)
-    @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_tune_with_oom_kills(
-        self, mock_get_connector, mock_get_service, mock_commit, mock_reprocess, mock_prefix, mock_min_mem
+        self,
+        mock_get_connector,
+        mock_get_from_git,
+        mock_commit,
+        mock_reprocess,
+        mock_prefix,
+        mock_max_mem,
+        mock_min_mem,
     ):
-        """OOM kills should produce a 1.5x recommendation."""
+        """OOM kills should produce a 2x recommendation (128Mi is in the <256Mi range)."""
         project_data = {
             "name": "my-project",
             "components": [
@@ -81,14 +89,10 @@ class TestTuneDeploymentResources:
                 }
             ],
         }
-        mock_project = MagicMock()
-        mock_project.data = project_data
-        mock_project.filename = "my-project.yaml"
-        mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
-        mock_get_service.return_value = mock_service
+        mock_git_connector = AsyncMock()
+        mock_get_from_git.return_value = (project_data, "my-project.yaml", mock_git_connector)
 
-        mock_connector = MagicMock()
+        mock_connector = AsyncMock()
         mock_connector.custom_query.side_effect = [
             [],  # max: no data
             [],  # avg: no data
@@ -102,14 +106,15 @@ class TestTuneDeploymentResources:
         assert isinstance(result, TuneResult)
         assert len(result.changes) == 1
         assert result.changes[0]["has_oom_kills"] == "True"
-        assert result.changes[0]["new_limits_memory"] == "192Mi"  # 128 * 1.5
+        assert result.changes[0]["new_limits_memory"] == "256Mi"  # 128 * 2.0
         assert result.deployment_refresh_triggered is True
 
+    @patch("opi.services.resource_tuning_service.get_max_memory_limit_mi", return_value=4096)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-my-project")
-    @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
-    async def test_no_data_returns_unchanged(self, mock_get_connector, mock_get_service, mock_prefix):
+    async def test_no_data_returns_unchanged(self, mock_get_connector, mock_get_from_git, mock_prefix, mock_max_mem):
         """No Prometheus data and no OOM should return unchanged."""
         project_data = {
             "name": "my-project",
@@ -123,14 +128,10 @@ class TestTuneDeploymentResources:
                 }
             ],
         }
-        mock_project = MagicMock()
-        mock_project.data = project_data
-        mock_project.filename = "my-project.yaml"
-        mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
-        mock_get_service.return_value = mock_service
+        mock_git_connector = AsyncMock()
+        mock_get_from_git.return_value = (project_data, "my-project.yaml", mock_git_connector)
 
-        mock_connector = MagicMock()
+        mock_connector = AsyncMock()
         mock_connector.custom_query.return_value = []
         mock_get_connector.return_value = mock_connector
 
@@ -155,15 +156,15 @@ class TestTuneDeploymentResources:
     async def test_metrics_unavailable_raises_runtime_error(self):
         """Should raise RuntimeError when metrics backend is unavailable."""
         with (
-            patch("opi.services.resource_tuning_service.get_project_service") as mock_get_service,
-            patch("opi.services.resource_tuning_service.get_metrics_connector") as mock_get_connector,
+            patch(
+                "opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock
+            ) as mock_get_from_git,
+            patch(
+                "opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock
+            ) as mock_get_connector,
         ):
-            mock_project = MagicMock()
-            mock_project.data = {"deployments": []}
-            mock_project.filename = "test.yaml"
-            mock_service = MagicMock()
-            mock_service.get_project.return_value = mock_project
-            mock_get_service.return_value = mock_service
+            mock_git_connector = AsyncMock()
+            mock_get_from_git.return_value = ({"deployments": []}, "test.yaml", mock_git_connector)
 
             mock_get_connector.side_effect = RuntimeError("Connection refused")
 
