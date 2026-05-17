@@ -1,0 +1,71 @@
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+spec:
+  # Applies to every pod in the tenant namespace.
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Pods in this namespace may talk to each other.
+    - from:
+        - podSelector: {}
+    # Traffic from the ingress controller so published web apps stay reachable.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ ingress_namespace | default("ingress-nginx") }}
+{% if allowed_ingress_namespaces %}
+    # Explicit cross-namespace ingress (e.g. the tenant's own app namespaces
+    # reaching this project's datastore namespace).
+    - from:
+{% for ns in allowed_ingress_namespaces %}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ ns }}
+{% endfor %}
+{% endif %}
+  egress:
+    # DNS resolution against the cluster DNS service. Without this nothing
+    # else works, so it is always allowed.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Pods in this namespace may talk to each other.
+    - to:
+        - podSelector: {}
+{% if datastore_namespaces %}
+    # Egress to the specific datastore namespaces this project provisioned
+    # (PostgreSQL cluster in the project's infrastructure namespace).
+    - to:
+{% for ns in datastore_namespaces %}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ ns }}
+{% endfor %}
+{% endif %}
+{% if minio_namespace %}
+    # Egress to the shared object storage (MinIO) when the project requested it.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ minio_namespace }}
+{% endif %}
+{% if extra_egress_cidrs %}
+    # Project-declared explicit egress destinations (opt-in via project file).
+    - to:
+{% for cidr in extra_egress_cidrs %}
+        - ipBlock:
+            cidr: {{ cidr }}
+{% endfor %}
+{% endif %}
