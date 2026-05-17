@@ -116,6 +116,16 @@ class EditModalHelper:
         labels = self.page.locator("#modal-wizard-steps .wizard-steps__label")
         return [labels.nth(i).text_content() or "" for i in range(labels.count())]
 
+    def select_with_rerender(self, select_locator, value: str, timeout: float = 10000) -> None:
+        """Select an option on a data-rerender field and wait for the HTMX swap.
+
+        Combines the select action with waiting for the triggered re-render to
+        complete, avoiding race conditions between the JS listener and the wait.
+        """
+        with self.page.expect_response(lambda r: "/step/" in r.url, timeout=timeout):
+            select_locator.select_option(value)
+        self.page.wait_for_load_state("networkidle", timeout=timeout)
+
     def _click_and_wait(self, locator, timeout: float = 10000) -> None:
         """Click a button and wait for the HTMX swap to complete.
 

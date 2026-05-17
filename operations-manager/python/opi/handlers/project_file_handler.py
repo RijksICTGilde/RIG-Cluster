@@ -7,26 +7,57 @@ including git-based diff generation and structured change extraction.
 
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from deepdiff import DeepDiff
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
-from opi.connectors.git import GitConnector
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.resource_analyzer import _k8s_memory_to_mb
+from opi.services.schema_migration import migrate_to_latest
 from opi.utils.age import decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
+from opi.utils.yaml_util import save_yaml_to_path
+
+if TYPE_CHECKING:
+    from opi.connectors.git import GitConnector
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_path_config(path_config: Any, label: str = "unknown") -> list[dict[str, str | None]]:
+    """Normalize a path value (string or list-of-dicts) to canonical list format.
+
+    Handles:
+    - ``str``: pre-migration plain string path (backward compat)
+    - ``list[dict]``: canonical v2.2+ format with ``match`` and optional ``rewrite``
+    """
+    if isinstance(path_config, str):
+        logger.debug("Found single path '%s' for '%s'", path_config, label)
+        return [{"match": path_config, "rewrite": None}]
+
+    if isinstance(path_config, list):
+        result = []
+        for p in path_config:
+            if isinstance(p, dict):
+                result.append({"match": p.get("match", "/"), "rewrite": p.get("rewrite")})
+            else:
+                result.append({"match": str(p), "rewrite": None})
+        if result:
+            logger.debug("Found %d path(s) for '%s'", len(result), label)
+            return result
+
+    logger.debug("No path found for '%s', using default '/'", label)
+    return [{"match": "/", "rewrite": None}]
+
 
 # Default resource values for deployment containers
 DEFAULT_RESOURCES: dict[str, str] = {
     "requests_memory": "128Mi",
     "requests_cpu": "50m",
     "limits_memory": "512Mi",
-    "limits_cpu": "1000m",
+    "limits_cpu": "500m",
 }
 
 
@@ -93,8 +124,8 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
     """Write flat resource keys into a nested resources block.
 
     Ensures the ``requests``/``limits`` structure exists, applies values,
-    and removes the legacy ``memory`` sub-dict (which used ``request``/``limit``
-    keys) to prevent dual-format entries.
+    and migrates any legacy flat ``cpu``/``memory`` keys into the nested
+    structure before removing them to prevent data loss.
     """
     if "resources" not in target:
         target["resources"] = {}
@@ -103,6 +134,13 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
         res["requests"] = {}
     if "limits" not in res:
         res["limits"] = {}
+
+    # Migrate legacy flat keys into the nested structure before they could
+    # be removed.  This prevents silently losing CPU or memory values that
+    # only existed in the old flat format.
+    _migrate_flat_key_before_apply(res, "cpu")
+    _migrate_flat_key_before_apply(res, "memory")
+
     if "requests_memory" in resources:
         res["requests"]["memory"] = resources["requests_memory"]
     if "requests_cpu" in resources:
@@ -111,8 +149,35 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
         res["limits"]["memory"] = resources["limits_memory"]
     if "limits_cpu" in resources:
         res["limits"]["cpu"] = resources["limits_cpu"]
-    # Remove legacy format (memory/request, memory/limit)
-    res.pop("memory", None)
+
+
+def _migrate_flat_key_before_apply(res: dict[str, Any], key: str) -> None:
+    """Migrate a legacy flat resource key into requests/limits if present.
+
+    Handles three legacy formats:
+    - ``cpu: {request: "50m", limit: "1"}`` — dict with request/limit
+    - ``cpu: "1"`` or ``memory: "256Mi"`` — plain string treated as limit
+    - ``memory: {request: "128Mi", limit: "256Mi"}`` — dict with request/limit
+
+    Only fills in nested values that are not already set, then removes
+    the flat key so the dual-format entry is cleaned up.
+    """
+    value = res.get(key)
+    if value is None:
+        return
+
+    if isinstance(value, dict):
+        if "request" in value and key not in res.get("requests", {}):
+            res.setdefault("requests", {})[key] = str(value["request"])
+        if "limit" in value and key not in res.get("limits", {}):
+            res.setdefault("limits", {})[key] = str(value["limit"])
+    elif isinstance(value, str | int | float):
+        if key not in res.get("limits", {}):
+            res.setdefault("limits", {})[key] = str(value)
+        if key == "memory" and key not in res.get("requests", {}):
+            res.setdefault("requests", {})[key] = str(value)
+
+    del res[key]
 
 
 class ProjectFileHandler:
@@ -123,6 +188,7 @@ class ProjectFileHandler:
         logger.debug("Initializing ProjectFileHandler")
         self._project_data: dict[str, str | list | dict[str, str]] | None = None
         self._full_file_path: str | None = None
+        self._was_migrated: bool = False
 
     def _normalize_age_content(self, age_content: str) -> str:
         """
@@ -234,9 +300,16 @@ class ProjectFileHandler:
             raise Exception("Can only initialize one project file per class")
 
         if not self._project_data:
-            self._project_data = await self._parse_project_file(full_file_path)
+            raw_data = await self._parse_project_file(full_file_path)
+            migrated_data, self._was_migrated = migrate_to_latest(raw_data)
+            self._project_data = migrated_data
             self._full_file_path = full_file_path
         return self._project_data
+
+    @property
+    def was_migrated(self) -> bool:
+        """Whether the last read_project_file call required schema migration."""
+        return self._was_migrated
 
     async def _parse_project_file(self, file_path: str) -> dict[str, str | list | dict[str, str]]:
         """
@@ -460,7 +533,6 @@ class ProjectFileHandler:
         matches = jsonpath_expr.find(data)
 
         if not matches:
-            logger.debug(f"No matches found for JSONPath: {path}")
             return default
 
         # If path contains [*], always return a list (even for single match)
@@ -581,7 +653,8 @@ class ProjectFileHandler:
         """
         Extract publication paths from a component definition.
 
-        Supports both simple string format and list format with optional rewrite.
+        Canonical format (v2.2+): list of dicts with ``match`` and optional ``rewrite``.
+        Backward compat: plain string path (pre-migration files).
 
         Args:
             project_data: The parsed project data
@@ -589,39 +662,10 @@ class ProjectFileHandler:
 
         Returns:
             List of path configs: [{"match": "/api", "rewrite": None}, ...]
-
-        Examples:
-            # Simple string format
-            path: "/"
-            -> [{"match": "/", "rewrite": None}]
-
-            # List format with rewrite
-            path:
-              - match: "/kader"
-                rewrite: "/"
-            -> [{"match": "/kader", "rewrite": "/"}]
         """
         json_path = f"$.components[?(@.name='{component_name}')].path"
         path_config = self.extract_value_by_path(project_data, json_path, "/")
-
-        # Normalize to list format
-        if isinstance(path_config, str):
-            logger.debug(f"Found single path '{path_config}' for component '{component_name}'")
-            return [{"match": path_config, "rewrite": None}]
-        elif isinstance(path_config, list):
-            result = []
-            for p in path_config:
-                if isinstance(p, dict):
-                    rewrite = p.get("rewrite")
-                    match_value = p.get("match", "/")
-                    result.append({"match": match_value, "rewrite": rewrite})
-                else:
-                    result.append({"match": str(p), "rewrite": None})
-            logger.info(f"Found {len(result)} path(s) for component '{component_name}'")
-            return result
-
-        logger.debug(f"No path found for component '{component_name}', using default '/'")
-        return [{"match": "/", "rewrite": None}]
+        return _normalize_path_config(path_config, component_name)
 
     def extract_deployment_component_paths(
         self,
@@ -632,7 +676,7 @@ class ProjectFileHandler:
         """
         Extract publication paths for a component in a deployment context.
 
-        Checks deployment-level paths first (deployments[].components[].paths),
+        Checks deployment-level path first (deployments[].components[].path),
         then falls back to component-level path (components[].path).
 
         Args:
@@ -643,19 +687,14 @@ class ProjectFileHandler:
         Returns:
             List of path configs: [{"match": "/api", "rewrite": None}, ...]
         """
-        # Check deployment-level paths first
+        # Check deployment-level path first
         components = deployment_data.get("components", [])
         for comp in components:
             if comp.get("reference") == component_reference:
-                paths = comp.get("paths")
-                if paths is not None:
-                    result = []
-                    for p in paths:
-                        if isinstance(p, dict):
-                            result.append({"match": p.get("match", "/"), "rewrite": p.get("rewrite")})
-                        else:
-                            result.append({"match": str(p), "rewrite": None})
-                    if result:
+                path_config = comp.get("path")
+                if path_config is not None:
+                    result = _normalize_path_config(path_config, component_reference)
+                    if result != [{"match": "/", "rewrite": None}]:
                         logger.info(
                             f"Found {len(result)} deployment-level path(s) for component '{component_reference}'"
                         )
@@ -2147,7 +2186,7 @@ class ProjectFileHandler:
             logger.info(f"Found {len(helm_charts)} helm chart reference(s) in deployment '{deployment_name}'")
             return helm_charts if isinstance(helm_charts, list) else [helm_charts]
 
-        logger.debug(f"No helm-charts found in deployment '{deployment_name}'")
+        # Intentionally no log for missing helm-charts — most deployments don't have them
         return []
 
     def extract_helm_chart_uses_services(self, project_data: dict[str, Any], chart_name: str) -> list[str]:
@@ -2319,7 +2358,7 @@ class ProjectFileHandler:
             logger.info(f"Found {len(helmfiles)} helmfile reference(s) in deployment '{deployment_name}'")
             return helmfiles if isinstance(helmfiles, list) else [helmfiles]
 
-        logger.debug(f"No helmfiles found in deployment '{deployment_name}'")
+        # Intentionally no log for missing helmfiles — most deployments don't have them
         return []
 
     def extract_helmfile_uses_services(self, project_data: dict[str, Any], helmfile_name: str) -> list[str]:
@@ -2396,6 +2435,24 @@ class ProjectFileHandler:
                     return True
 
         return False
+
+    def get_deployment_backup_labels(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str,
+    ) -> list[dict[str, str]]:
+        """Get backup labels for services this deployment actually uses.
+
+        Returns the subset of backupable service labels (pvc, database, minio)
+        that the deployment uses, based on its components, helm-charts, and
+        helmfiles.
+        """
+        result: list[dict[str, str]] = []
+        for bl in ServiceAdapter.get_backupable_labels():
+            svc_types = ServiceAdapter.get_service_types_for_backup_label(bl["label"])
+            if self.deployment_uses_service(project_data, deployment_name, svc_types):
+                result.append(bl)
+        return result
 
     def get_components_using_service(
         self,
@@ -2749,15 +2806,7 @@ def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
         project_data: The project data dictionary to save
     """
     logger.info(f"Saving project file: {file_path}")
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    yaml.default_flow_style = False
-    yaml.indent(mapping=2, sequence=4, offset=2)
-    yaml.representer.ignore_aliases = lambda *_: True
-
-    with open(file_path, "w") as f:
-        yaml.dump(project_data, f)
-
+    save_yaml_to_path(file_path, project_data)
     logger.debug(f"Successfully saved project file: {file_path}")
 
 

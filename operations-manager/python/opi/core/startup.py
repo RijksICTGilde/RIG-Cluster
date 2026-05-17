@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+    from opi.connectors.kubectl import KubectlConnector
     from opi.core.readiness import ReadinessState
-from fastapi import FastAPI
 from keycloak.exceptions import KeycloakError
 from tenacity import (
     after_log,
@@ -31,7 +33,6 @@ from opi.connectors.git import (
     create_git_connector_for_project_files,
 )
 from opi.connectors.keycloak import create_keycloak_connector
-from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
@@ -39,7 +40,7 @@ from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_service import get_project_service, initialize_project_service
+from opi.services.project_service import Project, ProjectUser, get_project_service, initialize_project_service
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
@@ -180,7 +181,7 @@ async def start_prometheus_reconnection_task() -> None:
     The application continues to function without Prometheus - metrics will
     simply be unavailable until connection is established.
     """
-    metrics_connector = get_metrics_connector()
+    metrics_connector = await get_metrics_connector()
 
     if metrics_connector.is_connected:
         logger.info("Metrics connector already connected, no background reconnection needed")
@@ -264,14 +265,14 @@ class ProjectRefreshState:
 
     REFRESH_TTL_SECONDS = 30
 
-    _instance: "ProjectRefreshState | None" = None
+    _instance: ProjectRefreshState | None = None
 
     def __init__(self) -> None:
         self.last_refresh_time: float = 0.0
         self.refresh_lock = asyncio.Lock()
 
     @classmethod
-    def get_instance(cls) -> "ProjectRefreshState":
+    def get_instance(cls) -> ProjectRefreshState:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -331,9 +332,6 @@ async def refresh_projects_from_git() -> int:
 
     project_service = get_project_service()
 
-    # Clear existing projects to reload fresh data
-    project_service.clear_all_projects()
-
     # Create a shared Git connector that will be reused across all ProjectManagers
     shared_git_connector = None
     try:
@@ -347,6 +345,9 @@ async def refresh_projects_from_git() -> int:
         raise
 
     try:
+        # Build new project dict first, then swap atomically to avoid
+        # a window where the cache is empty or partially populated (causes 401s).
+        new_projects: dict[str, Project] = {}
         loaded_count = 0
         for project_file in project_files:
             # Each ProjectManager shares the git connector for project files
@@ -364,16 +365,28 @@ async def refresh_projects_from_git() -> int:
                 project_name = await project_manager.get_name()
                 project_data = await project_manager.get_contents()
 
-                # Register project with users and full project data
-                project_service.register(
-                    project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
+                # Build Project object for the new dict
+                users_data = project_data.get("users", [])
+                users = None
+                if users_data and isinstance(users_data, list):
+                    users = [
+                        ProjectUser(email=u["email"], role=u["role"])
+                        for u in users_data
+                        if isinstance(u, dict) and "email" in u and "role" in u
+                    ]
+
+                new_projects[project_name] = Project(
+                    name=project_name,
+                    api_key=api_key,
+                    filename=project_file_base_name,
+                    users=users or None,
+                    data=project_data,
                 )
 
                 # Add project users to allowed emails list
-                project_users = project_data.get("users", [])
-                if project_users:
+                if users_data:
                     user_service = get_user_service()
-                    project_user_emails = [u.get("email") for u in project_users if u.get("email")]
+                    project_user_emails = [u.get("email") for u in users_data if u.get("email")]
                     if project_user_emails:
                         user_service.add_allowed_emails(project_user_emails)
 
@@ -382,6 +395,9 @@ async def refresh_projects_from_git() -> int:
                 logger.error(f"Error refreshing project file {project_file}: {e}")
             finally:
                 await project_manager.close()
+
+        # Atomic swap: concurrent requests always see a complete project set
+        project_service.replace_all_projects(new_projects)
 
         logger.info(f"Refreshed {loaded_count} projects from Git")
         return loaded_count
@@ -565,7 +581,7 @@ async def check_minio_availability() -> bool:
         return False
 
 
-async def _setup_database(readiness: "ReadinessState") -> bool:
+async def _setup_database(readiness: ReadinessState) -> bool:
     """Initialize database pools. Returns True on success.
 
     Note: Database migrations are now primarily handled by the Docker entrypoint
@@ -597,7 +613,7 @@ async def _setup_database(readiness: "ReadinessState") -> bool:
         return False
 
 
-async def _setup_projects(readiness: "ReadinessState", app: FastAPI, skip_checks: bool) -> bool:
+async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: bool) -> bool:
     """Load project files from Git. Returns True on success."""
     try:
         # Initialize the API key service for project API key registration
@@ -615,6 +631,22 @@ async def _setup_projects(readiness: "ReadinessState", app: FastAPI, skip_checks
             env_emails = [email.strip() for email in settings.ALLOWED_EMAILS.split(",") if email.strip()]
             if env_emails:
                 user_service.add_allowed_emails(env_emails)
+
+        # Load platform users from the users database table into the allowlist
+        try:
+            from opi.core.database_pools import get_database_pool
+            from opi.services.user_admin_service import UserAdminService
+
+            pool = get_database_pool("main")
+            admin_service = UserAdminService(pool)
+            db_users = await admin_service.list_users()
+            if db_users:
+                db_emails = [u["email"] for u in db_users if u.get("email")]
+                if db_emails:
+                    user_service.add_allowed_emails(db_emails)
+                    logger.info(f"Loaded {len(db_emails)} platform users from database into allowlist")
+        except Exception as e:
+            logger.warning(f"Could not load platform users from database: {e}")
 
         project_service = get_project_service()
         default_admin_emails = [
@@ -679,7 +711,7 @@ async def _setup_projects(readiness: "ReadinessState", app: FastAPI, skip_checks
         return False
 
 
-async def _setup_keycloak(readiness: "ReadinessState", skip_checks: bool) -> bool:
+async def _setup_keycloak(readiness: ReadinessState, skip_checks: bool) -> bool:
     """Set up Keycloak realm and SSO. Returns True on success."""
     if skip_checks:
         readiness.keycloak.mark_ready()
@@ -708,7 +740,7 @@ async def _setup_keycloak(readiness: "ReadinessState", skip_checks: bool) -> boo
         return False
 
 
-async def _setup_oauth(readiness: "ReadinessState", app: FastAPI) -> bool:
+async def _setup_oauth(readiness: ReadinessState, app: FastAPI) -> bool:
     """Register OAuth client. Returns True on success."""
     try:
         await register_oauth_client_after_keycloak_setup(app)
@@ -774,7 +806,7 @@ async def run_startup_tasks(app: FastAPI) -> bool:
 
     # Initialize metrics connector (non-critical)
     logger.info("Initializing metrics connector")
-    metrics_connector = get_metrics_connector()
+    metrics_connector = await get_metrics_connector()
     if not metrics_connector.is_connected:
         logger.warning("Metrics connector not available at startup, starting background reconnection task")
         app.state.metrics_reconnect_task = asyncio.create_task(start_prometheus_reconnection_task())

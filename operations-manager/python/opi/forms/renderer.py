@@ -284,10 +284,11 @@ class FormRenderer:
         layout: LayoutElement | list,
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
+        warnings: dict[str, list[str]] | None = None,
     ) -> str:
         """Render form fields without form wrapper (for HTMX partial updates)."""
         self._edit_mode = edit_mode
-        fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode)
+        fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode, warnings=warnings)
 
         if isinstance(layout, list):
             content_parts = [self._render_layout_element(elem, fields_by_name, yaml_data) for elem in layout]
@@ -301,6 +302,7 @@ class FormRenderer:
         yaml_data: dict[str, Any],
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
+        warnings: dict[str, list[str]] | None = None,
     ) -> dict[str, FormField]:
         """Convert editables to FormField dict for the layout pipeline."""
         from opi.forms.editables.service_path import smart_set_value
@@ -330,7 +332,9 @@ class FormRenderer:
 
             if editable.widget == WidgetType.GROUP:
                 # Groups flatten their children into the field list
-                group_fields = self._build_group_fields(editable, yaml_data, errors, edit_mode, provider_context)
+                group_fields = self._build_group_fields(
+                    editable, yaml_data, errors, edit_mode, provider_context, warnings=warnings
+                )
                 fields_by_name.update(group_fields)
             elif editable.widget == WidgetType.SEQUENCE:
                 seq_field = self._build_sequence_field(editable, yaml_data, errors, edit_mode, provider_context)
@@ -342,6 +346,7 @@ class FormRenderer:
                     errors,
                     edit_mode=edit_mode,
                     provider_context=provider_context,
+                    warnings=warnings,
                 )
                 # Pass locked services to service_cards widget
                 if editable.widget == WidgetType.SERVICE_CARDS and "_locked_services" in yaml_data:
@@ -493,6 +498,7 @@ class FormRenderer:
         errors: dict[str, list[str]],
         edit_mode: bool,
         provider_context: dict[str, Any] | None = None,
+        warnings: dict[str, list[str]] | None = None,
     ) -> dict[str, FormField]:
         """Flatten a group editable's children into individual form fields.
 
@@ -508,7 +514,9 @@ class FormRenderer:
             if not should_render_editable(child, yaml_data, siblings=group_children):
                 continue
             if child.widget == WidgetType.GROUP:
-                fields.update(self._build_group_fields(child, yaml_data, errors, edit_mode, provider_context))
+                fields.update(
+                    self._build_group_fields(child, yaml_data, errors, edit_mode, provider_context, warnings=warnings)
+                )
             elif child.widget == WidgetType.SEQUENCE:
                 seq_field = self._build_sequence_field(child, yaml_data, errors, edit_mode, provider_context)
                 fields[child.editable.yaml_path] = seq_field
@@ -519,6 +527,7 @@ class FormRenderer:
                     errors,
                     edit_mode=edit_mode,
                     provider_context=provider_context,
+                    warnings=warnings,
                 )
                 fields[form_field.path] = form_field
         return fields
@@ -531,11 +540,23 @@ class FormRenderer:
         edit_mode: bool,
         provider_context: dict[str, Any] | None = None,
     ) -> FormField:
-        """Build a FormField for a sequence editable with item children."""
+        """Build a FormField for a sequence editable with item children.
+
+        When the sequence carries a ``virtualize`` mapping, the form path is
+        rewritten to the virtual segment (e.g. ``services`` → ``_services-config``)
+        and the same mapping is propagated to each non-sequence child via
+        ``parent_virtualize`` — mirroring ``_build_nested_sequence_field`` so the
+        modal-edit-component flow (which flattens nested sequences to the top
+        level) doesn't collide with the sibling service-selection list.
+        """
+        from opi.forms.editables.editable import apply_virtualize
         from opi.forms.editables.service_path import smart_get_value
         from opi.forms.visualizers.bridge import editable_to_form_field, should_render_editable
 
         ed = editable.editable
+        virt = ed.virtualize
+        # Always read items from the REAL path; only the form-side name uses
+        # the virtual segment.
         items = smart_get_value(yaml_data, ed.yaml_path) or []
         if not isinstance(items, list):
             items = []
@@ -544,15 +565,17 @@ class FormRenderer:
         while len(items) < ed.min_items:
             items.append({})
 
+        form_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
         seq_field = FormField(
-            name=ed.yaml_path,
-            path=ed.yaml_path,
+            name=form_path,
+            path=form_path,
             schema_type=list,
             widget_type="sequence",
             label=editable.label or "",
             description=editable.description,
             min_items=ed.min_items,
             max_items=ed.max_items,
+            virtualize=virt,
         )
 
         # Detect per-item reference exclusion for ComponentReferenceOptionsProvider
@@ -593,12 +616,13 @@ class FormRenderer:
                         index=index,
                         edit_mode=edit_mode,
                         provider_context=item_context,
+                        parent_virtualize=virt,
                     )
                     item_children.append(child_field)
 
             item_field = FormField(
-                name=f"{ed.yaml_path}[{index}]",
-                path=f"{ed.yaml_path}[{index}]",
+                name=f"{form_path}[{index}]",
+                path=f"{form_path}[{index}]",
                 schema_type=dict,
                 widget_type="sequence_item",
                 label=f"Item {index + 1}",

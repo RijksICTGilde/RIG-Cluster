@@ -61,6 +61,7 @@ class KeycloakSetup:
             context = {
                 "realm_name": settings.KEYCLOAK_DEFAULT_REALM,
                 "realm_display_name": settings.KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME,
+                "keycloak_url": settings.KEYCLOAK_URL,
                 "sso_client_id": settings.KEYCLOAK_MASTER_OIDC_CLIENT_ID,
                 "sso_client_secret": settings.KEYCLOAK_MASTER_OIDC_CLIENT_SECRET,
                 "sso_discovery_url": settings.KEYCLOAK_MASTER_OIDC_DISCOVERY_URL,

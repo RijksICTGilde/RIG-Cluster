@@ -10,13 +10,16 @@ import contextlib
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from opi.core.async_task_service import AsyncTaskService
 from opi.core.task_manager import (
     ProjectInfo,
     TaskStatus,
     _projects,
 )
+
+if TYPE_CHECKING:
+    from opi.core.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
 

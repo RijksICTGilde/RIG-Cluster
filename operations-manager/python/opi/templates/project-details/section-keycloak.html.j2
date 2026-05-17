@@ -33,7 +33,8 @@
                     size="sm"
                     showIcon="after"
                     icon="externe-link"
-                    @click="window.open('{{ kc_config.host }}/admin/master/console/#/{{ kc_config.realm }}', '_blank')" />
+                    data-url="{{ kc_config.host }}/admin/master/console/#/{{ kc_config.realm }}"
+                    @click="window.open(this.dataset.url, '_blank')" />
             </div>
             <div class="config-item">
                 <div class="config-label">

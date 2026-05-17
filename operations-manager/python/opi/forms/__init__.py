@@ -103,6 +103,7 @@ from opi.forms.visualizers.providers import (
     CpuRequestOptionsProvider,
     DomainModeOptionsProvider,
     MemoryOptionsProvider,
+    MemoryRequestOptionsProvider,
     ServiceOptionsProvider,
     UserRoleOptionsProvider,
     get_all_providers,
@@ -150,6 +151,7 @@ __all__ = [
     "LayoutElement",
     "ListConverter",
     "MemoryOptionsProvider",
+    "MemoryRequestOptionsProvider",
     "OptionsProvider",
     "PatternValidatorHook",
     # Models

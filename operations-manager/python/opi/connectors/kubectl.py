@@ -6,6 +6,7 @@ This module provides functionality to interact with Kubernetes clusters using ku
 
 import asyncio
 import base64
+import json
 import logging
 import os
 from datetime import UTC
@@ -738,7 +739,7 @@ class KubectlConnector:
             # try fetching previous container logs
             if not log_lines:
                 prev_args = ["logs", "-l", f"app={deployment_name}", "-n", namespace, f"--tail={lines}", "--previous"]
-                prev_stdout, prev_stderr, prev_code = await self._run_kubectl_command(prev_args)
+                prev_stdout, _, prev_code = await self._run_kubectl_command(prev_args)
                 if prev_code == 0 and prev_stdout.strip():
                     log_lines = ["[previous container logs]"] + [
                         line for line in prev_stdout.split("\n") if line.strip()
@@ -759,14 +760,17 @@ class KubectlConnector:
         Uses label selector instead of deployment/ to avoid needing deployment
         get permissions - only requires pods and pods/log permissions.
 
-        This returns a subprocess that streams logs in real-time. The caller
-        is responsible for reading from process.stdout and terminating the
-        process when done.
+        Returns a subprocess that streams logs in real-time. The caller is
+        responsible for reading from process.stdout, terminating the process
+        when done, and restarting it if it exits (which it does for pods in
+        CrashLoopBackOff or after the matched pod terminates).
 
         Args:
             deployment_name: Name of the deployment
             namespace: Namespace containing the deployment
-            lines: Number of historical lines to retrieve initially (default: 100)
+            lines: Number of historical lines to retrieve initially. Pass 0
+                on reattach so the follower only streams NEW output and does
+                not re-dump the same stored tail every backoff cycle.
 
         Returns:
             Subprocess with stdout stream, or None if failed to start
@@ -775,7 +779,7 @@ class KubectlConnector:
             logger.error("kubectl connection is not available for log streaming")
             return None
 
-        logger.debug(f"Starting log stream for deployment {deployment_name} in namespace {namespace}")
+        logger.debug(f"Starting log stream for deployment {deployment_name} in namespace {namespace} (tail={lines})")
 
         try:
             # Use label selector instead of deployment/ to only require pod permissions
@@ -797,34 +801,20 @@ class KubectlConnector:
                 env=self.env,
             )
 
-            # Wait briefly to see if process exits immediately (no running pods)
-            await asyncio.sleep(0.5)
-            if process.returncode is not None:
-                logger.info(f"Log stream exited immediately for {deployment_name}, trying previous container logs")
-                # Try --previous without -f (incompatible flags)
-                prev_cmd = [
-                    "kubectl",
-                    "logs",
-                    "-l",
-                    f"app={deployment_name}",
-                    "-n",
-                    namespace,
-                    f"--tail={lines}",
-                    "--previous",
-                ]
-                process = await asyncio.create_subprocess_exec(
-                    *prev_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=self.env,
-                )
-
-            logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid})")
+            logger.info(f"Started log stream for {deployment_name} in {namespace} (PID: {process.pid}, tail={lines})")
             return process
 
         except Exception as e:
             logger.error(f"Error starting log stream for {deployment_name}: {e}")
             return None
+
+    # Event object prefixes and reasons that are infrastructure noise —
+    # not actionable by project users.
+    _IGNORED_EVENT_PREFIXES = ("cm-acme-",)
+    _IGNORED_EVENT_REASONS = (
+        "FailedToUpdateEndpoint",
+        "FailedIngressToRouteConversion",
+    )
 
     async def get_namespace_events(
         self,
@@ -871,13 +861,22 @@ class KubectlConnector:
                         event_dt = datetime.fromisoformat(timestamp)
                         if (now - event_dt).total_seconds() / 3600 > max_age_hours:
                             continue
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         pass
+
+                # Filter out infrastructure noise that users can't act on
+                obj_name = event.get("involvedObject", {}).get("name", "")
+                reason = event.get("reason", "")
+                if any(obj_name.startswith(p) for p in self._IGNORED_EVENT_PREFIXES):
+                    continue
+                if reason in self._IGNORED_EVENT_REASONS:
+                    continue
+
                 events.append(
                     {
                         "type": event.get("type", ""),
-                        "reason": event.get("reason", ""),
-                        "object": event.get("involvedObject", {}).get("name", ""),
+                        "reason": reason,
+                        "object": obj_name,
                         "message": event.get("message", ""),
                         "time": timestamp,
                     }
@@ -950,6 +949,41 @@ class KubectlConnector:
         except Exception as e:
             logger.error(f"Error getting deployment status: {e}")
             return []
+
+    async def get_deployment_conditions(self, namespace: str, deployment_name: str) -> list[dict[str, str]] | None:
+        """
+        Get the status conditions of a specific deployment.
+
+        Args:
+            namespace: Namespace of the deployment
+            deployment_name: Name of the deployment
+
+        Returns:
+            List of condition dicts (with keys: type, status, reason, message),
+            or None if the deployment was not found.
+        """
+        try:
+            args = [
+                "get",
+                "deployment",
+                deployment_name,
+                "-n",
+                namespace,
+                "-o",
+                "json",
+            ]
+            stdout, stderr, code = await self._run_kubectl_command(args)
+
+            if code != 0:
+                logger.debug(f"Deployment '{deployment_name}' not found in {namespace}: {stderr}")
+                return None
+
+            data = json.loads(stdout)
+            return data.get("status", {}).get("conditions", [])
+
+        except Exception as e:
+            logger.warning(f"Error getting deployment conditions for {deployment_name}: {e}")
+            return None
 
     async def delete_resource(self, resource_type: str, resource_name: str, namespace: str | None = None) -> bool:
         """

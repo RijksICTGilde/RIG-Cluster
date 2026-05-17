@@ -1,4 +1,4 @@
-{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, bool_attr, optional_attr, htmx_attrs, extra_attrs, format_value %}
+{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, render_warnings, bool_attr, optional_attr, htmx_attrs, extra_attrs, format_value %}
 {% if field.help_template %}
 <div class="field-with-help">
 <c-icon icon="vraagteken" size="xl" color="hemelblauw"
@@ -22,6 +22,7 @@
     {{ htmx_attrs(field) }}
     {{ extra_attrs(field) }}
 />{{ render_examples(field) }}
+{{ render_warnings(field.warnings) }}
 {% if field.help_template %}
 </div>
 {% endif %}

@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.fields.deployments import (
+    BACKUP_DEPLOYMENT_NAME_EDITABLE,
+    BACKUP_RESOURCE_TYPES_EDITABLE,
+    DEPLOYMENT_BACKUP_RESOURCE_TYPES_EDITABLE,
+    DEPLOYMENT_BACKUP_SCHEDULE_DAY_EDITABLE,
+    DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE,
+    DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY_EDITABLE,
+    DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE,
     DEPLOYMENT_BASE_DOMAIN_EDITABLE,
     DEPLOYMENT_CLONE_FROM_EDITABLE,
     DEPLOYMENT_CLUSTER_EDITABLE,
@@ -88,6 +95,51 @@ DEPLOYMENT_CLONE_FROM = EditableVisualizer(
     help_text="Kopieer database- en opslagdata van een andere deployment. Handig voor preview/PR-omgevingen.",
 )
 
+DEPLOYMENT_BACKUP_SCHEDULE = EditableVisualizer(
+    editable=DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Herhaling",
+    help_text="Hoe vaak automatische backups worden gemaakt.",
+    attributes={"data-rerender": "true"},
+)
+DEPLOYMENT_BACKUP_SCHEDULE_TIME = EditableVisualizer(
+    editable=DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Tijd (indicatie)",
+    help_text="Rond welk tijdstip de backup wordt gestart. Dit is een indicatie, niet een exact tijdstip.",
+)
+DEPLOYMENT_BACKUP_SCHEDULE_DAY = EditableVisualizer(
+    editable=DEPLOYMENT_BACKUP_SCHEDULE_DAY_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Dag van de week",
+)
+DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY = EditableVisualizer(
+    editable=DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Dag van de maand",
+)
+DEPLOYMENT_BACKUP_RESOURCE_TYPES = EditableVisualizer(
+    editable=DEPLOYMENT_BACKUP_RESOURCE_TYPES_EDITABLE,
+    widget=WidgetType.CHECKBOX_GROUP,
+    label="Resource types",
+    description="Selecteer welke resource types automatisch worden geback-upt.",
+)
+
+# Manual backup visualizers (transient)
+BACKUP_DEPLOYMENT_NAME = EditableVisualizer(
+    editable=BACKUP_DEPLOYMENT_NAME_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Deployment",
+    description="Selecteer de deployment waarvoor u een backup wilt aanmaken.",
+    attributes={"data-rerender": "true"},
+)
+BACKUP_RESOURCE_TYPES = EditableVisualizer(
+    editable=BACKUP_RESOURCE_TYPES_EDITABLE,
+    widget=WidgetType.CHECKBOX_GROUP,
+    label="Resource types",
+    description="Selecteer welke resource types u wilt back-uppen.",
+)
+
 DEPLOYMENT_COMP_REFERENCE = EditableVisualizer(
     editable=DEPLOYMENT_COMP_REFERENCE_EDITABLE,
     widget=WidgetType.SELECT,
@@ -145,6 +197,11 @@ DEPLOYMENTS_SEQUENCE = EditableVisualizer(
         DEPLOYMENT_DOMAIN_MODE,
         DEPLOYMENT_DOMAIN_FORMAT,
         DEPLOYMENT_CLONE_FROM,
+        DEPLOYMENT_BACKUP_SCHEDULE,
+        DEPLOYMENT_BACKUP_SCHEDULE_TIME,
+        DEPLOYMENT_BACKUP_SCHEDULE_DAY,
+        DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY,
+        DEPLOYMENT_BACKUP_RESOURCE_TYPES,
         DEPLOYMENT_COMPONENTS_SEQ,
     ],
 )

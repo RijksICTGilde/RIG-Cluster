@@ -22,16 +22,19 @@ from opi.forms.visualizers.display_blocks import compute_url_preview as _compute
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import (
-    DEPLOYMENT_BASE_DOMAIN,
+    BACKUP_DEPLOYMENT_NAME,
+    BACKUP_RESOURCE_TYPES,
+    DEPLOYMENT_BACKUP_RESOURCE_TYPES,
+    DEPLOYMENT_BACKUP_SCHEDULE,
+    DEPLOYMENT_BACKUP_SCHEDULE_DAY,
+    DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY,
+    DEPLOYMENT_BACKUP_SCHEDULE_TIME,
     DEPLOYMENT_CLONE_FROM,
     DEPLOYMENT_COMP_IMAGE,
     DEPLOYMENT_COMP_REFERENCE,
     DEPLOYMENT_COMP_USER_ENV_VARS,
     DEPLOYMENT_COMPONENTS_SEQ,
-    DEPLOYMENT_CUSTOM_BASE_DOMAIN,
-    DEPLOYMENT_DOMAIN_FORMAT,
     DEPLOYMENT_NAME,
-    DEPLOYMENT_SUBDOMAIN,
     DEPLOYMENTS_SEQUENCE,
 )
 from opi.forms.visualizers.fields.domains import (
@@ -146,8 +149,7 @@ COMPONENTS_SECTION = FormSection(
                         "Bijvoorbeeld: / voor de frontend en /api voor de backend."
                     ),
                     children=[
-                        "path",
-                        "rewrite-path",
+                        Sequence(field_name="path"),
                     ],
                 ),
                 Fieldset(
@@ -274,10 +276,13 @@ DOMAIN_SECTION = FormSection(
     layout=[
         TemplatePartial(template="wizard/partials/domain_info.html.j2"),
         "deployments[*]/base-domain",
+        "deployments[*]/_request-domain",
         "deployments[*]/base-domain:custom",
         "deployments[*]/domain-format",
         "deployments[*]/subdomain",
+        "deployments[*]/_request-subdomain",
         "deployments[*]/root-component",
+        "deployments[*]/expose-component-on-bare-domain",
         DisplayBlock(
             display_id="url-preview",
             compute=_compute_url_preview,
@@ -608,7 +613,9 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
             return
         component = components[component_index]
         comp_name = component.get("name")
-        comp_image = component.get("image")
+        comp_image = component.get(
+            "image"
+        )  # TODO: clarify purpose — see features/component-image-field-clarification.md
         if not comp_name:
             return
 
@@ -728,8 +735,8 @@ BACKUP_SELECT_SECTION = FormSection(
     title="Backup configuratie",
     icon="database",
     description="Selecteer een deployment en welke resources u wilt back-uppen",
-    editables=[],
-    layout=[TemplatePartial(template="wizard/partials/backup_select_deployment.html.j2")],
+    editables=[BACKUP_DEPLOYMENT_NAME, BACKUP_RESOURCE_TYPES],
+    layout=["deployment_name", "resource_types"],
     post_save_action="trigger_backup",
     summary_fn=_backup_summary,
 )
@@ -779,44 +786,33 @@ def _materialize_new_deployment_fields(
 
 # The base set of visualizers for creating a new deployment (info + domain).
 _NEW_DEPLOYMENT_INFO_VISUALIZERS = [DEPLOYMENT_NAME, DEPLOYMENT_CLONE_FROM]
-_NEW_DEPLOYMENT_DOMAIN_VISUALIZERS = [
-    DEPLOYMENT_SUBDOMAIN,
-    DEPLOYMENT_BASE_DOMAIN,
-    DEPLOYMENT_CUSTOM_BASE_DOMAIN,
-    DEPLOYMENT_DOMAIN_FORMAT,
-]
 
 
-def _build_restore_new_deployment_section() -> FormSection:
-    """Build the restore new deployment section with materialized editables.
+def _restore_new_visible(data: dict[str, Any]) -> bool:
+    return data.get("restore_mode") == "new"
 
-    Materializes deployment[*] visualizers to deployment[0] so the form
-    reads/writes a single deployment entry.
+
+def build_restore_new_deployment_sections(deployment_index: int = 0) -> list[FormSection]:
+    """Build sections for the restore-to-new-deployment flow.
+
+    Reuses the add-deployment builders (info, components, domain) with
+    clone-from excluded — the backup source is already selected in step 2.
+    All sections are conditionally visible based on ``restore_mode == "new"``.
+
+    Args:
+        deployment_index: Index of the new deployment slot in the
+            deployments list. Set at init time to ``len(deployments)``
+            so it targets an empty slot, not an existing deployment.
     """
-    editables = _materialize_new_deployment_fields(
-        0, _NEW_DEPLOYMENT_INFO_VISUALIZERS + _NEW_DEPLOYMENT_DOMAIN_VISUALIZERS
-    )
+    info = build_deployment_add_info_section(deployment_index, include_clone_from=False)
+    components = build_deployment_add_components_section(deployment_index)
+    domain = build_deployment_add_domain_section(deployment_index)
 
-    return FormSection(
-        section_id="restore-new-deployment",
-        title="Deployment configuratie",
-        icon="server",
-        description="Configureer de nieuwe deployment",
-        visible=lambda data: data.get("restore_mode") == "new",
-        editables=editables,
-        layout=[
-            "deployments[0]/name",
-            "deployments[0]/clone-from",
-            "deployments[0]/subdomain",
-            "deployments[0]/base-domain",
-            "deployments[0]/base-domain:custom",
-            "deployments[0]/domain-format",
-        ],
-        summary_fn=_new_deployment_summary,
-    )
-
-
-RESTORE_NEW_DEPLOYMENT_SECTION = _build_restore_new_deployment_section()
+    return [
+        dataclasses.replace(info, visible=_restore_new_visible),
+        dataclasses.replace(components, visible=_restore_new_visible),
+        dataclasses.replace(domain, visible=_restore_new_visible),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -824,29 +820,41 @@ RESTORE_NEW_DEPLOYMENT_SECTION = _build_restore_new_deployment_section()
 # ---------------------------------------------------------------------------
 
 
-def build_deployment_add_info_section(deployment_index: int) -> FormSection:
-    """Build the info section for adding a new deployment (name + clone-from).
+def build_deployment_add_info_section(
+    deployment_index: int,
+    *,
+    include_clone_from: bool = True,
+) -> FormSection:
+    """Build the info section for adding a new deployment.
 
     Overrides readonly_on_edit on the name visualizer so the name field
     is editable even though the modal wizard uses edit_mode=True.
+
+    Args:
+        include_clone_from: When False, omits the clone-from field (used
+            by the restore flow where the source is already selected).
     """
-    editables = _materialize_new_deployment_fields(deployment_index, _NEW_DEPLOYMENT_INFO_VISUALIZERS)
+    visualizers = _NEW_DEPLOYMENT_INFO_VISUALIZERS if include_clone_from else [DEPLOYMENT_NAME]
+    editables = _materialize_new_deployment_fields(deployment_index, visualizers)
 
     # The name visualizer has readonly_on_edit=True - override for add flows
     name_vis = editables[0]
     editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
 
+    layout = [f"deployments[{deployment_index}]/name"]
+    if include_clone_from:
+        layout.append(f"deployments[{deployment_index}]/clone-from")
+
     return FormSection(
         section_id=f"add-deployment-info-{deployment_index}",
         title="Deployment informatie",
         icon="server",
-        description="Kies een naam en optioneel een bron-deployment om van te klonen",
+        description="Kies een naam en optioneel een bron-deployment om van te klonen"
+        if include_clone_from
+        else "Kies een naam voor de nieuwe deployment",
         enforcer=UniqueDeploymentNameEnforcer(deployment_index=deployment_index),
         editables=editables,
-        layout=[
-            f"deployments[{deployment_index}]/name",
-            f"deployments[{deployment_index}]/clone-from",
-        ],
+        layout=layout,
         summary_fn=lambda data, idx=deployment_index: _new_deployment_summary(data, idx),
     )
 
@@ -875,6 +883,145 @@ def build_deployment_add_domain_section(deployment_index: int) -> FormSection:
     with URL preview, info partial, root-component, and DomainConfigEnforcer.
     """
     return build_domain_section(deployment_index, edit_mode=True)
+
+
+# ---------------------------------------------------------------------------
+# Admin domain/subdomain approval section
+# ---------------------------------------------------------------------------
+
+
+def _apply_approval_to_project(
+    project_data: dict[str, Any],
+    wizard_data: dict[str, Any],
+) -> None:
+    """Map approval items back into the project's domains structure.
+
+    For each item where status != "skip", updates the status in the
+    correct location and appends a history entry.
+    """
+    from datetime import UTC, datetime
+
+    items = wizard_data.get("_approval_items", [])
+    if not items:
+        return
+
+    admin_email = wizard_data.get("_admin_email", "admin")
+    domains = project_data.setdefault("domains", {})
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        new_status = item.get("status", "skip")
+        if new_status == "skip":
+            continue
+
+        item_type = item.get("type")
+        domain = item.get("domain", "")
+        name = item.get("name", "")
+        message = item.get("message") or None
+
+        history_entry: dict[str, str] = {
+            "date": datetime.now(UTC).isoformat(),
+            "status": new_status,
+        }
+        if admin_email:
+            history_entry["by"] = admin_email
+        if message:
+            history_entry["message"] = message
+
+        if item_type == "subdomain":
+            for entry in domains.get("allowed-subdomains", []):
+                if not isinstance(entry, dict) or entry.get("domain") != domain:
+                    continue
+                for sub in entry.get("subdomains", []):
+                    if isinstance(sub, dict) and sub.get("name") == name:
+                        sub["status"] = new_status
+                        sub.setdefault("history", []).append(history_entry)
+                        break
+
+        elif item_type == "domain":
+            for entry in domains.get("allowed-domains", []):
+                if isinstance(entry, dict) and entry.get("domain") == domain:
+                    entry["status"] = new_status
+                    entry.setdefault("history", []).append(history_entry)
+                    break
+
+
+def build_domain_approval_section() -> FormSection:
+    """Build the admin domain/subdomain approval section.
+
+    Uses the same pattern as backup/restore: no editables, a TemplatePartial
+    for the UI, and raw form data stored directly. The post_merge callback
+    maps the submitted data back to the project YAML.
+    """
+    return FormSection(
+        section_id="domain-approval",
+        title="Domein- en subdomeingoedkeuring",
+        icon="vinkje",
+        description="Keur domein- en subdomeinaanvragen goed of af",
+        editables=[],
+        layout=[TemplatePartial(template="wizard/partials/approval_items.html.j2")],
+        post_save_action="process_project",
+        post_merge=_apply_approval_to_project,
+    )
+
+
+def build_backup_schedule_section(deployment_index: int) -> FormSection:
+    """Build a backup schedule section targeting a specific deployment.
+
+    Materializes deployment[*] to the concrete deployment index for the
+    backup schedule SELECT field.
+    """
+    from opi.forms.editables.reindex import materialize_wildcard_visualizer
+
+    # Transient fields must be processed BEFORE the main schedule field so that
+    # RRuleFrequencyConverter.write() can read time/day/monthday from the result
+    # dict when building the combined RRULE string.
+    # The `layout` list below controls the display order independently.
+    editables = [
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE_TIME, deployment_index),
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE_DAY, deployment_index),
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY, deployment_index),
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_RESOURCE_TYPES, deployment_index),
+        materialize_wildcard_visualizer(DEPLOYMENT_BACKUP_SCHEDULE, deployment_index),
+    ]
+
+    def _has_backupable_services(yaml_data: dict[str, Any], idx: int = deployment_index) -> bool:
+        from opi.handlers.project_file_handler import create_project_file_handler
+
+        deployments = yaml_data.get("deployments", [])
+        if not isinstance(deployments, list) or idx >= len(deployments):
+            return True
+        dep = deployments[idx]
+        dep_name = dep.get("name", "") if isinstance(dep, dict) else ""
+        if not dep_name:
+            return True
+        pfh = create_project_file_handler()
+        return bool(pfh.get_deployment_backup_labels(yaml_data, dep_name))
+
+    async def _notify_backup_scheduler(request: Any) -> None:
+        scheduler = getattr(request.app.state, "backup_scheduler", None)
+        if scheduler:
+            await scheduler.trigger_check()
+
+    return FormSection(
+        section_id=f"backup-schedule-{deployment_index}",
+        title="Backup schema instellen",
+        icon="database",
+        description="Configureer automatische backups voor deze deployment. Tijden zijn een indicatie.",
+        editables=editables,
+        layout=[
+            f"deployments[{deployment_index}]/backup/schedule",
+            f"deployments[{deployment_index}]/backup/schedule:time",
+            f"deployments[{deployment_index}]/backup/schedule:day",
+            f"deployments[{deployment_index}]/backup/schedule:monthday",
+            f"deployments[{deployment_index}]/backup/resource_types",
+        ],
+        guard=_has_backupable_services,
+        guard_message="Deze deployment gebruikt geen services die geback-upt kunnen worden.",
+        post_save_action="save_only",
+        after_save=_notify_backup_scheduler,
+    )
 
 
 ALL_SECTIONS: list[FormSection] = [

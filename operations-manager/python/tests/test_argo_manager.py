@@ -165,6 +165,91 @@ class TestWaitForApplicationSynced:
 
         mock_connector.get_application_status.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_on_progressing_called_when_progressing_and_fresh(
+        self, argo_manager: ArgoManager, mock_connector: AsyncMock
+    ):
+        """Should call on_progressing callback when health is Progressing and status is fresh."""
+        mock_connector.get_application_status = AsyncMock(
+            side_effect=[
+                _make_status("Synced", "Progressing", reconciled_at="2026-03-17T10:01:00Z"),
+                _make_status("Synced", "Healthy", reconciled_at="2026-03-17T10:01:00Z"),
+            ]
+        )
+        callback = AsyncMock()
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await argo_manager.wait_for_application_synced(
+                "my-app",
+                timeout=30,
+                poll_interval=2,
+                refreshed_after="2026-03-17T10:00:00Z",
+                on_progressing=callback,
+            )
+
+        assert result is True
+        callback.assert_called_once_with(2)  # elapsed_time after first poll_interval
+
+    @pytest.mark.asyncio
+    async def test_on_progressing_called_even_when_stale(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Should call on_progressing even when status is stale.
+
+        The callback uses kubectl to check pod health directly, so it
+        does not depend on ArgoCD's reconciliation freshness.
+        """
+        mock_connector.get_application_status = AsyncMock(
+            side_effect=[
+                # Stale Progressing — callback should still fire
+                _make_status("Synced", "Progressing", reconciled_at="2026-03-17T10:00:00Z"),
+                # Fresh and healthy
+                _make_status("Synced", "Healthy", reconciled_at="2026-03-17T10:01:00Z"),
+            ]
+        )
+        callback = AsyncMock()
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await argo_manager.wait_for_application_synced(
+                "my-app",
+                timeout=30,
+                poll_interval=2,
+                refreshed_after="2026-03-17T10:00:00Z",
+                on_progressing=callback,
+            )
+
+        assert result is True
+        callback.assert_called_once_with(2)
+
+    @pytest.mark.asyncio
+    async def test_on_progressing_exception_propagates(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Exceptions from on_progressing should propagate to caller."""
+        mock_connector.get_application_status = AsyncMock(
+            return_value=_make_status("Synced", "Progressing", reconciled_at="2026-03-17T10:01:00Z"),
+        )
+
+        class CustomError(Exception):
+            pass
+
+        callback = AsyncMock(side_effect=CustomError("OOM detected"))
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(CustomError, match="OOM detected"),
+        ):
+            await argo_manager.wait_for_application_synced(
+                "my-app",
+                timeout=30,
+                poll_interval=2,
+                refreshed_after="2026-03-17T10:00:00Z",
+                on_progressing=callback,
+            )
+
 
 class TestStaleStatusProtection:
     """Tests for the refreshed_after parameter that prevents acting on stale status."""

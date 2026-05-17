@@ -12,7 +12,9 @@
 
         {% if project.components %}
         <c-layout-flow gap="lg">
-            {% for component in project.components %}
+            {# Display alphabetically; keep the original YAML index for edit-modal flow_ids. #}
+            {% for component in project.components | sort(attribute='name') %}
+            {% set original_index = project.components.index(component) %}
             <c-card class="component-card" padding="lg" background="color" backgroundColor="wit" outline="true">
                 <c-layout-flow gap="md">
                     <div class="component-header">
@@ -24,7 +26,7 @@
                         {% if user_role in ["admin", "owner"] %}
                         <c-layout-flow row="true" gap="xs">
                             <c-button kind="secondary" size="sm" label="Bewerken" showIcon="before" icon="bewerken"
-                                @click="openEditModal('modal-edit-component-{{ loop.index0 }}', 'Component bewerken - {{ component.name }}')" />
+                                @click="openEditModal('modal-edit-component-{{ original_index }}', 'Component bewerken - {{ component.name }}')" />
                             <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
                                 @click="showDangerConfirmation('component', '{{ component.name }}', 'Weet u zeker dat u component &quot;{{ component.name }}&quot; wilt verwijderen?')" />
                         </c-layout-flow>
@@ -88,7 +90,8 @@
                                 size="sm"
                                 showIcon="after"
                                 icon="externe-link"
-                                @click="window.open('{{ link.url }}', '_blank')" />
+                                data-url="{{ link.url }}"
+                                @click="window.open(this.dataset.url, '_blank')" />
                             {% endfor %}
                         </c-layout-flow>
                     </c-layout-flow>

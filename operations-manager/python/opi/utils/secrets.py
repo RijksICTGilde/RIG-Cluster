@@ -8,11 +8,13 @@ Kubernetes secrets with consistent key mappings and validation.
 import logging
 from abc import ABC
 from dataclasses import dataclass
-from typing import Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
-from opi.connectors.kubectl import KubectlConnector
 from opi.services import ServiceType
 from opi.services.services import ServiceAdapter
+
+if TYPE_CHECKING:
+    from opi.connectors.kubectl import KubectlConnector
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +184,7 @@ class DatabaseSecret(BaseSecret):
     @property
     def connection_string(self) -> str:
         """Generate PostgreSQL connection string."""
-        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self.schema}"
+        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self.schema},public"
 
     def _get_additional_keys(self) -> dict[str, str]:
         """Add computed keys that are not defined in service definitions."""
@@ -353,7 +355,7 @@ class UserSecret(BaseSecret):
         return self.env_vars.copy()
 
     @classmethod
-    def from_k8s_secret_data(cls, secret_data: dict[str, str]) -> "UserSecret":
+    def from_k8s_secret_data(cls, secret_data: dict[str, str]) -> UserSecret:
         """Create from all secret data as env_vars."""
         return cls(env_vars=secret_data.copy())
 
@@ -395,7 +397,7 @@ class RegistrySecret(BaseSecret):
         return {".dockerconfigjson": self.to_dockerconfigjson()}
 
     @classmethod
-    def from_k8s_secret_data(cls, secret_data: dict[str, str]) -> "RegistrySecret":
+    def from_k8s_secret_data(cls, secret_data: dict[str, str]) -> RegistrySecret:
         """Create from .dockerconfigjson secret data."""
         import base64
         import json

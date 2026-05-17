@@ -2,14 +2,18 @@
 
 All long-running operations return 202 Accepted immediately with a task ID.
 Clients must poll /api/tasks/{task_id} for status and results.
+
+Read-only GET endpoints return deployment state directly (no task queue).
 """
 
+import asyncio
 import logging
+from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
-from opi.api.router import (
+from opi.api.router import (  # noqa: TC002 — Pydantic models must be runtime imports for FastAPI
     AddComponentRequest,
     AddComponentToDeploymentRequest,
     AddServiceRequest,
@@ -31,7 +35,14 @@ from opi.api.task_models import (
     UpdateImageResult,
     UpsertDeploymentResult,
 )
-from opi.api.v2.models import AsyncTaskAcceptedResponse
+from opi.api.v2.models import (
+    AsyncTaskAcceptedResponse,
+    DeploymentComponentDetail,
+    DeploymentDetail,
+    DeploymentListResponse,
+    DeploymentStatus,
+    StatusError,
+)
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
@@ -39,8 +50,21 @@ from opi.api.validation import (
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
 )
+from opi.connectors.argo import ArgoConnector, create_argo_connector
+from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
+from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
+from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
-from opi.utils.naming import sanitize_kubernetes_name
+from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
+from opi.services.project_service import get_project_service
+from opi.utils.naming import (
+    HostnameFormat,
+    generate_argocd_application_name,
+    generate_public_url,
+    get_component_ingress_map,
+    sanitize_kubernetes_name,
+)
 from opi.utils.project_utils import validate_project_name
 
 logger = logging.getLogger(__name__)
@@ -68,8 +92,368 @@ def _accepted_response(task: dict, task_type: str) -> JSONResponse:
     )
 
 
+def _compute_deployment_urls(
+    deployment: dict[str, Any],
+    project_name: str,
+    project_data: dict[str, Any],
+) -> dict[str, str]:
+    """Compute public URLs for a deployment's components.
+
+    Uses the same ingress-map logic as the web UI detail page.
+    Only components with the publish-on-web service get URLs.
+    """
+    cluster = deployment.get("cluster", "")
+    urls: dict[str, str] = {}
+
+    try:
+        ingress_postfix = get_ingress_postfix(cluster)
+        use_https = get_ingress_tls_enabled(cluster)
+    except KeyError, ValueError:
+        logger.debug("Could not resolve ingress config for cluster '%s'", cluster)
+        return urls
+
+    subdomain = deployment.get("subdomain")
+    base_domain = deployment.get("base-domain")
+    hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+    domain_format = deployment.get("domain-format")
+    deployment_name = deployment["name"]
+    project_file_handler = ProjectFileHandler()
+
+    for component in deployment.get("components", []):
+        component_name = component.get("reference")
+        if not component_name:
+            continue
+
+        has_publish = project_file_handler.extract_component_publish_on_web(project_data, component_name)
+        if not has_publish:
+            continue
+
+        ingress_map = get_component_ingress_map(
+            component_name=component_name,
+            deployment_name=deployment_name,
+            project_name=project_name,
+            ingress_postfix=ingress_postfix,
+            subdomain=subdomain,
+            base_domain=base_domain,
+            hostname_format=hostname_format,
+            domain_format=domain_format,
+            project_data=project_data,
+            cluster=cluster,
+        )
+        hostname = next(iter(ingress_map.values()), None)
+        if hostname:
+            urls[component_name] = generate_public_url(hostname, use_https)
+
+    return urls
+
+
+class _LiveStatus(NamedTuple):
+    """Internal aggregate of what we know about a deployment's live state.
+
+    Always populated; sentinel values (Pending, Unavailable, Unknown) cover
+    the cases where we don't have real Argo data.
+    """
+
+    status: DeploymentStatus
+    revision: str | None
+    last_synced_at: str | None
+    errors: list[StatusError]
+
+
+def _collapse_argo_status(sync_raw: str | None, health_raw: str | None) -> DeploymentStatus:
+    """Collapse Argo's (sync, health) into a single overall status.
+
+    Priority: bad health states win > OutOfSync > Progressing > Healthy.
+    Unknown/novel values fall through to DeploymentStatus.Unknown.
+    """
+    if health_raw in ("Degraded", "Suspended", "Missing"):
+        return DeploymentStatus(health_raw)
+    if sync_raw == "OutOfSync":
+        return DeploymentStatus.OutOfSync
+    if health_raw == "Progressing":
+        return DeploymentStatus.Progressing
+    if health_raw == "Healthy":
+        return DeploymentStatus.Healthy
+    return DeploymentStatus.Unknown
+
+
+def _extract_live_status(status_data: dict[str, Any] | None) -> _LiveStatus:
+    """Build a _LiveStatus from an ArgoCD Application payload.
+
+    Returns ``status=Pending`` when the cluster has no Application yet.
+    Errors are populated by the caller after a separate gather step;
+    this function does not call out.
+    """
+    if not status_data:
+        return _LiveStatus(DeploymentStatus.Pending, None, None, [])
+
+    status = status_data.get("status", {}) or {}
+    sync = status.get("sync", {}) or {}
+    health = status.get("health", {}) or {}
+    operation_state = status.get("operationState", {}) or {}
+
+    return _LiveStatus(
+        status=_collapse_argo_status(sync.get("status"), health.get("status")),
+        revision=sync.get("revision") or None,
+        last_synced_at=operation_state.get("finishedAt") or status.get("reconciledAt"),
+        errors=[],
+    )
+
+
+_PROBLEM_STATUSES = frozenset(
+    {
+        DeploymentStatus.Degraded,
+        DeploymentStatus.OutOfSync,
+        DeploymentStatus.Suspended,
+        DeploymentStatus.Missing,
+    }
+)
+
+
+async def _fetch_one_live_status(
+    *,
+    project_name: str,
+    deployment: dict[str, Any],
+    argo: ArgoConnector,
+    kubectl: KubectlConnector,
+) -> _LiveStatus:
+    """Fetch live status for a single deployment, including errors when in a problem state.
+
+    Raises on per-deployment fetch failures; callers decide whether to catch
+    (lenient list) or propagate (strict single).
+    """
+    deployment_name = deployment["name"]
+    app_name = generate_argocd_application_name(project_name, deployment_name)
+    status_data = await argo.get_application_status(app_name)
+
+    live = _extract_live_status(status_data)
+    if live.status not in _PROBLEM_STATUSES:
+        return live
+
+    raw_errors = await gather_deployment_errors(
+        argo=argo,
+        kubectl=kubectl,
+        app_name=app_name,
+        base_namespace=deployment.get("namespace", ""),
+        cluster=deployment.get("cluster", ""),
+        deployment_name=deployment_name,
+        status_data=status_data or {},
+    )
+    typed_errors = [
+        StatusError(**raw, category=cat, explanation=expl)
+        for raw in raw_errors
+        for cat, expl in [categorize_error(raw["resource"], raw["message"])]
+    ]
+    return live._replace(errors=typed_errors)
+
+
+async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
+    """Connect to ArgoCD + kubectl. Raises HTTPException(503) on connection failure.
+
+    This represents the "whole backend is down" case — distinct from a single
+    deployment's fetch failing, which is handled per-call.
+    """
+    try:
+        argo = create_argo_connector()
+    except Exception as exc:
+        logger.warning("ArgoCD connector init failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Deployment status backend is unreachable") from exc
+
+    if argo.auth_token is None:
+        logger.warning("ArgoCD login failed (no auth token after init)")
+        raise HTTPException(status_code=503, detail="Deployment status backend is unreachable")
+
+    return argo, create_kubectl_connector()
+
+
+def _unavailable() -> _LiveStatus:
+    """The "we couldn't fetch" sentinel for lenient list mode."""
+    return _LiveStatus(DeploymentStatus.Unavailable, None, None, [])
+
+
+async def _fetch_live_statuses_lenient(
+    project_name: str,
+    deployments: list[dict[str, Any]],
+) -> dict[str, _LiveStatus]:
+    """Fetch status for many deployments. Per-deployment failures yield Unavailable.
+
+    The whole-backend-down case still returns 503 via _connect_status_backend.
+    """
+    if not deployments:
+        return {}
+
+    argo, kubectl = await _connect_status_backend()
+
+    async def _safe_one(deployment: dict[str, Any]) -> _LiveStatus:
+        try:
+            return await _fetch_one_live_status(
+                project_name=project_name, deployment=deployment, argo=argo, kubectl=kubectl
+            )
+        except Exception as exc:
+            logger.warning(
+                "Deployment status fetch failed for %s/%s: %s",
+                project_name,
+                deployment.get("name"),
+                exc,
+            )
+            return _unavailable()
+
+    results = await asyncio.gather(*[_safe_one(d) for d in deployments])
+    return {d["name"]: result for d, result in zip(deployments, results, strict=True)}
+
+
+async def _fetch_one_live_status_strict(
+    project_name: str,
+    deployment: dict[str, Any],
+) -> _LiveStatus:
+    """Fetch status for a single deployment. Raises 503 on any fetch failure.
+
+    Used by the single-deployment endpoint where partial truth is misleading.
+    """
+    argo, kubectl = await _connect_status_backend()
+    try:
+        return await _fetch_one_live_status(
+            project_name=project_name, deployment=deployment, argo=argo, kubectl=kubectl
+        )
+    except Exception as exc:
+        logger.warning(
+            "Deployment status fetch failed for %s/%s: %s",
+            project_name,
+            deployment.get("name"),
+            exc,
+        )
+        raise HTTPException(status_code=503, detail="Deployment status backend is unreachable") from exc
+
+
+def _build_deployment_detail(
+    deployment: dict[str, Any],
+    project_name: str,
+    project_data: dict[str, Any],
+    live: _LiveStatus,
+) -> DeploymentDetail:
+    """Build a DeploymentDetail from a deployment dict in the project file."""
+    components = [
+        DeploymentComponentDetail(
+            reference=c.get("reference", ""),
+            image=c.get("image", ""),
+        )
+        for c in deployment.get("components", [])
+    ]
+
+    urls = _compute_deployment_urls(deployment, project_name, project_data)
+
+    return DeploymentDetail(
+        name=deployment.get("name", ""),
+        project=project_name,
+        cluster=deployment.get("cluster", ""),
+        namespace=deployment.get("namespace", ""),
+        subdomain=deployment.get("subdomain"),
+        components=components,
+        urls=urls,
+        status=live.status,
+        sync_revision=live.revision,
+        last_synced_at=live.last_synced_at,
+        errors=live.errors,
+    )
+
+
 # ---------------------------------------------------------------------------
-# Endpoints
+# Read-only endpoints
+# ---------------------------------------------------------------------------
+
+
+@v2_router.get(
+    "/projects/{project_name}/deployments",
+    tags=["v2", "deployments"],
+    response_model=DeploymentListResponse,
+)
+@validate_api_token
+async def list_deployments_v2(
+    request: Request,
+    project_name: str,
+) -> JSONResponse:
+    """List deployments in a project with components, images, and computed URLs.
+
+    Returns only deployments targeting the current cluster.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    project_data: dict[str, Any] = project.data
+    current_cluster = settings.CLUSTER_MANAGER
+    deployments = [
+        d for d in project_data.get("deployments", []) if d.get("cluster") == current_cluster and d.get("name")
+    ]
+
+    statuses = await _fetch_live_statuses_lenient(project_name, deployments)
+
+    details = [
+        _build_deployment_detail(depl, project_name, project_data, statuses.get(depl["name"], _unavailable()))
+        for depl in deployments
+    ]
+
+    return JSONResponse(
+        content=DeploymentListResponse(
+            project=project_name,
+            cluster=current_cluster,
+            deployments=details,
+        ).model_dump(),
+    )
+
+
+@v2_router.get(
+    "/projects/{project_name}/deployments/{deployment_name}",
+    tags=["v2", "deployments"],
+    response_model=DeploymentDetail,
+)
+@validate_api_token
+async def get_deployment_v2(
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+) -> JSONResponse:
+    """Get a single deployment with components, images, and computed URLs.
+
+    Returns the current state of a deployment as defined in the project file,
+    with computed public URLs for components that have publish-on-web.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    project_service = get_project_service()
+    project = project_service.get_project(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    project_data: dict[str, Any] = project.data
+    current_cluster = settings.CLUSTER_MANAGER
+
+    deployment = next(
+        (
+            d
+            for d in project_data.get("deployments", [])
+            if d.get("name") == deployment_name and d.get("cluster") == current_cluster
+        ),
+        None,
+    )
+    if not deployment:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Deployment '{deployment_name}' not found in project '{project_name}' on cluster '{current_cluster}'",
+        )
+
+    live = await _fetch_one_live_status_strict(project_name, deployment)
+    detail = _build_deployment_detail(deployment, project_name, project_data, live)
+    return JSONResponse(content=detail.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Mutation endpoints
 # ---------------------------------------------------------------------------
 
 

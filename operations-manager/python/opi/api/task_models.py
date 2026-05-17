@@ -51,6 +51,16 @@ class ProjectInfo(BaseModel):
     file_path: str
 
 
+class ComponentFailureInfo(BaseModel):
+    """Per-component failure detail for deployment health issues."""
+
+    component: str
+    deployment: str = ""
+    failure_type: str  # "oom", "image_pull", "crash_loop"
+    message: str
+    logs: list[str] | None = None
+
+
 class ProcessingStatus(BaseModel):
     """Processing step status."""
 
@@ -58,6 +68,7 @@ class ProcessingStatus(BaseModel):
     message: str | None = None
     error: str | None = None
     result: Any | None = None
+    component_failures: list[ComponentFailureInfo] | None = None
 
 
 # ---------------------------------------------------------------------------

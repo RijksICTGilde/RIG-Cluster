@@ -39,12 +39,9 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
-def _converter_write(converter: Any, value: Any, yaml_data: dict[str, Any] | None = None) -> Any:
-    """Call converter.write() passing yaml_data when accepted."""
-    try:
-        return converter.write(value, yaml_data=yaml_data)
-    except TypeError:
-        return converter.write(value)
+def _converter_write(converter: Any, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+    """Call converter.write() with context data."""
+    return converter.write(value, context_data=context_data)
 
 
 def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:
@@ -59,6 +56,9 @@ def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:
 
 class EditableFormProcessor:
     """Processes form submissions through the editables pipeline."""
+
+    def __init__(self) -> None:
+        self.field_warnings: dict[str, list[str]] = {}
 
     @staticmethod
     def _validate_field(
@@ -87,6 +87,7 @@ class EditableFormProcessor:
         sections: list[FormSection],
         enforcer_context: dict[str, Any] | None = None,
         field_errors: dict[str, list[str]] | None = None,
+        field_warnings: dict[str, list[str]] | None = None,
     ) -> list[str]:
         """
         Run section-level enforcers.
@@ -96,11 +97,14 @@ class EditableFormProcessor:
             field_errors: When provided, ``FieldError`` exceptions are
                 merged into this dict (keyed by field path) instead of
                 appearing in the returned global errors list.
+            field_warnings: When provided, ``FieldWarning`` exceptions are
+                merged into this dict (keyed by field path). Warnings do
+                not block submission.
 
         Returns:
             List of global error messages. Empty means all passed.
         """
-        from opi.forms.editables.enforcers import FieldError
+        from opi.forms.editables.enforcers import FieldError, FieldWarning
 
         ctx = enforcer_context or {}
         global_errors: list[str] = []
@@ -108,6 +112,9 @@ class EditableFormProcessor:
             if section.enforcer:
                 try:
                     await section.enforcer.enforce(yaml_data, ctx)
+                except FieldWarning as e:
+                    if field_warnings is not None:
+                        field_warnings.setdefault(e.field_path, []).append(str(e))
                 except FieldError as e:
                     if field_errors is not None:
                         field_errors.setdefault(e.field_path, []).append(str(e))
@@ -276,6 +283,15 @@ class EditableFormProcessor:
             if vis.readonly or (vis.readonly_on_edit and edit_mode):
                 continue
             if not should_render_editable(vis, result, siblings=editables):
+                # When ``show_when`` no longer holds against the in-progress
+                # ``result`` the field is conceptually hidden; processing it
+                # anyway would let stale form data clobber the now-current
+                # state. The dependency-providing editable is expected to
+                # appear earlier in this list (and has therefore already
+                # written its new value into ``result``), so this check
+                # reflects the user's latest intent — matching the strict
+                # skip that ``_process_sequence_json`` already does at
+                # line 461 for in-sequence children.
                 continue
 
             if vis.widget == WidgetType.GROUP:
@@ -286,6 +302,7 @@ class EditableFormProcessor:
                     errors,
                     edit_mode,
                     enforcer_context,
+                    warnings=self.field_warnings,
                 )
             elif vis.widget == WidgetType.SEQUENCE:
                 self._process_sequence_json(
@@ -313,7 +330,7 @@ class EditableFormProcessor:
         self._resolve_deferrals(result, editables)
 
         if strip_transients:
-            self._strip_transients(result, editables)
+            self.strip_transients_from(result, editables)
 
         return result, errors
 
@@ -325,6 +342,7 @@ class EditableFormProcessor:
         errors: dict[str, list[str]],
         edit_mode: bool,
         enforcer_context: dict[str, Any] | None = None,
+        warnings: dict[str, list[str]] | None = None,
     ) -> None:
         """Process a group editable: validate children, then run parent enforcer.
 
@@ -333,8 +351,12 @@ class EditableFormProcessor:
         are processed directly. The group's enforcer provides cross-field
         validation after all children pass individual validation.
         """
+        from opi.forms.editables.enforcers import FieldError, FieldWarning
+
         ed = vis.editable
         errors_before = len(errors)
+        if warnings is None:
+            warnings = {}
 
         # Process each child through the same dispatch logic
         group_children = vis.children or []
@@ -361,12 +383,20 @@ class EditableFormProcessor:
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(child_ed, child_ed.yaml_path, value, result)
 
-        # Run parent enforcer only if children introduced no new errors
-        if len(errors) == errors_before and ed.enforcer:
+        # Always run enforcer: warnings are collected regardless of child errors,
+        # but errors are only propagated when children have no errors.
+        has_child_errors = len(errors) > errors_before
+        if ed.enforcer:
             try:
                 await ed.enforcer.enforce(result, enforcer_context or {})
+            except FieldWarning as e:
+                warnings.setdefault(e.field_path, []).append(str(e))
+            except FieldError as e:
+                if not has_child_errors:
+                    errors.setdefault(e.field_path, []).append(str(e))
             except ValueError as e:
-                errors.setdefault(ed.yaml_path, []).append(str(e))
+                if not has_child_errors:
+                    errors.setdefault(ed.yaml_path, []).append(str(e))
 
     def _process_sequence_json(
         self,
@@ -384,7 +414,11 @@ class EditableFormProcessor:
         and applies converters for each child editable.
         """
         ed = vis.editable
-        items = get_value(submitted, ed.yaml_path)
+        virt = ed.virtualize
+        read_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
+        items = get_value(submitted, read_path)
+        if not isinstance(items, list) and virt and read_path != ed.yaml_path:
+            items = get_value(submitted, ed.yaml_path)
         if not isinstance(items, list):
             items = []
 
@@ -393,6 +427,20 @@ class EditableFormProcessor:
 
         # Write the submitted items into result (correct count + raw values)
         smart_set_value(result, ed.yaml_path, copy.deepcopy(items))
+
+        # Strip the virtual key from result so it doesn't leak into YAML
+        if virt and read_path != ed.yaml_path:
+            virtual_key = virt[1]
+            virtual_parts = read_path.split("/")
+            parent_parts = []
+            for part in virtual_parts:
+                if part.startswith(virtual_key):
+                    break
+                parent_parts.append(part)
+            parent_path = "/".join(parent_parts)
+            parent = smart_get_value(result, parent_path) if parent_path else result
+            if isinstance(parent, dict):
+                parent.pop(virtual_key, None)
 
         # In edit mode, readonly fields aren't rendered in the form and are
         # therefore absent from the submission.  Restore their values from
@@ -408,6 +456,14 @@ class EditableFormProcessor:
                     last_seg = child_vis.editable.yaml_path.rsplit("/", 1)[-1]
                     if last_seg in original_items[i]:
                         result_items[i][last_seg] = copy.deepcopy(original_items[i][last_seg])
+
+        # When the sequence itself declares ``virtualize`` (e.g.
+        # PERSISTENT_STORAGE_SEQUENCE in the modal-edit-component flow where
+        # it is flattened to the top level), propagate that mapping to each
+        # non-sequence child so the form submission is read from the virtual
+        # ``_services-config{…}`` path rather than the real ``services{…}``
+        # one — which would collide with the sibling service-selection list.
+        seq_virt = ed.virtualize
 
         seq_children_json = vis.children or []
         for index in range(len(items)):
@@ -429,12 +485,16 @@ class EditableFormProcessor:
                     )
                 elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
-                    value = _coerce_to_list(get_value(submitted, concrete_path))
+                    virt = child_ed.virtualize or seq_virt
+                    read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
+                    value = _coerce_to_list(get_value(submitted, read_path))
+                    if not value and virt and read_path != concrete_path:
+                        value = _coerce_to_list(get_value(submitted, concrete_path))
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
                 else:
                     concrete_path = resolve_path(child_ed.yaml_path, index)
-                    virt = child_ed.virtualize
+                    virt = child_ed.virtualize or seq_virt
                     read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
                     value = get_value(submitted, read_path)
                     # Fall back to real path when merged data has no virtual key
@@ -666,7 +726,7 @@ class EditableFormProcessor:
                     transient_value,
                 )
 
-    def _strip_transients(
+    def strip_transients_from(
         self,
         data: dict[str, Any],
         editables: list[EditableVisualizer],
@@ -808,7 +868,7 @@ class EditableFormProcessor:
             if not stored_value:
                 continue
             # Apply converter.view to get the display value (e.g. "__custom__")
-            display_value = ed.converter.view(stored_value) if ed.converter else stored_value
+            display_value = ed.converter.view(stored_value, context_data=data) if ed.converter else stored_value
             if ed.defer_when.check(display_value):
                 deferred_path = ed.defers_to
                 if "[*]" in deferred_path and "[*]" not in concrete_path:

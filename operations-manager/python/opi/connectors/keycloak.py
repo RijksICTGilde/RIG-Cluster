@@ -385,6 +385,9 @@ class KeycloakConnector:
             "directAccessGrantsEnabled": True,
             "serviceAccountsEnabled": True,
             "frontchannelLogout": True,
+            "attributes": {
+                "post.logout.redirect.uris": "+",
+            },
         }
 
         try:
@@ -409,23 +412,26 @@ class KeycloakConnector:
                         # Check if redirect URIs need updating
                         existing_redirect_uris = set(existing_client.get("redirectUris", []))
                         existing_web_origins = set(existing_client.get("webOrigins", []))
+                        existing_attrs = existing_client.get("attributes", {}) or {}
                         expected_redirect_uris = set(redirect_uris)
                         expected_web_origins = set(web_origins)
 
                         uris_differ = existing_redirect_uris != expected_redirect_uris
                         origins_differ = existing_web_origins != expected_web_origins
+                        post_logout_differ = existing_attrs.get("post.logout.redirect.uris") != "+"
 
-                        if uris_differ or origins_differ:
+                        if uris_differ or origins_differ or post_logout_differ:
                             logger.info(
                                 f"Client '{client_id}' redirect URIs need updating. "
                                 f"Current: {existing_redirect_uris}, Expected: {expected_redirect_uris}"
                             )
                             # Switch back to target realm for update
                             self.admin.change_current_realm(realm_name)
-                            # Update the client with new redirect URIs
+                            merged_attrs = {**existing_attrs, "post.logout.redirect.uris": "+"}
                             update_data = {
                                 "redirectUris": redirect_uris,
                                 "webOrigins": web_origins,
+                                "attributes": merged_attrs,
                             }
                             self.admin.update_client(client_id=existing_client["id"], payload=update_data)
                             logger.info(f"Successfully updated redirect URIs for client '{client_id}'")
@@ -506,6 +512,7 @@ class KeycloakConnector:
             "frontchannelLogout": True,
             "attributes": {
                 "pkce.code.challenge.method": "S256",
+                "post.logout.redirect.uris": "+",
             },
         }
 
@@ -520,11 +527,22 @@ class KeycloakConnector:
                 if existing:
                     existing_uris = set(existing.get("redirectUris", []))
                     existing_origins = set(existing.get("webOrigins", []))
-                    if existing_uris != set(redirect_uris) or existing_origins != set(web_origins):
+                    existing_attrs = existing.get("attributes", {}) or {}
+                    post_logout_differ = existing_attrs.get("post.logout.redirect.uris") != "+"
+                    if (
+                        existing_uris != set(redirect_uris)
+                        or existing_origins != set(web_origins)
+                        or post_logout_differ
+                    ):
                         self.admin.change_current_realm(realm_name)
+                        merged_attrs = {**existing_attrs, "post.logout.redirect.uris": "+"}
                         self.admin.update_client(
                             client_id=existing["id"],
-                            payload={"redirectUris": redirect_uris, "webOrigins": web_origins},
+                            payload={
+                                "redirectUris": redirect_uris,
+                                "webOrigins": web_origins,
+                                "attributes": merged_attrs,
+                            },
                         )
                         logger.info(f"Updated redirect URIs for public client '{public_client_id}'")
             else:
@@ -564,10 +582,20 @@ class KeycloakConnector:
             # Delete the client using its internal ID
             self.admin.delete_client(client_id=target_client["id"])
 
+            logger.info(f"Successfully deleted client '{client_id}' for deployment '{deployment_name}'")
+
+            # Also delete the public client (used for keycloak-js / browser-based OIDC flows)
+            public_client_id = f"{client_id}-public"
+            public_client = await self.find_client_by_client_id(public_client_id, realm_name)
+            if public_client:
+                self.admin.change_current_realm(realm_name)
+                self.admin.delete_client(client_id=public_client["id"])
+                logger.info(f"Successfully deleted public client '{public_client_id}'")
+            else:
+                logger.debug(f"Public client '{public_client_id}' not found in realm '{realm_name}', skipping")
+
             # Switch back to master
             self.admin.change_current_realm("master")
-
-            logger.info(f"Successfully deleted client '{client_id}' for deployment '{deployment_name}'")
             return True
 
         except KeycloakError as e:
@@ -653,8 +681,14 @@ class KeycloakConnector:
             logger.info(f"Final redirect_uris for update: {redirect_uris}")
             logger.info(f"Final web_origins for update: {web_origins}")
 
-            # Update the client
-            update_data = {"redirectUris": redirect_uris, "webOrigins": web_origins}
+            # Update the client (preserve existing attributes, enforce post.logout.redirect.uris=+)
+            existing_attrs = target_client.get("attributes", {}) or {}
+            merged_attrs = {**existing_attrs, "post.logout.redirect.uris": "+"}
+            update_data = {
+                "redirectUris": redirect_uris,
+                "webOrigins": web_origins,
+                "attributes": merged_attrs,
+            }
             self.admin.update_client(client_id=target_client["id"], payload=update_data)
 
             # Switch back to master
@@ -826,6 +860,7 @@ class KeycloakConnector:
         provider_type: str = "oidc",
         authenticate_by_default: bool = True,
         update_profile_first_login: str = "off",
+        config_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Add an OIDC identity provider to a realm.
@@ -840,6 +875,7 @@ class KeycloakConnector:
             provider_type: Type of provider (default: "oidc")
             authenticate_by_default: Auto-redirect to this IDP on login (default: True)
             update_profile_first_login: Whether to show profile update on first login (default: "off")
+            config_overrides: Optional dict merged into provider config after defaults (YAML wins)
 
         Returns:
             Dictionary containing provider information
@@ -847,14 +883,14 @@ class KeycloakConnector:
         logger.info(f"Adding identity provider {provider_alias} to realm {realm_name}")
 
         # Build OIDC configuration
-        provider_config = {
+        provider_config: dict[str, Any] = {
             "clientId": client_id,
             "clientSecret": client_secret,
             "discoveryEndpoint": discovery_url,
             "validateSignature": "true",
             "useJwksUrl": "true",
             "syncMode": "IMPORT",
-            "backchannelSupported": "true",
+            "backchannelSupported": "false",
         }
 
         # Add explicit OIDC endpoints derived from discovery URL
@@ -865,6 +901,13 @@ class KeycloakConnector:
             provider_config["userInfoUrl"] = f"{realm_base}/protocol/openid-connect/userinfo"
             provider_config["logoutUrl"] = f"{realm_base}/protocol/openid-connect/logout"
             provider_config["jwksUrl"] = f"{realm_base}/protocol/openid-connect/certs"
+
+        # Merge YAML-provided overrides last so they take precedence over defaults
+        if config_overrides:
+            for key, value in config_overrides.items():
+                if value is None:
+                    continue
+                provider_config[key] = str(value) if isinstance(value, bool) else value
 
         provider_data = {
             "alias": provider_alias,
@@ -890,14 +933,29 @@ class KeycloakConnector:
                 logger.info(f"Created new identity provider {provider_alias} in realm {realm_name}")
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
-                    logger.info(
-                        f"Identity provider {provider_alias} already exists in realm {realm_name}, updating config"
-                    )
                     current_provider = self.admin.get_idp(idp_alias=provider_alias)
-                    current_provider["displayName"] = provider_data["displayName"]
-                    current_provider["config"].update(provider_data["config"])
-                    self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
-                    logger.info(f"Updated identity provider {provider_alias} in realm {realm_name}")
+                    current_config = current_provider.get("config", {}) or {}
+
+                    # Compute explicit diff: which keys would change?
+                    changed_keys: list[str] = []
+                    for key, desired in provider_config.items():
+                        if current_config.get(key) != desired:
+                            changed_keys.append(key)
+                    display_name_differs = current_provider.get("displayName") != provider_data["displayName"]
+
+                    if changed_keys or display_name_differs:
+                        logger.info(
+                            f"Identity provider {provider_alias} in realm {realm_name} needs update: "
+                            f"changed_keys={changed_keys}, displayName_differs={display_name_differs}"
+                        )
+                        current_provider["displayName"] = provider_data["displayName"]
+                        current_provider["config"] = {**current_config, **provider_config}
+                        self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
+                        logger.info(f"Updated identity provider {provider_alias} in realm {realm_name}")
+                    else:
+                        logger.debug(
+                            f"Identity provider {provider_alias} in realm {realm_name} already matches desired config"
+                        )
                 else:
                     raise
 
@@ -935,6 +993,7 @@ class KeycloakConnector:
         sync_mode: str = "FORCE",
         enabled: bool = True,
         update_profile_first_login: str = "off",
+        config_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Add a SAML identity provider to a realm.
@@ -954,7 +1013,7 @@ class KeycloakConnector:
             want_assertions_signed: Require signed assertions
             want_assertions_encrypted: Require encrypted assertions
             authenticate_by_default: Auto-redirect to this IDP on login
-            sync_mode: Sync mode for attributes (FORCE, IMPORT, INHERIT)
+            sync_mode: Sync mode for attributes (FORCE, IMPORT, LEGACY)
             enabled: Whether the IDP is enabled
             update_profile_first_login: Whether to show profile update on first login (default: "off")
 
@@ -996,6 +1055,13 @@ class KeycloakConnector:
             provider_config["signingCertificate"] = signing_certificate
             provider_config["validateSignature"] = "true" if validate_signature else "false"
 
+        # Merge YAML-provided overrides last so they take precedence over defaults
+        if config_overrides:
+            for key, value in config_overrides.items():
+                if value is None:
+                    continue
+                provider_config[key] = str(value) if isinstance(value, bool) else value
+
         provider_data = {
             "alias": provider_alias,
             "displayName": display_name,
@@ -1020,15 +1086,32 @@ class KeycloakConnector:
                 logger.info(f"Created new SAML identity provider {provider_alias} in realm {realm_name}")
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
-                    logger.info(
-                        f"SAML identity provider {provider_alias} already exists in realm {realm_name}, updating config"
-                    )
                     current_provider = self.admin.get_idp(idp_alias=provider_alias)
-                    current_provider["displayName"] = provider_data["displayName"]
-                    current_provider["enabled"] = provider_data["enabled"]
-                    current_provider["config"].update(provider_data["config"])
-                    self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
-                    logger.info(f"Updated SAML identity provider {provider_alias} in realm {realm_name}")
+                    current_config = current_provider.get("config", {}) or {}
+
+                    # Compute explicit diff
+                    changed_keys: list[str] = []
+                    for key, desired in provider_config.items():
+                        if current_config.get(key) != desired:
+                            changed_keys.append(key)
+                    display_name_differs = current_provider.get("displayName") != provider_data["displayName"]
+                    enabled_differs = current_provider.get("enabled") != provider_data["enabled"]
+
+                    if changed_keys or display_name_differs or enabled_differs:
+                        logger.info(
+                            f"SAML identity provider {provider_alias} in realm {realm_name} needs update: "
+                            f"changed_keys={changed_keys}, displayName_differs={display_name_differs}, "
+                            f"enabled_differs={enabled_differs}"
+                        )
+                        current_provider["displayName"] = provider_data["displayName"]
+                        current_provider["enabled"] = provider_data["enabled"]
+                        current_provider["config"] = {**current_config, **provider_config}
+                        self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
+                        logger.info(f"Updated SAML identity provider {provider_alias} in realm {realm_name}")
+                    else:
+                        logger.debug(
+                            f"SAML identity provider {provider_alias} in realm {realm_name} already matches desired config"
+                        )
                 else:
                     raise
 

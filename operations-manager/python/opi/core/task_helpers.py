@@ -24,6 +24,7 @@ async def create_async_task(
     project_name: str,
     deployment_name: str | None = None,
     payload: dict | None = None,
+    max_attempts: int | None = None,
 ) -> dict:
     """Create an async task, routing through federation when available.
 
@@ -33,7 +34,18 @@ async def create_async_task(
 
     Returns:
         Task dict with task_id and status.
+
+    Raises:
+        HTTPException 503: When the application is draining (graceful shutdown).
     """
+    from opi.core.shutdown import is_draining
+
+    if is_draining():
+        raise HTTPException(
+            status_code=503,
+            detail="Service is shutting down. Please retry shortly — the new instance will pick up pending work.",
+        )
+
     task_service = get_task_service(request)
 
     federation_service = getattr(request.app.state, "federation_service", None)
@@ -53,6 +65,7 @@ async def create_async_task(
         deployment_name=deployment_name,
         cluster=settings.CLUSTER_MANAGER,
         payload=payload or {},
+        max_attempts=max_attempts,
     )
 
 

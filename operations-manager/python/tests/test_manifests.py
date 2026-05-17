@@ -208,6 +208,35 @@ class TestRenderRealTemplates:
         # HSTS annotations should not appear without TLS
         assert "hsts_header" not in result
 
+    def test_ingress_template_with_external_dns_target(self):
+        """When external_dns_target is set, the matching annotation is rendered."""
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "myproject.rijksapp.nl",
+                "enable_tls": True,
+                "cluster_issuer": "letsencrypt-prod",
+                "tls_secret_name": "app-tls",
+                "external_dns_target": "router.rijksapp.nl",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["metadata"]["annotations"]["external-dns.alpha.kubernetes.io/target"] == "router.rijksapp.nl"
+
+    def test_ingress_template_without_external_dns_target(self):
+        """When external_dns_target is absent, no annotation is rendered."""
+        result = render_template(
+            "ingress.yaml.jinja",
+            {
+                "name": "web-ingress",
+                "hostname": "app.example.com",
+                "enable_tls": False,
+            },
+        )
+        assert "external-dns.alpha.kubernetes.io/target" not in result
+
     def test_network_policy_template(self):
         result = render_template(
             "network-policy.yaml.jinja",
