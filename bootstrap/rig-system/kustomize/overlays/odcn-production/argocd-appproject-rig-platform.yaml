@@ -1,0 +1,73 @@
+# AppProject - beperkt wat de productie-Applications mogen synchroniseren.
+#
+# Zonder dit project draaien de Applications in het ingebouwde 'default'
+# project, dat sourceRepos '*', destinations '*' en
+# clusterResourceWhitelist '*' toestaat. Iedereen die naar 'main' van een
+# van de bronrepo's kan pushen krijgt daarmee willekeurige cluster-brede
+# objecten (incl. ClusterRoleBindings) automatisch toegepast en self-healed.
+#
+# Dit project pint:
+#  - sourceRepos op exact de twee legitieme repo-URL's (geen wildcard)
+#  - destinations op de in-cluster API server en uitsluitend de namespaces
+#    waar deze apps daadwerkelijk naartoe deployen
+#  - clusterResourceWhitelist op de minimale set cluster-brede kinds die de
+#    infrastructuur-sync aantoonbaar nodig heeft
+#
+# LET OP: delen van de infrastructuur-overlay zijn SOPS-versleuteld, waardoor
+# niet elke namespace/kind statisch te enumereren is. De whitelist hieronder
+# is bewust conservatief. Een te strakke whitelist breekt de productie-GitOps.
+# Een 'kustomize build' van de odcn-production overlay EN een ArgoCD dry-run
+# (beide Applications moeten onder dit project blijven syncen) zijn VERPLICHTE
+# pre-merge checks op staging. Zie de PR-omschrijving.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rig-platform
+  namespace: rig-system
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: >-
+    Beperkt project voor de productie-Applications (infrastructuur en
+    user-applications). Vervangt het ongebonden 'default' project.
+
+  # Exact de twee bronrepo's. Geen wildcard - dit sluit de supply-chain
+  # takeover via een willekeurige andere repo uit.
+  sourceRepos:
+    - https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
+    - https://user-applications@github.com/RijksICTGilde/argo-applications.git
+
+  # Alleen de in-cluster API server en de namespaces waar deze apps
+  # legitiem naartoe deployen. Beide Applications zetten destination.namespace
+  # op rig-prd-operations; de infrastructuur-overlay plaatst daarnaast
+  # resources in rig-system. Geen '*'.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: rig-prd-operations
+    - server: https://kubernetes.default.svc
+      namespace: rig-system
+
+  # Cluster-brede kinds: de infrastructuur-sync maakt aantoonbaar een
+  # ClusterRole + ClusterRoleBinding aan (external-dns) en kan Namespaces
+  # aanmaken. Bewust géén '*'. Als de SOPS-versleutelde overlays meer
+  # cluster-brede kinds blijken te bevatten faalt de sync zichtbaar op
+  # staging - dat is het pre-merge validatiemoment, niet productie.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+
+  # Namespaced resources blijven breed toegestaan: de blast radius is al
+  # ingeperkt door de destination-namespace-pinning hierboven. Een te
+  # strakke namespaced-whitelist zou de platform-sync stilletjes breken
+  # zonder extra beveiligingswinst bovenop de namespace-pinning.
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # Geen orphaned-resource-acties; alleen waarschuwen.
+  orphanedResources:
+    warn: false

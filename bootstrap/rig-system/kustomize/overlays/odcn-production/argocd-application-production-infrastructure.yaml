@@ -7,7 +7,7 @@ metadata:
 #  annotations:
 #    argocd.argoproj.io/sync-wave: "1"  # Deploy before user applications
 spec:
-  project: default
+  project: rig-platform
   source:
     repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/clusters/odcn
