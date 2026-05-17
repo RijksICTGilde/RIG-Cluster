@@ -11,6 +11,7 @@ resources:
 - argocd-deployment.yaml
 - network-policies/argocd-network-policy.yaml
 - ../../operations-manager/overlays/odcn-production
+- argocd-appproject-rig-platform.yaml
 - argocd-application-production-infrastructure.yaml
 - argocd-application-user-applications.yaml
 
