@@ -15,6 +15,8 @@ with an API key and are not cookie/session based; static assets and the OAuth
 endpoints are exempt as well (the OAuth endpoints are GET-only).
 """
 
+from __future__ import annotations
+
 import logging
 import secrets
 from typing import TYPE_CHECKING

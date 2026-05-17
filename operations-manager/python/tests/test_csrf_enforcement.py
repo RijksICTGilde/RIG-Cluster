@@ -7,8 +7,10 @@ Red-green coverage:
 - a state-changing POST without a valid CSRF token is rejected (403)
 - a state-changing POST with a foreign Origin is rejected (403)
 - a state-changing POST with a valid token + matching Origin passes
-- a GET still mints/seeds the CSRF cookie
+- the Referer fallback rejects a foreign Referer and accepts a matching one
+- a GET still mints/seeds the CSRF cookie; a POST response keeps it usable
 - /api/ routes are exempt (API-key auth, not cookie/session based)
+- the module imports at runtime (no __future__ annotations regression)
 """
 
 from typing import Any
@@ -137,3 +139,58 @@ class TestCsrfEnforcement:
         )
         assert response.status_code == 200
         assert response.json() == {"api": True}
+
+    def test_post_with_foreign_referer_is_rejected(self, client: TestClient) -> None:
+        # When no Origin is sent the middleware falls back to Referer; a
+        # cross-site Referer must still be rejected.
+        client.get("/")
+        token = client.cookies[CSRF_COOKIE_NAME]
+        response = client.post(
+            "/projects/delete/foo",
+            headers={
+                "X-CSRF-Token": token,
+                "Referer": "http://attacker.example.nl/x",
+            },
+        )
+        assert response.status_code == 403
+        assert "invalid referer" in response.json()["detail"]
+
+    def test_post_with_matching_referer_passes(self, client: TestClient) -> None:
+        client.get("/")
+        token = client.cookies[CSRF_COOKIE_NAME]
+        response = client.post(
+            "/projects/delete/foo",
+            headers={
+                "X-CSRF-Token": token,
+                "Referer": "http://opi.example.nl/projects",
+            },
+        )
+        assert response.status_code == 200
+
+    def test_get_seeded_cookie_is_usable_for_subsequent_post(self, client: TestClient) -> None:
+        # Real flow: a GET renders the page and seeds the cookie; the cookie
+        # the browser holds is exactly what a later POST must echo back.
+        get_response = client.get("/")
+        seeded = get_response.cookies[CSRF_COOKIE_NAME]
+        post_response = client.post(
+            "/projects/delete/foo",
+            headers={"X-CSRF-Token": seeded, "Origin": "http://opi.example.nl"},
+        )
+        assert post_response.status_code == 200
+        assert post_response.json() == {"changed": True}
+
+
+def test_csrf_module_has_no_unresolved_runtime_annotations() -> None:
+    """Regression: dispatch() is annotated with Callable/Awaitable/Response.
+
+    The module has no ``from __future__ import annotations``, so those names
+    must be importable at runtime, not only under TYPE_CHECKING. Importing the
+    module fresh must not raise NameError.
+    """
+    import importlib
+
+    import opi.utils.csrf as csrf_module
+
+    importlib.reload(csrf_module)
+    assert hasattr(csrf_module, "CSRFMiddleware")
+    assert "from __future__ import annotations" not in (csrf_module.__doc__ or "")
