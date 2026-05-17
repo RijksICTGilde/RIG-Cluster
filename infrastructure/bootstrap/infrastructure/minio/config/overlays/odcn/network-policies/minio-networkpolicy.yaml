@@ -20,9 +20,15 @@ spec:
         - protocol: TCP
           port: 9001  # MinIO Console
 
-    # Allow S3 API access from all other namespaces
+    # Allow S3 API access from tenant namespaces only.
+    # Tenant namespaces are stamped with `created-by: operations-manager`
+    # by OPI (see operations-manager/python/manifests/namespace.yaml.jinja);
+    # infra namespaces do not carry this label. This replaces the previous
+    # empty selector that exposed the S3 API to every namespace.
     - from:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
       ports:
         - protocol: TCP
           port: 9000  # MinIO S3 API

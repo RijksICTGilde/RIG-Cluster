@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: rig-system
+spec:
+  # Backstop for the shared rig-system datastore namespace.
+  #
+  # podSelector: {} selects every pod in the namespace and, because
+  # policyTypes only lists Ingress, denies all ingress that is not
+  # explicitly allowed by another NetworkPolicy (allow-postgres-access,
+  # allow-minio-access, allow-vault-access, allow-postgres-monitoring).
+  #
+  # Purpose: if a future change reintroduces an empty `namespaceSelector: {}`
+  # in one of the datastore policies, that policy would only be ADDITIVE on
+  # top of this deny baseline for its own pods. This does not by itself undo
+  # an over-broad allow rule, but it guarantees that any datastore pod with
+  # NO matching allow policy is unreachable by default instead of open.
+  # Egress is intentionally left unmanaged here so this policy cannot break
+  # outbound traffic for unrelated rig-system workloads.
+  podSelector: {}
+  policyTypes:
+    - Ingress

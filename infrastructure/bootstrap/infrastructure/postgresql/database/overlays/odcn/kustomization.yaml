@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: rig-system
 resources:
 - ../../base
+- network-policies/default-deny-ingress.yaml
 - network-policies/postgresql-networkpolicy.yaml
 
 patches:

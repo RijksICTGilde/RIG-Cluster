@@ -20,12 +20,12 @@ spec:
         - protocol: TCP
           port: 8201  # Vault cluster port
 
-    # Allow API access from all other namespaces
-    - from:
-        - namespaceSelector: {}
-      ports:
-        - protocol: TCP
-          port: 8200  # Vault API port
+    # NOTE: the previous rule allowed Vault API access from ALL namespaces
+    # (`namespaceSelector: {}`). Vault is only consumed by OPI in the
+    # rig-system namespace; no tenant workload needs Vault. The
+    # all-namespaces rule has been removed entirely so tenant pods can no
+    # longer reach the Vault API. Access is now limited to rig-system
+    # (rule above) and the ingress controller (rule below).
 
     # Allow ingress controller access
     - from:

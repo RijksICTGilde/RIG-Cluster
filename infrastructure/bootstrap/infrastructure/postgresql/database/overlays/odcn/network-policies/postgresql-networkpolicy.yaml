@@ -19,16 +19,49 @@ spec:
         - protocol: TCP
           port: 5432
 
-    # Allow PostgreSQL access from all other namespaces
+    # Allow PostgreSQL access from tenant namespaces only.
+    # Tenant namespaces are stamped with `created-by: operations-manager`
+    # by OPI (see operations-manager/python/manifests/namespace.yaml.jinja).
+    # Infra namespaces (rig-system, monitoring, ingress-nginx) do NOT carry
+    # this label, so ingress is scoped to tenant workloads instead of the
+    # previous empty selector that allowed every namespace in the cluster.
     - from:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
       ports:
         - protocol: TCP
           port: 5432
 
   egress:
-    # Allow all outbound traffic (needed for backups, WAL shipping, etc.)
-    - {}
+    # Allow DNS resolution (kube-dns / CoreDNS).
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow intra-cluster traffic within rig-system: CNPG instance-to-instance
+    # replication / WAL streaming and the in-cluster MinIO S3 backup target.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-system
+
+    # Allow HTTPS egress for off-cluster backup / WAL archive targets
+    # (object storage over TLS). Assumption: backups use an HTTPS S3
+    # endpoint; narrow this further if an in-cluster-only target is used.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
 
 ---
 apiVersion: networking.k8s.io/v1
