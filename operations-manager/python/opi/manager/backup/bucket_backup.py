@@ -12,6 +12,7 @@ from opi.manager.backup.base import (
     BaseBackupManager,
     RestoreResult,
     SnapshotInfo,
+    kopia_backup_identity,
     utc_now,
 )
 from opi.utils.naming import generate_backup_prefix
@@ -76,6 +77,7 @@ class BucketBackupManager(BaseBackupManager):
         deployment_name: str | None = None,
         component_name: str | None = None,
         generation: int | None = None,
+        trigger: str = "manual",
     ) -> BucketBackupResult:
         """
         Backup a MinIO bucket to S3 via Kopia with SOPS-derived encryption.
@@ -120,6 +122,7 @@ class BucketBackupManager(BaseBackupManager):
                     component_name=component_name,
                     generation=generation,
                     backup_run_id=backup_run_id,
+                    trigger=trigger,
                 )
             else:
                 return await self._backup_bucket_mirror(
@@ -153,6 +156,7 @@ class BucketBackupManager(BaseBackupManager):
         deployment_name: str | None = None,
         component_name: str | None = None,
         generation: int | None = None,
+        trigger: str = "manual",
     ) -> BucketBackupResult:
         """
         Internal: backup a bucket using Kopia (lock must be held).
@@ -190,6 +194,7 @@ class BucketBackupManager(BaseBackupManager):
                 component_name=component_name,
                 generation=generation,
                 backup_run_id=backup_run_id,
+                trigger=trigger,
             )
 
             # Wait for pod completion
@@ -366,6 +371,7 @@ class BucketBackupManager(BaseBackupManager):
         deployment_name: str | None = None,
         component_name: str | None = None,
         generation: int | None = None,
+        trigger: str = "manual",
     ) -> None:
         """Create the bucket backup pod (Kopia approach)."""
         template_path = os.path.join(self.MANIFESTS_DIR, "backup-bucket-pod.yaml.jinja")
@@ -376,6 +382,15 @@ class BucketBackupManager(BaseBackupManager):
         # Get the bucket name (may be per-project based on config)
         effective_cluster = cluster or settings.CLUSTER_MANAGER
         bucket_name = self.config.get_bucket_name(project_name, effective_cluster)
+
+        # Stable per-resource Kopia source identity for this bucket.
+        kopia_hostname, kopia_source = kopia_backup_identity(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            resource_kind="bucket",
+            resource_name=reference_name,
+            trigger=trigger,
+        )
 
         manifest = self.kubectl.template_manifest(
             template_content,
@@ -396,10 +411,13 @@ class BucketBackupManager(BaseBackupManager):
                 "s3_disable_tls": not self.config.s3_use_tls,
                 "backup_prefix": backup_prefix,
                 "kopia_password": kopia_password,
+                "kopia_hostname": kopia_hostname,
+                "kopia_source": kopia_source,
                 "timeout_seconds": self.config.timeout_seconds,
                 "retention_keep_latest": self.config.retention_keep_latest,
                 "retention_keep_daily": self.config.retention_keep_daily,
                 "retention_keep_weekly": self.config.retention_keep_weekly,
+                "retention_keep_monthly": self.config.retention_keep_monthly,
                 # Metadata
                 "cluster": effective_cluster,
                 "project_name": project_name,
@@ -407,6 +425,7 @@ class BucketBackupManager(BaseBackupManager):
                 "component_name": component_name,
                 "generation": generation if generation is not None else 0,
                 "backup_run_id": backup_run_id,
+                "trigger": trigger,
             },
         )
 
@@ -758,6 +777,7 @@ class BucketBackupManager(BaseBackupManager):
                         generation=ks.generation,
                         backup_run_id=ks.backup_run_id,
                         resource_type="bucket",
+                        trigger=ks.trigger,
                         tags=ks.tags,
                     )
                 )

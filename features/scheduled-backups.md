@@ -35,7 +35,7 @@ deployments:
 | Weekly | `FREQ=WEEKLY;BYDAY=MO;BYHOUR=2;BYMINUTE=0` | Runs once every 7 days on the specified day |
 | Monthly | `FREQ=MONTHLY;BYMONTHDAY=1;BYHOUR=2;BYMINUTE=0` | Runs once every 30 days on the specified day |
 
-`BYHOUR` and `BYMINUTE` specify the preferred backup window (+/-60 minutes). `BYDAY` and `BYMONTHDAY` are optional parameters for weekly and monthly schedules respectively.
+`BYHOUR` and `BYMINUTE` are interpreted in **Europe/Amsterdam** wall-clock time. Backups fire at or shortly after the configured moment — within ~10 minutes, depending on the scheduler tick interval. `BYDAY` (single day code like `MO`, or a comma-separated list like `MO,WE,FR` per RFC 5545) and `BYMONTHDAY` are optional parameters for weekly and monthly schedules respectively. For MONTHLY with a `BYMONTHDAY` larger than the current month allows (e.g. 31 in February), the last day of the month is used — standard cron semantics.
 
 ### Resource Types
 
@@ -49,11 +49,18 @@ When no `backup` section is present on a deployment, no automatic backups are sc
 
 ## How It Works
 
-1. The **BackupScheduler** runs as a background service inside the Operations Manager
-2. Every `BACKUP_SCHEDULER_INTERVAL` seconds (default: 3600), it checks all projects for deployments with a `backup.schedule`
-3. For each scheduled deployment on the current cluster, it checks the last completed BACKUP task in the database
-4. If sufficient time has elapsed (based on the schedule) AND current time is within +/-60 min of preferred time, a new backup task is created via the async task queue
-5. The backup task covers the configured resource types
+1. The **BackupScheduler** runs as a background service inside the Operations Manager.
+2. Ticks are **anchored to wall-clock boundaries** of `BACKUP_SCHEDULER_INTERVAL` seconds (default 600). With a 600s interval, ticks fire at HH:00, HH:10, HH:20, … regardless of when OPI started — restarting the pod does not shift the firing phase.
+3. Each tick walks all projects on this cluster. For each deployment with a `backup.schedule`, a backup is due when:
+   - **Today is a target day** for the schedule (`FREQ`/`BYDAY`/`BYMONTHDAY`), AND
+   - **Current Amsterdam wall-clock time is at or past today's `BYHOUR:BYMINUTE`** but still **within the catch-up window** (`BACKUP_SCHEDULE_CATCH_UP_SECONDS`, default 4 hours), AND
+   - **No scheduled backup has completed at or after today's target time** (manual backups are ignored for this check, so a user-triggered run does not suppress the next automatic one).
+4. When due, a backup task is created via the async task queue with `payload.trigger = "scheduled"`.
+5. The backup task covers the configured `resource_types`.
+
+This catches up automatically after brief OPI downtime: if the pod was offline at 02:00 (the configured target) and starts at 03:30, the next tick at 03:40 sees "past today's target AND no scheduled backup yet today AND within catch-up window" and fires immediately.
+
+The catch-up window prevents late-day surprise runs. If OPI has been down all day or the schedule is freshly added late in the day, the scheduler will **not** fire a 02:00 backup at, say, 22:00 — it skips today and waits for tomorrow's 02:00. Bump `BACKUP_SCHEDULE_CATCH_UP_SECONDS` if your downtime windows can exceed 4 hours.
 
 ### Prerequisites
 
@@ -99,7 +106,8 @@ The frequency select triggers an HTMX re-render (`data-rerender="true"`) to show
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `BACKUP_SCHEDULER_ENABLED` | `true` | Enable/disable the backup scheduler |
-| `BACKUP_SCHEDULER_INTERVAL` | `3600` | Seconds between schedule checks (hourly) |
+| `BACKUP_SCHEDULER_INTERVAL` | `600` | Seconds between scheduler ticks. Ticks are anchored to wall-clock boundaries (e.g. 600 → HH:00, HH:10, HH:20…). Maximum firing latency after the configured time equals this value. |
+| `BACKUP_SCHEDULE_CATCH_UP_SECONDS` | `14400` | Catch-up window after the configured `BYHOUR:BYMINUTE`. Backups missed inside this window fire late; missed outside it wait for the next target day. Default 4 hours. |
 | `BACKUP_MAX_CONCURRENT` | `2` | Max backup/restore tasks running simultaneously |
 
 ## Concurrency Control
@@ -110,7 +118,13 @@ This is enforced at the task worker level via `claim_next_task` — the worker s
 
 ## Interaction with Manual Backups
 
-Manual backups and scheduled backups use the same async task queue and the same backup logic. A manual backup resets the schedule timer (the scheduler checks `completed_at` of the last backup task, regardless of whether it was manual or scheduled).
+Manual and scheduled backups use the same async task queue and the same backup logic, but are tracked independently via `payload.trigger` (`"manual"` or `"scheduled"`):
+
+- **The scheduler ignores manual runs** when checking "have we already run today?" — a user-triggered backup at 14:00 does not suppress the next automatic 02:00 run.
+- **Manual snapshots are exempt from automatic retention.** Each backup gets a stable Kopia source identity (`<project>-<deployment>-<kind>-<resource>` for scheduled, `…-manual` suffix for manual). Retention (`kopia policy set` + `kopia snapshot expire`) is applied per-source, so the scheduled run's expiry never touches a manual snapshot. Manual snapshots persist until an operator deletes them explicitly.
+- Backup runs in the UI are tagged "auto" or "handmatig" so the distinction is visible at a glance.
+
+Legacy tasks created before the `trigger` field existed are treated as `scheduled` (the historical default).
 
 ## Key Files
 

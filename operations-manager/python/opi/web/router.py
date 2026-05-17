@@ -1510,6 +1510,7 @@ async def project_details(request: Request, project_name: str):
                                 "generation": s.generation,
                                 "backup_run_id": s.backup_run_id,
                                 "resource_type": s.resource_type,
+                                "trigger": s.trigger,
                                 # Raw tags for debugging
                                 "tags": s.tags,
                             }

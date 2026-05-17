@@ -352,14 +352,33 @@ class Settings(BaseSettings):
     BACKUP_S3_USE_TLS: bool = False  # Use HTTP (False) or HTTPS (True) for S3 endpoint
     BACKUP_SNAPSHOT_CLASS: str = "ocs-storagecluster-rbdplugin-snapclass"
     BACKUP_TIMEOUT_SECONDS: int = 3600
-    BACKUP_RETENTION_KEEP_LATEST: int = 7
-    BACKUP_RETENTION_KEEP_DAILY: int = 7
+    # Retention: Kopia keeps the union of all "keep-*" rules. With these
+    # defaults a daily-scheduled deployment retains 30 daily snapshots, then
+    # one per week for 4 weeks, then one per month for 12 months. Manual
+    # backups bypass retention entirely (separate Kopia source identity) and
+    # are removed only when an operator deletes them explicitly.
+    BACKUP_RETENTION_KEEP_LATEST: int = 30
+    BACKUP_RETENTION_KEEP_DAILY: int = 30
     BACKUP_RETENTION_KEEP_WEEKLY: int = 4
+    BACKUP_RETENTION_KEEP_MONTHLY: int = 12
 
-    # Backup scheduler settings
+    # Backup scheduler settings. Ticks are anchored to wall-clock boundaries
+    # of this interval (e.g. 600 -> HH:00, HH:10, HH:20, ...), so the firing
+    # phase is independent of pod start time.
     BACKUP_SCHEDULER_ENABLED: bool = True
-    BACKUP_SCHEDULER_INTERVAL: int = 3600  # seconds between schedule checks (hourly)
+    BACKUP_SCHEDULER_INTERVAL: int = 600  # seconds between schedule checks
     BACKUP_MAX_CONCURRENT: int = 2  # max backup/restore tasks running simultaneously
+    # Catch-up window after the configured BYHOUR:BYMINUTE. If the scheduled
+    # moment has passed and no backup has completed today, fire any time within
+    # this window (default 4 hours). Outside it, skip and wait for tomorrow —
+    # prevents an OPI deploy at 18:00 from firing a "missed" 02:00 backup at
+    # 18:00. Bumps up if your downtime windows are longer than 4h.
+    BACKUP_SCHEDULE_CATCH_UP_SECONDS: int = 14400
+    # How long a task waits for the global backup lock before giving up.
+    # Cron-anchored ticks fire multiple due backups at the same instant —
+    # without a wait, the second one fails immediately. 30 min is enough for
+    # a typical PVC+DB+bucket run to finish.
+    BACKUP_LOCK_WAIT_SECONDS: int = 1800
 
 
 def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:

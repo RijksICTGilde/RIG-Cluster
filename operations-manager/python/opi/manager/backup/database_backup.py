@@ -12,6 +12,7 @@ from opi.manager.backup.base import (
     BaseBackupManager,
     RestoreResult,
     SnapshotInfo,
+    kopia_backup_identity,
     utc_now,
 )
 from opi.utils.naming import generate_backup_prefix
@@ -71,6 +72,7 @@ class DatabaseBackupManager(BaseBackupManager):
         deployment_name: str | None = None,
         component_name: str | None = None,
         generation: int | None = None,
+        trigger: str = "manual",
     ) -> DatabaseBackupResult:
         """
         Backup a PostgreSQL database to S3 via Kopia with SOPS-derived encryption.
@@ -114,6 +116,7 @@ class DatabaseBackupManager(BaseBackupManager):
                 component_name=component_name,
                 generation=generation,
                 backup_run_id=backup_run_id,
+                trigger=trigger,
             )
 
     async def _backup_database(
@@ -132,6 +135,7 @@ class DatabaseBackupManager(BaseBackupManager):
         deployment_name: str | None = None,
         component_name: str | None = None,
         generation: int | None = None,
+        trigger: str = "manual",
     ) -> DatabaseBackupResult:
         """
         Internal: backup a PostgreSQL database (lock must be held).
@@ -173,6 +177,7 @@ class DatabaseBackupManager(BaseBackupManager):
                 component_name=component_name,
                 generation=generation,
                 backup_run_id=backup_run_id,
+                trigger=trigger,
             )
 
             # 3. Wait for pod completion
@@ -243,6 +248,7 @@ class DatabaseBackupManager(BaseBackupManager):
         component_name: str | None = None,
         generation: int | None = None,
         backup_run_id: str | None = None,
+        trigger: str = "manual",
     ) -> None:
         """Create the database backup pod."""
         template_path = os.path.join(self.MANIFESTS_DIR, "backup-database-pod.yaml.jinja")
@@ -253,6 +259,15 @@ class DatabaseBackupManager(BaseBackupManager):
         # Get the bucket name (may be per-project based on config)
         effective_cluster = cluster or settings.CLUSTER_MANAGER
         bucket_name = self.config.get_bucket_name(project_name, effective_cluster)
+
+        # Stable per-resource Kopia source identity for this database.
+        kopia_hostname, kopia_source = kopia_backup_identity(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            resource_kind="db",
+            resource_name=reference_name,
+            trigger=trigger,
+        )
 
         manifest = self.kubectl.template_manifest(
             template_content,
@@ -274,10 +289,13 @@ class DatabaseBackupManager(BaseBackupManager):
                 "s3_disable_tls": not self.config.s3_use_tls,
                 "backup_prefix": backup_prefix,
                 "kopia_password": kopia_password,
+                "kopia_hostname": kopia_hostname,
+                "kopia_source": kopia_source,
                 "timeout_seconds": self.config.timeout_seconds,
                 "retention_keep_latest": self.config.retention_keep_latest,
                 "retention_keep_daily": self.config.retention_keep_daily,
                 "retention_keep_weekly": self.config.retention_keep_weekly,
+                "retention_keep_monthly": self.config.retention_keep_monthly,
                 # Metadata
                 "cluster": effective_cluster,
                 "project_name": project_name,
@@ -285,6 +303,7 @@ class DatabaseBackupManager(BaseBackupManager):
                 "component_name": component_name,
                 "generation": generation if generation is not None else 0,
                 "backup_run_id": backup_run_id,
+                "trigger": trigger,
             },
         )
 
@@ -569,6 +588,7 @@ class DatabaseBackupManager(BaseBackupManager):
                         generation=ks.generation,
                         backup_run_id=ks.backup_run_id,
                         resource_type="database",
+                        trigger=ks.trigger,
                         tags=ks.tags,
                     )
                 )

@@ -730,6 +730,7 @@ class AsyncTaskService:
         task_type: str,
         project_name: str,
         deployment_name: str | None = None,
+        only_scheduled: bool = False,
     ) -> dict | None:
         """Get the most recently completed task matching the given criteria.
 
@@ -737,6 +738,9 @@ class AsyncTaskService:
             task_type: The task type to filter on.
             project_name: The project name to filter on.
             deployment_name: Optional deployment name for more specific matching.
+            only_scheduled: When True, exclude tasks explicitly tagged
+                `payload.trigger == "manual"`. Tasks with no trigger or any
+                other value are treated as scheduled (legacy-safe default).
 
         Returns:
             A dict representing the task, or None if no matching task exists.
@@ -750,12 +754,14 @@ class AsyncTaskService:
                   AND project_name = $2
                   AND deployment_name IS NOT DISTINCT FROM $3
                   AND status = 'completed'
+                  AND (NOT $4 OR (payload->>'trigger') IS DISTINCT FROM 'manual')
                 ORDER BY completed_at DESC
                 LIMIT 1
                 """,
                 task_type,
                 project_name,
                 deployment_name,
+                only_scheduled,
             )
             if row is None:
                 return None

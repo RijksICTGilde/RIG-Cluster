@@ -1307,6 +1307,7 @@ async def _handle_backup_restore_submit(
                 "project_name": project_name,
                 "deployment_name": deployment_name,
                 "resource_types": resource_types,
+                "trigger": "manual",
             },
         )
         task_id = task["task_id"]
