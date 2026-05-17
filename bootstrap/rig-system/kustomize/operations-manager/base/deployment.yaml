@@ -78,6 +78,13 @@ spec:
         - name: kube-api-access
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount
           readOnly: true
+        # Git SSH key for pushing to the GitOps repositories. Provided at
+        # runtime from a Kubernetes Secret instead of being baked into the
+        # image. Path matches GIT_SERVER_KEY_PATH / GIT_ARGO_APPLICATIONS_KEY
+        # (/app/keys/git-server-key).
+        - name: git-server-key
+          mountPath: /app/keys
+          readOnly: true
         - name: tmp
           mountPath: /tmp
         - name: tmp
@@ -118,6 +125,19 @@ spec:
               - path: namespace
                 fieldRef:
                   fieldPath: metadata.namespace
+      # Git SSH key Secret. Provisioned out-of-band by an operator (same
+      # pattern as the sops-age-key Secret referenced above): the key
+      # material is never committed to this repo and is NOT baked into the
+      # image. Keys: "git-server-key" (private), "git-server-key.pub".
+      - name: git-server-key
+        secret:
+          secretName: git-server-key
+          defaultMode: 0400
+          items:
+          - key: git-server-key
+            path: git-server-key
+          - key: git-server-key.pub
+            path: git-server-key.pub
       - name: tmp
         emptyDir:
           sizeLimit: 500Mi

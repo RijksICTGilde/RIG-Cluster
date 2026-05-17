@@ -9,6 +9,23 @@ __pycache__/
 !/security/readme.md
 !/security/tls/
 /security/tls/**/*.pem
+# SSH / git server keys must never be committed. They are mounted at runtime
+# from a Kubernetes Secret, not baked into the image or stored in the repo.
+/keys/
+keys/git-server-key
+keys/git-server-key.pub
+*.pem
+*_rsa
+*_ed25519
+id_*
+# Environment files contain secrets and must never be committed. They are
+# delivered at runtime via Kubernetes Secrets (operations-manager-env-secrets).
+.env
+.env.*
+!.env.example
+!.env.sample
+/operations-manager/python/.env
+/operations-manager/python/.env.production
 /operations-manager/python/scripts/.env.*
 /operations-manager/python/log*
 /operations-manager/python/.env.local

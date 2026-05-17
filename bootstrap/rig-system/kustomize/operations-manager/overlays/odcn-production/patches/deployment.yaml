@@ -9,6 +9,11 @@ spec:
       - name: ghcr-rig-robot-pull-secret
       containers:
       - name: operations-manager
+        # TODO(security): pin by immutable digest in a follow-up release.
+        # The current :latest is mutable; once a digest pin is in place
+        # (rcr.rijksapps.nl/ghcr-rig/minbzk/.../operations-manager@sha256:<digest>),
+        # ArgoCD will only redeploy on explicit manifest change instead of on
+        # silent image-registry mutation. Out-of-scope for this security PR.
         image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:latest
         resources:
           limits:

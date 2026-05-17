@@ -8,6 +8,8 @@ generators:
 
 resources:
   - ../../base
+  - cluster-role.yaml
+  - cluster-binding.yaml
   - ingress.yaml
   - configmap.yaml
   - network-policy.yaml

@@ -12,6 +12,21 @@ rules:
       - get
       - list
       - patch
+  # SECURITY: secrets are intentionally scoped DOWN here.
+  #
+  # Cluster-wide `secrets list` was removed: it let OPI read every tenant's
+  # secrets across the whole cluster (full tenant-secret disclosure) and is
+  # not used by the application (kubectl connector only does a namespaced
+  # `get_secret`; tenant secrets are delivered via GitOps/ArgoCD, not written
+  # directly by OPI). `update` cluster-wide was also removed.
+  #
+  # REQUIRED FOLLOW-UP (needs app-code change, tracked in the PR): the
+  # remaining create/get/patch on secrets should move to per-namespace
+  # Role+RoleBinding objects that OPI generates alongside each tenant
+  # namespace in _create_namespace_with_argocd_label
+  # (operations-manager/python/opi/manager/project_manager.py). Until that
+  # lands, create/get/patch are kept cluster-wide as the tightest set that
+  # does not break provisioning.
   - apiGroups:
       - ""
     resources:
@@ -19,9 +34,7 @@ rules:
     verbs:
       - create
       - get
-      - list
       - patch
-      - update
   # Prometheus service discovery - read-only access to pods/services/endpoints/nodes
   - apiGroups:
       - ""
