@@ -123,3 +123,109 @@ def test_known_good_example_project_passes() -> None:
         project_data = yaml.load(project_file)
 
     validate_project_schema(project_data)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for review findings (PR #68 augmentation)
+# ---------------------------------------------------------------------------
+
+
+def test_trailing_newline_in_namespace_is_rejected() -> None:
+    """Regression: `$` regex anchor allows a final `\\n` under Python `re`.
+
+    Patterns use `\\Z` now; a value ending in `\\n` must be rejected. Without
+    this the upstream injection vector (newline-terminated namespace that
+    looks valid to the validator but injects YAML structure downstream) was
+    silently accepted by the validator.
+    """
+    project = _valid_project()
+    project["deployments"][0]["namespace"] = "valid-project\n"
+
+    with pytest.raises(ProjectSchemaError) as exc:
+        validate_project_schema(project)
+    assert "namespace" in str(exc.value)
+
+
+def test_trailing_newline_in_project_name_is_rejected() -> None:
+    """Regression: project-name pattern must reject a trailing `\\n`."""
+    project = _valid_project()
+    project["name"] = "valid-project\n"
+
+    with pytest.raises(ProjectSchemaError) as exc:
+        validate_project_schema(project)
+    assert "name" in str(exc.value)
+
+
+def test_env_var_value_with_newline_is_rejected() -> None:
+    """Regression: env-var values must reject control chars.
+
+    A newline in an env-var value rendered into a YAML manifest (`value:
+    "{{ env_value }}"` in deployment.yaml.jinja) is the canonical injection
+    vector that PR #63 closed at the template layer. Schema layer must close
+    it at the source.
+    """
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["env-vars"] = {
+        "FOO": "value\nLD_PRELOAD=/tmp/x.so",
+    }
+
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_env_var_value_with_carriage_return_is_rejected() -> None:
+    """Same as the newline case for \\r."""
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["env-vars"] = {"FOO": "value\rmore"}
+
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_env_var_value_with_null_byte_is_rejected() -> None:
+    """Embedded NUL must be rejected (truncation attack on downstream tools)."""
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["env-vars"] = {"FOO": "value\x00x"}
+
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_env_var_value_plain_string_is_accepted() -> None:
+    """Sanity: a normal env-var value (spaces, dashes, equals) still passes."""
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["env-vars"] = {
+        "DATABASE_URL": "postgresql://app:p@ss-w0rd@db:5432/myapp?ssl=true",
+        "FEATURE_FLAGS": "auth,csrf,metrics",
+    }
+    validate_project_schema(project)
+
+
+def test_mount_path_with_dotdot_traversal_is_rejected() -> None:
+    """Regression: mount-path must reject `..` (path traversal).
+
+    The earlier pattern `^/[\\w./-]+$` allowed `/var/../etc/passwd` because
+    `..` is not forbidden in the character class. Container-side this can
+    escape the intended storage root if any tool resolves the path.
+    """
+    project = _valid_project()
+    project["components"][0]["storage"][0]["mount-path"] = "/var/../etc/passwd"
+
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_mount_path_with_double_dot_in_middle_is_rejected() -> None:
+    """`..` anywhere in the path is rejected, not just at the start."""
+    project = _valid_project()
+    project["components"][0]["storage"][0]["mount-path"] = "/data/../secrets"
+
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_mount_path_normal_value_is_accepted() -> None:
+    """Sanity: normal mount paths (dots in filenames are fine) still pass."""
+    project = _valid_project()
+    project["components"][0]["storage"][0]["mount-path"] = "/data/v1.0/files"
+    validate_project_schema(project)
