@@ -26,32 +26,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _normalize_path_config(path_config: Any, label: str = "unknown") -> list[dict[str, str | None]]:
-    """Normalize a path value (string or list-of-dicts) to canonical list format.
-
-    Handles:
-    - ``str``: pre-migration plain string path (backward compat)
-    - ``list[dict]``: canonical v2.2+ format with ``match`` and optional ``rewrite``
-    """
-    if isinstance(path_config, str):
-        logger.debug("Found single path '%s' for '%s'", path_config, label)
-        return [{"match": path_config, "rewrite": None}]
-
-    if isinstance(path_config, list):
-        result = []
-        for p in path_config:
-            if isinstance(p, dict):
-                result.append({"match": p.get("match", "/"), "rewrite": p.get("rewrite")})
-            else:
-                result.append({"match": str(p), "rewrite": None})
-        if result:
-            logger.debug("Found %d path(s) for '%s'", len(result), label)
-            return result
-
-    logger.debug("No path found for '%s', using default '/'", label)
-    return [{"match": "/", "rewrite": None}]
-
-
 # Default resource values for deployment containers
 DEFAULT_RESOURCES: dict[str, str] = {
     "requests_memory": "128Mi",

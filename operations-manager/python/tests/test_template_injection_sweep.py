@@ -120,6 +120,68 @@ class TestDeploymentTemplateInjection:
         assert doc["kind"] == "Deployment"
 
 
+class TestServiceTemplateInjection:
+    """service.yaml.jinja is rendered in the same per-component loop as
+    deployment.yaml.jinja with the same tenant-controlled ``name`` (=
+    deployment-component, both unconstrained ``{"type": "string"}`` in the
+    project schema), ``namespace`` and ``project.name``. It must be quoted
+    structurally just like the deployment template."""
+
+    def test_service_name_injection_is_neutralized(self):
+        result = render_template(
+            "service.yaml.jinja",
+            {
+                "name": MALICIOUS,
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "service_port": 80,
+                "application_port": 3000,
+            },
+        )
+        doc = _yaml().load(result)
+        # No injected sibling key anywhere; document root stays minimal and
+        # the payload never escapes the scalar into the metadata mapping.
+        assert set(doc.keys()) == {"apiVersion", "kind", "metadata", "spec"}
+        assert set(doc["metadata"].keys()) == {"name", "namespace", "labels"}
+        assert "securityContext" not in doc["spec"]
+        # The payload survives intact as a single scalar value.
+        assert doc["metadata"]["name"] == MALICIOUS
+        assert doc["metadata"]["labels"]["app"] == MALICIOUS
+        assert doc["spec"]["selector"]["app"] == MALICIOUS
+
+    def test_service_project_name_injection_is_neutralized(self):
+        result = render_template(
+            "service.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": MALICIOUS},
+                "service_port": 80,
+                "application_port": 3000,
+            },
+        )
+        doc = _yaml().load(result)
+        assert set(doc.keys()) == {"apiVersion", "kind", "metadata", "spec"}
+        assert doc["metadata"]["labels"]["project"] == MALICIOUS
+
+    def test_normal_values_still_render_valid_service(self):
+        result = render_template(
+            "service.yaml.jinja",
+            {
+                "name": "frontend-webapp",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "service_port": 8080,
+                "application_port": 3000,
+            },
+        )
+        doc = _yaml().load(result)
+        assert doc["kind"] == "Service"
+        assert doc["metadata"]["name"] == "frontend-webapp"
+        assert doc["spec"]["selector"]["app"] == "frontend-webapp"
+        assert doc["spec"]["ports"][0]["port"] == 8080
+
+
 class TestIngressTemplateInjection:
     def test_ingress_renders_valid_with_safe_rewrite(self):
         result = render_template(
