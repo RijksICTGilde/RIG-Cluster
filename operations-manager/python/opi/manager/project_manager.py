@@ -329,9 +329,39 @@ class ProjectManager:
 
         Returns:
             List of deployment configurations matching the filters
+
+        Raises:
+            ValueError: If a deployment specifies a namespace that does not
+                match the project name. The namespace is always derived from
+                the project name; allowing an arbitrary value would let a
+                tenant target another tenant's namespace (cross-tenant
+                isolation breach). We fail closed instead of silently
+                rewriting, so a mismatch surfaces the actual intent.
         """
         project_data = await self.get_contents()
         deployments = project_data.get("deployments", [])
+
+        # Tenant-isolation guard: the namespace must always equal the project
+        # name. The project file is attacker-controlled, so an explicit
+        # namespace pointing at another project would make OPI label and
+        # operate on that victim namespace and generate ArgoCD resources
+        # targeting it. Default the namespace when absent (legitimate common
+        # case) and reject any explicit value that differs.
+        project_name = project_data.get("name")
+        if project_name:
+            for deployment in deployments:
+                declared_namespace = deployment.get("namespace")
+                if declared_namespace is None:
+                    deployment["namespace"] = project_name
+                elif declared_namespace != project_name:
+                    deployment_label = deployment.get("name", "<naamloos>")
+                    raise ValueError(
+                        f"Deployment '{deployment_label}' in project '{project_name}' "
+                        f"gebruikt namespace '{declared_namespace}', maar de namespace "
+                        f"moet gelijk zijn aan de projectnaam '{project_name}'. "
+                        f"Een afwijkende namespace is niet toegestaan omdat dit toegang "
+                        f"tot de resources van een ander project zou geven."
+                    )
 
         # Filter by CLUSTER_MANAGER if requested
         if cluster_filter:
