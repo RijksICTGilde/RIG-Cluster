@@ -223,6 +223,49 @@ async def test_owner_save_protected_keys_survive_deletion_attack(project_service
     assert saved["display-name"] == "Slimmed Down"
 
 
+# ---------------------------------------------------------------------------
+# Route-level gate: the GET handler wires through _require_project_edit_access
+#
+# The helper-level tests above prove the gate function itself rejects a
+# member. This test pins the route -> gate wiring so a future refactor
+# cannot silently drop the gate call from `wizard_edit_page` without a test
+# failure. The route does light setup (get_flow / get_current_user /
+# get_templates) before calling the gate, all mocked here.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wizard_edit_page_invokes_role_gate(project_service: ProjectService) -> None:
+    """`wizard_edit_page` must invoke `_require_project_edit_access`; if the
+    gate raises, the route propagates it.
+    """
+    from unittest.mock import MagicMock
+
+    from opi.web.router_wizard import wizard_edit_page
+
+    sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
+
+    with (
+        patch(
+            "opi.web.router_detail_edit._require_project_edit_access",
+            side_effect=sentinel,
+        ) as gate,
+        patch("opi.web.router_detail_edit.get_current_user", return_value={"email": MEMBER_EMAIL}),
+        patch("opi.web.router_wizard.get_current_user", return_value={"email": MEMBER_EMAIL}),
+        patch("opi.web.router_wizard.get_flow", return_value=MagicMock()),
+        patch("opi.web.router_wizard.get_templates", return_value=MagicMock()),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await wizard_edit_page(  # @requires_sso just delegates; calling the wrapper is fine
+            request=_request_for(MEMBER_EMAIL),
+            flow_id="edit-project",
+            project_name=PROJECT_NAME,
+        )
+
+    assert exc.value.status_code == 403
+    gate.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_owner_save_blocks_nested_config_secret_exfiltration(project_service: ProjectService) -> None:
     """A payload rewriting only a nested ``config`` secret must not stick.
