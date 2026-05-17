@@ -2130,6 +2130,13 @@ class ProjectManager:
 
             current_yaml = analysis["current_yaml"]
 
+            # Security gate FIRST: validate against the project schema before
+            # any side-effect (including the auto-migration save+commit+push
+            # below). Without this ordering, a hostile project that happens to
+            # migrate cleanly would be written to zad-projects with our ops-
+            # manager identity *before* validation rejected it. Fails closed.
+            validate_project_schema(current_yaml)
+
             # read_project_file auto-migrates in memory; persist to disk if needed
             if self._project_file_handler.was_migrated:
                 project_name = current_yaml.get("name", relative_project_file_path)
@@ -2138,10 +2145,6 @@ class ProjectManager:
                 await git_connector_for_project_files.commit_and_push(
                     f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}"
                 )
-
-            # Security gate: validate against the project schema before any
-            # processing. Fails closed - a schema violation aborts the run.
-            validate_project_schema(current_yaml)
 
             previous_yaml = analysis["previous_yaml"]
             changes = analysis["changes"]
