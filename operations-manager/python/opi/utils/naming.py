@@ -5,10 +5,12 @@ This module provides standardized methods for generating unique names for Kubern
 including deployments, services, PVCs, and other manifest resources.
 """
 
+import logging
 import re
-from datetime import UTC
 from enum import Enum
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
+
+logger = logging.getLogger(__name__)
 
 
 class HostnameFormat(Enum):
@@ -22,7 +24,7 @@ class HostnameFormat(Enum):
     DOTS = "dots"
 
     @classmethod
-    def from_domain_mode(cls, domain_mode: str | None) -> "HostnameFormat":
+    def from_domain_mode(cls, domain_mode: str | None) -> HostnameFormat:
         """Convert a domain_mode string to HostnameFormat enum.
 
         Args:
@@ -62,6 +64,10 @@ DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
     "deployment.subdomain": "{deployment}.{subdomain}.{domain}",
     "component.subdomain": "{component}.{subdomain}.{domain}",
 }
+
+# Safe fallback format — always works, no approval needed.
+# Used when the requested domain+subdomain is not yet approved.
+SAFE_FALLBACK_FORMAT = "component-deployment-project"
 
 # Type alias derived from the template keys so OpenAPI exposes an enum.
 # The Literal must be written explicitly (Python cannot construct Literal from
@@ -1379,16 +1385,19 @@ def normalize_base_domain(base_domain: str, max_length: int = 50) -> str:
     return normalized or "domain"
 
 
-def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt", deployment_name: str | None = None) -> str:
     """
     Generate a consistent cert-manager Issuer name for a base domain.
 
     The issuer name includes the issuer type prefix and normalized domain
-    to ensure uniqueness per domain within a namespace.
+    to ensure uniqueness per domain within a namespace. When deployment_name
+    is provided, the name is scoped to the deployment to avoid
+    SharedResourceWarning in ArgoCD when multiple deployments share a namespace.
 
     Args:
         base_domain: The base domain (e.g., "rijksapp.com")
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+        deployment_name: Optional deployment name to scope the issuer
 
     Returns:
         Issuer name string
@@ -1398,12 +1407,19 @@ def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt") -> 
         'letsencrypt-rijksapp-com'
         >>> generate_issuer_name("rijksapp.com", "letsencrypt-staging")
         'letsencrypt-staging-rijksapp-com'
+        >>> generate_issuer_name("rijksapp.com", deployment_name="staging2")
+        'letsencrypt-rijksapp-com-staging2'
     """
     normalized = normalize_base_domain(base_domain)
-    return sanitize_kubernetes_name(f"{issuer_type}-{normalized}")
+    name = f"{issuer_type}-{normalized}"
+    if deployment_name:
+        name = f"{name}-{deployment_name}"
+    return sanitize_kubernetes_name(name)
 
 
-def generate_issuer_secret_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+def generate_issuer_secret_name(
+    base_domain: str, issuer_type: str = "letsencrypt", deployment_name: str | None = None
+) -> str:
     """
     Generate a consistent ACME account private key secret name for an Issuer.
 
@@ -1412,6 +1428,7 @@ def generate_issuer_secret_name(base_domain: str, issuer_type: str = "letsencryp
     Args:
         base_domain: The base domain (e.g., "rijksapp.com")
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+        deployment_name: Optional deployment name to scope the secret
 
     Returns:
         Secret name string
@@ -1421,18 +1438,23 @@ def generate_issuer_secret_name(base_domain: str, issuer_type: str = "letsencryp
         'letsencrypt-rijksapp-com-key'
         >>> generate_issuer_secret_name("rijksapp.com", "letsencrypt-staging")
         'letsencrypt-staging-rijksapp-com-key'
+        >>> generate_issuer_secret_name("rijksapp.com", deployment_name="staging2")
+        'letsencrypt-rijksapp-com-staging2-key'
     """
-    issuer_name = generate_issuer_name(base_domain, issuer_type)
+    issuer_name = generate_issuer_name(base_domain, issuer_type, deployment_name)
     return f"{issuer_name}-key"
 
 
-def generate_issuer_manifest_name(base_domain: str, issuer_type: str = "letsencrypt") -> str:
+def generate_issuer_manifest_name(
+    base_domain: str, issuer_type: str = "letsencrypt", deployment_name: str | None = None
+) -> str:
     """
     Generate a consistent filename for the Issuer manifest.
 
     Args:
         base_domain: The base domain (e.g., "rijksapp.com")
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
+        deployment_name: Optional deployment name to scope the manifest
 
     Returns:
         Manifest filename string
@@ -1442,17 +1464,24 @@ def generate_issuer_manifest_name(base_domain: str, issuer_type: str = "letsencr
         'issuer-letsencrypt-rijksapp-com.yaml'
         >>> generate_issuer_manifest_name("rijksapp.com", "letsencrypt-staging")
         'issuer-letsencrypt-staging-rijksapp-com.yaml'
+        >>> generate_issuer_manifest_name("rijksapp.com", deployment_name="staging2")
+        'issuer-letsencrypt-rijksapp-com-staging2.yaml'
     """
-    issuer_name = generate_issuer_name(base_domain, issuer_type)
+    issuer_name = generate_issuer_name(base_domain, issuer_type, deployment_name)
     return f"issuer-{issuer_name}.yaml"
 
 
-def generate_network_policy_name(purpose: str) -> str:
+def generate_network_policy_name(purpose: str, deployment_name: str | None = None) -> str:
     """
     Generate a consistent name for a NetworkPolicy.
 
+    When deployment_name is provided, the name is scoped to the deployment
+    to avoid SharedResourceWarning in ArgoCD when multiple deployments
+    share a namespace.
+
     Args:
         purpose: The purpose of the network policy (e.g., "acme-http")
+        deployment_name: Optional deployment name to scope the policy
 
     Returns:
         NetworkPolicy name string
@@ -1460,16 +1489,21 @@ def generate_network_policy_name(purpose: str) -> str:
     Example:
         >>> generate_network_policy_name("acme-http")
         'acme-http-network-policy'
+        >>> generate_network_policy_name("acme-http", "staging2")
+        'acme-http-staging2-network-policy'
     """
+    if deployment_name:
+        return f"{purpose}-{deployment_name}-network-policy"
     return f"{purpose}-network-policy"
 
 
-def generate_network_policy_manifest_name(purpose: str) -> str:
+def generate_network_policy_manifest_name(purpose: str, deployment_name: str | None = None) -> str:
     """
     Generate a consistent filename for a NetworkPolicy manifest.
 
     Args:
         purpose: The purpose of the network policy (e.g., "acme-http")
+        deployment_name: Optional deployment name to scope the manifest
 
     Returns:
         Manifest filename string (without .yaml extension)
@@ -1477,8 +1511,10 @@ def generate_network_policy_manifest_name(purpose: str) -> str:
     Example:
         >>> generate_network_policy_manifest_name("acme-http")
         'acme-http-network-policy'
+        >>> generate_network_policy_manifest_name("acme-http", "staging2")
+        'acme-http-staging2-network-policy'
     """
-    return generate_network_policy_name(purpose)
+    return generate_network_policy_name(purpose, deployment_name)
 
 
 def resolve_effective_base_domain(base_domain: str | None, ingress_postfix: str) -> str:
@@ -1590,33 +1626,89 @@ def generate_nice_url_root_hostname(subdomain: str, base_domain: str) -> str:
     return f"{subdomain_clean}.{base_domain}"
 
 
-def find_root_component(components: list[dict]) -> str | None:
-    """
-    Find the component marked as root in a list of component configurations.
+def generate_bare_domain_hostname(base_domain: str) -> str:
+    """Generate the bare domain hostname for expose-on-bare-domain mode.
 
-    The root component receives traffic for the root hostname (subdomain.base_domain)
-    in nice-url mode. It should be marked with root: true in the component config.
+    Returns the base domain itself as the hostname, used when a deployment
+    is configured with ``expose-component-on-bare-domain`` to serve traffic on
+    the apex domain (e.g., ``voorbeeld.nl``) alongside the prefixed domain
+    (e.g., ``www.voorbeeld.nl``).
 
     Args:
-        components: List of component dictionaries with optional 'root' field
+        base_domain: The custom base domain (e.g., "voorbeeld.nl")
 
     Returns:
-        Component name (from 'reference' or 'name' field), or None if no root found
+        Bare domain hostname
 
     Examples:
-        >>> find_root_component([{"reference": "frontend", "root": True}, {"reference": "backend"}])
+        >>> generate_bare_domain_hostname("voorbeeld.nl")
+        'voorbeeld.nl'
+    """
+    return base_domain.lower()
+
+
+def find_root_component(deployment: dict) -> str | None:
+    """
+    Find the root component for a deployment.
+
+    The root component receives traffic for the root hostname (subdomain.base_domain)
+    in nice-url mode. It is specified via the ``root-component`` field on the deployment.
+
+    Args:
+        deployment: Deployment dictionary with optional 'root-component' field
+
+    Returns:
+        Component name, or None if no root component is configured
+
+    Examples:
+        >>> find_root_component({"name": "prod", "root-component": "frontend"})
         'frontend'
 
-        >>> find_root_component([{"name": "api"}, {"name": "web", "root": True}])
-        'web'
-
-        >>> find_root_component([{"name": "api"}, {"name": "web"}])
+        >>> find_root_component({"name": "prod"})
         None
     """
-    for comp in components:
-        if comp.get("root") is True:
-            return comp.get("reference") or comp.get("name")
-    return None
+    return deployment.get("root-component")
+
+
+def apply_domain_approval_fallback(
+    domain_format: str,
+    base_domain: str | None,
+    subdomain: str | None,
+    ingress_postfix: str,
+    project_data: dict[str, Any],
+    cluster: str,
+) -> tuple[str, str | None]:
+    """Check domain approval and return the effective format + domain.
+
+    If the requested domain+subdomain combination is approved, returns
+    them unchanged. If not approved, falls back to the safe format
+    (component-deployment-project) on the cluster domain.
+
+    Args:
+        domain_format: Requested domain format ID
+        base_domain: Requested base domain
+        subdomain: Requested subdomain
+        ingress_postfix: Cluster ingress postfix (for fallback domain)
+        project_data: Project YAML data (for approval check)
+        cluster: Cluster name (for approval check)
+
+    Returns:
+        (effective_format, effective_base_domain) tuple
+    """
+    from opi.connectors.subdomain import is_deployment_domain_approved
+
+    if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
+        return domain_format, base_domain
+
+    # Not approved — fall back to safe format on cluster domain
+    logger.warning(
+        "Domain '%s' with subdomain '%s' not approved, falling back to %s on cluster domain",
+        base_domain,
+        subdomain,
+        SAFE_FALLBACK_FORMAT,
+    )
+    cluster_domain = ingress_postfix.lstrip(".")
+    return SAFE_FALLBACK_FORMAT, cluster_domain
 
 
 def get_component_ingress_map(
@@ -1628,6 +1720,9 @@ def get_component_ingress_map(
     base_domain: str | None = None,
     hostname_format: HostnameFormat = HostnameFormat.DASHES,
     domain_format: str | None = None,
+    *,
+    project_data: dict[str, Any],
+    cluster: str,
 ) -> dict[str, str]:
     """
     Get the ingress map for a single component.
@@ -1686,9 +1781,12 @@ def get_component_ingress_map(
 
     # When domain_format is explicitly set, use the template-based generation
     if domain_format and domain_format in DOMAIN_FORMAT_TEMPLATES:
-        domain = resolve_domain_tail(base_domain, ingress_postfix)
+        effective_format, effective_domain = apply_domain_approval_fallback(
+            domain_format, base_domain, subdomain, ingress_postfix, project_data, cluster
+        )
+        domain = resolve_domain_tail(effective_domain, ingress_postfix)
         hostname = generate_hostname_from_format(
-            domain_format=domain_format,
+            domain_format=effective_format,
             component_name=component_name,
             deployment_name=deployment_name,
             project_name=project_name,
@@ -1722,6 +1820,10 @@ def get_deployment_hostnames(
     base_domain: str | None = None,
     hostname_format: HostnameFormat = HostnameFormat.DASHES,
     domain_format: str | None = None,
+    expose_on_bare_domain: str | bool = False,
+    *,
+    project_data: dict[str, Any],
+    cluster: str,
 ) -> list[str]:
     """
     Get all hostnames for components in a deployment.
@@ -1737,6 +1839,8 @@ def get_deployment_hostnames(
         base_domain: Optional custom base domain (e.g., "rijks.app")
         hostname_format: Format for hostname (DASHES or DOTS)
         domain_format: Optional domain-format template ID from project YAML
+        expose_on_bare_domain: Component name that serves the bare domain,
+            or False/empty when disabled
 
     Returns:
         List of unique hostnames for the deployment
@@ -1753,6 +1857,8 @@ def get_deployment_hostnames(
             base_domain,
             hostname_format=hostname_format,
             domain_format=domain_format,
+            project_data=project_data,
+            cluster=cluster,
         )
         hostname = next(iter(ingress_map.values()))
         if hostname not in hostnames:
@@ -1765,6 +1871,12 @@ def get_deployment_hostnames(
         root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)
+
+    # Add bare domain hostname when expose-on-bare-domain is enabled
+    if expose_on_bare_domain and base_domain:
+        bare_hostname = generate_bare_domain_hostname(base_domain)
+        if bare_hostname not in hostnames:
+            hostnames.append(bare_hostname)
 
     return hostnames
 
@@ -1969,15 +2081,56 @@ def generate_backup_run_id() -> str:
     that are part of the same backup operation. This allows for consistent
     restoration of an entire deployment.
 
-    Format: YYYYMMDDHHmmss (UTC)
+    Format: YYYYMMDDHHmmss (Europe/Amsterdam local time)
 
     Returns:
         Backup run ID string
 
     Example:
         >>> generate_backup_run_id()
-        '20260116163045'
+        '20260116173045'
     """
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-    return datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    return datetime.now(ZoneInfo("Europe/Amsterdam")).strftime("%Y%m%d%H%M%S")
+
+
+def ensure_fqdn(hostname: str) -> str:
+    """Ensure a Kubernetes service hostname is fully qualified.
+
+    Short names like ``rig-db-rw`` only resolve within the same namespace.
+    Pods running in other namespaces need the FQDN. This function appends
+    the OPI namespace suffix when the hostname isn't already qualified.
+
+    Args:
+        hostname: Service hostname, e.g. ``rig-db-rw`` or
+            ``rig-db-rw.rig-system.svc.cluster.local``
+
+    Returns:
+        Fully qualified hostname.
+
+    Examples:
+        >>> ensure_fqdn("rig-db-rw")
+        'rig-db-rw.rig-system.svc.cluster.local'
+        >>> ensure_fqdn("rig-db-rw.rig-system.svc.cluster.local")
+        'rig-db-rw.rig-system.svc.cluster.local'
+        >>> ensure_fqdn("my-db:5432")
+        'my-db.rig-system.svc.cluster.local:5432'
+    """
+    # Strip port if present
+    port_suffix = ""
+    host = hostname
+    if ":" in host and not host.endswith(".local"):
+        host, port_suffix = host.rsplit(":", 1)
+        port_suffix = f":{port_suffix}"
+
+    if "." in host:
+        return f"{host}{port_suffix}"
+
+    from opi.core.cluster_config import CLUSTER_CONFIG
+    from opi.core.config import settings
+
+    cluster_conf = CLUSTER_CONFIG.get(settings.CLUSTER_MANAGER, {})
+    namespace = cluster_conf.get("namespace", "rig-system")
+    return f"{host}.{namespace}.svc.cluster.local{port_suffix}"

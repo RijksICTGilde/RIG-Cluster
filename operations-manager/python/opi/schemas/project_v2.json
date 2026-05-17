@@ -10,7 +10,7 @@
     "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
     "display-name": { "type": "string" },
     "description": { "type": "string" },
-    "schema-version": { "type": "integer" },
+    "schema-version": { "type": "number" },
     "clusters": {
       "type": "array",
       "items": { "type": "string" }
@@ -53,10 +53,83 @@
       "items": { "$ref": "#/$defs/remote-source" }
     },
     "invites": { "$ref": "#/$defs/invites" },
-    "backup": { "$ref": "#/$defs/backup" }
+    "backup": { "$ref": "#/$defs/backup" },
+    "domains": { "$ref": "#/$defs/domains" }
   },
 
   "$defs": {
+
+    "domains": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed-subdomains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/allowed-subdomain-entry" }
+        },
+        "allowed-domains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/allowed-domain-entry" }
+        }
+      }
+    },
+
+    "allowed-subdomain-entry": {
+      "type": "object",
+      "required": ["domain", "subdomains"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": { "type": "string" },
+        "subdomains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/allowed-subdomain-detail" }
+        }
+      }
+    },
+
+    "allowed-subdomain-detail": {
+      "type": "object",
+      "required": ["name", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/domain-history-entry" }
+        }
+      }
+    },
+
+    "allowed-domain-entry": {
+      "type": "object",
+      "required": ["domain", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "supports-dots": { "type": "boolean" },
+        "issuer": { "type": "string" },
+        "restricted-subdomains": { "type": "boolean" },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/domain-history-entry" }
+        }
+      }
+    },
+
+    "domain-history-entry": {
+      "type": "object",
+      "required": ["date", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
+        "by": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+
 
     "age-encrypted": {
       "type": "string",
@@ -76,7 +149,7 @@
       "additionalProperties": false,
       "properties": {
         "email": { "type": "string", "format": "email" },
-        "role": { "type": "string", "enum": ["admin", "administrator", "owner", "member"] }
+        "role": { "type": "string", "enum": ["admin", "owner", "member"] }
       }
     },
 
@@ -156,6 +229,7 @@
 
     "component-path": {
       "type": "object",
+      "required": ["match"],
       "additionalProperties": false,
       "properties": {
         "match": { "type": "string" },
@@ -231,7 +305,6 @@
         "name": { "type": "string" },
         "type": { "type": "string" },
         "image": { "type": "string" },
-        "root": { "type": "boolean" },
         "ports": {
           "type": "object",
           "additionalProperties": false,
@@ -241,13 +314,8 @@
           }
         },
         "path": {
-          "oneOf": [
-            { "type": "string" },
-            {
-              "type": "array",
-              "items": { "$ref": "#/$defs/component-path" }
-            }
-          ]
+          "type": "array",
+          "items": { "$ref": "#/$defs/component-path" }
         },
         "resources": { "$ref": "#/$defs/resources" },
         "services": {
@@ -316,6 +384,7 @@
           "type": "array",
           "items": { "$ref": "#/$defs/deployment-helmfile" }
         },
+        "root-component": { "type": "string" },
         "clone-from": { "$ref": "#/$defs/clone-from" }
       }
     },
@@ -329,8 +398,11 @@
         "image": { "type": "string" },
         "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
         "registry": { "type": "string" },
-        "root": { "type": "boolean" },
         "resources": { "$ref": "#/$defs/resources" },
+        "path": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/component-path" }
+        },
         "services": {
           "type": "object",
           "additionalProperties": {

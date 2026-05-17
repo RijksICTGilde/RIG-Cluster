@@ -8,6 +8,7 @@ infrastructure, and URL handling.
 
 from opi.utils.naming import (
     HostnameFormat,
+    ensure_fqdn,
     ensure_url_has_protocol,
     extract_domain_from_url,
     find_root_component,
@@ -17,6 +18,7 @@ from opi.utils.naming import (
     generate_backup_pod_name,
     generate_backup_prefix,
     generate_backup_snapshot_name,
+    generate_bare_domain_hostname,
     generate_bucket_name,
     generate_database_name,
     generate_database_schema,
@@ -60,6 +62,12 @@ from opi.utils.naming import (
     resolve_effective_base_domain,
     sanitize_kubernetes_name,
 )
+
+_CLUSTER = "local"
+
+
+def _approved(*domains: str) -> dict:
+    return {"domains": {"allowed-domains": [{"domain": d, "status": "approved"} for d in domains]}}
 
 
 class TestGenerateUniqueName:
@@ -639,34 +647,19 @@ class TestGenerateHelmValuesFilename:
 class TestFindRootComponent:
     """Tests for find_root_component function."""
 
-    def test_finds_by_reference(self):
-        """Finds root component using reference field."""
-        components = [{"reference": "frontend", "root": True}, {"reference": "backend"}]
-        assert find_root_component(components) == "frontend"
-
-    def test_finds_by_name(self):
-        """Finds root component using name field."""
-        components = [{"name": "api"}, {"name": "web", "root": True}]
-        assert find_root_component(components) == "web"
+    def test_finds_root_from_deployment(self):
+        """Reads root-component from deployment dict."""
+        deployment = {"name": "prod", "root-component": "frontend"}
+        assert find_root_component(deployment) == "frontend"
 
     def test_no_root_returns_none(self):
-        """Returns None when no root found."""
-        components = [{"name": "api"}, {"name": "web"}]
-        assert find_root_component(components) is None
+        """Returns None when no root-component set."""
+        deployment = {"name": "prod"}
+        assert find_root_component(deployment) is None
 
-    def test_empty_list_returns_none(self):
-        """Returns None for empty list."""
-        assert find_root_component([]) is None
-
-    def test_prefers_reference_over_name(self):
-        """Prefers reference field over name field."""
-        components = [{"reference": "ref", "name": "fallback", "root": True}]
-        assert find_root_component(components) == "ref"
-
-    def test_root_false_not_matched(self):
-        """root: False is not matched."""
-        components = [{"name": "api", "root": False}]
-        assert find_root_component(components) is None
+    def test_empty_dict_returns_none(self):
+        """Returns None for empty deployment dict."""
+        assert find_root_component({}) is None
 
 
 class TestGetComponentIngressMap:
@@ -682,6 +675,8 @@ class TestGetComponentIngressMap:
             subdomain="myapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
+            project_data={},
+            cluster="local",
         )
         assert result == {"prod-frontend": "frontend.myapp.rijks.app"}
 
@@ -694,6 +689,8 @@ class TestGetComponentIngressMap:
             ".kind",
             subdomain="myapp",
             base_domain="custom.nl",
+            project_data={},
+            cluster="local",
         )
         assert result == {"prod-frontend": "myapp.custom.nl"}
 
@@ -704,6 +701,8 @@ class TestGetComponentIngressMap:
             "prod",
             "myapp",
             ".kind",
+            project_data={},
+            cluster="local",
         )
         assert result == {"prod-frontend": "frontend-prod-myapp.kind"}
 
@@ -721,6 +720,8 @@ class TestGetDeploymentHostnames:
             subdomain="myapp",
             base_domain="rijks.app",
             hostname_format=HostnameFormat.DOTS,
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert "frontend.myapp.rijks.app" in result
         assert "backend.myapp.rijks.app" in result
@@ -734,6 +735,8 @@ class TestGetDeploymentHostnames:
             "prod",
             "myapp",
             ".kind",
+            project_data={},
+            cluster=_CLUSTER,
         )
         assert len(result) == 2
 
@@ -745,6 +748,8 @@ class TestGetDeploymentHostnames:
             "myapp",
             ".dev.example.com",
             subdomain="myapp",
+            project_data={},
+            cluster=_CLUSTER,
         )
         # In subdomain mode with subdomain != deployment_name, both resolve to same hostname
         assert "myapp.dev.example.com" in result
@@ -896,6 +901,16 @@ class TestGenerateIssuerName:
         result = generate_issuer_name("rijksapp.com", "letsencrypt-staging")
         assert result == "letsencrypt-staging-rijksapp-com"
 
+    def test_deployment_scoped(self):
+        """Deployment name is appended to scope the issuer per deployment."""
+        result = generate_issuer_name("rijksapp.com", deployment_name="staging2")
+        assert result == "letsencrypt-rijksapp-com-staging2"
+
+    def test_staging_deployment_scoped(self):
+        """Staging issuer with deployment name."""
+        result = generate_issuer_name("rijksapp.com", "letsencrypt-staging", "pr-164")
+        assert result == "letsencrypt-staging-rijksapp-com-pr-164"
+
 
 class TestGenerateIssuerSecretName:
     """Tests for generate_issuer_secret_name function."""
@@ -909,6 +924,11 @@ class TestGenerateIssuerSecretName:
         result = generate_issuer_secret_name("rijksapp.com", "letsencrypt-staging")
         assert result == "letsencrypt-staging-rijksapp-com-key"
 
+    def test_deployment_scoped_secret(self):
+        """Deployment-scoped secret name."""
+        result = generate_issuer_secret_name("rijksapp.com", deployment_name="staging2")
+        assert result == "letsencrypt-rijksapp-com-staging2-key"
+
 
 class TestGenerateNetworkPolicyName:
     """Tests for generate_network_policy_name function."""
@@ -916,6 +936,10 @@ class TestGenerateNetworkPolicyName:
     def test_basic_policy(self):
         """Appends -network-policy to purpose."""
         assert generate_network_policy_name("acme-http") == "acme-http-network-policy"
+
+    def test_deployment_scoped_policy(self):
+        """Deployment name is inserted before -network-policy suffix."""
+        assert generate_network_policy_name("acme-http", "staging2") == "acme-http-staging2-network-policy"
 
 
 class TestResolveEffectiveBaseDomain:
@@ -960,3 +984,113 @@ class TestGenerateTlsSecretName:
     def test_complex_ingress_name(self):
         """Works with complex ingress names."""
         assert generate_tls_secret_name("frontend-api-v1users") == "frontend-api-v1users-tls"
+
+
+class TestGenerateBareDomainHostname:
+    """Tests for generate_bare_domain_hostname function."""
+
+    def test_basic_domain(self):
+        """Returns the base domain as-is (lowercased)."""
+        assert generate_bare_domain_hostname("voorbeeld.nl") == "voorbeeld.nl"
+
+    def test_uppercase_lowered(self):
+        """Uppercase input is lowercased."""
+        assert generate_bare_domain_hostname("VOORBEELD.NL") == "voorbeeld.nl"
+
+    def test_mixed_case(self):
+        """Mixed case is lowercased."""
+        assert generate_bare_domain_hostname("Mijn-App.Example.Com") == "mijn-app.example.com"
+
+
+class TestGetDeploymentHostnamesBareDomain:
+    """Tests for get_deployment_hostnames with expose_on_bare_domain."""
+
+    def test_bare_domain_included_when_set(self):
+        """Bare domain hostname is appended when expose_on_bare_domain is set."""
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            subdomain="www",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            expose_on_bare_domain="frontend",
+            project_data=_approved("voorbeeld.nl"),
+            cluster=_CLUSTER,
+        )
+        assert "voorbeeld.nl" in hostnames
+        assert "www.voorbeeld.nl" in hostnames
+
+    def test_bare_domain_not_included_when_false(self):
+        """Bare domain hostname is not added when expose_on_bare_domain is False."""
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            subdomain="www",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            expose_on_bare_domain=False,
+            project_data=_approved("voorbeeld.nl"),
+            cluster=_CLUSTER,
+        )
+        assert "voorbeeld.nl" not in hostnames
+
+    def test_bare_domain_not_included_when_empty(self):
+        """Bare domain hostname is not added when expose_on_bare_domain is empty string."""
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            subdomain="www",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            expose_on_bare_domain="",
+            project_data={},
+            cluster=_CLUSTER,
+        )
+        assert "voorbeeld.nl" not in hostnames
+
+    def test_bare_domain_not_duplicated(self):
+        """Bare domain appears only once even if it matches a component hostname."""
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            subdomain="www",
+            expose_on_bare_domain="frontend",
+            project_data={},
+            cluster=_CLUSTER,
+        )
+        assert hostnames.count("voorbeeld.nl") == 1
+
+
+class TestEnsureFqdn:
+    """Tests for ensure_fqdn — used to qualify service names for cross-namespace pods."""
+
+    def test_short_name_gets_qualified(self):
+        result = ensure_fqdn("rig-db-rw")
+        assert result == "rig-db-rw.rig-system.svc.cluster.local"
+
+    def test_already_qualified_unchanged(self):
+        result = ensure_fqdn("rig-db-rw.rig-system.svc.cluster.local")
+        assert result == "rig-db-rw.rig-system.svc.cluster.local"
+
+    def test_short_name_with_port(self):
+        result = ensure_fqdn("minio:9000")
+        assert result == "minio.rig-system.svc.cluster.local:9000"
+
+    def test_qualified_with_port_unchanged(self):
+        result = ensure_fqdn("minio.rig-system.svc.cluster.local:9000")
+        assert result == "minio.rig-system.svc.cluster.local:9000"
+
+    def test_partial_domain_unchanged(self):
+        """A hostname with a dot is already qualified enough."""
+        result = ensure_fqdn("db.other-namespace.svc")
+        assert result == "db.other-namespace.svc"

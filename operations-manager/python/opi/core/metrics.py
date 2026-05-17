@@ -222,7 +222,7 @@ class OPICollector(Collector):
                         cmdline = f.read().replace("\0", " ").strip()[:100]
                     child_rss.add_metric([entry, cmdline], rss_bytes)
                     num_children += 1
-                except (FileNotFoundError, IndexError, ValueError, PermissionError):
+                except FileNotFoundError, IndexError, ValueError, PermissionError:
                     continue
         except Exception:
             logger.debug("Failed to scan child processes", exc_info=True)
@@ -405,7 +405,7 @@ class _SubprocessMemoryTracker:
         self.connector = connector
         self.before: int = 0
 
-    async def __aenter__(self) -> "_SubprocessMemoryTracker":
+    async def __aenter__(self) -> _SubprocessMemoryTracker:
         self.before = _read_cgroup_memory() or 0
         return self
 

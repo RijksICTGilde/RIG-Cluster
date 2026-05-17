@@ -35,7 +35,7 @@
                         </div>
                     </div>
 
-                    {% for component in project.components %}
+                    {% for component in project.components | sort(attribute='name') %}
                     {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
                     <c-card padding="md" backgroundColor="grijs-050" outline="true">
                         <c-layout-flow gap="sm">
@@ -78,7 +78,7 @@
                         </div>
                     </div>
 
-                    {% for deployment in project.deployments %}
+                    {% for deployment in project.deployments | sort(attribute='name') %}
                     {% set dep_ns = namespace(has_env_vars=false) %}
                     {% for dep_component in deployment.components %}
                         {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
@@ -95,7 +95,7 @@
                                 <span class="cluster-badge">{{ deployment.cluster|title }}</span>
                             </div>
 
-                            {% for dep_component in deployment.components %}
+                            {% for dep_component in deployment.components | sort(attribute='reference') %}
                             {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
                             <c-card padding="sm" backgroundColor="wit" outline="true">
                                 <c-layout-flow gap="sm">

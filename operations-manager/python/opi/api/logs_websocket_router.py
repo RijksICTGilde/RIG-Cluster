@@ -216,37 +216,36 @@ async def _unregister_connection(user_email: str, websocket: WebSocket) -> None:
 
 
 class RateLimiter:
-    """Simple token bucket rate limiter for log messages."""
+    """Token bucket rate limiter that paces (rather than drops) bursts.
+
+    Originally this dropped any line that exceeded the burst, which silently
+    truncated long startup tracebacks dumped in one go by ``kubectl logs``.
+    The bucket now blocks the caller until a token is available, so every
+    line is eventually delivered while sustained output is still capped at
+    ``rate`` messages/sec.
+    """
 
     def __init__(self, rate: float, burst: int = 10):
-        self.rate = rate  # messages per second
+        self.rate = rate  # messages per second (sustained cap)
         self.burst = burst
         self.tokens = float(burst)
-        self.last_update = time.monotonic()  # Use monotonic instead of deprecated get_event_loop
-        self._dropped_count = 0
+        self.last_update = time.monotonic()
 
-    def acquire(self) -> tuple[bool, int]:
-        """
-        Try to acquire a token.
+    async def acquire(self) -> None:
+        """Block until a token is available, then consume one."""
+        while True:
+            now = time.monotonic()
+            elapsed = now - self.last_update
+            self.last_update = now
+            self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
 
-        Returns:
-            Tuple of (allowed: bool, dropped_since_last_success: int)
-        """
-        now = time.monotonic()
-        elapsed = now - self.last_update
-        self.last_update = now
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return
 
-        # Add tokens based on time elapsed
-        self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
-
-        if self.tokens >= 1:
-            self.tokens -= 1
-            dropped = self._dropped_count
-            self._dropped_count = 0
-            return True, dropped
-        else:
-            self._dropped_count += 1
-            return False, 0
+            # Sleep just long enough for the next token to appear.
+            deficit = 1 - self.tokens
+            await asyncio.sleep(deficit / self.rate)
 
 
 def _sanitize_log_line(line: str) -> str:
@@ -278,7 +277,7 @@ async def stream_logs(
     project_name: str,
     deployment: str = Query(..., description="Deployment name"),
     component: str = Query(..., description="Component reference name"),
-    lines: int = Query(100, description="Initial historical lines", ge=1, le=1000),
+    lines: int = Query(250, description="Initial historical lines", ge=1, le=1000),
 ) -> None:
     """
     WebSocket endpoint for streaming deployment logs in real-time.
@@ -439,9 +438,26 @@ async def stream_logs(
 
         await send_message(websocket, "status", status="streaming", message="Log streaming started")
 
+        # Pace reattach attempts so a permanently-broken pod (CrashLoopBackOff
+        # where kubectl logs -f exits within milliseconds) doesn't have us
+        # spawning kubectl every few seconds in a tight loop. We back off
+        # exponentially up to a cap when consecutive attaches die immediately.
+        REATTACH_MIN_INTERVAL_SECONDS = 5.0
+        REATTACH_MAX_INTERVAL_SECONDS = 30.0
+        REATTACH_QUICK_EXIT_THRESHOLD_SECONDS = 1.0
+        last_reattach_at = 0.0
+        consecutive_quick_exits = 0
+
         async def drain_stdout() -> None:
-            """Drain subprocess stdout into bounded queue, dropping oldest when full."""
-            nonlocal running
+            """Drain subprocess stdout into bounded queue, dropping oldest when full.
+
+            When the kubectl subprocess exits (which happens when a pod's last
+            container terminates, e.g. CrashLoopBackOff between restarts), we
+            reattach with a fresh `kubectl logs -f` instead of tearing down the
+            WebSocket — that way the user keeps seeing logs across pod
+            restarts, matching the Argo UI's behaviour.
+            """
+            nonlocal running, process, last_reattach_at, consecutive_quick_exits
             while running:
                 async with process_lock:
                     current_process = process
@@ -459,22 +475,79 @@ async def stream_logs(
                     await asyncio.sleep(1.0)
                     continue
 
-                if not line:
-                    # Check if subprocess has died (EOF on pipe)
-                    async with process_lock:
-                        if process and process.returncode is not None:
-                            logger.warning(f"kubectl log stream process exited with code {process.returncode}")
-                            running = False
-                            break
+                if line:
+                    # Sliding window: drop oldest line when queue is full
+                    if log_queue.full():
+                        with contextlib.suppress(asyncio.QueueEmpty):
+                            log_queue.get_nowait()
+                    with contextlib.suppress(asyncio.QueueFull):
+                        log_queue.put_nowait(line)
+                    continue
+
+                # EOF on stdout — decide whether to reattach or just keep
+                # looping (the snapshot may be a process that's already been
+                # replaced by a component-switch).
+                should_reattach = False
+                exited_quickly = False
+                async with process_lock:
+                    if process is not None and process.returncode is not None:
+                        # If kubectl exited within ~1s the matched pod has no
+                        # active container (CrashLoopBackOff backoff window);
+                        # back off so we don't spawn a fresh kubectl every 5s
+                        # only to have it dump the same stored tail and exit.
+                        exited_quickly = (time.monotonic() - last_reattach_at) < REATTACH_QUICK_EXIT_THRESHOLD_SECONDS
+                        logger.info(
+                            f"kubectl log stream for {current_k8s_name} exited "
+                            f"(code {process.returncode}); will reattach "
+                            f"(quick_exit={exited_quickly})"
+                        )
+                        process = None
+                        should_reattach = True
+
+                if not should_reattach:
                     await asyncio.sleep(0.5)
                     continue
 
-                # Sliding window: drop oldest line when queue is full
-                if log_queue.full():
-                    with contextlib.suppress(asyncio.QueueEmpty):
-                        log_queue.get_nowait()
-                with contextlib.suppress(asyncio.QueueFull):
-                    log_queue.put_nowait(line)
+                # Exponential backoff when consecutive attaches die instantly
+                # (typically pod sitting in CrashLoopBackOff backoff window).
+                if exited_quickly:
+                    consecutive_quick_exits += 1
+                else:
+                    consecutive_quick_exits = 0
+                backoff = min(
+                    REATTACH_MIN_INTERVAL_SECONDS * (2 ** max(0, consecutive_quick_exits - 1)),
+                    REATTACH_MAX_INTERVAL_SECONDS,
+                )
+                now = time.monotonic()
+                wait = backoff - (now - last_reattach_at)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+
+                if not running:
+                    break
+
+                # Spawn the new follower OUTSIDE the lock so we don't block
+                # stderr draining or component-switching during the kubectl
+                # fork; then swap atomically. Use --tail=0 (no historical
+                # dump) so each reattach only streams *new* output. Without
+                # this, every backoff cycle would re-emit the same N lines
+                # of the stored tail, drowning the WebSocket in duplicates.
+                new_process = await kubectl.stream_deployment_logs(
+                    deployment_name=current_k8s_name,
+                    namespace=namespace,
+                    lines=0,
+                )
+                last_reattach_at = time.monotonic()
+                async with process_lock:
+                    if not running or process is not None:
+                        # Either we are shutting down, or a component switch
+                        # already installed a fresh process — discard ours.
+                        if new_process is not None:
+                            with contextlib.suppress(ProcessLookupError):
+                                new_process.terminate()
+                    elif new_process is not None:
+                        process = new_process
+                        logger.info(f"Reattached log stream for {current_k8s_name} (PID {new_process.pid})")
 
         async def drain_stderr() -> None:
             """Drain subprocess stderr into bounded queue, dropping oldest when full."""
@@ -523,18 +596,10 @@ async def stream_logs(
                 if paused:
                     continue
 
-                # Rate limiting with notification
-                allowed, dropped = rate_limiter.acquire()
-                if not allowed:
-                    continue
-
-                # Notify if messages were dropped
-                if dropped > 0:
-                    await send_message(
-                        websocket,
-                        "warning",
-                        message=f"Rate limited: {dropped} log lines skipped",
-                    )
+                # Pace output without dropping. Bursty traceback dumps from
+                # ``kubectl logs`` are delivered in full; sustained output is
+                # still capped at ``rate`` messages/sec.
+                await rate_limiter.acquire()
 
                 decoded_line = line.decode("utf-8", errors="replace").rstrip()
                 sanitized_line = _sanitize_log_line(decoded_line)
@@ -558,6 +623,15 @@ async def stream_logs(
         # Separate rate limiter for stderr to prevent stderr flooding bypass
         stderr_rate_limiter = RateLimiter(rate=MAX_MESSAGES_PER_SECOND, burst=20)
 
+        # kubectl emits these on stderr whenever the upstream container
+        # terminates while -f is following — which is expected (and frequent)
+        # for CrashLoopBackOff pods, where every reattach cycle ends this
+        # way. Forwarding them to the WebSocket added a "[STDERR] error:
+        # unexpected EOF" line to the panel every 5-30 seconds, which the
+        # user can't do anything about. Keep logging them server-side, but
+        # don't pollute the client view.
+        _BENIGN_KUBECTL_STDERR_SUBSTRINGS = ("unexpected EOF",)
+
         async def read_stderr() -> None:
             """Read stderr from bounded queue and forward warnings."""
             nonlocal running
@@ -568,22 +642,14 @@ async def stream_logs(
                 except TimeoutError:
                     continue
 
-                # Apply rate limiting to stderr as well
-                allowed, dropped = stderr_rate_limiter.acquire()
-                if not allowed:
-                    continue
+                await stderr_rate_limiter.acquire()
 
                 stderr_text = line.decode("utf-8", errors="replace").rstrip()
                 sanitized_text = _sanitize_log_line(stderr_text)
                 logger.warning(f"kubectl stderr: {sanitized_text}")
 
-                # Notify if stderr messages were dropped
-                if dropped > 0:
-                    await send_message(
-                        websocket,
-                        "warning",
-                        message=f"Rate limited: {dropped} stderr lines skipped",
-                    )
+                if any(s in sanitized_text for s in _BENIGN_KUBECTL_STDERR_SUBSTRINGS):
+                    continue
 
                 await send_message(
                     websocket,
@@ -674,7 +740,7 @@ async def stream_logs(
                                     try:
                                         await asyncio.wait_for(process.wait(), timeout=2.0)
                                         logger.info("switch: process terminated cleanly")
-                                    except (OSError, TimeoutError):
+                                    except OSError, TimeoutError:
                                         logger.warning(f"switch: terminate timeout, killing PID {process.pid}")
                                         with contextlib.suppress(OSError):
                                             process.kill()
@@ -783,7 +849,7 @@ async def stream_logs(
                 task.cancel()
                 try:
                     await asyncio.wait_for(task, timeout=5.0)
-                except (asyncio.CancelledError, TimeoutError):
+                except asyncio.CancelledError, TimeoutError:
                     if not task.done():
                         logger.error(f"task {task_name} did NOT cancel within 5s")
 

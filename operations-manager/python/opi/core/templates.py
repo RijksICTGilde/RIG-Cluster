@@ -7,16 +7,19 @@ Includes Babel i18n integration for multi-language support.
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import markupsafe
 from fastapi.templating import Jinja2Templates
 from jinja_roos_components import setup_components
 from jinja_roos_components.extension import ComponentExtension
-from starlette.requests import Request
 
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.i18n import get_current_translation, get_requested_language
+from opi.core.rrule_utils import format_rrule
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
 # Dutch month names
 DUTCH_MONTHS = [
@@ -75,6 +78,12 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True) -
         else:
             return str(value)
 
+        # Convert UTC to Amsterdam time for display
+        from zoneinfo import ZoneInfo
+
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(ZoneInfo("Europe/Amsterdam"))
+
         day = dt.day
         month = DUTCH_MONTHS[dt.month - 1]
         year = dt.year
@@ -84,9 +93,23 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True) -
         else:
             return f"{day} {month} {year}"
 
-    except (ValueError, TypeError, AttributeError):
+    except ValueError, TypeError, AttributeError:
         # Fallback: return truncated original
         return str(value)[:19] if value else "-"
+
+
+def format_rrule_schedule(rrule: str | None) -> str:
+    """Format an RRULE schedule string into a human-readable Dutch label.
+
+    Example: "FREQ=DAILY;BYHOUR=2;BYMINUTE=0" -> "Dagelijks rond 02:00"
+
+    Delegates to the shared format_rrule() utility. This wrapper preserves
+    the original pass-through behavior for non-RRULE values (returns the
+    raw string instead of "Geen").
+    """
+    if not rrule or not isinstance(rrule, str) or "FREQ=" not in rrule:
+        return str(rrule or "")
+    return format_rrule(rrule)
 
 
 def get_service_name(service: str | dict[str, Any]) -> str:
@@ -139,6 +162,7 @@ templates.env.globals["build_date"] = BUILD_DATE
 # Register custom filters
 templates.env.filters["service_name"] = get_service_name
 templates.env.filters["dutch_date"] = format_dutch_date
+templates.env.filters["rrule_schedule"] = format_rrule_schedule
 
 # Register process_components filter for runtime-generated HTML that contains
 # component tags (e.g. form_html from render_from_editables). The extension's

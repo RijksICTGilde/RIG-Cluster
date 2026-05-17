@@ -1,0 +1,108 @@
+name: realistic-project
+display-name: "Realistic Test Project"
+description: "A comprehensive project file used for non-destructive edit testing"
+
+clusters:
+  - local
+  - odcn-production
+
+users:
+  - email: admin@rijksoverheid.nl
+    role: admin
+  - email: developer@rijksoverheid.nl
+    role: developer
+
+services:
+  - publish-on-web
+  - keycloak
+  - postgresql
+  - minio
+
+config:
+  age-public-key: "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy"
+
+repositories:
+  - name: main-repo
+    url: "ssh://git@host.docker.internal:2222/srv/git/realistic-project.git"
+    branch: "main"
+    path: "infra"
+
+components:
+  - name: frontend
+    publish-on-web: true
+    type: deployment
+    services:
+      - publish-on-web
+    storage:
+      - type: persistent
+        size: 10Gi
+        mount-path: /data
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    sso-rijk: true
+    uses-components: [api]
+
+  - name: api
+    type: deployment
+    services:
+      - postgresql
+    ports:
+      inbound: [3000]
+      outbound: [5432, 443]
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+
+  - name: worker
+    type: deployment
+    services:
+      - minio
+    ports:
+      outbound: [9000, 5432]
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+
+deployments:
+  - name: productie
+    cluster: odcn-production
+    namespace: realistic-project
+    repository: main-repo
+    domain-format: component-deployment-project
+    components:
+      - reference: frontend
+        image: "ghcr.io/org/frontend:1.2.3"
+      - reference: api
+        image: "ghcr.io/org/api:1.2.3"
+      - reference: worker
+        image: "ghcr.io/org/worker:1.2.3"
+
+  - name: acceptatie
+    cluster: odcn-production
+    namespace: realistic-project
+    repository: main-repo
+    domain-format: component-deployment-project
+    clone-from:
+      type: deployment
+      reference: productie
+      mode: once
+    components:
+      - reference: frontend
+        image: "ghcr.io/org/frontend:1.3.0-rc1"
+      - reference: api
+        image: "ghcr.io/org/api:1.3.0-rc1"
+
+  - name: sandbox
+    cluster: local
+    namespace: realistic-project
+    repository: main-repo
+    domain-format: project
+    components:
+      - reference: frontend
+        image: "nginx:latest"
+      - reference: api
+        image: "python:3.14-slim"
+
+backup:
+  enabled: true

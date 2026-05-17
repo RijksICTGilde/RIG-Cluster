@@ -59,6 +59,7 @@ def _render_step_html(
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
     edit_mode: bool = False,
+    warnings: dict[str, list[str]] | None = None,
 ) -> str:
     """Render the form fields for a single wizard step."""
     import copy
@@ -129,6 +130,7 @@ def _render_step_html(
         layout=section.layout,
         errors=errors,
         edit_mode=edit_mode,
+        warnings=warnings,
     )
 
 
@@ -778,8 +780,6 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Re-render only (preview update) — process submission but skip validation
     # to prevent spurious "required" errors on newly-visible fields with defaults.
     if is_rerender:
-        from opi.forms.editables.service_path import smart_get_value as _sgv
-
         submitted_yaml, _errors = await processor.process_json_submission(
             submitted_data,
             section.editables,
@@ -788,28 +788,15 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             enforcer_context=enforcer_context,
         )
 
-        logger.info(
-            "[RERENDER %s] services in submitted_yaml BEFORE clear_hidden: %r",
-            section_id,
-            _sgv(submitted_yaml, "components[0]/services"),
-        )
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
-        logger.info(
-            "[RERENDER %s] services in submitted_yaml AFTER clear_hidden: %r",
-            section_id,
-            _sgv(submitted_yaml, "components[0]/services"),
-        )
 
         section_data = _extract_section_data(section.editables, submitted_yaml)
         state.store_step_data(section_id, section_data)
         save_wizard_state(request, state)
 
-        logger.info(
-            "[RERENDER %s] services passed to renderer: %r",
-            section_id,
-            _sgv(submitted_yaml, "components[0]/services"),
+        step_html = _render_step_html(
+            section, yaml_data=submitted_yaml, edit_mode=edit_mode, warnings=processor.field_warnings
         )
-        step_html = _render_step_html(section, yaml_data=submitted_yaml, edit_mode=edit_mode)
         context = _build_step_context(request, flow_id, section, step_html)
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
@@ -844,11 +831,20 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # Forward navigation (Next / Review): block on field-level validation errors
     if is_forward and errors:
+        # Extract group-level errors (e.g. from enforcers on GROUP editables)
+        # and surface them as global_errors so they appear in the alert box.
+        # Group paths like "deployments[0]" have no leaf field to attach to.
+        group_errors: list[str] = []
+        for path, msgs in list(errors.items()):
+            if path.endswith("]") and "/" not in path.split("]")[-1]:
+                group_errors.extend(msgs)
+
         step_html = _render_step_html(
             section,
             yaml_data=submitted_yaml,
             errors=errors,
             edit_mode=edit_mode,
+            warnings=processor.field_warnings,
         )
         context = _build_step_context(
             request,
@@ -856,13 +852,14 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             section,
             step_html,
             errors=errors,
+            global_errors=group_errors or None,
         )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
 
     # Forward navigation: run section-level enforcer for cross-field validation
     if is_forward and section.enforcer:
         global_errors = await processor.enforce_sections(
-            submitted_yaml, [section], enforcer_context, field_errors=errors
+            submitted_yaml, [section], enforcer_context, field_errors=errors, field_warnings=processor.field_warnings
         )
 
         # CENTRALIZED VALIDATION LOGGING - section-level (enforcer) validation
@@ -877,6 +874,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 yaml_data=submitted_yaml,
                 errors=errors,
                 edit_mode=edit_mode,
+                warnings=processor.field_warnings,
             )
             context = _build_step_context(
                 request,
@@ -1145,27 +1143,6 @@ def _prune_empty_dicts(data: Any) -> None:
             _prune_empty_dicts(item)
 
 
-def _normalize_component_paths(final_data: dict[str, Any]) -> None:
-    """Merge ``rewrite-path`` into ``path`` for each component.
-
-    When a component has a non-empty ``rewrite-path``, the simple string
-    ``path`` is converted to the list format that
-    ``extract_component_paths()`` expects::
-
-        path: [{match: "/api", rewrite: "/"}]
-
-    The ``rewrite-path`` key is removed after merging.
-    """
-    components = final_data.get("components", [])
-    for comp in components:
-        if not isinstance(comp, dict):
-            continue
-        rewrite = comp.pop("rewrite-path", None)
-        if rewrite:
-            match_path = comp.get("path", "/")
-            comp["path"] = [{"match": match_path, "rewrite": rewrite}]
-
-
 def _assemble_deployment(final_data: dict[str, Any]) -> None:
     """Assemble the full deployment structure for create mode.
 
@@ -1200,7 +1177,6 @@ def _assemble_deployment(final_data: dict[str, Any]) -> None:
 
     # Build deployment components from project components
     components = final_data.get("components", [])
-    root_component_name = deployment.pop("root-component", None)
 
     dep_components: list[dict[str, Any]] = []
     for comp in components:
@@ -1209,8 +1185,6 @@ def _assemble_deployment(final_data: dict[str, Any]) -> None:
                 "reference": comp["name"],
                 "image": comp.get("image", ""),
             }
-            if root_component_name and comp["name"] == root_component_name:
-                dep_comp["root"] = True
             dep_components.append(dep_comp)
 
     if dep_components:
@@ -1786,16 +1760,15 @@ async def _do_submit(
     enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
 
     # Validate and build final YAML in a single pass.
-    # The merged yaml_data is both the "submitted" values and the base -
-    # process_json_submission reads from it, validates, converts, and
-    # strips transients for the final output.
+    # The merged yaml_data is both the "submitted" values and the base.
+    # Process WITHOUT stripping transients first — generators may need them.
     final_data, errors = await processor.process_json_submission(
         yaml_data,
         all_editables,
         yaml_data,
         edit_mode=state.project_name is not None,
         enforcer_context=enforcer_context,
-        strip_transients=True,
+        strip_transients=False,
     )
 
     if errors:
@@ -1859,15 +1832,34 @@ async def _do_submit(
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
 
-    # Merge rewrite-path into path field for each component
-    _normalize_component_paths(final_data)
-
     try:
+        # PRE_SAVE hooks: run while transients are still available.
+        # Includes SubdomainRequestHook (creates domains entry from transient checkbox)
+        # and StripTransientsHook (order=999, removes transients last).
+        from opi.forms.editables.editable import Editable, FormState, WidgetType
+        from opi.forms.editables.hooks import StripTransientsHook
+        from opi.forms.editables.lifecycle import run_hooks
+        from opi.forms.visualizers.visualizer import EditableVisualizer
+
+        # Register StripTransientsHook as a system-level hook on a virtual editable
+        strip_hook_editable = EditableVisualizer(
+            editable=Editable(
+                yaml_path="_system/strip-transients",
+                hooks={FormState.PRE_SAVE: StripTransientsHook(all_editables)},
+            ),
+            widget=WidgetType.HIDDEN,
+            label="",
+        )
+        all_with_system = [*all_editables, strip_hook_editable]
+        from opi.forms.editables.resolvers import build_resolver_map
+
+        hook_context = {**enforcer_context, "resolvers": build_resolver_map(all_editables)}
+        await run_hooks(FormState.PRE_SAVE, all_with_system, final_data, hook_context)
+
         if state.project_name:
-            # Edit mode: save to existing project
             return await _save_existing_project(request, state.project_name, final_data)
         else:
-            # Create mode: run generators first (sets name, AGE keys, etc.),
+            # Create mode: run generators (sets name, AGE keys, etc.),
             # then assemble deployment (needs name for namespace).
             final_data = processor.apply_generators(flow.generated_editables, final_data)
             _assemble_deployment(final_data)
@@ -1922,15 +1914,10 @@ async def _start_project_creation(
     from io import StringIO
 
     from ruamel.yaml import YAML
-    from starlette.background import BackgroundTask
-
-    from opi.core.task_manager import create_task
 
     project_name = data.get("name", "")
     if not project_name:
         raise HTTPException(status_code=400, detail="Projectnaam is verplicht")
-
-    display_name = data.get("display-name", project_name)
 
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
@@ -1943,19 +1930,25 @@ async def _start_project_creation(
     yaml_instance.dump(data, yaml_output)
     yaml_content = yaml_output.getvalue()
 
-    # Create background task and start processing
-    task_id = create_task(display_name)
-
-    from opi.core.simple_background import process_project_yaml_background
+    # Create V2 async task — the task worker handles git commit + processing
+    from opi.core.task_helpers import create_async_task
 
     clear_wizard_state(request)
-    logger.info("Starting background project creation for %s (task=%s)", project_name, task_id)
+
+    task = await create_async_task(
+        request=request,
+        task_type="create_project",
+        project_name=project_name,
+        payload={"project_name": project_name, "yaml_content": yaml_content},
+        max_attempts=1,
+    )
+    task_id = str(task["task_id"])
+    logger.info("Created V2 project creation task for %s (task=%s)", project_name, task_id)
 
     # Use HX-Redirect so HTMX does a full-page navigation instead of
     # swapping the progress page into the wizard frame.
     response = HTMLResponse(content="", status_code=200)
     response.headers["HX-Redirect"] = f"/projects/progress/{task_id}"
-    response.background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
     return response
 
 

@@ -79,7 +79,8 @@ class FormField:
     default: Any = None
     options: list[dict[str, Any]] | None = None
     errors: list[str] = field(default_factory=list)
-    children: list["FormField"] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    children: list[FormField] = field(default_factory=list)
     converter: Converter | None = None
     validator: Validator | None = None
     css_class: str | None = None

@@ -1,6 +1,6 @@
 # Multi-stage Docker build for operations-manager with optimized caching
 # Stage 1: Base system with dependencies (rarely changes)
-FROM python:3.13-slim AS base-system
+FROM python:3.14-slim AS base-system
 
 # Pin tool versions for deterministic builds and optimal layer caching.
 # Bump these ARGs when you need a newer version.
@@ -85,9 +85,9 @@ COPY operations-manager/python/pyproject.toml operations-manager/python/uv.lock 
 # Then clean up cache and unnecessary files to reduce image size
 RUN uv sync --frozen --no-install-project --no-dev --no-group test && \
     rm -rf /root/.cache/uv && \
-    find /usr/local/lib/python3.13/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python3.13/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python3.13/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
+    find /usr/local/lib/python3.14/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.14/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.14/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
 
 # Stage 3: Application (changes frequently)
 FROM dependencies AS application
@@ -116,6 +116,7 @@ RUN chmod +x /app/entrypoint.sh
 # Copy application code and resources (change frequently - put last for optimal caching)
 COPY operations-manager/python/opi ./opi
 COPY operations-manager/python/manifests ./manifests
+COPY operations-manager/python/extensions ./extensions
 COPY operations-manager/python/sources ./sources
 COPY operations-manager/python/static ./static
 

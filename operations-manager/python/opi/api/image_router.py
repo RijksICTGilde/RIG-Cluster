@@ -17,7 +17,7 @@ from opi.api.endpoint_util import validate_api_token
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
-from starlette.requests import Request
+from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
 
 logger = logging.getLogger(__name__)
 

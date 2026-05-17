@@ -4,13 +4,15 @@ Shared pytest fixtures for all tests.
 This module provides common fixtures used across unit and integration tests.
 """
 
-from collections.abc import AsyncGenerator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 
 @pytest.fixture
@@ -114,6 +116,9 @@ def mock_settings() -> Any:
         mock_settings.SECRET_KEY = "test-secret-key-for-testing-only"
         mock_settings.OIDC_DISABLED = True
         mock_settings.ENABLE_GIT_MONITOR = False
+        mock_settings.KEYCLOAK_URL = ""
+        mock_settings.PROMETHEUS_EXTERNAL_URL = ""
+        mock_settings.PROMETHEUS_URL = ""
         yield mock_settings
 
 

@@ -10,9 +10,11 @@ Hooks allow custom logic to be executed at various points in the form lifecycle:
 Inspired by TAD's Editable pattern with enforcers, converters, and validators.
 """
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 @dataclass
@@ -333,7 +335,7 @@ class RangeValidatorHook:
 
         try:
             num_value = float(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return ["Voer een geldig getal in"]
 
         if self.min_value is not None and num_value < self.min_value:
@@ -387,22 +389,22 @@ class FormProcessor:
         self.pre_submit_hooks: list[FormHook] = []
         self.post_submit_hooks: list[FormHook] = []
 
-    def add_enforcer(self, enforcer: EnforcerHook) -> "FormProcessor":
+    def add_enforcer(self, enforcer: EnforcerHook) -> FormProcessor:
         """Add an enforcer hook."""
         self.enforcers.append(enforcer)
         return self
 
-    def add_validator(self, field_name: str, validator: ValidatorHook) -> "FormProcessor":
+    def add_validator(self, field_name: str, validator: ValidatorHook) -> FormProcessor:
         """Add a validator hook for a specific field."""
         self.validators.append((field_name, validator))
         return self
 
-    def add_pre_submit_hook(self, hook: FormHook) -> "FormProcessor":
+    def add_pre_submit_hook(self, hook: FormHook) -> FormProcessor:
         """Add a pre-submission hook."""
         self.pre_submit_hooks.append(hook)
         return self
 
-    def add_post_submit_hook(self, hook: FormHook) -> "FormProcessor":
+    def add_post_submit_hook(self, hook: FormHook) -> FormProcessor:
         """Add a post-submission hook."""
         self.post_submit_hooks.append(hook)
         return self

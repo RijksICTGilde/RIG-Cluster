@@ -2,6 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.connectors.subdomain import (
+    BARE_DOMAIN_SUBDOMAIN,
+    SubdomainConnector,
+    get_project_allowed_domain_config,
+    get_subdomain_status,
+    get_supported_base_domains,
+    is_domain_allowed_for_project,
+    is_subdomain_allowed_for_project,
+)
+from opi.core import config as opi_config
+from opi.core.cluster_config import get_domain_supports_dots
+from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+
 
 class FieldError(ValueError):
     """Validation error tied to a specific field path.
@@ -13,6 +27,20 @@ class FieldError(ValueError):
 
     def __init__(self, field_path: str, message: str) -> None:
         self.field_path = field_path
+        super().__init__(message)
+
+
+class FieldWarning(Exception):
+    """Non-blocking warning tied to a specific field path.
+
+    When raised from an enforcer, the warning message is attached to
+    the given field path in the form warnings dict. Unlike errors,
+    warnings do not block form submission.
+    """
+
+    def __init__(self, field_path: str, message: str) -> None:
+        self.field_path = field_path
+        self.message = message
         super().__init__(message)
 
 
@@ -90,8 +118,6 @@ def extract_service_names(services: list[Any]) -> list[str]:
 
 def _validate_memory_request_limit(comp_index: int, request_val: str, limit_val: str) -> None:
     """Raise FieldError on the limit field if memory request exceeds the limit."""
-    from opi.services.resource_analyzer import parse_k8s_memory_to_mi
-
     try:
         request_mi = parse_k8s_memory_to_mi(str(request_val))
         limit_mi = parse_k8s_memory_to_mi(str(limit_val))
@@ -180,10 +206,6 @@ class DomainConfigEnforcer:
         self.deployment_index = deployment_index
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
-        from opi.core.cluster_config import get_domain_supports_dots
-        from opi.core.config import settings
-        from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
-
         deployments = value.get("deployments", [])
         if len(deployments) <= self.deployment_index:
             return value
@@ -198,6 +220,9 @@ class DomainConfigEnforcer:
         custom_domain = dep.get("base-domain:custom")
         subdomain = dep.get("subdomain")
 
+        cluster = opi_config.settings.CLUSTER_MANAGER
+        supported = get_supported_base_domains(cluster)
+
         # When base-domain is "__custom__", user selected custom domain input
         # Validate that they actually filled it in
         if base_domain == "__custom__":
@@ -205,18 +230,32 @@ class DomainConfigEnforcer:
                 raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
             # Use custom domain for further validation
             actual_domain = custom_domain
-        else:
-            # Standard domain was selected
+        elif base_domain:
             actual_domain = base_domain
+        else:
+            # Resolve default domain when not explicitly selected
+            actual_domain = next(iter(supported)) if supported else None
 
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
         if "{subdomain}" in template and not subdomain:
-            raise ValueError("Een subdomein is vereist voor het gekozen URL-formaat")
+            # Field-level required validation only fires when the field is
+            # rendered. If the user changed domain-format to one that needs a
+            # subdomain but never filled it (or the field was hidden when
+            # processed), surface the error against the subdomain input so it
+            # is visible — not against the parent group path.
+            raise FieldError(
+                f"deployments[{self.deployment_index}]/subdomain",
+                "Een subdomein is vereist voor het gekozen URL-formaat",
+            )
 
         # Check if domain format (with dots) is compatible with the selected domain
         if actual_domain and "." in domain_format:
-            cluster = settings.CLUSTER_MANAGER
             supports_dots = get_domain_supports_dots(cluster, actual_domain)
+            # For custom domains not in cluster config, check project-level config
+            if not supports_dots and actual_domain.lower() not in supported:
+                custom_config = get_project_allowed_domain_config(value, actual_domain)
+                if custom_config:
+                    supports_dots = custom_config.get("supports-dots", False)
             if not supports_dots:
                 raise ValueError(
                     f"Het gekozen URL-formaat ondersteunt geen punten in de domeinnaam. "
@@ -224,9 +263,61 @@ class DomainConfigEnforcer:
                     f"Kies een ander URL-formaat of een ander domein."
                 )
 
+        # Check custom domain approval for non-platform domains. Mirrors the
+        # subdomain pattern below: a ticked "Domein aanvragen" checkbox lets
+        # the submission through, an existing "requested" status lets it
+        # through, "denied" hard-fails, and any other unapproved state
+        # surfaces as a non-blocking warning prompting the user to tick the
+        # request checkbox.
+        if actual_domain and base_domain == "__custom__" and actual_domain.lower() not in supported:
+            domain_field = f"deployments[{self.deployment_index}]/base-domain:custom"
+            is_allowed, error_msg = is_domain_allowed_for_project(actual_domain, value)
+            if not is_allowed:
+                domain_config = get_project_allowed_domain_config(value, actual_domain)
+                status = domain_config.get("status") if isinstance(domain_config, dict) else None
+                request_checked = bool(dep.get("_request-domain"))
+                if status is None and request_checked:
+                    pass  # User is requesting this domain — allow through
+                elif status == "requested":
+                    pass  # Already requested — allow through
+                elif status == "denied":
+                    msg = error_msg or f"Het domein '{actual_domain}' is afgewezen."
+                    raise FieldError(domain_field, msg)
+                else:
+                    raise FieldWarning(
+                        domain_field,
+                        f"Gebruik van het domein '{actual_domain}' is op aanvraag.",
+                    )
+
+        # Check subdomain restrictions for restricted domains
+        if subdomain and actual_domain and "{subdomain}" in template:
+            subdomain_field = f"deployments[{self.deployment_index}]/subdomain"
+            is_allowed, error_msg = is_subdomain_allowed_for_project(subdomain, actual_domain, value, cluster)
+            if not is_allowed:
+                status = get_subdomain_status(value, actual_domain, subdomain)
+                request_checked = dep.get("_request-subdomain")
+                if status is None and request_checked:
+                    pass  # User is requesting this subdomain — allow through
+                elif status == "requested":
+                    pass  # Already requested — allow through
+                elif status == "denied":
+                    raise FieldError(subdomain_field, error_msg)
+                else:
+                    raise FieldWarning(
+                        subdomain_field,
+                        f"Gebruik van een subdomein '{subdomain}' voor het domein '{actual_domain}' is op aanvraag.",
+                    )
+
         # Check subdomain availability for nice-URL formats
         if subdomain and actual_domain and "{subdomain}" in template:
             await self._check_subdomain_availability(subdomain, actual_domain, context)
+
+        # Validate bare domain component: only valid with custom domains
+        bare_domain_component = dep.get("expose-component-on-bare-domain")
+        if bare_domain_component and actual_domain:
+            if actual_domain.lower() in supported:
+                raise ValueError("Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen")
+            await self._check_bare_domain_availability(actual_domain, context)
 
         return value
 
@@ -241,8 +332,6 @@ class DomainConfigEnforcer:
         Skips the check when the current project already owns the registration
         (edit mode).
         """
-        from opi.connectors.subdomain import SubdomainConnector
-
         connector = SubdomainConnector()
         registration = await connector.get_by_subdomain(subdomain.lower(), base_domain.lower())
 
@@ -255,6 +344,29 @@ class DomainConfigEnforcer:
             return  # Owned by this project
 
         raise ValueError(f"Het subdomein '{subdomain}.{base_domain}' is niet beschikbaar")
+
+    @staticmethod
+    async def _check_bare_domain_availability(
+        base_domain: str,
+        context: dict[str, Any],
+    ) -> None:
+        """Check if the bare domain is available for registration.
+
+        Skips the check when the current project already owns the registration
+        (edit mode).
+        """
+        connector = SubdomainConnector()
+        registration = await connector.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain.lower())
+
+        if registration is None:
+            return  # Available
+
+        # On edit: allow if same project owns it
+        project_name = context.get("project_name")
+        if project_name and registration.get("project_name") == project_name:
+            return  # Owned by this project
+
+        raise ValueError(f"Het kale domein '{base_domain}' is niet beschikbaar")
 
 
 class ServiceDependencyEnforcer:

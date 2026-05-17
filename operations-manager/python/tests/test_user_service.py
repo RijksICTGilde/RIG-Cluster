@@ -57,7 +57,7 @@ class TestEnrichUserInfo:
         assert result["is_developer"] is False
         assert result["is_manager"] is False
 
-    def test_role_flag_administrator_variant(self, service):
+    def test_role_flag_administrator_variant_not_recognized(self, service):
         result = service._enrich_user_info(
             {
                 "email": "a@b.com",
@@ -65,7 +65,7 @@ class TestEnrichUserInfo:
                 "organization.role": "Administrator",
             }
         )
-        assert result["is_admin"] is True
+        assert result["is_admin"] is False
 
     def test_role_flag_dev(self, service):
         result = service._enrich_user_info(

@@ -137,7 +137,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             # ArgoCD monitoring
             monitor_task = progress.add_subtask(deploy_task, "ArgoCD & deployment monitoring")
             await _monitor_argocd_and_deployment(
-                task_id="",  # not used meaningfully by the monitor helper
+                _task_id="",  # not used by the monitor helper
                 project_name=project_name,
                 task_progress_manager=progress,
                 monitor_task=monitor_task,
@@ -184,7 +184,17 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             error_msg = project_manager.get_processing_error() or "Project processing failed"
             progress.fail_task(deploy_task, error_msg)
             progress.fail_project(error_msg)
-            return {"project_name": project_name, "status": "failed", "error": error_msg}
+            component_failures = project_manager.get_component_failures()
+            return {
+                "project_name": project_name,
+                "status": "failed",
+                "error": error_msg,
+                "processing": {
+                    "status": "failed",
+                    "error": error_msg,
+                    **({"component_failures": component_failures} if component_failures else {}),
+                },
+            }
 
     except Exception as exc:
         error_msg = f"Failed deployment: {exc}"
@@ -294,14 +304,19 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         deploy_task = progress.add_task("Deployment processing")
         progress.update_current_step(f"Processing deployment '{deployment_name}'")
 
+        # ArgoCD Application/AppProject resources only change when a new
+        # deployment is created.  Image updates don't touch ArgoCD resources.
+        is_new_deployment = result.get("created", False)
+
         processing_result = await project_manager.process_project_from_git(
             project_file_relative_path,
             task_progress_manager=progress,
             deployment_name=deployment_name,
             force_clone=force_clone,
+            argocd_resources_changed=is_new_deployment,
         )
 
-        action = "created" if result.get("created") else "updated"
+        action = "created" if is_new_deployment else "updated"
 
         # Collect URLs from deployment results
         urls: dict[str, dict[str, Any]] = {}
@@ -364,6 +379,11 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 **(
                     {"error": project_manager.get_processing_error()}
                     if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **(
+                    {"component_failures": component_failures}
+                    if (component_failures := project_manager.get_component_failures())
                     else {}
                 ),
             },

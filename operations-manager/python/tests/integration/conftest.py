@@ -9,12 +9,14 @@ import asyncio
 import os
 import subprocess
 import time
-from collections.abc import Generator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 def is_kind_available() -> bool:
@@ -27,7 +29,7 @@ def is_kind_available() -> bool:
             timeout=5,
         )
         return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         return False
 
 
@@ -41,7 +43,7 @@ def is_kubectl_available() -> bool:
             timeout=5,
         )
         return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         return False
 
 
@@ -55,7 +57,7 @@ def is_docker_available() -> bool:
             timeout=10,
         )
         return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         return False
 
 
@@ -202,7 +204,7 @@ def kind_cluster(
         )
         if result.returncode == 0:
             original_context = result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         pass
 
     _create_kind_cluster(kind_cluster_name, kind_config_path)

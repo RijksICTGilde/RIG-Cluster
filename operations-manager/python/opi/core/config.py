@@ -233,6 +233,8 @@ class Settings(BaseSettings):
     # Logging configuration
     LOG_TO_FILE: bool = False  # Enable file logging alongside stdout
     LOG_FILE_PATH: str = "log.txt"  # Path to log file when LOG_TO_FILE is enabled
+    LOG_ERRORS_TO_FILE: bool = False  # Write WARNING+ to a separate persistent error log
+    LOG_ERRORS_FILE_PATH: str = "/data/logs/errors.log"  # Path to error log (should be on PVC)
 
     # Temporary directory configuration
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
@@ -283,6 +285,7 @@ class Settings(BaseSettings):
     TASK_WORKER_MAX_ATTEMPTS: int = 3
     TASK_WORKER_CONCURRENCY: int = 4
     TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1
+    TASK_WORKER_MAX_DURATION: int = 1800  # 30 minutes
 
     # MinIO configuration
     MINIO_HOST: str = "minio.kind:9000"
@@ -318,11 +321,13 @@ class Settings(BaseSettings):
     GRAFANA_URL: str = "http://grafana-service.rig-system.svc.cluster.local:3000"
     GRAFANA_TOKEN: str | None = None
     GRAFANA_DATASOURCE_UID: str | None = None  # Auto-discovered if not set
+    GRAFANA_BILLING_DATASOURCE_UID: str | None = None  # UID of the billing Mimir datasource in Grafana
 
     # Resource tuning configuration
     RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
     RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed
     RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Only recommend if diff > 20%
+    # max_memory_limit_mi is now in cluster_config (per-cluster setting)
 
     # Deployment sanitization configuration
     SANITIZE_RESTART_THRESHOLD: int = 10  # Restarts above this = broken
@@ -350,6 +355,11 @@ class Settings(BaseSettings):
     BACKUP_RETENTION_KEEP_LATEST: int = 7
     BACKUP_RETENTION_KEEP_DAILY: int = 7
     BACKUP_RETENTION_KEEP_WEEKLY: int = 4
+
+    # Backup scheduler settings
+    BACKUP_SCHEDULER_ENABLED: bool = True
+    BACKUP_SCHEDULER_INTERVAL: int = 3600  # seconds between schedule checks (hourly)
+    BACKUP_MAX_CONCURRENT: int = 2  # max backup/restore tasks running simultaneously
 
 
 def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
@@ -439,7 +449,12 @@ def _load_sops_key_from_local_file() -> str | None:
 def _get_settings() -> Settings:
     settings = Settings()
 
-    setup_logging(log_to_file=settings.LOG_TO_FILE, log_file_path=settings.LOG_FILE_PATH)
+    setup_logging(
+        log_to_file=settings.LOG_TO_FILE,
+        log_file_path=settings.LOG_FILE_PATH,
+        log_errors_to_file=settings.LOG_ERRORS_TO_FILE,
+        log_errors_file_path=settings.LOG_ERRORS_FILE_PATH,
+    )
 
     # Detailed logging for SOPS key configuration
     logger.info("=== SOPS Age Key Configuration Debug ===")

@@ -8,14 +8,16 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Callable, Coroutine
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
 
 from ruamel.yaml import YAML
 
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto_sync
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
 
 logger = logging.getLogger(__name__)
 

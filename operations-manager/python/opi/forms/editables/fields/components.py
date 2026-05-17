@@ -15,6 +15,7 @@ from opi.forms.editables.validators import (
     ContainerImageValidator,
     KeyValueValidator,
     MemoryRangeValidator,
+    MemoryRequestRangeValidator,
     PathValidator,
 )
 
@@ -28,6 +29,7 @@ COMPONENT_NAME_EDITABLE = Editable(
     required=True,
 )
 
+# TODO: clarify purpose of image on top-level components — see features/component-image-field-clarification.md
 COMPONENT_IMAGE_EDITABLE = Editable(
     yaml_path="components[*]/image",
     validator=ContainerImageValidator(),
@@ -72,15 +74,15 @@ COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE = Editable(
 
 COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE = Editable(
     yaml_path="components[*]/resources/requests/memory",
-    values_provider="MemoryOptionsProvider",
-    validator=MemoryRangeValidator(min_mi=32, max_mi=1024),
+    values_provider="MemoryRequestOptionsProvider",
+    validator=MemoryRequestRangeValidator(min_mi=25),
     default="256Mi",
 )
 
 COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE = Editable(
     yaml_path="components[*]/resources/limits/memory",
     values_provider="MemoryOptionsProvider",
-    validator=MemoryRangeValidator(min_mi=32, max_mi=1024),
+    validator=MemoryRangeValidator(min_mi=25),
     default="512Mi",
 )
 
@@ -90,16 +92,27 @@ COMPONENT_SERVICES_EDITABLE = Editable(
     values_provider="FilteredServiceOptionsProvider",
 )
 
-COMPONENT_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/path",
+COMPONENT_PATH_MATCH_EDITABLE = Editable(
+    yaml_path="components[*]/path[*]/match",
     default="/",
     validator=PathValidator(),
+    required=True,
 )
 
-COMPONENT_REWRITE_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/rewrite-path",
+COMPONENT_PATH_REWRITE_EDITABLE = Editable(
+    yaml_path="components[*]/path[*]/rewrite",
     validator=PathValidator(),
     remove_when_none=True,
+)
+
+COMPONENT_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/path",
+    default=[{"match": "/"}],
+    min_items=1,
+    children=[
+        COMPONENT_PATH_MATCH_EDITABLE,
+        COMPONENT_PATH_REWRITE_EDITABLE,
+    ],
 )
 
 COMPONENT_ALIASES_EDITABLE = Editable(
@@ -214,7 +227,6 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_PORTS_OUTBOUND_EDITABLE,
         COMPONENT_SERVICES_EDITABLE,
         COMPONENT_PATH_EDITABLE,
-        COMPONENT_REWRITE_PATH_EDITABLE,
         COMPONENT_ALIASES_EDITABLE,
         COMPONENT_USER_ENV_VARS_EDITABLE,
         PERSISTENT_STORAGE_SEQUENCE_EDITABLE,

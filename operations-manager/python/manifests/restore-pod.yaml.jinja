@@ -12,6 +12,14 @@ metadata:
 spec:
   restartPolicy: Never
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  securityContext:
+    {% if cluster in ['local', 'sandboxed-local'] %}
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    {% else %}
+    runAsNonRoot: true
+    {% endif %}
   containers:
     - name: kopia
       image: ghcr.io/minbzk/base-images/rig-backup:latest
@@ -100,7 +108,9 @@ spec:
           value: "{{ kopia_password }}"
         - name: RESTORE_SNAPSHOT_ID
           value: "{{ snapshot_id }}"
-        # Use /tmp for Kopia cache (container filesystem is read-only)
+        # Use /tmp for Kopia paths (HOME may not be writable)
+        - name: KOPIA_CONFIG_PATH
+          value: "/tmp/kopia-repository.config"
         - name: KOPIA_CACHE_DIRECTORY
           value: "/tmp/kopia-cache"
         - name: KOPIA_LOG_DIR

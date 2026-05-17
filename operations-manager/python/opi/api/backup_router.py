@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token, validate_master_api_key
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
+from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import create_project_file_handler
@@ -281,7 +282,7 @@ class DeploymentBackupRequest(BaseModel):
     """Request body for project deployment backup operations."""
 
     resource_types: list[str] = Field(
-        default=["pvc", "database", "minio"],
+        default=DEFAULT_BACKUP_RESOURCE_TYPES,
         description="List of resource types to backup: 'pvc', 'database', 'minio'. Defaults to all.",
     )
 
@@ -644,7 +645,7 @@ async def backup_project_deployment(
     """
     try:
         # Parse resource types from body (defaults to all)
-        resource_types = body.resource_types if body else ["pvc", "database", "minio"]
+        resource_types = body.resource_types if body else DEFAULT_BACKUP_RESOURCE_TYPES
         logger.info(
             f"Backup request for project: {project_name}, deployment: {deployment_name}, "
             f"resource_types: {resource_types}"
@@ -1008,7 +1009,7 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
 
                     dt = datetime.datetime.strptime(run_id, "%Y%m%d%H%M%S").replace(tzinfo=datetime.UTC)
                     formatted_ts = dt.isoformat()
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     formatted_ts = s.timestamp or "unknown"
 
                 runs_map[run_id] = BackupRun(

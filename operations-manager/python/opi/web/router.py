@@ -26,6 +26,9 @@ from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
 from .router_detail_edit import detail_edit_router
 from .router_self_service import check_subdomain_availability_web
+from .router_subdomain_admin import subdomain_admin_router
+from .router_usage import usage_router
+from .router_user_admin import user_admin_router
 from .router_wizard import wizard_router
 from .services_router import services_router
 
@@ -40,6 +43,9 @@ web_router.include_router(services_router)
 web_router.include_router(metrics_explorer_router)
 web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
+web_router.include_router(user_admin_router)
+web_router.include_router(usage_router)
+web_router.include_router(subdomain_admin_router)
 
 
 @web_router.get("/")
@@ -103,19 +109,17 @@ async def project_progress_page(request: Request, task_id: str):
     """
     Show the project creation progress page.
 
-    This page displays real-time progress of the background task
-    and automatically redirects when complete.
+    Reads task state from the V2 async task service (database-backed).
     """
     try:
-        from opi.core.task_manager import get_task
+        from opi.core.task_helpers import get_task_service
 
-        # Get project info
-        project = get_task(task_id)
+        task_service = get_task_service(request)
+        task = await task_service.get_task(task_id)
         user = get_current_user(request)
         templates = get_templates()
 
-        if not project:
-            # Task not found - completed and cleaned up, or never existed
+        if not task:
             return templates.TemplateResponse(
                 "project-progress-done.html.j2",
                 {
@@ -126,17 +130,27 @@ async def project_progress_page(request: Request, task_id: str):
                 },
             )
 
+        project_name = task.get("project_name", "")
+        status = task.get("status", "pending")
+        if status in ("pending", "claimed", "running"):
+            template_status = "running"
+        elif status == "completed":
+            result = task.get("result")
+            template_status = "failed" if isinstance(result, dict) and result.get("status") == "failed" else "completed"
+        else:
+            template_status = "failed"
+
         return templates.TemplateResponse(
             "project-progress.html.j2",
             {
                 "request": request,
-                "title": f"Creating Project: {project.project_name}",
+                "title": f"Creating Project: {project_name}",
                 "menu_items": get_menu_items(user),
                 "task_id": task_id,
-                "project_name": project.project_name,
-                "initial_progress": 0,  # We'll show progress via tasks now
-                "initial_step": project.current_step,
-                "initial_status": project.status.value,
+                "project_name": project_name,
+                "initial_progress": task.get("progress_percent", 0),
+                "initial_step": task.get("current_step") or "Verwerking gestart...",
+                "initial_status": template_status,
             },
         )
 
@@ -154,75 +168,29 @@ async def get_task_status(request: Request, task_id: str):
     Get current task status and progress.
 
     This endpoint is used for polling by the progress page JavaScript.
-    Reads task state from the in-memory TaskProgressManager.
-
-    TODO: Migrate to database-backed AsyncTaskService once TaskProgressManager
-    writes to the database instead of in-memory. See features/futures/
-    migrate-task-progress-to-database.md
+    Reads task state from the V2 async task service (database-backed).
     """
     from fastapi.responses import JSONResponse
 
-    from opi.core.task_manager import TaskStatus, _project_managers, _projects
+    from opi.core.task_helpers import get_task_service
 
-    project = _projects.get(task_id)
-    if project is None:
+    task_service = get_task_service(request)
+    task = await task_service.get_task(task_id)
+
+    if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task_manager = _project_managers.get(task_id)
-
-    # Build subtask hierarchy from the in-memory task manager
-    task_hierarchy: list[dict] = []
-    progress = 0
-
-    if task_manager:
-        main_tasks = []
-        subtasks_by_parent: dict[str, list] = {}
-
-        for task in task_manager.tasks.values():
-            if task.parent_id is None:
-                main_tasks.append(task)
-            else:
-                subtasks_by_parent.setdefault(task.parent_id, []).append(task)
-
-        for main_task in main_tasks:
-            task_data: dict[str, Any] = {
-                "id": main_task.id,
-                "name": main_task.name,
-                "status": main_task.status.value,
-                "error": main_task.error,
-                "subtasks": [
-                    {
-                        "id": subtask.id,
-                        "name": subtask.name,
-                        "status": subtask.status.value,
-                        "error": subtask.error,
-                    }
-                    for subtask in subtasks_by_parent.get(main_task.id, [])
-                ],
-            }
-            task_hierarchy.append(task_data)
-
-        total = len(task_manager.tasks)
-        completed = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
-        progress = int((completed / total * 100) if total > 0 else 0)
-
+    context = _v2_task_to_template_context(task, task.get("project_name", ""))
     response_data: dict[str, Any] = {
         "task_id": task_id,
-        "status": project.status.value,
-        "current_step": project.current_step or "Starting...",
-        "project_name": project.project_name,
-        "progress": progress,
-        "tasks": task_hierarchy,
+        "status": context["status"],
+        "current_step": context["current_step"],
+        "project_name": context["project_name"],
+        "progress": context["progress"],
+        "tasks": context["tasks"],
     }
-
-    if project.logs:
-        response_data["logs"] = project.logs[-50:]
-
-    if project.events:
-        response_data["events"] = project.events[-20:]
-
-    if project.web_addresses:
-        response_data["web_addresses"] = project.web_addresses
+    if context["error"]:
+        response_data["error"] = context["error"]
 
     return JSONResponse(content=response_data)
 
@@ -511,13 +479,12 @@ async def delete_component_web(request: Request, project_name: str, component_na
         project_service.load_project_from_data(project_data, project.filename)
         logger.info(f"Component '{component_name}' removed from '{project_name}', triggering reprocessing")
 
-        # Trigger background reprocessing to update K8s manifests
+        # Trigger reprocessing via V2 async task
         from io import StringIO
 
         from ruamel.yaml import YAML
 
-        from opi.core.simple_background import process_project_yaml_background
-        from opi.core.task_manager import create_task
+        from opi.core.task_helpers import create_async_task
 
         yaml_instance = YAML()
         yaml_instance.preserve_quotes = True
@@ -526,19 +493,18 @@ async def delete_component_web(request: Request, project_name: str, component_na
         yaml_instance.dump(project_data, yaml_output)
         yaml_content = yaml_output.getvalue()
 
-        display_name = project_data.get("display-name", project_name)
-        task_id = create_task(display_name)
+        await create_async_task(
+            request=request,
+            task_type="create_project",
+            project_name=project_name,
+            payload={"project_name": project_name, "yaml_content": yaml_content},
+            max_attempts=1,
+        )
 
-        from starlette.background import BackgroundTask
-
-        background = BackgroundTask(process_project_yaml_background, task_id, project_name, yaml_content)
-
-        response = JSONResponse(
+        return JSONResponse(
             content={"success": True, "message": f"Component '{component_name}' succesvol verwijderd"},
             status_code=200,
-            background=background,
         )
-        return response
 
     except HTTPException:
         raise
@@ -552,17 +518,9 @@ async def delete_component_web(request: Request, project_name: str, component_na
 @web_router.post("/projects/{project_name}/refresh", response_class=HTMLResponse)
 @requires_sso
 async def refresh_project_web(request: Request, project_name: str) -> HTMLResponse:
-    """Reprocess a project from Git via web interface.
-
-    Kicks off a background task that detects changes in the project file,
-    creates new deployments, removes deleted ones, and reconciles services.
-    Returns a task progress fragment with HTMX polling.
-    """
-    from opi.core.simple_background import refresh_project_background
-    from opi.core.task_manager import create_task, update_progress
+    """Reprocess a project from Git via web interface."""
     from opi.services.project_service import get_project_service
 
-    templates = get_templates()
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
 
@@ -584,33 +542,56 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
     if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
 
-    task_id = create_task(project_name)
-    update_progress(task_id, 0, "Project herverwerken gestart...")
-
-    task = asyncio.create_task(
-        refresh_project_background(task_id, project_name, f"projects/{project.filename}"),
-        name=f"refresh-{project_name}",
+    return await _create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        task_type="refresh_project",
+        payload={"project_name": project_name, "force_clone": False},
+        current_step="Project herverwerken gestart...",
+        success_message="Project succesvol herverwerkt!",
     )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
-    context = {
-        "task_id": task_id,
-        "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
-        "progress": 0,
-        "current_step": "Project herverwerken gestart...",
-        "tasks": [],
-        "status": "running",
-        "success_message": "Project succesvol herverwerkt!",
-        "on_complete": "location.reload()",
-    }
 
-    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
+@web_router.post("/projects/{project_name}/refresh/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def refresh_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Reprocess a single deployment from Git via web interface."""
+    from opi.services.project_service import get_project_service
 
-    return HTMLResponse(content=rendered)
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    logger.info(f"Web deployment refresh request for '{project_name}/{deployment_name}' by user: {user_email}")
+
+    project_service = get_project_service()
+
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = project_service.get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen een deployment herverwerken. Uw rol: {user_role}",
+        )
+
+    project = project_service.get_project(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+
+    return await _create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        task_type="refresh_deployment",
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "force_clone": False,
+        },
+        deployment_name=deployment_name,
+        current_step=f"Deployment '{deployment_name}' herverwerken gestart...",
+        success_message=f"Deployment '{deployment_name}' succesvol herverwerkt!",
+    )
 
 
 @web_router.get("/test-architecture", response_class=HTMLResponse)
@@ -755,7 +736,7 @@ async def dashboard(request: Request):
             try:
                 from opi.connectors.prometheus import get_metrics_connector
 
-                prom = get_metrics_connector()
+                prom = await get_metrics_connector()
                 prometheus_available = prom.is_connected
 
                 if prometheus_available:
@@ -763,7 +744,7 @@ async def dashboard(request: Request):
                     cpu_usage_val = 0.0
                     cpu_limit_val = 0.0
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
                         )
                         if result and result[0].get("value"):
@@ -772,7 +753,7 @@ async def dashboard(request: Request):
                         logger.debug(f"Dashboard CPU usage query failed: {e}")
 
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
                         )
                         if result and result[0].get("value"):
@@ -784,7 +765,7 @@ async def dashboard(request: Request):
                     mem_usage_val = 0.0
                     mem_limit_val = 0.0
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
                         )
                         if result and result[0].get("value"):
@@ -793,7 +774,7 @@ async def dashboard(request: Request):
                         logger.debug(f"Dashboard memory usage query failed: {e}")
 
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
                         )
                         if result and result[0].get("value"):
@@ -805,14 +786,16 @@ async def dashboard(request: Request):
                     storage_used_val = 0.0
                     storage_cap_val = 0.0
                     try:
-                        result = prom.custom_query(f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})')
+                        result = await prom.custom_query(
+                            f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})'
+                        )
                         if result and result[0].get("value"):
                             storage_used_val = float(result[0]["value"][1])
                     except Exception as e:
                         logger.debug(f"Dashboard storage usage query failed: {e}")
 
                     try:
-                        result = prom.custom_query(
+                        result = await prom.custom_query(
                             f'sum(kubelet_volume_stats_capacity_bytes{{namespace=~"{ns_regex}"}})'
                         )
                         if result and result[0].get("value"):
@@ -822,7 +805,7 @@ async def dashboard(request: Request):
 
                     # Pod count
                     try:
-                        result = prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                        result = await prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
                         if result and result[0].get("value"):
                             pod_count = int(float(result[0]["value"][1]))
                     except Exception as e:
@@ -835,7 +818,7 @@ async def dashboard(request: Request):
                         now = datetime.now(UTC)
                         start = now.timestamp() - 1800  # 30 minutes ago
                         end = now.timestamp()
-                        in_results = prom.query_range(
+                        in_results = await prom.query_range(
                             f'sum(rate(container_network_receive_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
                             start_time=str(int(start)),
                             end_time=str(int(end)),
@@ -850,7 +833,7 @@ async def dashboard(request: Request):
                                     }
                                 )
 
-                        out_results = prom.query_range(
+                        out_results = await prom.query_range(
                             f'sum(rate(container_network_transmit_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
                             start_time=str(int(start)),
                             end_time=str(int(end)),
@@ -906,7 +889,7 @@ async def dashboard(request: Request):
                             continue
                         try:
                             proj_regex = "|".join(proj_ns)
-                            result = prom.custom_query(
+                            result = await prom.custom_query(
                                 f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{proj_regex}",container!=""}}[5m]))'
                             )
                             if result and result[0].get("value"):
@@ -1273,6 +1256,8 @@ async def project_details(request: Request, project_name: str):
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
                                     domain_format=domain_format,
+                                    project_data=project_data,
+                                    cluster=cluster,
                                 )
 
                                 # Create links for all ingress hostnames
@@ -1324,6 +1309,8 @@ async def project_details(request: Request, project_name: str):
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
                                     domain_format=domain_format,
+                                    project_data=project_data,
+                                    cluster=cluster,
                                 )
 
                                 # Create links for all ingress hostnames
@@ -1348,202 +1335,121 @@ async def project_details(request: Request, project_name: str):
         try:
             from opi.connectors.prometheus import get_metrics_connector
 
-            prom = get_metrics_connector()
+            prom = await get_metrics_connector()
             prometheus_available = prom.is_connected
         except Exception as e:
             logger.debug(f"Prometheus not available: {e}")
 
-        # Fetch ArgoCD status for each deployment
+        # Fetch ArgoCD status for each deployment (in parallel)
+        from datetime import datetime
         from typing import Any
+
+        from opi.services.deployment_diagnostics import gather_deployment_errors
+        from opi.services.event_interpreter import interpret_argocd_errors
+
+        def _unavailable_result(app_name: str, message: str, source: str = "Application") -> dict[str, Any]:
+            return {
+                "app_name": app_name,
+                "available": False,
+                "health": "Unknown",
+                "sync": "Unknown",
+                "errors": [{"resource": source, "message": message}],
+            }
+
+        def _annotate_age_dutch(errors: list[dict[str, Any]]) -> None:
+            """Add the Dutch ``age`` field in-place for entries that carry a timestamp."""
+            now = datetime.now(UTC)
+            for error in errors:
+                ts = error.get("timestamp")
+                if not ts:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(ts)
+                    diff_min = int((now - dt).total_seconds() / 60)
+                    if diff_min < 1:
+                        error["age"] = "zojuist"
+                    elif diff_min < 60:
+                        error["age"] = f"{diff_min} min geleden"
+                    else:
+                        error["age"] = f"{diff_min // 60} uur geleden"
+                except ValueError, TypeError:
+                    pass
 
         argocd_status: dict[str, dict[str, Any]] = {}
         argocd_available = False
         try:
-            from opi.connectors.argo import create_argo_connector
+            from opi.connectors.argo import ArgoConnector, create_argo_connector
+            from opi.connectors.kubectl import create_kubectl_connector
             from opi.utils.naming import generate_argocd_application_name
 
             argo_connector = create_argo_connector()
             argocd_available = argo_connector.auth_token is not None
 
             if argocd_available:
-                for deployment in project_details["deployments"]:
+                kubectl_connector = create_kubectl_connector()
+
+                async def _fetch_deployment_status(
+                    deployment: dict[str, Any],
+                    argo: ArgoConnector,
+                ) -> tuple[str, dict[str, Any]] | None:
+                    """Fetch ArgoCD status for a single deployment, with errors when unhealthy."""
                     deployment_name = deployment.get("name")
-                    if deployment_name:
-                        app_name = generate_argocd_application_name(project_name, deployment_name)
-                        try:
-                            status_data = await argo_connector.get_application_status(app_name)
-                            if status_data:
-                                # Extract relevant status information
-                                status = status_data.get("status", {})
-                                health = status.get("health", {})
-                                sync = status.get("sync", {})
-                                operation_state = status.get("operationState", {})
+                    if not deployment_name:
+                        return None
+                    app_name = generate_argocd_application_name(project_name, deployment_name)
+                    try:
+                        status_data = await argo.get_application_status(app_name)
+                        if not status_data:
+                            return deployment_name, _unavailable_result(app_name, "Application not found in ArgoCD")
 
-                                errors = []
-                                app_health = health.get("status", "Unknown")
+                        status = status_data.get("status", {})
+                        health = status.get("health", {})
+                        sync = status.get("sync", {})
+                        operation_state = status.get("operationState", {})
+                        app_health = health.get("status", "Unknown")
 
-                                if app_health != "Healthy":
-                                    # Extract errors from top-level resources
-                                    for resource in status.get("resources", []):
-                                        resource_health = resource.get("health", {})
-                                        health_status = resource_health.get("status")
-                                        health_msg = resource_health.get("message", "")
-                                        if health_status in ["Degraded", "Missing"]:
-                                            error_msg = health_msg or "Unknown error"
-                                            resource_name = (
-                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
-                                            )
-                                            errors.append({"resource": resource_name, "message": error_msg})
-                                        elif health_status == "Progressing" and health_msg:
-                                            resource_name = (
-                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
-                                            )
-                                            errors.append({"resource": resource_name, "message": health_msg})
+                        raw_errors: list[dict[str, str]] = []
+                        if app_health != "Healthy":
+                            raw_errors = await gather_deployment_errors(
+                                argo=argo,
+                                kubectl=kubectl_connector,
+                                app_name=app_name,
+                                base_namespace=deployment.get("namespace", ""),
+                                cluster=deployment.get("cluster", ""),
+                                deployment_name=deployment_name,
+                                status_data=status_data,
+                            )
 
-                                    # Fetch resource tree for child-level errors (Pods, ReplicaSets)
-                                    try:
-                                        tree_nodes = await argo_connector.get_application_resource_tree(app_name)
-                                        for node in tree_nodes:
-                                            node_health = node.get("health", {})
-                                            node_health_status = node_health.get("status")
-                                            node_health_msg = node_health.get("message", "")
-                                            if not node_health_msg:
-                                                continue
-                                            node_kind = node.get("kind", "")
-                                            if node_kind not in ("Pod", "ReplicaSet"):
-                                                continue
-                                            if node_health_status in ("Degraded", "Missing"):
-                                                node_name = node.get("name", "unknown")
-                                                node_error: dict[str, str] = {
-                                                    "resource": f"{node_kind}/{node_name}",
-                                                    "message": node_health_msg,
-                                                }
-                                                node_created = node.get("createdAt")
-                                                if node_created:
-                                                    node_error["timestamp"] = node_created
-                                                errors.append(node_error)
-                                    except Exception as tree_error:
-                                        logger.debug(f"Could not fetch resource tree for {app_name}: {tree_error}")
+                        errors = interpret_argocd_errors(raw_errors, deployment_name=deployment_name)
+                        _annotate_age_dutch(errors)
 
-                                    # Fetch recent Warning events when Degraded or when errors already found
-                                    if app_health == "Degraded" or errors:
-                                        try:
-                                            from opi.connectors.kubectl import KubectlConnector
-                                            from opi.core.cluster_config import get_prefixed_namespace
+                        last_sync = operation_state.get("finishedAt")
+                        if not last_sync and sync.get("status") == "Synced":
+                            last_sync = status.get("reconciledAt")
 
-                                            base_ns = deployment.get("namespace")
-                                            dep_cluster = deployment.get("cluster")
-                                            if base_ns and dep_cluster:
-                                                k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
-                                                kubectl = KubectlConnector()
-                                                events = await kubectl.get_namespace_events(k8s_ns, limit=30)
-                                                for event in events:
-                                                    obj = event.get("object", "unknown")
-                                                    reason = event.get("reason", "")
-                                                    msg = event.get("message", "")
-                                                    if msg:
-                                                        error_entry: dict[str, str] = {
-                                                            "resource": f"Event/{obj}",
-                                                            "message": f"[{reason}] {msg}",
-                                                        }
-                                                        event_time = event.get("time")
-                                                        if event_time:
-                                                            error_entry["timestamp"] = event_time
-                                                        errors.append(error_entry)
-                                        except Exception as events_error:
-                                            logger.debug(
-                                                f"Could not fetch namespace events for {deployment_name}: {events_error}"
-                                            )
+                        return deployment_name, {
+                            "app_name": app_name,
+                            "available": True,
+                            "health": health.get("status", "Unknown"),
+                            "health_message": health.get("message"),
+                            "sync": sync.get("status", "Unknown"),
+                            "revision": sync.get("revision", "")[:7] if sync.get("revision") else None,
+                            "last_sync": last_sync,
+                            "operation_phase": operation_state.get("phase"),
+                            "operation_message": operation_state.get("message"),
+                            "errors": errors,
+                        }
+                    except Exception as app_error:
+                        logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
+                        return deployment_name, _unavailable_result(app_name, str(app_error), source="API")
 
-                                    # Extract per-resource sync failures from syncResult
-                                    sync_result = operation_state.get("syncResult", {})
-                                    for resource in sync_result.get("resources", []):
-                                        if resource.get("status") == "SyncFailed":
-                                            resource_name = (
-                                                f"{resource.get('kind', 'Resource')}/{resource.get('name', 'unknown')}"
-                                            )
-                                            error_msg = resource.get("message", "Sync failed")
-                                            errors.append({"resource": resource_name, "message": error_msg})
+                results = await asyncio.gather(
+                    *[_fetch_deployment_status(dep, argo_connector) for dep in project_details["deployments"]]
+                )
+                for result in results:
+                    if result is not None:
+                        argocd_status[result[0]] = result[1]
 
-                                    # Extract application-level conditions
-                                    for condition in status.get("conditions", []):
-                                        condition_type = condition.get("type", "Unknown")
-                                        condition_msg = condition.get("message", "")
-                                        if condition_msg:
-                                            errors.append({"resource": condition_type, "message": condition_msg})
-
-                                    # Check for sync operation errors
-                                    if operation_state.get("phase") in ("Failed", "Error"):
-                                        op_message = operation_state.get("message", "Sync operation failed")
-                                        errors.append(
-                                            {
-                                                "resource": "SyncOperation",
-                                                "message": op_message,
-                                                "timestamp": operation_state.get("finishedAt"),
-                                            }
-                                        )
-
-                                # Get last sync time
-                                last_sync = None
-                                if operation_state.get("finishedAt"):
-                                    last_sync = operation_state.get("finishedAt")
-                                elif sync.get("status") == "Synced":
-                                    last_sync = status.get("reconciledAt")
-
-                                # Compute relative age for each error with a timestamp
-                                from datetime import datetime
-
-                                now = datetime.now(UTC)
-                                for error in errors:
-                                    ts = error.get("timestamp")
-                                    if not ts:
-                                        continue
-                                    try:
-                                        dt = datetime.fromisoformat(ts)
-                                        diff_min = int((now - dt).total_seconds() / 60)
-                                        if diff_min < 1:
-                                            error["age"] = "zojuist"
-                                        elif diff_min < 60:
-                                            error["age"] = f"{diff_min} min geleden"
-                                        else:
-                                            error["age"] = f"{diff_min // 60} uur geleden"
-                                    except (ValueError, TypeError):
-                                        pass
-
-                                argocd_status[deployment_name] = {
-                                    "app_name": app_name,
-                                    "available": True,
-                                    "health": health.get("status", "Unknown"),
-                                    "health_message": health.get("message"),
-                                    "sync": sync.get("status", "Unknown"),
-                                    "revision": sync.get("revision", "")[:7] if sync.get("revision") else None,
-                                    "last_sync": last_sync,
-                                    "operation_phase": operation_state.get("phase"),
-                                    "operation_message": operation_state.get("message"),
-                                    "errors": errors,
-                                }
-                                logger.debug(
-                                    f"Fetched ArgoCD status for {app_name}: health={health.get('status')}, sync={sync.get('status')}"
-                                )
-                            else:
-                                argocd_status[deployment_name] = {
-                                    "app_name": app_name,
-                                    "available": False,
-                                    "health": "Unknown",
-                                    "sync": "Unknown",
-                                    "errors": [
-                                        {"resource": "Application", "message": "Application not found in ArgoCD"}
-                                    ],
-                                }
-                        except Exception as app_error:
-                            logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
-                            argocd_status[deployment_name] = {
-                                "app_name": app_name,
-                                "available": False,
-                                "health": "Unknown",
-                                "sync": "Unknown",
-                                "errors": [{"resource": "API", "message": str(app_error)}],
-                            }
         except Exception as argo_error:
             logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
 
@@ -1655,6 +1561,8 @@ async def project_details(request: Request, project_name: str):
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
                                     domain_format=domain_format,
+                                    project_data=project_data,
+                                    cluster=cluster,
                                 )
 
                                 for ingress_name, hostname in ingress_map.items():
@@ -1704,6 +1612,8 @@ async def project_details(request: Request, project_name: str):
                                     base_domain=base_domain,
                                     hostname_format=hostname_format,
                                     domain_format=domain_format,
+                                    project_data=project_data,
+                                    cluster=cluster,
                                 )
 
                                 for ingress_name, hostname in ingress_map.items():
@@ -1776,12 +1686,28 @@ async def project_details(request: Request, project_name: str):
 
 @web_router.get("/projects/details/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
-async def deployment_metrics_fragment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+async def deployment_metrics_fragment(
+    request: Request, project_name: str, deployment_name: str, duration: int = 60
+) -> HTMLResponse:
     """Return metrics HTML fragment for a single deployment (HTMX lazy-load)."""
     from typing import Any
 
     from opi.core.startup import ensure_projects_fresh
     from opi.services.project_service import get_project_service
+
+    # Validate and compute step interval based on duration
+    allowed_durations = {60, 120, 360, 720, 1440}
+    if duration not in allowed_durations:
+        duration = 60
+    # Scale step to keep ~12-20 data points per chart
+    if duration <= 120:
+        step = 5
+    elif duration <= 360:
+        step = 15
+    elif duration <= 720:
+        step = 30
+    else:
+        step = 60
 
     templates = get_templates()
     user = get_current_user(request)
@@ -1824,36 +1750,36 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
             from opi.connectors.prometheus import get_metrics_connector
             from opi.core.cluster_config import get_prefixed_namespace
 
-            prom = get_metrics_connector()
+            prom = await get_metrics_connector()
             if prom.is_connected:
                 k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
 
                 if components:
                     component_names = [c.get("reference") for c in components if c.get("reference")]
                     if component_names:
-                        metrics = prom.get_deployment_component_metrics_timeseries(
+                        metrics = await prom.get_deployment_component_metrics_timeseries(
                             namespace=k8s_namespace,
                             components=component_names,
                             deployment_name=deployment_name,
-                            duration_minutes=60,
-                            step_minutes=5,
+                            duration_minutes=duration,
+                            step_minutes=step,
                         )
                 elif helm_charts:
-                    workloads = prom.discover_workloads_in_namespace(k8s_namespace)
+                    workloads = await prom.discover_workloads_in_namespace(k8s_namespace)
                     if workloads:
                         discovered_workloads = workloads
-                        metrics = prom.get_discovered_workload_metrics_timeseries(
+                        metrics = await prom.get_discovered_workload_metrics_timeseries(
                             namespace=k8s_namespace,
                             workloads=workloads,
-                            duration_minutes=60,
-                            step_minutes=5,
+                            duration_minutes=duration,
+                            step_minutes=step,
                         )
 
                 try:
-                    pvc_data = prom.get_pvc_storage_by_namespace(
+                    pvc_data = await prom.get_pvc_storage_by_namespace(
                         namespace=k8s_namespace,
-                        duration_minutes=60,
-                        step_minutes=5,
+                        duration_minutes=duration,
+                        step_minutes=step,
                     )
                     if pvc_data:
                         # Filter PVCs to only those belonging to this deployment
@@ -1879,10 +1805,12 @@ async def deployment_metrics_fragment(request: Request, project_name: str, deplo
         "partials/deployment_metrics.html.j2",
         {
             "request": request,
+            "project_name": project_name,
             "deployment": deployment_ctx,
             "metrics": metrics,
             "discovered_workloads": discovered_workloads,
             "pvc_storage": pvc_storage,
+            "duration": duration,
         },
     )
 
@@ -1952,15 +1880,12 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
         base_domain = deployment.get("base-domain")
 
         # Find root component (if any)
-        root_component = None
+        root_component = deployment.get("root-component")
         components_list = []
         for comp in deployment.get("components", []):
             comp_ref = comp.get("reference")
-            is_root = comp.get("root", False)
-            if is_root and comp_ref:
-                root_component = comp_ref
             if comp_ref:
-                components_list.append({"reference": comp_ref, "root": is_root})
+                components_list.append({"reference": comp_ref, "root": comp_ref == root_component})
 
         # Get supported base domains for this cluster
         cluster_base_domains = get_cluster_base_domains_for_template()
@@ -2130,7 +2055,7 @@ def _validate_path_safe(filename: str) -> None:
 
 
 async def _update_keycloak_redirect_uris_for_deployment(
-    project_manager: "ProjectManager",
+    project_manager: ProjectManager,
     project_name: str,
     deployment_name: str,
     cluster: str,
@@ -2215,7 +2140,9 @@ async def _update_keycloak_redirect_uris_for_deployment(
             ingress_postfix=ingress_postfix,
             subdomain=subdomain,
             base_domain=base_domain,
-            domain_mode=domain_mode,
+            domain_format=deployment.get("domain-format"),
+            project_data=project_data,
+            cluster=cluster,
         )
 
         if not all_ingress_hosts:
@@ -2492,14 +2419,16 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
                     if "issuer" in yaml_dep:
                         del yaml_dep["issuer"]
 
-                # Handle root component
+                # Handle root component — set on deployment level
+                if root_component:
+                    yaml_dep["root-component"] = root_component
+                elif "root-component" in yaml_dep:
+                    del yaml_dep["root-component"]
+
+                # Clean up any legacy root flags on components
                 for comp in yaml_dep.get("components", []):
-                    # Clear existing root flags
                     if "root" in comp:
                         del comp["root"]
-                    # Set root flag on selected component
-                    if root_component and comp.get("reference") == root_component:
-                        comp["root"] = True
 
                 break
 
@@ -2991,10 +2920,59 @@ async def deployment_memory_check(
         return HTMLResponse("")
 
     try:
-        warnings = check_deployment_resources(project_name, deployment_name)
+        warnings = await check_deployment_resources(project_name, deployment_name)
     except Exception as e:
         logger.debug(f"Memory check failed for {project_name}/{deployment_name}: {e}")
-        return HTMLResponse("")
+        warnings = []
+
+    # Supplement with kubectl-based OOM detection: Prometheus may report
+    # reason="Error" instead of "OOMKilled" for exit-code-137 kills,
+    # so kubectl (which checks both reason and exit code) is more reliable.
+    try:
+        from opi.core.cluster_config import get_prefixed_namespace
+        from opi.services.oom_watcher import check_pod_health
+        from opi.services.resource_tuning_service import MemoryCheckResult, get_project_data
+        from opi.utils.naming import generate_unique_name
+
+        project_data, _ = get_project_data(project_name)
+        oom_warned_components = {w.component for w in warnings if w.oom_detected}
+
+        for dep in project_data.get("deployments", []):
+            if dep.get("name") != deployment_name:
+                continue
+            base_ns = dep.get("namespace", "")
+            cluster = dep.get("cluster", "")
+            if not base_ns or not cluster:
+                continue
+            namespace = get_prefixed_namespace(cluster, base_ns)
+
+            for comp in dep.get("components", []):
+                comp_ref = comp.get("reference", "")
+                if not comp_ref or comp_ref in oom_warned_components:
+                    continue
+                unique_name = generate_unique_name(deployment_name, comp_ref)
+                health = await check_pod_health(namespace, unique_name)
+                if health.oom_detected:
+                    # Extract current limit from project data for display
+                    from opi.handlers.project_file_handler import ProjectFileHandler
+
+                    fh = ProjectFileHandler()
+                    res = fh.extract_component_resources(project_data, comp_ref)
+                    dep_res = fh.extract_deployment_component_resources(project_data, deployment_name, comp_ref)
+                    if dep_res:
+                        res.update(dep_res)
+                    current_limit = res.get("limits_memory", "?")
+                    warnings.append(
+                        MemoryCheckResult(
+                            component=comp_ref,
+                            current_limit=current_limit,
+                            recommended_limit="(tune to auto-detect)",
+                            saving_mb=0,
+                            oom_detected=True,
+                        )
+                    )
+    except Exception as e:
+        logger.debug(f"kubectl OOM check failed for {project_name}/{deployment_name}: {e}")
 
     container_id = f"memory-check-{id_prefix or deployment_name}"
 
@@ -3010,62 +2988,159 @@ async def deployment_memory_check(
     )
 
 
-@web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
-@requires_sso
-async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
-    """Generic task progress fragment for HTMX polling."""
-    from typing import Any
+async def _create_task_and_render_progress(
+    request: Request,
+    project_name: str,
+    task_type: str,
+    payload: dict,
+    current_step: str,
+    success_message: str,
+    deployment_name: str | None = None,
+) -> HTMLResponse:
+    """Create a V2 async task and return a rendered progress fragment.
 
-    from opi.core.task_manager import TaskStatus, _project_managers, _projects
+    Shared helper for all web UI endpoints that trigger async processing.
+    Creates the task via the V2 task service and returns an HTML fragment
+    with HTMX polling for progress updates.
+    """
+    from opi.core.task_helpers import create_async_task
 
     templates = get_templates()
 
-    if task_id not in _projects:
-        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
-
-    project = _projects[task_id]
-    task_manager = _project_managers.get(task_id)
-
-    task_hierarchy: list[dict[str, Any]] = []
-    progress = 0
-
-    if task_manager:
-        main_tasks = []
-        subtasks_by_parent: dict[str, list] = {}
-
-        for task in task_manager.tasks.values():
-            if task.parent_id is None:
-                main_tasks.append(task)
-            else:
-                subtasks_by_parent.setdefault(task.parent_id, []).append(task)
-
-        for main_task in main_tasks:
-            task_data: dict[str, Any] = {
-                "name": main_task.name,
-                "status": main_task.status.value,
-                "subtasks": [],
-            }
-            if main_task.id in subtasks_by_parent:
-                for subtask in subtasks_by_parent[main_task.id]:
-                    task_data["subtasks"].append({"name": subtask.name, "status": subtask.status.value})
-            task_hierarchy.append(task_data)
-
-        total = len(task_manager.tasks)
-        completed = sum(1 for t in task_manager.tasks.values() if t.status == TaskStatus.COMPLETED)
-        progress = int((completed / total * 100) if total > 0 else 0)
+    task = await create_async_task(
+        request=request,
+        task_type=task_type,
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload=payload,
+        max_attempts=1,
+    )
+    task_id = str(task["task_id"])
 
     context = {
         "task_id": task_id,
         "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
-        "progress": progress,
-        "current_step": project.current_step or "Verwerking gestart...",
-        "tasks": task_hierarchy,
-        "status": project.status.value,
-        "error": getattr(project, "error", None),
+        "progress": 0,
+        "current_step": current_step,
+        "tasks": [],
+        "status": "running",
+        "success_message": success_message,
         "on_complete": "location.reload()",
     }
 
     rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    return HTMLResponse(content=rendered)
+
+
+def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
+    """Map a V2 async task dict to the template context expected by progress fragments.
+
+    Shared by all progress polling endpoints (inline, modal, JSON).
+    """
+    db_status = task.get("status", "pending")
+    if db_status in ("pending", "claimed", "running"):
+        template_status = "running"
+    elif db_status == "completed":
+        result = task.get("result")
+        template_status = "failed" if isinstance(result, dict) and result.get("status") == "failed" else "completed"
+    else:
+        template_status = "failed"
+
+    subtasks = task.get("subtasks") or []
+    task_hierarchy = _build_task_hierarchy(subtasks)
+
+    error = task.get("error_message")
+    component_failures = None
+    result = task.get("result")
+    if isinstance(result, dict):
+        processing = result.get("processing")
+        if isinstance(processing, dict):
+            component_failures = processing.get("component_failures")
+            if not error:
+                error = processing.get("error")
+
+    return {
+        "progress": task.get("progress_percent", 0),
+        "current_step": task.get("current_step") or "Verwerking gestart...",
+        "tasks": task_hierarchy,
+        "status": template_status,
+        "error": error,
+        "component_failures": component_failures,
+        "project_name": project_name,
+    }
+
+
+def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
+    """Convert flat V2 subtask list to nested task hierarchy for the template."""
+    main_tasks = []
+    children: dict[str, list] = {}
+    for st in subtasks:
+        entry = {"name": st.get("name", ""), "status": st.get("status", "pending")}
+        parent = st.get("parent_id")
+        if parent:
+            children.setdefault(parent, []).append(entry)
+        else:
+            task_entry = {**entry, "id": st.get("id", ""), "subtasks": []}
+            main_tasks.append(task_entry)
+    for mt in main_tasks:
+        mt["subtasks"] = children.get(mt["id"], [])
+    return main_tasks
+
+
+@web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
+@requires_sso
+async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
+    """Generic task progress fragment for HTMX polling.
+
+    Reads task state from the V2 async task service (database-backed)
+    and renders an HTML fragment for HTMX polling.
+    """
+    from opi.core.task_helpers import get_task_service
+
+    templates = get_templates()
+    task_service = get_task_service(request)
+    task = await task_service.get_task(task_id)
+
+    if task is None:
+        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
+
+    context = _v2_task_to_template_context(task, project_name)
+    context["task_id"] = task_id
+    context["progress_url"] = f"/projects/{project_name}/task-progress/{task_id}"
+    context["on_complete"] = "location.reload()"
+
+    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    return HTMLResponse(content=rendered)
+
+
+@web_router.get("/projects/{project_name}/task-errors/{task_id}", response_class=HTMLResponse)
+@requires_sso
+async def task_errors_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
+    """Render just the component failure alerts for a task.
+
+    Used by the full progress page to load error details via HTMX
+    without duplicating the failure rendering logic in JavaScript.
+    """
+    from opi.core.task_helpers import get_task_service
+
+    templates = get_templates()
+    task_service = get_task_service(request)
+    task = await task_service.get_task(task_id)
+
+    if task is None:
+        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
+
+    context = _v2_task_to_template_context(task, project_name)
+
+    rendered = templates.get_template("partials/_component_failures.html.j2").render(context)
     process_components = templates.env.filters.get("process_components")
     if process_components:
         rendered = str(process_components(rendered))
@@ -3080,7 +3155,6 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
     from opi.core.startup import ensure_projects_fresh
     from opi.core.task_manager import create_task
     from opi.services.project_service import get_project_service
-    from opi.services.resource_tuning_service import tune_deployment_resources
 
     templates = get_templates()
     user = get_current_user(request)
@@ -3100,18 +3174,138 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
     metrics_task = progress.add_task("Prometheus metrics ophalen")
 
     async def _run_tune() -> None:
+        from opi.services.resource_tuning_service import (
+            commit_project_yaml,
+            get_project_data,
+            trigger_reprocessing,
+        )
+
         try:
-            result = await tune_deployment_resources(project_name, deployment_name)
+            # Step 1: Query Prometheus and compute recommendations
+            from datetime import UTC, datetime
+
+            from opi.core.cluster_config import get_prefixed_namespace
+            from opi.handlers.project_file_handler import ProjectFileHandler
+            from opi.services.resource_tuning_service import (
+                _analyze_component_resources,
+                get_metrics_connector,
+            )
+
+            project_data, filename = get_project_data(project_name)
+            file_handler = ProjectFileHandler()
+
+            try:
+                connector = await get_metrics_connector()
+            except Exception as e:
+                raise RuntimeError(f"Metrics backend unavailable: {e}") from e
+
             progress.complete_task(metrics_task)
 
-            if result.changes:
-                for c in result.changes:
+            # Step 2: Analyze and apply changes
+            analyze_task = progress.add_task("Aanbevelingen berekenen")
+            changes: list[dict[str, str]] = []
+            unchanged: list[str] = []
+
+            deployments = project_data.get("deployments", [])
+            for dep in deployments:
+                dep_name = dep.get("name", "")
+                if deployment_name and dep_name != deployment_name:
+                    continue
+                base_namespace = dep.get("namespace")
+                cluster = dep.get("cluster")
+                if not base_namespace or not cluster:
+                    continue
+                namespace = get_prefixed_namespace(cluster, base_namespace)
+
+                for comp in dep.get("components", []):
+                    component_ref = comp.get("reference", "")
+                    if not component_ref:
+                        continue
+                    analysis = await _analyze_component_resources(
+                        connector, file_handler, project_data, dep_name, component_ref, namespace, cluster
+                    )
+                    if analysis is None:
+                        unchanged.append(component_ref)
+                        continue
+
+                    file_handler.set_deployment_component_resources(
+                        project_data,
+                        dep_name,
+                        component_ref,
+                        {"limits_memory": analysis.new_limit, "requests_memory": analysis.new_request},
+                    )
+                    base_resources = file_handler.extract_component_resources(project_data, component_ref)
+                    base_updates: dict[str, str] = {}
+                    if analysis.new_request != base_resources["requests_memory"]:
+                        base_updates["requests_memory"] = analysis.new_request
+                    if analysis.new_limit != base_resources["limits_memory"]:
+                        base_updates["limits_memory"] = analysis.new_limit
+                    if base_updates:
+                        file_handler.set_component_resources(project_data, component_ref, base_updates)
+
+                    source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"
+                    now = datetime.now(UTC).isoformat()
+                    file_handler.append_deployment_component_resource_history(
+                        project_data,
+                        dep_name,
+                        component_ref,
+                        {
+                            "timestamp": now,
+                            "limits": {"memory": analysis.new_limit},
+                            "source": source,
+                            "reason": analysis.reason,
+                        },
+                    )
+                    file_handler.append_component_resource_history(
+                        project_data,
+                        component_ref,
+                        {
+                            "timestamp": now,
+                            "limits": {"memory": analysis.new_limit},
+                            "source": source,
+                            "deployment": dep_name,
+                            "reason": analysis.reason,
+                        },
+                    )
+
+                    changes.append(
+                        {
+                            "component": component_ref,
+                            "deployment": dep_name,
+                            "previous_limits_memory": analysis.current_resources["limits_memory"],
+                            "new_limits_memory": analysis.new_limit,
+                            "previous_requests_memory": analysis.current_resources["requests_memory"],
+                            "new_requests_memory": analysis.new_request,
+                            "max_observed_memory_mb": f"{analysis.max_observed_mb:.0f}",
+                            "avg_observed_memory_mb": f"{analysis.avg_observed_mb:.0f}",
+                            "has_oom_kills": str(analysis.has_oom_kills),
+                            "reason": analysis.reason,
+                        }
+                    )
+
+            progress.complete_task(analyze_task)
+
+            if changes:
+                for c in changes:
                     change_task = progress.add_task(
                         f"{c['component']} ({c['deployment']}): "
                         f"{c['previous_limits_memory']} \u2192 {c['new_limits_memory']}"
                     )
                     progress.complete_task(change_task)
-                progress.update_current_step(f"{len(result.changes)} component(s) aangepast")
+
+                # Step 3: Commit
+                commit_task = progress.add_task("Wijzigingen opslaan")
+                component_names = [c["component"] for c in changes]
+                commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
+                await commit_project_yaml(project_name, filename, project_data, commit_msg)
+                progress.complete_task(commit_task)
+
+                # Step 4: Reprocess
+                reprocess_task = progress.add_task("Project opnieuw deployen")
+                await trigger_reprocessing(project_name, filename, deployment_name, argocd_resources_changed=False)
+                progress.complete_task(reprocess_task)
+
+                progress.update_current_step(f"{len(changes)} component(s) aangepast")
             else:
                 no_change = progress.add_task("Geen aanpassingen nodig")
                 progress.complete_task(no_change)

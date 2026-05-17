@@ -28,11 +28,9 @@ Prerequisites:
 """
 
 import argparse
-import json
 import logging
 import subprocess
 import sys
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -40,9 +38,12 @@ import requests
 
 # Suppress SSL warnings for local testing
 import urllib3
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -203,10 +204,17 @@ OIDC_MAPPERS = [
 # KEYCLOAK CLIENT
 # =============================================================================
 
+
 class KeycloakClient:
     """Client for Keycloak Admin API."""
 
-    def __init__(self, base_url: str, admin_user: str, admin_password: str, verify_ssl: bool = True):
+    def __init__(
+        self,
+        base_url: str,
+        admin_user: str,
+        admin_password: str,
+        verify_ssl: bool = True,
+    ):
         self.base_url = base_url.rstrip("/")
         self.admin_user = admin_user
         self.admin_password = admin_password
@@ -233,7 +241,10 @@ class KeycloakClient:
         return self._token
 
     def _headers(self) -> dict:
-        return {"Authorization": f"Bearer {self._get_token()}", "Content-Type": "application/json"}
+        return {
+            "Authorization": f"Bearer {self._get_token()}",
+            "Content-Type": "application/json",
+        }
 
     def get_idp(self, realm: str, alias: str) -> dict | None:
         """Get IDP configuration by alias."""
@@ -288,15 +299,21 @@ class KeycloakClient:
             disc_response.raise_for_status()
             disc_data = disc_response.json()
 
-            idp_config["config"]["authorizationUrl"] = disc_data.get("authorization_endpoint", "")
+            idp_config["config"]["authorizationUrl"] = disc_data.get(
+                "authorization_endpoint", ""
+            )
             idp_config["config"]["tokenUrl"] = disc_data.get("token_endpoint", "")
             idp_config["config"]["userInfoUrl"] = disc_data.get("userinfo_endpoint", "")
-            idp_config["config"]["logoutUrl"] = disc_data.get("end_session_endpoint", "")
+            idp_config["config"]["logoutUrl"] = disc_data.get(
+                "end_session_endpoint", ""
+            )
             idp_config["config"]["jwksUrl"] = disc_data.get("jwks_uri", "")
             idp_config["config"]["issuer"] = disc_data.get("issuer", "")
             logger.info("OIDC discovery successful")
         except Exception as e:
-            logger.warning(f"OIDC discovery failed: {e}. Manual configuration may be needed.")
+            logger.warning(
+                f"OIDC discovery failed: {e}. Manual configuration may be needed."
+            )
 
         response = requests.post(
             f"{self.base_url}/admin/realms/{realm}/identity-provider/instances",
@@ -421,10 +438,13 @@ class KeycloakClient:
 # DATABASE MIGRATOR
 # =============================================================================
 
+
 class DatabaseMigrator:
     """Handles database-level IDP migration."""
 
-    def __init__(self, db_host: str, db_port: int, db_name: str, db_user: str, db_password: str):
+    def __init__(
+        self, db_host: str, db_port: int, db_name: str, db_user: str, db_password: str
+    ):
         self.db_host = db_host
         self.db_port = db_port
         self.db_name = db_name
@@ -432,6 +452,7 @@ class DatabaseMigrator:
         self.db_password = db_password
         try:
             import psycopg2
+
             self.psycopg2 = psycopg2
         except ImportError:
             logger.error("psycopg2 not installed. Run: pip install psycopg2-binary")
@@ -458,16 +479,22 @@ class DatabaseMigrator:
         logger.info(f"Creating database backup: {backup_file}")
 
         import os
+
         env = os.environ.copy()
         env["PGPASSWORD"] = self.db_password
 
         cmd = [
             "pg_dump",
-            "-h", self.db_host,
-            "-p", str(self.db_port),
-            "-U", self.db_user,
-            "-d", self.db_name,
-            "-f", str(backup_file),
+            "-h",
+            self.db_host,
+            "-p",
+            str(self.db_port),
+            "-U",
+            self.db_user,
+            "-d",
+            self.db_name,
+            "-f",
+            str(backup_file),
         ]
 
         try:
@@ -484,8 +511,17 @@ class DatabaseMigrator:
     def _backup_via_kubectl(self, backup_file: Path) -> str:
         """Backup database via kubectl exec into postgres pod."""
         # Find the postgres pod
-        cmd = ["kubectl", "get", "pods", "-n", "rig-system", "-l", "cnpg.io/cluster=rig-db",
-               "-o", "jsonpath={.items[0].metadata.name}"]
+        cmd = [
+            "kubectl",
+            "get",
+            "pods",
+            "-n",
+            "rig-system",
+            "-l",
+            "cnpg.io/cluster=rig-db",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"Could not find postgres pod: {result.stderr}")
@@ -495,8 +531,17 @@ class DatabaseMigrator:
 
         # Execute pg_dump in the pod
         cmd = [
-            "kubectl", "exec", "-n", "rig-system", pod_name, "--",
-            "pg_dump", "-U", self.db_user, "-d", self.db_name
+            "kubectl",
+            "exec",
+            "-n",
+            "rig-system",
+            pod_name,
+            "--",
+            "pg_dump",
+            "-U",
+            self.db_user,
+            "-d",
+            self.db_name,
         ]
 
         with open(backup_file, "w") as f:
@@ -553,7 +598,9 @@ class DatabaseMigrator:
                 )
                 return cur.fetchone()[0]
 
-    def get_federated_identities_sample(self, realm_id: str, idp_alias: str, limit: int = 5) -> list[dict]:
+    def get_federated_identities_sample(
+        self, realm_id: str, idp_alias: str, limit: int = 5
+    ) -> list[dict]:
         """Get sample of federated identities."""
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -577,7 +624,9 @@ class DatabaseMigrator:
                     for row in cur.fetchall()
                 ]
 
-    def swap_idps(self, realm_id: str, old_alias: str, new_alias: str, dry_run: bool = False) -> None:
+    def swap_idps(
+        self, realm_id: str, old_alias: str, new_alias: str, dry_run: bool = False
+    ) -> None:
         """
         Swap IDPs at database level (safe version - preserves old IDP).
 
@@ -603,37 +652,55 @@ class DatabaseMigrator:
         # Check if obsolete alias already exists
         obsolete_idp = self.get_idp_info(realm_id, obsolete_alias)
         if obsolete_idp:
-            raise ValueError(f"Obsolete IDP already exists: {obsolete_alias}. Delete it first or use a different name.")
+            raise ValueError(
+                f"Obsolete IDP already exists: {obsolete_alias}. Delete it first or use a different name."
+            )
 
         fed_count = self.get_federated_identities_count(realm_id, old_alias)
 
         logger.info("=" * 60)
         logger.info("IDP SWAP SUMMARY (SAFE MODE)")
         logger.info("=" * 60)
-        logger.info(f"Old IDP: {old_alias} -> {obsolete_alias} (will be disabled, kept as fallback)")
-        logger.info(f"  Provider: {old_idp['provider_id']}, ID: {old_idp['internal_id']}")
+        logger.info(
+            f"Old IDP: {old_alias} -> {obsolete_alias} (will be disabled, kept as fallback)"
+        )
+        logger.info(
+            f"  Provider: {old_idp['provider_id']}, ID: {old_idp['internal_id']}"
+        )
         logger.info(f"New IDP: {new_alias} -> {old_alias} (will take over)")
-        logger.info(f"  Provider: {new_idp['provider_id']}, ID: {new_idp['internal_id']}")
+        logger.info(
+            f"  Provider: {new_idp['provider_id']}, ID: {new_idp['internal_id']}"
+        )
         logger.info(f"Federated identities to preserve: {fed_count}")
         logger.info("=" * 60)
 
         if dry_run:
             logger.info("[DRY RUN] Would execute:")
-            logger.info(f"  1. UPDATE identity_provider SET provider_alias = '{obsolete_alias}', "
-                       f"provider_display_name = 'SSO Rijk (OBSOLETE)', enabled = false "
-                       f"WHERE internal_id = '{old_idp['internal_id']}'")
-            logger.info(f"  2. UPDATE identity_provider_mapper SET idp_alias = '{obsolete_alias}' "
-                       f"WHERE idp_alias = '{old_alias}'")
-            logger.info(f"  3. UPDATE identity_provider SET provider_alias = '{old_alias}', "
-                       f"provider_display_name = 'SSO Rijk', enabled = true, authenticate_by_default = true "
-                       f"WHERE internal_id = '{new_idp['internal_id']}'")
-            logger.info(f"  4. UPDATE identity_provider_mapper SET idp_alias = '{old_alias}' "
-                       f"WHERE idp_alias = '{new_alias}'")
+            logger.info(
+                f"  1. UPDATE identity_provider SET provider_alias = '{obsolete_alias}', "
+                f"provider_display_name = 'SSO Rijk (OBSOLETE)', enabled = false "
+                f"WHERE internal_id = '{old_idp['internal_id']}'"
+            )
+            logger.info(
+                f"  2. UPDATE identity_provider_mapper SET idp_alias = '{obsolete_alias}' "
+                f"WHERE idp_alias = '{old_alias}'"
+            )
+            logger.info(
+                f"  3. UPDATE identity_provider SET provider_alias = '{old_alias}', "
+                f"provider_display_name = 'SSO Rijk', enabled = true, authenticate_by_default = true "
+                f"WHERE internal_id = '{new_idp['internal_id']}'"
+            )
+            logger.info(
+                f"  4. UPDATE identity_provider_mapper SET idp_alias = '{old_alias}' "
+                f"WHERE idp_alias = '{new_alias}'"
+            )
             return
 
         with self._connect() as conn:
             with conn.cursor() as cur:
-                logger.info(f"Step 1: Renaming '{old_alias}' to '{obsolete_alias}' and disabling...")
+                logger.info(
+                    f"Step 1: Renaming '{old_alias}' to '{obsolete_alias}' and disabling..."
+                )
                 cur.execute(
                     """UPDATE identity_provider
                        SET provider_alias = %s, provider_display_name = 'SSO Rijk (OBSOLETE)', enabled = false
@@ -642,14 +709,18 @@ class DatabaseMigrator:
                 )
                 logger.info(f"  Updated {cur.rowcount} IDP")
 
-                logger.info(f"Step 2: Updating old IDP mapper references to '{obsolete_alias}'...")
+                logger.info(
+                    f"Step 2: Updating old IDP mapper references to '{obsolete_alias}'..."
+                )
                 cur.execute(
                     "UPDATE identity_provider_mapper SET idp_alias = %s WHERE idp_alias = %s",
                     (obsolete_alias, old_alias),
                 )
                 logger.info(f"  Updated {cur.rowcount} mappers")
 
-                logger.info(f"Step 3: Renaming '{new_alias}' to '{old_alias}' and enabling as default...")
+                logger.info(
+                    f"Step 3: Renaming '{new_alias}' to '{old_alias}' and enabling as default..."
+                )
                 cur.execute(
                     """UPDATE identity_provider
                        SET provider_alias = %s, provider_display_name = 'SSO Rijk',
@@ -659,7 +730,9 @@ class DatabaseMigrator:
                 )
                 logger.info(f"  Updated {cur.rowcount} IDP")
 
-                logger.info(f"Step 4: Updating new IDP mapper references to '{old_alias}'...")
+                logger.info(
+                    f"Step 4: Updating new IDP mapper references to '{old_alias}'..."
+                )
                 cur.execute(
                     "UPDATE identity_provider_mapper SET idp_alias = %s WHERE idp_alias = %s",
                     (old_alias, new_alias),
@@ -668,12 +741,15 @@ class DatabaseMigrator:
 
                 conn.commit()
                 logger.info("IDP swap completed successfully!")
-                logger.info(f"Old IDP is now '{obsolete_alias}' (disabled) - can be deleted manually later")
+                logger.info(
+                    f"Old IDP is now '{obsolete_alias}' (disabled) - can be deleted manually later"
+                )
 
 
 # =============================================================================
 # BOOTSTRAP YAML UPDATER
 # =============================================================================
+
 
 def update_bootstrap_yaml(
     yaml_path: str,
@@ -731,7 +807,9 @@ def update_bootstrap_yaml(
             new_idp_index = i
 
     if old_idp_index is None:
-        logger.warning(f"Old IDP '{old_alias}' not found in bootstrap.yaml (may already be removed)")
+        logger.warning(
+            f"Old IDP '{old_alias}' not found in bootstrap.yaml (may already be removed)"
+        )
     if new_idp_index is None:
         logger.error(f"New IDP '{new_alias}' not found in bootstrap.yaml")
         return False
@@ -741,8 +819,8 @@ def update_bootstrap_yaml(
         if old_idp_index is not None:
             logger.info(f"  1. Remove OIDC IDP entry: '{old_alias}'")
         logger.info(f"  2. Rename SAML IDP: '{new_alias}' -> '{old_alias}'")
-        logger.info(f"  3. Set enabled: true, authenticateByDefault: true")
-        logger.info(f"  4. Update displayName: 'SSO Rijk'")
+        logger.info("  3. Set enabled: true, authenticateByDefault: true")
+        logger.info("  4. Update displayName: 'SSO Rijk'")
         return True
 
     # Update the new IDP (SAML) to take over the old alias
@@ -765,16 +843,17 @@ def update_bootstrap_yaml(
     # Create backup first
     backup_path = path.with_suffix(".yaml.bak")
     import shutil
+
     shutil.copy(path, backup_path)
     logger.info(f"Created backup: {backup_path}")
 
     with path.open("w") as f:
         yaml.dump(config, f)
 
-    logger.info(f"Updated bootstrap.yaml:")
-    logger.info(f"  - Removed old OIDC IDP entry")
+    logger.info("Updated bootstrap.yaml:")
+    logger.info("  - Removed old OIDC IDP entry")
     logger.info(f"  - Renamed '{new_alias}' to '{old_alias}'")
-    logger.info(f"  - Enabled IDP with authenticateByDefault: true")
+    logger.info("  - Enabled IDP with authenticateByDefault: true")
 
     return True
 
@@ -783,19 +862,29 @@ def update_bootstrap_yaml(
 # COMMANDS
 # =============================================================================
 
+
 def cmd_add_idp(args):
     """Add a new IDP."""
-    kc = KeycloakClient(args.keycloak_url, args.admin_user, args.admin_password, verify_ssl=not args.insecure)
+    kc = KeycloakClient(
+        args.keycloak_url,
+        args.admin_user,
+        args.admin_password,
+        verify_ssl=not args.insecure,
+    )
 
     # Check if IDP already exists
     existing = kc.get_idp(args.realm, args.alias)
     if existing:
-        logger.error(f"IDP '{args.alias}' already exists. Delete it first or use a different alias.")
+        logger.error(
+            f"IDP '{args.alias}' already exists. Delete it first or use a different alias."
+        )
         sys.exit(1)
 
     if args.type == "oidc":
         if not args.discovery_url or not args.client_id or not args.client_secret:
-            logger.error("OIDC IDP requires --discovery-url, --client-id, and --client-secret")
+            logger.error(
+                "OIDC IDP requires --discovery-url, --client-id, and --client-secret"
+            )
             sys.exit(1)
 
         kc.create_oidc_idp(
@@ -822,12 +911,19 @@ def cmd_add_idp(args):
         )
 
     logger.info(f"\nIDP '{args.alias}' created successfully!")
-    logger.info(f"Next step: python {sys.argv[0]} add-mappers --idp-alias {args.alias} --type {args.type}")
+    logger.info(
+        f"Next step: python {sys.argv[0]} add-mappers --idp-alias {args.alias} --type {args.type}"
+    )
 
 
 def cmd_add_mappers(args):
     """Add mappers to an IDP."""
-    kc = KeycloakClient(args.keycloak_url, args.admin_user, args.admin_password, verify_ssl=not args.insecure)
+    kc = KeycloakClient(
+        args.keycloak_url,
+        args.admin_user,
+        args.admin_password,
+        verify_ssl=not args.insecure,
+    )
 
     # Check IDP exists
     idp = kc.get_idp(args.realm, args.idp_alias)
@@ -842,10 +938,14 @@ def cmd_add_mappers(args):
     elif idp_type == "saml":
         mappers = SAML_MAPPERS
     else:
-        logger.error(f"Unknown IDP type: {idp_type}. Specify --type oidc or --type saml")
+        logger.error(
+            f"Unknown IDP type: {idp_type}. Specify --type oidc or --type saml"
+        )
         sys.exit(1)
 
-    logger.info(f"Adding {len(mappers)} {idp_type.upper()} mappers to '{args.idp_alias}'...")
+    logger.info(
+        f"Adding {len(mappers)} {idp_type.upper()} mappers to '{args.idp_alias}'..."
+    )
 
     # Check existing mappers
     existing = kc.get_idp_mappers(args.realm, args.idp_alias)
@@ -857,15 +957,22 @@ def cmd_add_mappers(args):
             continue
         kc.create_idp_mapper(args.realm, args.idp_alias, mapper)
 
-    logger.info(f"\nMappers added successfully!")
+    logger.info("\nMappers added successfully!")
     logger.info(f"Next step: Test login via '{args.idp_alias}', then run swap command")
 
 
 def cmd_swap(args):
     """Swap IDPs at database level."""
     # Initialize clients
-    kc = KeycloakClient(args.keycloak_url, args.admin_user, args.admin_password, verify_ssl=not args.insecure)
-    db = DatabaseMigrator(args.db_host, args.db_port, args.db_name, args.db_user, args.db_password)
+    kc = KeycloakClient(
+        args.keycloak_url,
+        args.admin_user,
+        args.admin_password,
+        verify_ssl=not args.insecure,
+    )
+    db = DatabaseMigrator(
+        args.db_host, args.db_port, args.db_name, args.db_user, args.db_password
+    )
 
     # Verify both IDPs exist
     old_idp = kc.get_idp(args.realm, args.old_alias)
@@ -894,7 +1001,9 @@ def cmd_swap(args):
     if sample:
         logger.info("\nSample federated identities:")
         for s in sample:
-            logger.info(f"  - {s['keycloak_username']}: {s['federated_user_id'][:60]}...")
+            logger.info(
+                f"  - {s['keycloak_username']}: {s['federated_user_id'][:60]}..."
+            )
 
     # Create backup
     if not args.skip_backup and not args.dry_run:
@@ -951,7 +1060,12 @@ def cmd_swap(args):
 
 def cmd_status(args):
     """Show current IDP status."""
-    kc = KeycloakClient(args.keycloak_url, args.admin_user, args.admin_password, verify_ssl=not args.insecure)
+    kc = KeycloakClient(
+        args.keycloak_url,
+        args.admin_user,
+        args.admin_password,
+        verify_ssl=not args.insecure,
+    )
 
     logger.info(f"\nChecking IDPs in realm '{args.realm}'...")
 
@@ -964,7 +1078,9 @@ def cmd_status(args):
             logger.info(f"  Enabled: {idp.get('enabled')}")
             logger.info(f"  Mappers: {len(mappers)}")
             for m in mappers:
-                logger.info(f"    - {m.get('name')} ({m.get('identityProviderMapper')})")
+                logger.info(
+                    f"    - {m.get('name')} ({m.get('identityProviderMapper')})"
+                )
         else:
             logger.info(f"\n{alias}: NOT FOUND")
 
@@ -972,6 +1088,7 @@ def cmd_status(args):
 # =============================================================================
 # MAIN
 # =============================================================================
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1006,22 +1123,32 @@ Examples:
     )
 
     # Common arguments
-    parser.add_argument("--keycloak-url", default="https://keycloak.kind", help="Keycloak base URL")
+    parser.add_argument(
+        "--keycloak-url", default="https://keycloak.kind", help="Keycloak base URL"
+    )
     parser.add_argument("--admin-user", default="admin", help="Keycloak admin username")
-    parser.add_argument("--admin-password", required=True, help="Keycloak admin password")
+    parser.add_argument(
+        "--admin-password", required=True, help="Keycloak admin password"
+    )
     parser.add_argument("--realm", default="rig-platform", help="Realm name")
-    parser.add_argument("--insecure", action="store_true", help="Disable SSL verification")
+    parser.add_argument(
+        "--insecure", action="store_true", help="Disable SSL verification"
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # status command
     status_parser = subparsers.add_parser("status", help="Show IDP status")
     status_parser.add_argument("--old-alias", default="sso-rijk", help="Old IDP alias")
-    status_parser.add_argument("--new-alias", default="sso-rijk-new", help="New IDP alias")
+    status_parser.add_argument(
+        "--new-alias", default="sso-rijk-new", help="New IDP alias"
+    )
 
     # add-idp command
     add_idp_parser = subparsers.add_parser("add-idp", help="Add a new IDP")
-    add_idp_parser.add_argument("--type", choices=["oidc", "saml"], required=True, help="IDP type")
+    add_idp_parser.add_argument(
+        "--type", choices=["oidc", "saml"], required=True, help="IDP type"
+    )
     add_idp_parser.add_argument("--alias", required=True, help="IDP alias")
     add_idp_parser.add_argument("--display-name", help="Display name")
     # OIDC options
@@ -1037,25 +1164,45 @@ Examples:
     # add-mappers command
     mappers_parser = subparsers.add_parser("add-mappers", help="Add mappers to an IDP")
     mappers_parser.add_argument("--idp-alias", required=True, help="IDP alias")
-    mappers_parser.add_argument("--type", choices=["oidc", "saml"], help="Mapper type (auto-detected from IDP if not specified)")
+    mappers_parser.add_argument(
+        "--type",
+        choices=["oidc", "saml"],
+        help="Mapper type (auto-detected from IDP if not specified)",
+    )
 
     # swap command
     swap_parser = subparsers.add_parser("swap", help="Swap IDPs at database level")
-    swap_parser.add_argument("--old-alias", default="sso-rijk", help="Old IDP alias to replace")
-    swap_parser.add_argument("--new-alias", default="sso-rijk-direct", help="New IDP alias (default: sso-rijk-direct)")
+    swap_parser.add_argument(
+        "--old-alias", default="sso-rijk", help="Old IDP alias to replace"
+    )
+    swap_parser.add_argument(
+        "--new-alias",
+        default="sso-rijk-direct",
+        help="New IDP alias (default: sso-rijk-direct)",
+    )
     swap_parser.add_argument("--db-host", default="localhost", help="Database host")
     swap_parser.add_argument("--db-port", type=int, default=5432, help="Database port")
     swap_parser.add_argument("--db-name", default="keycloak", help="Database name")
     swap_parser.add_argument("--db-user", default="keycloak", help="Database user")
     swap_parser.add_argument("--db-password", help="Database password")
-    swap_parser.add_argument("--backup-dir", default="./backups", help="Backup directory")
-    swap_parser.add_argument("--skip-backup", action="store_true", help="Skip database backup")
-    swap_parser.add_argument("--dry-run", action="store_true", help="Show what would be done")
-    swap_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
-    swap_parser.add_argument("--force", action="store_true", help="Proceed even if backup fails")
+    swap_parser.add_argument(
+        "--backup-dir", default="./backups", help="Backup directory"
+    )
+    swap_parser.add_argument(
+        "--skip-backup", action="store_true", help="Skip database backup"
+    )
+    swap_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be done"
+    )
+    swap_parser.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation"
+    )
+    swap_parser.add_argument(
+        "--force", action="store_true", help="Proceed even if backup fails"
+    )
     swap_parser.add_argument(
         "--bootstrap-yaml",
-        help="Path to bootstrap.yaml to update after swap (removes old IDP, renames new IDP)"
+        help="Path to bootstrap.yaml to update after swap (removes old IDP, renames new IDP)",
     )
 
     args = parser.parse_args()

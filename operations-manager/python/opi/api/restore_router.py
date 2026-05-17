@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.connectors.git import create_git_connector_for_project_files
+from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
 from opi.handlers.project_file_handler import (
@@ -754,6 +755,7 @@ async def restore_project_pvc(
                 access_modes=access_modes,
                 snapshot_id=body.snapshot_id,
                 backup_enabled=target_storage.get("backup", True),
+                project_name=project_name,
             )
 
             if not result.success:
@@ -846,7 +848,7 @@ async def _restore_snapshot(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
     backup_manager: Any,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a single snapshot and return detail + optional generation update."""
@@ -887,6 +889,7 @@ async def _restore_snapshot(
                 project_data,
                 project_file_handler,
                 backup_manager,
+                project_name=project_name,
             )
         case ResourceType.DATABASE:
             return await _restore_database(
@@ -922,8 +925,9 @@ async def _restore_pvc(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
     backup_manager: Any,
+    project_name: str | None = None,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a PVC from snapshot."""
     file_generation = (
@@ -960,6 +964,7 @@ async def _restore_pvc(
         access_modes=access_modes,
         snapshot_id=snapshot.snapshot_id,
         backup_enabled=backup_enabled,
+        project_name=project_name,
     )
 
     detail = PVCRestoreDetail(
@@ -998,7 +1003,7 @@ async def _restore_database(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a database from snapshot using versioned restore."""
     result = await _restore_database_with_versioning(
@@ -1049,7 +1054,7 @@ async def _restore_bucket(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> tuple[PVCRestoreDetail, GenerationUpdate | None]:
     """Restore a bucket from snapshot using versioned restore."""
     result = await _restore_bucket_with_versioning(
@@ -1092,9 +1097,9 @@ async def _restore_bucket(
 
 
 def _set_generation(
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
     project_data: dict[str, Any],
-    update: "GenerationUpdate",
+    update: GenerationUpdate,
 ) -> None:
     """Set generation in project file based on resource type."""
     match update.resource_type:
@@ -1562,11 +1567,10 @@ async def restore_deployment_resource(
         )
 
         # Validate resource type
-        valid_resource_types = ["pvc", "database", "minio"]
-        if body.resource_type not in valid_resource_types:
+        if body.resource_type not in VALID_BACKUP_RESOURCE_TYPES:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid resource_type '{body.resource_type}'. Must be one of: {valid_resource_types}",
+                detail=f"Invalid resource_type '{body.resource_type}'. Must be one of: {sorted(VALID_BACKUP_RESOURCE_TYPES)}",
             )
 
         # 1. Get project info
@@ -1752,7 +1756,7 @@ async def _restore_pvc_with_versioning(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
     """
     Restore a PVC with versioning support.
@@ -1811,6 +1815,7 @@ async def _restore_pvc_with_versioning(
         access_modes=access_modes,
         snapshot_id=snapshot_id,
         backup_enabled=backup_enabled,
+        project_name=project_name,
     )
 
     if not result.success:
@@ -1842,7 +1847,7 @@ async def _restore_database_with_versioning(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
     """
     Restore a database with versioning support.
@@ -1977,7 +1982,7 @@ async def _restore_bucket_with_versioning(
     deployment_cluster: str,
     namespace: str,
     project_data: dict[str, Any],
-    project_file_handler: "ProjectFileHandler",
+    project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
     """
     Restore a bucket with versioning support.
