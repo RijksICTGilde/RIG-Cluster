@@ -34,22 +34,6 @@ Before running functional tests, ensure:
 3. **Repository Access**: Required repositories exist and are accessible
 4. **Configuration**: Settings in `config.py` point to correct repositories
 
-### Quick Setup
-
-Run the setup script to automatically create required repositories and validate connectivity:
-
-```bash
-# From the operations-manager/python directory
-python functional_tests/setup_test_infrastructure.py
-```
-
-This script will:
-- ✅ Check if Git server is running on localhost:2222
-- ✅ Validate SSH connectivity and credentials
-- ✅ Create the ArgoCD applications repository
-- ✅ Create the project repository from simple-example.yaml
-- ✅ Provide detailed feedback on any issues
-
 ## Running Tests
 
 ### Run All Functional Tests
