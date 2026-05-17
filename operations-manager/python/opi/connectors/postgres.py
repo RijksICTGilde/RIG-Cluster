@@ -1497,18 +1497,31 @@ class PostgresConnector:
                 # The schema was created by admin via _precreate_extensions_for_clone().
                 # Transfer ownership to target_owner so the pg_dump pipeline (which runs
                 # as target_owner) has permission to create objects in the schema.
-                grant_cmd = f"psql -d {target_database} -c 'ALTER SCHEMA {source_schema} OWNER TO {target_owner};'"
-                grant_process = await asyncio.create_subprocess_shell(
-                    grant_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                grant_cmd = [
+                    "psql",
+                    "-d",
+                    target_database,
+                    "-c",
+                    f"ALTER SCHEMA {source_schema} OWNER TO {target_owner};",
+                ]
+                grant_process = await asyncio.create_subprocess_exec(
+                    *grant_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 _, grant_err = await grant_process.communicate()
                 if grant_process.returncode != 0:
                     raise Exception(f"Failed to transfer schema ownership to {target_owner}: {grant_err.decode()}")
                 logger.info(f"Transferred ownership of pre-created schema '{source_schema}' to {target_owner}")
             else:
-                check_source_schema_cmd = f"psql -d {target_database} -t -c \"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';\""
-                check_process = await asyncio.create_subprocess_shell(
-                    check_source_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                check_source_schema_cmd = [
+                    "psql",
+                    "-d",
+                    target_database,
+                    "-t",
+                    "-c",
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';",
+                ]
+                check_process = await asyncio.create_subprocess_exec(
+                    *check_source_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 check_out, _ = await check_process.communicate()
                 source_schema_exists_in_target = bool(check_out and check_out.decode().strip())
@@ -1543,9 +1556,16 @@ class PostgresConnector:
                     await drop_process.communicate()
                 else:
                     # Check if target schema exists
-                    check_target_cmd = f"psql -d {target_database} -t -c \"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';\""
-                    check_target_process = await asyncio.create_subprocess_shell(
-                        check_target_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    check_target_cmd = [
+                        "psql",
+                        "-d",
+                        target_database,
+                        "-t",
+                        "-c",
+                        f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",
+                    ]
+                    check_target_process = await asyncio.create_subprocess_exec(
+                        *check_target_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                     )
                     check_target_out, _ = await check_target_process.communicate()
                     target_schema_exists = bool(check_target_out and check_target_out.decode().strip())
@@ -1559,34 +1579,78 @@ class PostgresConnector:
             # Step 4: Stream complete schema (structure + data) in one step
             logger.info("Streaming complete schema using pg_dump pipeline")
 
-            # Build the shell command for cross-host cloning
-            # The sed filter converts CREATE SCHEMA to IF NOT EXISTS because extensions
-            # are pre-created in the target schema before pg_dump runs (pg_dump -n does
-            # not include CREATE EXTENSION statements). Without this, the duplicate
-            # CREATE SCHEMA would fail with ON_ERROR_STOP=1.
-            shell_cmd = (
-                f"PGHOST={source_host} PGPORT={source_port} PGUSER={source_username} PGPASSWORD={source_password} "
-                f"pg_dump -d {source_database} -n {source_schema} --no-owner --no-privileges | "
-                f"sed 's/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g' | "
-                f"PGHOST={target_host} PGPORT={target_port} PGUSER={target_owner} PGPASSWORD={target_owner_password} "
-                f"psql -d {target_database} -v ON_ERROR_STOP=1"
+            # Connection parameters are passed via the environment, never via the
+            # command line, so attacker-controlled source host/username/password
+            # values cannot be interpreted by a shell. pg_dump and psql are spawned
+            # directly (no shell) and connected with an explicit pipe; the
+            # CREATE SCHEMA -> CREATE SCHEMA IF NOT EXISTS rewrite (previously a
+            # `sed` stage) is done in Python. The rewrite is needed because
+            # extensions are pre-created in the target schema before pg_dump runs
+            # (pg_dump -n omits CREATE EXTENSION), so without it the duplicate
+            # CREATE SCHEMA would fail under ON_ERROR_STOP=1.
+            source_env = os.environ.copy()
+            source_env.update(
+                {
+                    "PGHOST": source_host,
+                    "PGPORT": str(source_port),
+                    "PGUSER": source_username,
+                    "PGPASSWORD": source_password,
+                }
+            )
+            target_env = os.environ.copy()
+            target_env.update(
+                {
+                    "PGHOST": target_host,
+                    "PGPORT": str(target_port),
+                    "PGUSER": target_owner,
+                    "PGPASSWORD": target_owner_password,
+                }
             )
 
-            logger.debug(f"Executing full schema pipeline: {shell_cmd}")
-
-            # Execute the shell pipeline for complete schema clone
             from opi.core.metrics import track_subprocess_memory
 
-            clone_process = await asyncio.create_subprocess_shell(
-                shell_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-
             async with track_subprocess_memory("postgres-clone"):
-                clone_out, clone_err = await clone_process.communicate()
+                dump_process = await asyncio.create_subprocess_exec(
+                    "pg_dump",
+                    "-d",
+                    source_database,
+                    "-n",
+                    source_schema,
+                    "--no-owner",
+                    "--no-privileges",
+                    env=source_env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                dump_out, dump_err = await dump_process.communicate()
+
+                if dump_process.returncode != 0:
+                    raise Exception(f"pg_dump failed: {dump_err.decode()}")
+
+                rewritten_dump = re.sub(
+                    rb"^CREATE SCHEMA ",
+                    b"CREATE SCHEMA IF NOT EXISTS ",
+                    dump_out,
+                    flags=re.MULTILINE,
+                )
+
+                restore_process = await asyncio.create_subprocess_exec(
+                    "psql",
+                    "-d",
+                    target_database,
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    env=target_env,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                clone_out, clone_err = await restore_process.communicate(input=rewritten_dump)
 
             # Log only errors or important warnings
-            if clone_err:
-                stderr_text = clone_err.decode().strip()
+            combined_err = (dump_err or b"") + (clone_err or b"")
+            if combined_err:
+                stderr_text = combined_err.decode().strip()
                 # Only log if it contains actual errors, not just version info
                 if "error:" in stderr_text.lower() and "version mismatch" not in stderr_text.lower():
                     logger.error(f"pg_dump stderr: {stderr_text}")
@@ -1594,7 +1658,7 @@ class PostgresConnector:
                     logger.debug(f"pg_dump stderr: {stderr_text}")
 
             # Check for errors
-            if clone_process.returncode != 0:
+            if restore_process.returncode != 0:
                 raise Exception(f"Schema clone pipeline failed: {clone_err.decode()}")
 
             # Check if pg_dump actually produced any output
@@ -1610,10 +1674,17 @@ class PostgresConnector:
 
             # Step 5: Check if target schema was created successfully
 
-            check_target_schema_cmd = f"psql -d {target_database} -c \"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';\" -t"
+            check_target_schema_cmd = [
+                "psql",
+                "-d",
+                target_database,
+                "-c",
+                f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",
+                "-t",
+            ]
 
-            check_process = await asyncio.create_subprocess_shell(
-                check_target_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            check_process = await asyncio.create_subprocess_exec(
+                *check_target_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             check_out, _ = await check_process.communicate()
 
@@ -1622,9 +1693,17 @@ class PostgresConnector:
                 logger.error(f"Target schema '{target_schema}' was not created during pg_dump")
 
                 # List what schemas DO exist for debugging
-                list_cmd = f"psql -d {target_database} -c \"SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast');\" -t"
-                list_process = await asyncio.create_subprocess_shell(
-                    list_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                list_cmd = [
+                    "psql",
+                    "-d",
+                    target_database,
+                    "-c",
+                    "SELECT schema_name FROM information_schema.schemata "
+                    "WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast');",
+                    "-t",
+                ]
+                list_process = await asyncio.create_subprocess_exec(
+                    *list_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 list_out, _ = await list_process.communicate()
                 if list_out:
@@ -1636,12 +1715,16 @@ class PostgresConnector:
                         logger.info(
                             f"Found source schema '{source_schema}' in target database, renaming to '{target_schema}'"
                         )
-                        rename_cmd = (
-                            f"psql -d {target_database} -c 'ALTER SCHEMA {source_schema} RENAME TO {target_schema};'"
-                        )
+                        rename_cmd = [
+                            "psql",
+                            "-d",
+                            target_database,
+                            "-c",
+                            f"ALTER SCHEMA {source_schema} RENAME TO {target_schema};",
+                        ]
 
-                        rename_process = await asyncio.create_subprocess_shell(
-                            rename_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                        rename_process = await asyncio.create_subprocess_exec(
+                            *rename_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                         )
 
                         _, rename_err = await rename_process.communicate()
@@ -1663,10 +1746,16 @@ class PostgresConnector:
 
             # Step 6: Set proper ownership of the final schema
             logger.info(f"Setting ownership of schema {target_schema} to {target_owner}")
-            ownership_cmd = f"psql -d {target_database} -c 'ALTER SCHEMA {target_schema} OWNER TO {target_owner};'"
+            ownership_cmd = [
+                "psql",
+                "-d",
+                target_database,
+                "-c",
+                f"ALTER SCHEMA {target_schema} OWNER TO {target_owner};",
+            ]
 
-            owner_process = await asyncio.create_subprocess_shell(
-                ownership_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            owner_process = await asyncio.create_subprocess_exec(
+                *ownership_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             _, owner_err = await owner_process.communicate()
 
