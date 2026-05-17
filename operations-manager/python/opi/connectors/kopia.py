@@ -110,6 +110,16 @@ class KopiaSnapshot:
         return ResourceType.from_string(self._get_tag("resource_type"))
 
     @property
+    def trigger(self) -> str:
+        """Whether the backup was created by the scheduler or a manual action.
+
+        Returns "scheduled" or "manual". Legacy snapshots without the tag are
+        treated as scheduled (the historical default before this field existed).
+        """
+        value = self._get_tag("trigger")
+        return value if value in {"scheduled", "manual"} else "scheduled"
+
+    @property
     def reference_name(self) -> str | None:
         """Extract reference name based on resource type.
 

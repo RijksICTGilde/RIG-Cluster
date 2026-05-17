@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token, validate_master_api_key
+from opi.api.endpoint_util import validate_api_token
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
@@ -21,7 +21,7 @@ from opi.manager.backup import (
     create_bucket_backup_manager,
     create_database_backup_manager,
 )
-from opi.services import ServiceAdapter, ServiceType
+from opi.services import ServiceType
 from opi.services.project_service import get_project_service
 from opi.utils.naming import generate_backup_run_id
 from opi.utils.secrets import DatabaseSecret, MinIOSecret
@@ -83,23 +83,6 @@ class BackupStatusResponse(BaseModel):
     locked_at: str | None = Field(None, description="When the lock was acquired")
 
 
-class BackupNamespaceRequest(BaseModel):
-    """Optional request body for namespace backup."""
-
-    pvcs: list[str] | None = Field(
-        None,
-        description="Specific PVC names to backup. If omitted, backs up all labeled PVCs.",
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "pvcs": ["app-data", "cache-data"],
-            }
-        }
-    }
-
-
 class BackupRunItem(BaseModel):
     """Information about a backed up resource (PVC, database, or bucket)."""
 
@@ -111,6 +94,7 @@ class BackupRunItem(BaseModel):
     generation: int | None = None
     size_bytes: int | None = None
     timestamp: str
+    trigger: str = Field(default="scheduled", description="'scheduled' or 'manual'")
 
 
 class BackupRun(BaseModel):
@@ -183,30 +167,6 @@ class BackupRunsResponse(BaseModel):
 # Database Backup Models
 
 
-class DatabaseBackupRequest(BaseModel):
-    """Request body for database backup operations."""
-
-    database_host: str = Field(..., description="Database host address")
-    database_port: int = Field(default=5432, description="Database port")
-    database_name: str = Field(..., description="Database name to backup")
-    database_user: str = Field(..., description="Database username")
-    database_password: str = Field(..., description="Database password")
-    source_type: str = Field(default="namespace", description="Source type: 'shared' or 'namespace'")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "database_host": "postgresql.my-namespace.svc.cluster.local",
-                "database_port": 5432,
-                "database_name": "myapp",
-                "database_user": "myapp",
-                "database_password": "secret",
-                "source_type": "namespace",
-            }
-        }
-    }
-
-
 class DatabaseBackupResultModel(BaseModel):
     """Result of a database backup operation."""
 
@@ -228,30 +188,6 @@ class DatabaseBackupResponse(BaseModel):
 
 
 # Bucket Backup Models
-
-
-class BucketBackupRequest(BaseModel):
-    """Request body for bucket backup operations."""
-
-    source_minio_endpoint: str = Field(..., description="Source MinIO endpoint URL")
-    source_bucket_name: str = Field(..., description="Source bucket name")
-    source_access_key: str = Field(..., description="Source MinIO access key")
-    source_secret_key: str = Field(..., description="Source MinIO secret key")
-    source_type: str = Field(default="namespace", description="Source type: 'shared' or 'namespace'")
-    use_kopia: bool = Field(default=True, description="Use Kopia for encrypted backup (true) or mc mirror (false)")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "source_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
-                "source_bucket_name": "my-bucket",
-                "source_access_key": "minioaccess",
-                "source_secret_key": "miniosecret",
-                "source_type": "namespace",
-                "use_kopia": True,
-            }
-        }
-    }
 
 
 class BucketBackupResultModel(BaseModel):
@@ -392,219 +328,6 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
         raise HTTPException(status_code=500, detail=f"Error getting backup status: {e}") from e
 
 
-@backup_router.post("/namespace/{namespace}", response_model=BackupResponse)
-@validate_master_api_key
-async def backup_namespace(
-    request: Request, namespace: str, body: BackupNamespaceRequest | None = None
-) -> JSONResponse:
-    """
-    Trigger backup for PVCs in a namespace.
-
-    By default, backs up all PVCs with the label `backup.rig.nl/enabled=true`.
-    Optionally, specify a list of PVC names to backup specific PVCs.
-
-    The backup process:
-    1. Acquires a distributed lock (only one backup runs at a time)
-    2. For each PVC:
-       - Creates a VolumeSnapshot
-       - Creates a temporary PVC clone from the snapshot
-       - Spawns a Kopia backup pod
-       - Uploads data to external S3 (encrypted with namespace's SOPS key)
-       - Cleans up temporary resources
-    3. Releases the lock
-
-    Headers:
-        X-API-Key: The API key (required)
-
-    Example:
-    ```bash
-    # Backup all labeled PVCs
-    curl -X POST "http://localhost:9595/api/v1/backup/namespace/project-alpha" \\
-      -H "X-API-Key: your-api-key"
-
-    # Backup specific PVCs
-    curl -X POST "http://localhost:9595/api/v1/backup/namespace/project-alpha" \\
-      -H "X-API-Key: your-api-key" \\
-      -H "Content-Type: application/json" \\
-      -d '{"pvcs": ["app-data", "cache-data"]}'
-    ```
-    """
-    try:
-        logger.info(f"Backup request for namespace: {namespace}")
-
-        backup_manager = create_backup_manager()
-
-        # If specific PVCs are requested, backup each one
-        if body and body.pvcs:
-            logger.info(f"Backing up specific PVCs: {body.pvcs}")
-            results: list[BackupResult] = []
-            for pvc_name in body.pvcs:
-                result = await backup_manager.backup_pvc(namespace, pvc_name)
-                results.append(result)
-        else:
-            # Backup all labeled PVCs
-            results = await backup_manager.backup_namespace(namespace)
-
-        # Determine overall status
-        if not results:
-            status = "success"
-            message = f"No PVCs with backup label found in namespace {namespace}"
-        elif all(r.success for r in results):
-            status = "success"
-            message = f"Backed up {len(results)} PVC(s) in namespace {namespace}"
-        elif any(r.success for r in results):
-            status = "partial"
-            failed_count = sum(1 for r in results if not r.success)
-            message = f"Backed up {len(results) - failed_count}/{len(results)} PVC(s) in namespace {namespace}"
-        else:
-            status = "failed"
-            message = f"Failed to backup all {len(results)} PVC(s) in namespace {namespace}"
-
-        content = {
-            "status": status,
-            "message": message,
-            "results": [_result_to_model(r).model_dump() for r in results],
-        }
-
-        status_code = 200 if status == "success" else (207 if status == "partial" else 500)
-        return JSONResponse(content=content, status_code=status_code)
-
-    except RuntimeError as e:
-        if "lock" in str(e).lower():
-            logger.warning(f"Backup lock conflict: {e}")
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-    except Exception as e:
-        logger.exception("Error backing up namespace %s", namespace)
-        raise HTTPException(status_code=500, detail=f"Error backing up namespace: {e}") from e
-
-
-@backup_router.post("/namespace/{namespace}/all", response_model=BackupResponse)
-@validate_master_api_key
-async def backup_namespace_all(request: Request, namespace: str) -> JSONResponse:
-    """
-    Trigger backup for ALL PVCs in a namespace (no labels required).
-
-    This endpoint backs up every PVC in the namespace, regardless of whether
-    it has the backup label. This is useful for:
-    - Helm charts that don't allow adding custom labels
-    - Third-party applications
-    - Quick backups without labeling
-
-    The backup process:
-    1. Acquires a distributed lock (only one backup runs at a time)
-    2. For each PVC in the namespace:
-       - Creates a VolumeSnapshot
-       - Creates a temporary PVC clone from the snapshot
-       - Spawns a Kopia backup pod
-       - Uploads data to external S3 (encrypted with namespace's SOPS key)
-       - Cleans up temporary resources
-    3. Releases the lock
-
-    Headers:
-        X-API-Key: The API key (required)
-
-    Example:
-    ```bash
-    curl -X POST "http://localhost:9595/api/v1/backup/namespace/my-helm-app/all" \\
-      -H "X-API-Key: your-api-key"
-    ```
-    """
-    try:
-        logger.info(f"Backup ALL request for namespace: {namespace}")
-
-        backup_manager = create_backup_manager()
-        results = await backup_manager.backup_namespace_all(namespace)
-
-        # Determine overall status
-        if not results:
-            status = "success"
-            message = f"No PVCs found in namespace {namespace}"
-        elif all(r.success for r in results):
-            status = "success"
-            message = f"Backed up all {len(results)} PVC(s) in namespace {namespace}"
-        elif any(r.success for r in results):
-            status = "partial"
-            failed_count = sum(1 for r in results if not r.success)
-            message = f"Backed up {len(results) - failed_count}/{len(results)} PVC(s) in namespace {namespace}"
-        else:
-            status = "failed"
-            message = f"Failed to backup all {len(results)} PVC(s) in namespace {namespace}"
-
-        content = {
-            "status": status,
-            "message": message,
-            "results": [_result_to_model(r).model_dump() for r in results],
-        }
-
-        status_code = 200 if status == "success" else (207 if status == "partial" else 500)
-        return JSONResponse(content=content, status_code=status_code)
-
-    except RuntimeError as e:
-        if "lock" in str(e).lower():
-            logger.warning(f"Backup lock conflict: {e}")
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-    except Exception as e:
-        logger.exception("Error backing up all PVCs in namespace %s", namespace)
-        raise HTTPException(status_code=500, detail=f"Error backing up namespace: {e}") from e
-
-
-@backup_router.post("/pvc/{namespace}/{pvc_name}", response_model=BackupResponse)
-@validate_master_api_key
-async def backup_pvc(request: Request, namespace: str, pvc_name: str) -> JSONResponse:
-    """
-    Trigger backup for a specific PVC.
-
-    This endpoint backs up a single PVC, regardless of whether it has
-    the backup label.
-
-    The backup process:
-    1. Acquires a distributed lock (only one backup runs at a time)
-    2. Creates a VolumeSnapshot of the PVC
-    3. Creates a temporary PVC clone from the snapshot
-    4. Spawns a Kopia backup pod
-    5. Uploads data to external S3 (encrypted with namespace's SOPS key)
-    6. Cleans up temporary resources
-    7. Releases the lock
-
-    Headers:
-        X-API-Key: The API key (required)
-
-    Example:
-    ```bash
-    curl -X POST "http://localhost:9595/api/v1/backup/pvc/project-alpha/app-data" \\
-      -H "X-API-Key: your-api-key"
-    ```
-    """
-    try:
-        logger.info(f"Backup request for PVC: {namespace}/{pvc_name}")
-
-        backup_manager = create_backup_manager()
-        result = await backup_manager.backup_pvc(namespace, pvc_name)
-
-        content = {
-            "status": "success" if result.success else "failed",
-            "message": f"Backup of {namespace}/{pvc_name} {'completed successfully' if result.success else 'failed'}",
-            "results": [_result_to_model(result).model_dump()],
-        }
-
-        status_code = 200 if result.success else 500
-        return JSONResponse(content=content, status_code=status_code)
-
-    except RuntimeError as e:
-        if "lock" in str(e).lower():
-            logger.warning(f"Backup lock conflict: {e}")
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-    except Exception as e:
-        logger.exception("Error backing up PVC %s/%s", namespace, pvc_name)
-        raise HTTPException(status_code=500, detail=f"Error backing up PVC: {e}") from e
-
-
 @backup_router.post("/project/{project_name}/deployment/{deployment_name}", response_model=DeploymentBackupResponse)
 @validate_api_token
 async def backup_project_deployment(
@@ -715,18 +438,6 @@ async def backup_project_deployment(
             all_results.extend(app_results)
             if app_results:
                 namespaces_backed_up.append(app_namespace)
-
-            # Also backup infra namespace PVCs if project uses infrastructure services
-            if ServiceAdapter.project_uses_infrastructure_namespace(project.model_dump()):
-                infra_namespace = get_prefixed_namespace(deployment_cluster, f"{raw_namespace}-infra")
-                logger.info(f"Project uses infrastructure services, backing up: {infra_namespace}")
-                try:
-                    infra_results = await backup_manager.backup_namespace(infra_namespace)
-                    all_results.extend(infra_results)
-                    if infra_results:
-                        namespaces_backed_up.append(infra_namespace)
-                except Exception as e:
-                    logger.warning(f"Failed to backup infrastructure namespace {infra_namespace}: {e}")
 
         # Track database and bucket backup results
         database_results: list[DatabaseBackupResult] = []
@@ -1030,6 +741,7 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
                     generation=s.generation,
                     size_bytes=s.size_bytes,
                     timestamp=s.timestamp,
+                    trigger=s.trigger,
                 )
             )
 
@@ -1051,203 +763,6 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
 
 
 # Database Backup Endpoints
-
-
-@backup_router.post("/database/{namespace}/{reference_name}", response_model=DatabaseBackupResponse)
-@validate_master_api_key
-async def backup_database(
-    request: Request,
-    namespace: str,
-    reference_name: str,
-    body: DatabaseBackupRequest,
-) -> JSONResponse:
-    """
-    Trigger backup for a PostgreSQL database.
-
-    This endpoint backs up a PostgreSQL database using pg_dump and stores it
-    in the Kopia repository with encryption using the namespace's SOPS key.
-
-    The backup process:
-    1. Acquires a distributed lock
-    2. Spawns a backup pod that:
-       - Connects to the database using provided credentials
-       - Runs pg_dump with --format=custom
-       - Streams the dump through Kopia for encrypted backup
-    3. Tags the snapshot with database metadata
-    4. Cleans up the backup pod
-    5. Releases the lock
-
-    Args:
-        namespace: Kubernetes namespace for the backup pod
-        reference_name: Logical name for this database backup (used in tags)
-        body: Database connection parameters
-
-    Headers:
-        X-API-Key: The master API key (required)
-
-    Example:
-    ```bash
-    curl -X POST "http://localhost:9595/api/v1/backup/database/my-namespace/mydb" \\
-      -H "X-API-Key: your-api-key" \\
-      -H "Content-Type: application/json" \\
-      -d '{
-        "database_host": "postgresql.my-namespace.svc.cluster.local",
-        "database_port": 5432,
-        "database_name": "myapp",
-        "database_user": "myapp",
-        "database_password": "secret"
-      }'
-    ```
-    """
-    try:
-        logger.info(f"Database backup request for {namespace}/{reference_name}")
-
-        # Generate backup_run_id for this backup
-        backup_run_id = generate_backup_run_id()
-        logger.info(f"Starting database backup run {backup_run_id}")
-
-        database_backup_manager = create_database_backup_manager()
-        result = await database_backup_manager.backup_database(
-            namespace=namespace,
-            database_host=body.database_host,
-            database_port=body.database_port,
-            database_name=body.database_name,
-            database_user=body.database_user,
-            database_password=body.database_password,
-            reference_name=reference_name,
-            backup_run_id=backup_run_id,
-            source_type=body.source_type,
-        )
-
-        content = {
-            "status": "success" if result.success else "failed",
-            "message": (
-                f"Database backup of {reference_name} completed successfully"
-                if result.success
-                else f"Database backup of {reference_name} failed: {result.error}"
-            ),
-            "result": _database_result_to_model(result).model_dump(),
-        }
-
-        status_code = 200 if result.success else 500
-        return JSONResponse(content=content, status_code=status_code)
-
-    except RuntimeError as e:
-        if "lock" in str(e).lower():
-            logger.warning(f"Backup lock conflict: {e}")
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-    except Exception as e:
-        logger.exception("Error backing up database %s/%s", namespace, reference_name)
-        raise HTTPException(status_code=500, detail=f"Error backing up database: {e}") from e
-
-
-# Bucket Backup Endpoints
-
-
-@backup_router.post("/bucket/{namespace}/{reference_name}", response_model=BucketBackupResponse)
-@validate_master_api_key
-async def backup_bucket(
-    request: Request,
-    namespace: str,
-    reference_name: str,
-    body: BucketBackupRequest,
-) -> JSONResponse:
-    """
-    Trigger backup for a MinIO bucket.
-
-    This endpoint backs up a MinIO bucket. By default, it uses Kopia for
-    encrypted backup (recommended). Alternatively, set use_kopia=false to
-    use mc mirror for a direct bucket-to-bucket copy (unencrypted).
-
-    The Kopia backup process:
-    1. Acquires a distributed lock
-    2. Spawns a backup pod that:
-       - Mirrors the source bucket to a temp directory
-       - Creates a Kopia snapshot with encryption
-    3. Tags the snapshot with bucket metadata
-    4. Cleans up the backup pod
-    5. Releases the lock
-
-    Args:
-        namespace: Kubernetes namespace for the backup pod
-        reference_name: Logical name for this bucket backup (used in tags)
-        body: MinIO connection parameters and backup options
-
-    Headers:
-        X-API-Key: The master API key (required)
-
-    Example:
-    ```bash
-    # Kopia backup (encrypted)
-    curl -X POST "http://localhost:9595/api/v1/backup/bucket/my-namespace/mybucket" \\
-      -H "X-API-Key: your-api-key" \\
-      -H "Content-Type: application/json" \\
-      -d '{
-        "source_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
-        "source_bucket_name": "my-bucket",
-        "source_access_key": "minioaccess",
-        "source_secret_key": "miniosecret",
-        "use_kopia": true
-      }'
-
-    # mc mirror backup (unencrypted, faster)
-    curl -X POST "http://localhost:9595/api/v1/backup/bucket/my-namespace/mybucket" \\
-      -H "X-API-Key: your-api-key" \\
-      -H "Content-Type: application/json" \\
-      -d '{
-        "source_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
-        "source_bucket_name": "my-bucket",
-        "source_access_key": "minioaccess",
-        "source_secret_key": "miniosecret",
-        "use_kopia": false
-      }'
-    ```
-    """
-    try:
-        logger.info(f"Bucket backup request for {namespace}/{reference_name} (use_kopia={body.use_kopia})")
-
-        # Generate backup_run_id for this backup
-        backup_run_id = generate_backup_run_id()
-        logger.info(f"Starting bucket backup run {backup_run_id}")
-
-        bucket_backup_manager = create_bucket_backup_manager()
-
-        result = await bucket_backup_manager.backup_bucket(
-            namespace=namespace,
-            source_minio_endpoint=body.source_minio_endpoint,
-            source_bucket_name=body.source_bucket_name,
-            source_access_key=body.source_access_key,
-            source_secret_key=body.source_secret_key,
-            reference_name=reference_name,
-            backup_run_id=backup_run_id,
-            source_type=body.source_type,
-            use_kopia=body.use_kopia,
-        )
-
-        content = {
-            "status": "success" if result.success else "failed",
-            "message": (
-                f"Bucket backup of {reference_name} completed successfully"
-                if result.success
-                else f"Bucket backup of {reference_name} failed: {result.error}"
-            ),
-            "result": _bucket_result_to_model(result).model_dump(),
-        }
-
-        status_code = 200 if result.success else 500
-        return JSONResponse(content=content, status_code=status_code)
-
-    except RuntimeError as e:
-        if "lock" in str(e).lower():
-            logger.warning(f"Backup lock conflict: {e}")
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-    except Exception as e:
-        logger.exception("Error backing up bucket %s/%s", namespace, reference_name)
-        raise HTTPException(status_code=500, detail=f"Error backing up bucket: {e}") from e
 
 
 # Snapshot Delete Endpoint

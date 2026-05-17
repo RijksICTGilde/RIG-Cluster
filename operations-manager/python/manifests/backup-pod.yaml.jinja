@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/managed-by: opi-backup
     backup.rig.nl/pvc: "{{ pvc_name }}"
     backup.rig.nl/timestamp: "{{ timestamp }}"
+    backup.rig.nl/trigger: "{{ trigger | default('scheduled') }}"
 spec:
   restartPolicy: Never
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
@@ -35,13 +36,19 @@ spec:
             TLS_FLAG="--disable-tls"
           fi
 
-          # Connect to existing Kopia repository, or create one if needed
+          # Pin a stable Kopia source identity per (project, deployment, PVC)
+          # so retention applies per resource (not per pod). The override
+          # flags belong on `repository connect/create` — they set the client
+          # identity for the whole session. Manual backups connect with a
+          # `-manual` suffix on the hostname, giving them a separate source
+          # so scheduled retention never touches them.
+          KOPIA_IDENTITY_ARGS="--override-hostname={{ kopia_hostname }} --override-username=opi-backup"
           KOPIA_S3_ARGS="--bucket=${S3_BUCKET} --prefix=${BACKUP_PREFIX}/ --endpoint=${S3_ENDPOINT} --access-key=${S3_ACCESS_KEY} --secret-access-key=${S3_SECRET_KEY} --password=${KOPIA_PASSWORD} ${TLS_FLAG}"
 
-          echo "Connecting to Kopia repository..."
-          if kopia repository connect s3 ${KOPIA_S3_ARGS} 2>/dev/null; then
+          echo "Connecting to Kopia repository as {{ kopia_source }}..."
+          if kopia repository connect s3 ${KOPIA_S3_ARGS} ${KOPIA_IDENTITY_ARGS} 2>/dev/null; then
             echo "Connected to existing repository"
-          elif kopia repository create s3 ${KOPIA_S3_ARGS} 2>/dev/null; then
+          elif kopia repository create s3 ${KOPIA_S3_ARGS} ${KOPIA_IDENTITY_ARGS} 2>/dev/null; then
             echo "Created new repository"
           else
             echo "WARNING: Normal create failed (stale data?), clearing prefix and reinitializing..."
@@ -53,13 +60,12 @@ spec:
             export MC_CONFIG_DIR=/tmp/mc
             mc alias set backup-s3 "${MC_ENDPOINT}" "${S3_ACCESS_KEY}" "${S3_SECRET_KEY}" --api S3v4
             mc rm --recursive --force backup-s3/${S3_BUCKET}/${BACKUP_PREFIX}/ 2>/dev/null || true
-            kopia repository create s3 ${KOPIA_S3_ARGS}
+            kopia repository create s3 ${KOPIA_S3_ARGS} ${KOPIA_IDENTITY_ARGS}
             echo "Created new repository (after clearing stale data)"
           fi
 
           echo "Repository connected successfully"
 
-          # Run backup with full context metadata
           echo "Starting snapshot of /data..."
           kopia snapshot create /data \
             --description="PVC backup: {{ pvc_name }}" \
@@ -73,26 +79,30 @@ spec:
             --tags="pvc:{{ pvc_name }}" \
             --tags="generation:{{ pvc_generation | default('0') }}" \
             --tags="timestamp:{{ timestamp }}" \
-            --tags="backup_run:{{ backup_run_id }}"
+            --tags="backup_run:{{ backup_run_id }}" \
+            --tags="trigger:{{ trigger | default('scheduled') }}"
 
           echo "Snapshot created successfully"
 
-          # Set retention policy (1 per day, keep 7 days)
-          echo "Setting retention policy..."
-          kopia policy set /data \
-            --keep-latest={{ retention_keep_latest | default(1) }} \
-            --keep-daily={{ retention_keep_daily | default(7) }} \
-            --keep-weekly={{ retention_keep_weekly | default(0) }} \
-            --keep-monthly={{ retention_keep_monthly | default(0) }} \
+{% if trigger | default('scheduled') != 'manual' %}
+          # Scheduled backups apply retention scoped to this source only.
+          # Manual snapshots (separate source identity) are never affected.
+          echo "Setting retention policy for {{ kopia_source }}..."
+          kopia policy set "{{ kopia_source }}" \
+            --keep-latest={{ retention_keep_latest | default(30) }} \
+            --keep-daily={{ retention_keep_daily | default(30) }} \
+            --keep-weekly={{ retention_keep_weekly | default(4) }} \
+            --keep-monthly={{ retention_keep_monthly | default(12) }} \
             --keep-annual={{ retention_keep_annual | default(0) }}
 
           echo "Retention policy set"
 
-          # Apply retention policy - delete old snapshots
-          echo "Applying retention policy (expiring old snapshots)..."
-          kopia snapshot expire --delete
+          echo "Applying retention policy (expiring old snapshots for this source)..."
+          kopia snapshot expire "{{ kopia_source }}" --delete
+{% else %}
+          echo "Manual backup: skipping retention (protected from automatic deletion)"
+{% endif %}
 
-          # Show snapshot list after cleanup
           echo "Current snapshots after retention:"
           kopia snapshot list
 

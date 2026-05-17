@@ -21,20 +21,16 @@ The backup system provides:
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Operations Manager API                                             │
 │                                                                     │
-│  PVC Backups:                                                       │
-│    POST /api/v1/backup/project/{project}/deployment/{deployment}    │
-│    POST /api/v1/backup/namespace/{namespace}                        │
-│    POST /api/v1/backup/namespace/{namespace}/all                    │
-│    POST /api/v1/backup/pvc/{namespace}/{pvc_name}                   │
+│  Trigger:                                                           │
+│    POST   /api/v1/backup/project/{project}/deployment/{deployment}  │
+│           (backs up PVCs, databases, and MinIO buckets in one run)  │
 │                                                                     │
-│  Database Backups:                                                  │
-│    POST /api/v1/backup/database/{namespace}/{reference_name}        │
+│  Inspect:                                                           │
+│    GET    /api/v1/backup/status                                     │
+│    GET    /api/v1/backup/runs/{project}/{deployment}                │
 │                                                                     │
-│  Bucket Backups:                                                    │
-│    POST /api/v1/backup/bucket/{namespace}/{reference_name}          │
-│                                                                     │
-│  GET  /api/v1/backup/status                                         │
-│  GET  /api/v1/backup/runs/{project}/{deployment}                    │
+│  Delete:                                                            │
+│    DELETE /api/v1/backup/snapshot/{project}/{deployment}/{id}       │
 │                                                                     │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
@@ -109,37 +105,27 @@ deployments:
 
 ### 2. Trigger a Backup
 
-**Backup a project deployment (recommended):**
+Backups are scoped to a (project, deployment) pair. One call backs up every
+resource the deployment owns — PVCs, databases, MinIO buckets — in a single
+backup run with a shared run ID.
+
 ```bash
 curl -X POST "http://localhost:9595/api/v1/backup/project/my-project/deployment/production" \
   -H "X-API-Key: your-api-key"
 ```
 
-**Backup a namespace:**
-```bash
-curl -X POST "http://localhost:9595/api/v1/backup/namespace/my-project" \
-  -H "X-API-Key: your-api-key"
-```
+To restrict to specific resource types:
 
-**Backup all PVCs in a namespace (no labels required - for Helm projects):**
 ```bash
-curl -X POST "http://localhost:9595/api/v1/backup/namespace/my-project/all" \
-  -H "X-API-Key: your-api-key"
-```
-
-**Backup specific PVCs:**
-```bash
-curl -X POST "http://localhost:9595/api/v1/backup/namespace/my-project" \
+curl -X POST "http://localhost:9595/api/v1/backup/project/my-project/deployment/production" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"pvcs": ["app-data", "cache-data"]}'
+  -d '{"resource_types": ["pvc", "database"]}'
 ```
 
-**Backup a single PVC:**
-```bash
-curl -X POST "http://localhost:9595/api/v1/backup/pvc/my-project/app-data" \
-  -H "X-API-Key: your-api-key"
-```
+Scheduled backups are configured per deployment in `project.yaml` under
+`deployments[].backup.schedule` (RRULE). OPI's in-process scheduler fires
+them automatically — no curl needed.
 
 ### 3. Check Backup Status
 
@@ -257,64 +243,61 @@ curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data
 
 ## API Reference
 
-### PVC Backup Endpoints
+Backups are scoped to (project, deployment). A single trigger covers every
+resource the deployment owns — PVCs, databases, MinIO buckets — in one run.
+
+### Backup endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/v1/backup/status` | Get current backup status |
-| `POST` | `/api/v1/backup/project/{project_name}/deployment/{deployment_name}` | Backup all labeled PVCs in a deployment (app + infra namespaces) |
-| `POST` | `/api/v1/backup/namespace/{namespace}` | Backup labeled PVCs in namespace |
-| `POST` | `/api/v1/backup/namespace/{namespace}/all` | Backup ALL PVCs in namespace (no labels required) |
-| `POST` | `/api/v1/backup/pvc/{namespace}/{pvc_name}` | Backup a specific PVC |
+| `POST` | `/api/v1/backup/project/{project_name}/deployment/{deployment_name}` | Trigger backup for a deployment (PVCs + databases + buckets, per `resource_types`) |
+| `GET` | `/api/v1/backup/status` | Distributed-lock status (who's currently running a backup) |
+| `GET` | `/api/v1/backup/runs/{project_name}/{deployment_name}` | List backup runs, grouped by `backup_run_id` |
+| `DELETE` | `/api/v1/backup/snapshot/{project_name}/{deployment_name}/{snapshot_id}` | Delete a single snapshot (typically used to prune manual backups) |
 
-### Database Backup Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/backup/database/{namespace}/{reference_name}` | Backup a PostgreSQL database |
-| `POST` | `/api/v1/restore/database/{cluster}/{namespace}/{reference_name}` | Restore a PostgreSQL database |
-
-### Bucket Backup Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/backup/bucket/{namespace}/{reference_name}` | Backup a MinIO bucket (Kopia encrypted or mc mirror) |
-| `POST` | `/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}` | Restore a MinIO bucket |
-
-### PVC Restore Endpoints
+### Restore endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/v1/restore/snapshots/{cluster}/{namespace}` | List snapshots for namespace |
 | `GET` | `/api/v1/restore/snapshots/{cluster}/{namespace}/{pvc_name}` | List snapshots for specific PVC |
-| `POST` | `/api/v1/restore/project/{project_name}` | **Recommended:** Restore PVC for RIG-managed project (auto-updates project file) |
-| `POST` | `/api/v1/restore/pvc/{cluster}/{namespace}/{pvc_name}` | Manual restore to new or existing PVC |
+| `POST` | `/api/v1/restore/project/{project_name}` | Restore for a RIG-managed project (auto-updates project file via generation versioning) |
+| `POST` | `/api/v1/restore/pvc/{cluster}/{namespace}/{pvc_name}` | Manual PVC restore to new or existing PVC |
+| `POST` | `/api/v1/restore/database/{cluster}/{namespace}/{reference_name}` | Restore a PostgreSQL database |
+| `POST` | `/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}` | Restore a MinIO bucket |
 
-### Request/Response Examples
+### Request body
 
-**Backup Response:**
+`POST /api/v1/backup/project/{project}/deployment/{deployment}` accepts an
+optional body to restrict to specific resource types:
+
+```json
+{ "resource_types": ["pvc", "database", "minio"] }
+```
+
+Omitting the body backs up all three types.
+
+### Backup response
+
 ```json
 {
   "status": "success",
-  "message": "Backed up 2 PVC(s) in namespace my-project",
+  "message": "Backed up 3 resources for my-project/production",
+  "backup_run_id": "20260520020000",
+  "total_results": 3,
   "results": [
-    {
-      "namespace": "my-project",
-      "pvc_name": "app-data",
-      "success": true,
-      "snapshot_name": "app-data-backup-20250112-143022",
-      "duration_seconds": 45.3
-    },
-    {
-      "namespace": "my-project",
-      "pvc_name": "cache-data",
-      "success": true,
-      "snapshot_name": "cache-data-backup-20250112-143108",
-      "duration_seconds": 12.1
-    }
+    {"namespace": "rig-my-project", "pvc_name": "production-frontend-data-pvc", "success": true, "duration_seconds": 45.3},
+    {"namespace": "rig-my-project", "reference_name": "frontend-database", "success": true, "duration_seconds": 12.1},
+    {"namespace": "rig-my-project", "reference_name": "frontend-uploads", "success": true, "duration_seconds": 8.7}
   ]
 }
 ```
+
+All snapshots in one run share `backup_run_id` and are tagged with `project`,
+`deployment`, `component`, `resource_type`, `generation`, and `trigger`
+(`"scheduled"` or `"manual"`). The trigger value also drives a per-resource
+Kopia source identity so that scheduled retention never touches manual
+snapshots — see "Trigger metadata and retention isolation" below.
 
 **Manual Restore Response:**
 ```json
@@ -380,14 +363,23 @@ components:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BACKUP_S3_ENDPOINT` | S3 endpoint URL | `minio.rig-backup-destination.svc:9000` |
-| `BACKUP_S3_BUCKET` | S3 bucket name | `rig-backups` |
+| `BACKUP_S3_BUCKET` | S3 bucket name (used when project context unavailable) | `rig-backups` |
 | `BACKUP_S3_ACCESS_KEY` | S3 access key | - |
 | `BACKUP_S3_SECRET_KEY` | S3 secret key | - |
 | `BACKUP_SNAPSHOT_CLASS` | VolumeSnapshotClass name | `ocs-storagecluster-rbdplugin-snapclass` |
 | `BACKUP_TIMEOUT_SECONDS` | Max backup duration | `3600` |
-| `BACKUP_RETENTION_KEEP_LATEST` | Keep N latest snapshots | `7` |
-| `BACKUP_RETENTION_KEEP_DAILY` | Keep N daily snapshots | `7` |
-| `BACKUP_RETENTION_KEEP_WEEKLY` | Keep N weekly snapshots | `4` |
+| `BACKUP_RETENTION_KEEP_LATEST` | Keep N latest snapshots per source | `30` |
+| `BACKUP_RETENTION_KEEP_DAILY` | Keep N daily snapshots per source | `30` |
+| `BACKUP_RETENTION_KEEP_WEEKLY` | Keep N weekly snapshots per source | `4` |
+| `BACKUP_RETENTION_KEEP_MONTHLY` | Keep N monthly snapshots per source | `12` |
+| `BACKUP_SCHEDULER_ENABLED` | Enable the in-process scheduler | `true` |
+| `BACKUP_SCHEDULER_INTERVAL` | Scheduler tick interval (cron-anchored to wall-clock boundaries) | `600` |
+| `BACKUP_MAX_CONCURRENT` | Max simultaneous backup/restore tasks | `2` |
+
+Retention applies per (project, deployment, resource) — each PVC, database,
+or bucket has its own Kopia source identity, so the counters are independent
+across resources. Manual snapshots live under a separate `-manual` source
+identity and are exempt from automatic retention entirely.
 
 ### Local Development Setup
 
@@ -534,78 +526,46 @@ deployments:
 
 **Database/Bucket reference_name**: Use the service reference name from your deployment configuration (e.g., `minio-storage`, `database`).
 
-## Backup Strategies
+## Trigger metadata and retention isolation
 
-### RIG-Managed Projects
+Every backup carries a `trigger` value — `"scheduled"` (from the in-process
+scheduler) or `"manual"` (from the UI button or the API endpoint). The
+trigger drives two pieces of behavior:
 
-For projects managed by RIG with generated manifests:
+1. **Scheduler isolation.** When checking "have we already run today?", the
+   scheduler only considers tasks with `trigger=scheduled`. A user-triggered
+   manual backup never suppresses the next automatic run.
+2. **Retention isolation.** Each backup uses a per-resource Kopia source
+   identity:
+   - Scheduled: `opi-backup@<project>-<deployment>-<kind>-<resource>`
+   - Manual: `opi-backup@<project>-<deployment>-<kind>-<resource>-manual`
 
-1. Add `backup.enabled: true` to project.yaml
-2. PVCs will automatically get the `backup.rig.nl/enabled: "true"` label
-3. Use `/api/v1/backup/project/{project_name}/deployment/{deployment_name}` to backup a specific deployment
+   `kind` is `pvc`, `db`, or `bucket`. `resource` is the storage name, the
+   database reference name, or the bucket reference name. Retention runs
+   per-source — the scheduled run sets a policy on its own source and
+   expires only its own snapshots. Manual snapshots are never touched by
+   automatic expiry and persist until an operator deletes them via the
+   delete-snapshot endpoint.
 
-### Helm/External Projects
-
-For Helm charts or externally managed deployments where you can't add labels:
-
-1. Use the `/api/v1/backup/namespace/{namespace}/all` endpoint
-2. This backs up ALL PVCs in the namespace, regardless of labels
-3. Useful for third-party applications
-
-### Manual PVC Labeling
-
-For existing PVCs, add the backup label manually:
-
-```bash
-kubectl label pvc my-pvc -n my-namespace backup.rig.nl/enabled=true
-```
-
-Or in YAML:
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: my-pvc
-  labels:
-    backup.rig.nl/enabled: "true"
-```
+The UI marks each backup run with an "auto" or "handmatig" badge so the
+distinction is visible at a glance.
 
 ## Database Backups (PostgreSQL)
 
-The backup system supports PostgreSQL database backups using `pg_dump` with streaming encryption through Kopia.
+Database backups run as part of the deployment backup trigger above — no
+separate endpoint. When you call `POST /api/v1/backup/project/{p}/deployment/{d}`
+with `resource_types` including `database` (the default), OPI:
 
-### How Database Backup Works
+1. Looks up the deployment's database credentials from its Kubernetes secret.
+2. Spawns a backup pod in the project namespace.
+3. Pipes `pg_dump --format=custom` directly into `kopia snapshot create --stdin-file`.
+4. Tags the snapshot with `resource_type:database`, `database:<reference>`,
+   `project`, `deployment`, `generation`, `backup_run`, `trigger`, etc.
+5. Cleans up the pod.
 
-1. A backup pod is spawned in the target namespace
-2. The pod runs `pg_dump --format=custom` piped directly to `kopia snapshot create --stdin-name`
-3. The database dump is encrypted and deduplicated by Kopia
-4. Snapshots are tagged with `resource_type:database` for filtering
-
-### Backup a Database
-
-```bash
-curl -X POST "http://localhost:9595/api/v1/backup/database/my-namespace/mydb" \
-  -H "X-API-Key: your-master-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "database_host": "postgresql.my-namespace.svc.cluster.local",
-    "database_port": 5432,
-    "database_name": "myapp",
-    "database_user": "myapp",
-    "database_password": "secret",
-    "source_type": "namespace"
-  }'
-```
-
-**Parameters:**
-- `namespace`: Kubernetes namespace where the backup pod runs
-- `reference_name`: Logical name for this database (used in tags and snapshot identification)
-- `database_host`: PostgreSQL host address
-- `database_port`: PostgreSQL port (default: 5432)
-- `database_name`: Database name to backup
-- `database_user`: Database username
-- `database_password`: Database password
-- `source_type`: `"namespace"` for namespace-local databases, `"shared"` for shared databases
+For RIG-managed projects, OPI discovers the database from the deployment's
+services and uses the auto-generated secret — no extra configuration needed
+on the caller's side.
 
 ### Restore a Database
 
@@ -661,62 +621,20 @@ curl -X POST "http://localhost:9595/api/v1/restore/database/local/my-namespace/m
 
 ## Bucket Backups (MinIO)
 
-The backup system supports MinIO bucket backups with two modes:
-1. **Kopia mode** (default): Encrypted, deduplicated backups via `mc mirror` + Kopia
-2. **mc mirror mode**: Direct bucket-to-bucket sync (faster, but unencrypted)
+Bucket backups run as part of the deployment backup trigger — no separate
+endpoint. When you call `POST /api/v1/backup/project/{p}/deployment/{d}`
+with `resource_types` including `minio` (the default), OPI:
 
-### How Bucket Backup Works (Kopia Mode)
+1. Looks up the deployment's MinIO credentials from its Kubernetes secret.
+2. Spawns a backup pod in the project namespace.
+3. Mirrors the source bucket to a temp directory with `mc mirror`.
+4. Creates an encrypted Kopia snapshot of the temp directory.
+5. Tags the snapshot with `resource_type:bucket`, `bucket:<reference>`,
+   `source_bucket`, `project`, `deployment`, `trigger`, etc.
+6. Cleans up.
 
-1. A backup pod is spawned in the target namespace
-2. The pod runs `mc mirror` to download the bucket to a temp directory
-3. Kopia creates an encrypted snapshot of the temp directory
-4. Snapshots are tagged with `resource_type:bucket` for filtering
-
-### How Bucket Backup Works (mc mirror Mode)
-
-1. A backup pod is spawned in the target namespace
-2. The pod runs `mc mirror` directly from source bucket to backup bucket
-3. Files are synced without encryption (faster for large buckets)
-4. Metadata is stored alongside the backup
-
-### Backup a Bucket
-
-```bash
-# Kopia backup (encrypted, recommended)
-curl -X POST "http://localhost:9595/api/v1/backup/bucket/my-namespace/mybucket" \
-  -H "X-API-Key: your-master-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
-    "source_bucket_name": "my-bucket",
-    "source_access_key": "minioaccess",
-    "source_secret_key": "miniosecret",
-    "source_type": "namespace",
-    "use_kopia": true
-  }'
-
-# mc mirror backup (unencrypted, faster)
-curl -X POST "http://localhost:9595/api/v1/backup/bucket/my-namespace/mybucket" \
-  -H "X-API-Key: your-master-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source_minio_endpoint": "http://minio.my-namespace.svc.cluster.local:9000",
-    "source_bucket_name": "my-bucket",
-    "source_access_key": "minioaccess",
-    "source_secret_key": "miniosecret",
-    "use_kopia": false
-  }'
-```
-
-**Parameters:**
-- `namespace`: Kubernetes namespace where the backup pod runs
-- `reference_name`: Logical name for this bucket (used in tags and snapshot identification)
-- `source_minio_endpoint`: MinIO endpoint URL
-- `source_bucket_name`: Bucket name to backup
-- `source_access_key`: MinIO access key
-- `source_secret_key`: MinIO secret key
-- `source_type`: `"namespace"` for namespace-local MinIO, `"shared"` for shared MinIO
-- `use_kopia`: `true` for encrypted Kopia backup (default), `false` for mc mirror
+Snapshots are encrypted with the project's SOPS-derived Kopia password —
+S3 credentials alone can't decrypt them.
 
 ### Restore a Bucket
 

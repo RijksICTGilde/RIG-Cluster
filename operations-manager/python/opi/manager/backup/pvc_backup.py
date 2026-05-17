@@ -13,6 +13,7 @@ from opi.manager.backup.base import (
     BaseBackupManager,
     RestoreResult,
     SnapshotInfo,
+    kopia_backup_identity,
     utc_now,
 )
 from opi.utils.naming import (
@@ -32,101 +33,17 @@ class PVCBackupManager(BaseBackupManager):
     """
     Orchestrates PVC backups to external S3 using Kopia.
 
-    Flow:
+    Project-aware entry point: `backup_project_deployment(...)`.
+
+    Flow per PVC:
     1. Acquire distributed lock
-    2. For each PVC with backup label:
-       a. Create VolumeSnapshot
-       b. Create temp PVC from snapshot
-       c. Derive backup key from namespace's SOPS age key
-       d. Spawn backup Pod
-       e. Wait for completion
-       f. Cleanup resources
-    3. Release lock
+    2. Create VolumeSnapshot
+    3. Create temp PVC from snapshot
+    4. Derive backup key from namespace's SOPS age key
+    5. Spawn backup Pod (kopia with stable per-resource source identity)
+    6. Wait for completion, then cleanup resources
+    7. Release lock
     """
-
-    BACKUP_LABEL = "backup.rig.nl/enabled"
-
-    async def backup_namespace(self, namespace: str) -> list[BackupResult]:
-        """
-        Backup all labeled PVCs in a namespace.
-
-        Args:
-            namespace: Namespace to backup
-
-        Returns:
-            List of BackupResult for each PVC
-        """
-        # Ensure backup bucket exists before starting
-        await self._ensure_backup_bucket_exists()
-
-        async with self.lock:
-            pvcs = await self._get_backup_pvcs(namespace)
-            results: list[BackupResult] = []
-
-            if not pvcs:
-                logger.info(f"No PVCs with backup label found in namespace {namespace}")
-                return results
-
-            # Generate backup_run_id for this backup run
-            backup_run_id = generate_backup_run_id()
-            logger.info(f"Found {len(pvcs)} PVC(s) to backup in namespace {namespace}, backup_run_id={backup_run_id}")
-
-            for pvc_name in pvcs:
-                await self.lock.update_progress(namespace, pvc_name)
-                result = await self._backup_pvc(namespace, pvc_name, backup_run_id=backup_run_id)
-                results.append(result)
-
-            return results
-
-    async def backup_pvc(
-        self,
-        namespace: str,
-        pvc_name: str,
-        backup_run_id: str | None = None,
-        cluster: str | None = None,
-        project_name: str | None = None,
-        deployment_name: str | None = None,
-        component_name: str | None = None,
-        storage_name: str | None = None,
-        pvc_generation: int | None = None,
-    ) -> BackupResult:
-        """
-        Backup a single PVC.
-
-        Args:
-            namespace: Namespace containing the PVC
-            pvc_name: Name of the PVC to backup
-            backup_run_id: Backup run ID (generated if not provided)
-            cluster: Cluster name for metadata
-            project_name: Project name for metadata
-            deployment_name: Deployment name for metadata
-            component_name: Component name for metadata
-            storage_name: Storage name for metadata
-            pvc_generation: PVC generation number for metadata
-
-        Returns:
-            BackupResult with operation details
-        """
-        # Ensure backup bucket exists before starting
-        await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
-
-        # Generate backup_run_id if not provided
-        if not backup_run_id:
-            backup_run_id = generate_backup_run_id()
-
-        async with self.lock:
-            await self.lock.update_progress(namespace, pvc_name)
-            return await self._backup_pvc(
-                namespace,
-                pvc_name,
-                backup_run_id=backup_run_id,
-                cluster=cluster,
-                project_name=project_name,
-                deployment_name=deployment_name,
-                component_name=component_name,
-                storage_name=storage_name,
-                pvc_generation=pvc_generation,
-            )
 
     async def _backup_pvc(
         self,
@@ -139,6 +56,7 @@ class PVCBackupManager(BaseBackupManager):
         component_name: str | None = None,
         storage_name: str | None = None,
         pvc_generation: int | None = None,
+        trigger: str = "manual",
     ) -> BackupResult:
         """
         Internal: backup a single PVC (lock must be held).
@@ -222,6 +140,7 @@ class PVCBackupManager(BaseBackupManager):
                 storage_name=storage_name,
                 pvc_generation=pvc_generation,
                 backup_run_id=backup_run_id,
+                trigger=trigger,
             )
 
             # 6. Wait for pod completion
@@ -265,80 +184,6 @@ class PVCBackupManager(BaseBackupManager):
             # 7. Cleanup (best effort)
             await self._cleanup(namespace, pod_name, clone_pvc_name, snapshot_name)
 
-    async def _get_backup_pvcs(self, namespace: str) -> list[str]:
-        """Get all PVCs with backup label in namespace."""
-        args = [
-            "get",
-            "pvc",
-            "-n",
-            namespace,
-            "-l",
-            f"{self.BACKUP_LABEL}=true",
-            "-o",
-            "jsonpath={.items[*].metadata.name}",
-        ]
-        stdout, stderr, code = await self.kubectl.run_command(args)
-
-        if code != 0:
-            logger.error(f"Failed to list PVCs in {namespace}: {stderr}")
-            return []
-
-        pvc_names = stdout.strip().split() if stdout.strip() else []
-        return pvc_names
-
-    async def _get_all_pvcs(self, namespace: str) -> list[str]:
-        """Get all PVCs in namespace (regardless of labels)."""
-        args = [
-            "get",
-            "pvc",
-            "-n",
-            namespace,
-            "-o",
-            "jsonpath={.items[*].metadata.name}",
-        ]
-        stdout, stderr, code = await self.kubectl.run_command(args)
-
-        if code != 0:
-            logger.error(f"Failed to list PVCs in {namespace}: {stderr}")
-            return []
-
-        pvc_names = stdout.strip().split() if stdout.strip() else []
-        return pvc_names
-
-    async def backup_namespace_all(self, namespace: str) -> list[BackupResult]:
-        """
-        Backup ALL PVCs in a namespace (no labels required).
-
-        This is useful for Helm charts or externally managed deployments
-        where you can't add labels to PVCs.
-
-        Args:
-            namespace: Namespace to backup
-
-        Returns:
-            List of BackupResult for each PVC
-        """
-        async with self.lock:
-            pvcs = await self._get_all_pvcs(namespace)
-            results: list[BackupResult] = []
-
-            if not pvcs:
-                logger.info(f"No PVCs found in namespace {namespace}")
-                return results
-
-            # Generate backup_run_id for this backup run
-            backup_run_id = generate_backup_run_id()
-            logger.info(
-                f"Found {len(pvcs)} PVC(s) to backup in namespace {namespace} (all mode), backup_run_id={backup_run_id}"
-            )
-
-            for pvc_name in pvcs:
-                await self.lock.update_progress(namespace, pvc_name)
-                result = await self._backup_pvc(namespace, pvc_name, backup_run_id=backup_run_id)
-                results.append(result)
-
-            return results
-
     async def backup_project_deployment(
         self,
         project_name: str,
@@ -347,6 +192,7 @@ class PVCBackupManager(BaseBackupManager):
         namespace: str,
         cluster: str,
         backup_run_id: str | None = None,
+        trigger: str = "manual",
     ) -> list[BackupResult]:
         """
         Backup PVCs for a project deployment with full metadata context.
@@ -468,6 +314,7 @@ class PVCBackupManager(BaseBackupManager):
                     storage_name=str(ctx_storage) if ctx_storage else None,
                     pvc_generation=int(ctx_gen) if ctx_gen is not None else None,
                     backup_run_id=backup_run_id,
+                    trigger=trigger,
                 )
                 results.append(result)
 
@@ -576,6 +423,7 @@ class PVCBackupManager(BaseBackupManager):
         component_name: str | None = None,
         storage_name: str | None = None,
         pvc_generation: int | None = None,
+        trigger: str = "manual",
     ) -> None:
         """Create the backup pod.
 
@@ -604,6 +452,17 @@ class PVCBackupManager(BaseBackupManager):
         effective_cluster = cluster or settings.CLUSTER_MANAGER
         bucket_name = self.config.get_bucket_name(project_name, effective_cluster)
 
+        # Stable per-resource Kopia source identity. Storage name is the
+        # logical (generation-stable) identifier; falls back to pvc name for
+        # callers that don't have project context (e.g. namespace-mode backups).
+        kopia_hostname, kopia_source = kopia_backup_identity(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            resource_kind="pvc",
+            resource_name=storage_name or pvc_name,
+            trigger=trigger,
+        )
+
         manifest = self.kubectl.template_manifest(
             template_content,
             {
@@ -619,10 +478,13 @@ class PVCBackupManager(BaseBackupManager):
                 "s3_disable_tls": not self.config.s3_use_tls,
                 "backup_prefix": backup_prefix,
                 "kopia_password": kopia_password,
+                "kopia_hostname": kopia_hostname,
+                "kopia_source": kopia_source,
                 "timeout_seconds": self.config.timeout_seconds,
                 "retention_keep_latest": self.config.retention_keep_latest,
                 "retention_keep_daily": self.config.retention_keep_daily,
                 "retention_keep_weekly": self.config.retention_keep_weekly,
+                "retention_keep_monthly": self.config.retention_keep_monthly,
                 # Project context metadata
                 "cluster": effective_cluster,
                 "project_name": project_name,
@@ -631,6 +493,7 @@ class PVCBackupManager(BaseBackupManager):
                 "storage_name": storage_name,
                 "pvc_generation": pvc_generation if pvc_generation is not None else 0,
                 "backup_run_id": backup_run_id,
+                "trigger": trigger,
             },
         )
 
@@ -717,6 +580,7 @@ class PVCBackupManager(BaseBackupManager):
                         generation=ks.generation,
                         backup_run_id=ks.backup_run_id,
                         resource_type=ks.resource_type,
+                        trigger=ks.trigger,
                         # Raw tags for debugging
                         tags=ks.tags,
                     )

@@ -13,8 +13,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from freezegun import freeze_time
 from opi.core.async_task_service import TaskType
 from opi.core.backup_scheduler import BackupScheduler, parse_rrule
+
+# 2026-05-20 is a Wednesday during CEST (UTC+2). 00:30 UTC = 02:30 Amsterdam,
+# which is just past today's 02:00 daily target — within the catch-up window
+# so backups should be due.
+_FROZEN_TIME = datetime(2026, 5, 20, 0, 30, 0, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,22 +106,25 @@ class TestParseRrule:
 # ---------------------------------------------------------------------------
 
 
+@freeze_time(_FROZEN_TIME)
 class TestSchedulerPicksUpYamlSchedule:
-    """Scheduler reads RRULE from project YAML and creates backup tasks."""
+    """Scheduler reads RRULE from project YAML and creates backup tasks.
 
-    def _run_scheduler(self, scheduler: BackupScheduler, projects: list) -> None:
-        """Run one scheduler tick.
+    Time is frozen at 07:30 Amsterdam on a Wednesday so that DAILY (target
+    02:00), WEEKLY (BYDAY=WE/SU explicit per-test), and MONTHLY targets land
+    appropriately.
+    """
 
-        Bypasses the ±60-minute BYHOUR:BYMINUTE window gate — these tests
-        verify scheduler pickup of the YAML schedule, not the time window
-        logic (which has its own tests). Without bypassing it, tests that
-        run outside each schedule's window would spuriously fail.
-        """
+    def _run_scheduler(self, scheduler: BackupScheduler, projects: list, snapshots: list | None = None) -> None:
         projects_dict = {p.data["name"]: p for p in projects if p.data and p.data.get("name")}
-        with (
-            patch("opi.services.project_service.get_project_service") as mock_get,
-            patch("opi.core.backup_scheduler._within_preferred_window", return_value=True),
-        ):
+        # Stub the Kopia snapshot listing — by default empty (no prior backups → due).
+        snaps = snapshots if snapshots is not None else []
+
+        async def fake_get(self_, project_name, cluster, namespace, cache):
+            return snaps
+
+        scheduler._get_namespace_snapshots = fake_get.__get__(scheduler, BackupScheduler)  # type: ignore[method-assign]
+        with patch("opi.services.project_service.get_project_service") as mock_get:
             mock_get.return_value.get_all_projects.return_value = projects_dict
             asyncio.run(scheduler._check_and_schedule())
 
@@ -128,6 +137,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"},
                 }
             ]
@@ -139,10 +149,13 @@ class TestSchedulerPicksUpYamlSchedule:
         assert call_kwargs["project_name"] == "test-project"
         assert call_kwargs["deployment_name"] == "prod"
         assert call_kwargs["payload"]["resource_types"] == ["pvc", "database", "minio"]
-        assert call_kwargs["payload"]["scheduled"] is True
+        assert call_kwargs["payload"]["trigger"] == "scheduled"
 
     def test_rrule_weekly_creates_task(self) -> None:
-        """A WEEKLY RRULE schedule creates a task when due."""
+        """A WEEKLY RRULE schedule creates a task when due.
+
+        Frozen at 02:30 Amsterdam Wednesday, so BYDAY=WE BYHOUR=2 is within catch-up window.
+        """
         scheduler = _make_scheduler()
         scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(
@@ -150,7 +163,8 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "staging",
                     "cluster": "local",
-                    "backup": {"schedule": "FREQ=WEEKLY;BYHOUR=3;BYMINUTE=0;BYDAY=SU"},
+                    "namespace": "test",
+                    "backup": {"schedule": "FREQ=WEEKLY;BYHOUR=2;BYMINUTE=0;BYDAY=WE"},
                 }
             ]
         )
@@ -158,7 +172,10 @@ class TestSchedulerPicksUpYamlSchedule:
         scheduler._task_service.create_task.assert_called_once()
 
     def test_rrule_monthly_creates_task(self) -> None:
-        """A MONTHLY RRULE schedule creates a task when due."""
+        """A MONTHLY RRULE schedule creates a task when due.
+
+        Frozen at 02:30 Amsterdam on the 20th, so BYMONTHDAY=20 BYHOUR=2 is within window.
+        """
         scheduler = _make_scheduler()
         scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(
@@ -166,7 +183,8 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
-                    "backup": {"schedule": "FREQ=MONTHLY;BYHOUR=4;BYMINUTE=0;BYMONTHDAY=1"},
+                    "namespace": "test",
+                    "backup": {"schedule": "FREQ=MONTHLY;BYHOUR=2;BYMINUTE=0;BYMONTHDAY=20"},
                 }
             ]
         )
@@ -181,6 +199,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {"enabled": True},
                 }
             ]
@@ -196,6 +215,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {"schedule": ""},
                 }
             ]
@@ -211,6 +231,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {"schedule": "FREQ=YEARLY;BYHOUR=2;BYMINUTE=0"},
                 }
             ]
@@ -219,20 +240,29 @@ class TestSchedulerPicksUpYamlSchedule:
         scheduler._task_service.create_task.assert_not_called()
 
     def test_recent_backup_prevents_new_task(self) -> None:
-        """If a backup completed recently, no new task is created."""
+        """If a scheduled snapshot exists past today's target, skip."""
+        from opi.manager.backup.base import SnapshotInfo
+
         scheduler = _make_scheduler()
-        recent = datetime.now(tz=UTC) - timedelta(hours=1)
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": recent})
+        # Today at 02:05 Amsterdam CEST = 00:05 UTC — past today's 02:00 target.
+        snap_today = SnapshotInfo(
+            snapshot_id="abc",
+            pvc_name="data",
+            timestamp=datetime(2026, 5, 20, 0, 5, 0, tzinfo=UTC).isoformat(),
+            deployment_name="prod",
+            trigger="scheduled",
+        )
         project = _make_project(
             deployments=[
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"},
                 }
             ]
         )
-        self._run_scheduler(scheduler, [project])
+        self._run_scheduler(scheduler, [project], snapshots=[snap_today])
         scheduler._task_service.create_task.assert_not_called()
 
     def test_multiple_deployments_independent_schedules(self) -> None:
@@ -241,8 +271,18 @@ class TestSchedulerPicksUpYamlSchedule:
         scheduler._task_service.get_last_completed_task = AsyncMock(return_value=None)
         project = _make_project(
             deployments=[
-                {"name": "prod", "cluster": "local", "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"}},
-                {"name": "staging", "cluster": "local", "backup": {"schedule": "FREQ=WEEKLY;BYHOUR=3;BYMINUTE=0"}},
+                {
+                    "name": "prod",
+                    "cluster": "local",
+                    "namespace": "test",
+                    "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"},
+                },
+                {
+                    "name": "staging",
+                    "cluster": "local",
+                    "namespace": "test",
+                    "backup": {"schedule": "FREQ=WEEKLY;BYHOUR=2;BYMINUTE=0;BYDAY=WE"},
+                },
                 {"name": "dev", "cluster": "local"},  # No schedule
             ]
         )
@@ -258,6 +298,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"},
                 }
             ]
@@ -274,7 +315,8 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
-                    "backup": {"schedule": "FREQ=DAILY;BYHOUR=14;BYMINUTE=30"},
+                    "namespace": "test",
+                    "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"},
                 }
             ]
         )
@@ -288,7 +330,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 "project_name": "test-project",
                 "deployment_name": "prod",
                 "resource_types": ["pvc", "database", "minio"],
-                "scheduled": True,
+                "trigger": "scheduled",
             },
             created_by="backup-scheduler",
         )
@@ -302,6 +344,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {
                         "schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0",
                         "resource_types": ["pvc", "database"],
@@ -322,6 +365,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"},
                 }
             ]
@@ -339,6 +383,7 @@ class TestSchedulerPicksUpYamlSchedule:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {
                         "schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0",
                         "resource_types": ["minio"],
@@ -352,41 +397,99 @@ class TestSchedulerPicksUpYamlSchedule:
 
 
 # ---------------------------------------------------------------------------
-# Preferred time window tests
+# Past-target gating: backup fires only at or after today's BYHOUR:BYMINUTE
+# in Amsterdam time (no ±window — cron-anchored ticks land close enough).
 # ---------------------------------------------------------------------------
 
 
-class TestPreferredTimeWindow:
-    """Scheduler only triggers backups within +-60 min of BYHOUR:BYMINUTE."""
+class TestPastTargetGating:
+    """Backup is due iff `now_amsterdam >= today's BYHOUR:BYMINUTE`, within
+    the catch-up window, and no scheduled snapshot exists past today's target.
 
-    def _is_due_at(self, hour: int, minute: int, byhour: str = "2", byminute: str = "0") -> bool:
-        from freezegun import freeze_time
+    All datetimes here are UTC; CEST = UTC+2.
+    """
+
+    def _stub_snapshots(self, scheduler: BackupScheduler, snapshots: list) -> None:
+        async def fake_get(self_, project_name, cluster, namespace, cache):
+            return snapshots
+
+        scheduler._get_namespace_snapshots = fake_get.__get__(scheduler, BackupScheduler)  # type: ignore[method-assign]
+
+    def _due(self, scheduler: BackupScheduler, rrule: dict) -> bool:
+        return _run(
+            scheduler._is_backup_due(
+                project_name="proj",
+                deployment_name="prod",
+                rrule=rrule,
+                cluster="local",
+                namespace="rig-test",
+                snapshot_cache={},
+            )
+        )
+
+    def _is_due_at_utc(self, ams_date_utc: datetime, byhour: str = "2", byminute: str = "0") -> bool:
+        scheduler = _make_scheduler()
+        self._stub_snapshots(scheduler, [])
+        rrule = {"FREQ": "DAILY", "BYHOUR": byhour, "BYMINUTE": byminute}
+        with freeze_time(ams_date_utc):
+            return self._due(scheduler, rrule)
+
+    def test_exactly_at_target_is_due(self) -> None:
+        # 02:00 Amsterdam CEST = 00:00 UTC on 2026-05-20.
+        at_target = datetime(2026, 5, 20, 0, 0, tzinfo=UTC)
+        assert self._is_due_at_utc(at_target) is True
+
+    def test_one_minute_before_target_not_due(self) -> None:
+        # 01:59 Amsterdam = 23:59 UTC the day before.
+        just_before = datetime(2026, 5, 19, 23, 59, tzinfo=UTC)
+        assert self._is_due_at_utc(just_before) is False
+
+    def test_hours_after_target_within_window_still_due(self) -> None:
+        # 04:30 Amsterdam = 02:30 UTC. 2.5h past target, still within 4h catch-up.
+        within_window = datetime(2026, 5, 20, 2, 30, tzinfo=UTC)
+        assert self._is_due_at_utc(within_window) is True
+
+    def test_late_in_day_outside_window_not_due(self) -> None:
+        """Regression: 22:10 Amsterdam with no prior snapshot must NOT fire 02:00 schedule."""
+        # 22:10 Amsterdam = 20:10 UTC. 20:10 hours past 02:00 target, far past 4h window.
+        well_past_window = datetime(2026, 5, 20, 20, 10, tzinfo=UTC)
+        assert self._is_due_at_utc(well_past_window) is False
+
+    def test_completed_already_today_not_due(self) -> None:
+        """A scheduled snapshot already exists today, past target — don't re-fire."""
+        from opi.manager.backup.base import SnapshotInfo
 
         scheduler = _make_scheduler()
-        old = datetime(2026, 3, 24, 0, 0, tzinfo=UTC)  # 25+ hours ago from any 2026-03-25 time
-        scheduler._task_service.get_last_completed_task = AsyncMock(return_value={"completed_at": old})
-        rrule = {"FREQ": "DAILY", "BYHOUR": byhour, "BYMINUTE": byminute}
-        frozen = datetime(2026, 3, 25, hour, minute, 0, tzinfo=UTC)
-        with freeze_time(frozen):
-            return _run(scheduler._is_backup_due("proj", "prod", "DAILY", rrule))
-
-    def test_within_window_is_due(self) -> None:
-        assert self._is_due_at(hour=2, minute=0) is True
-
-    def test_30_min_after_is_due(self) -> None:
-        assert self._is_due_at(hour=2, minute=30) is True
-
-    def test_60_min_after_is_due(self) -> None:
-        assert self._is_due_at(hour=3, minute=0) is True
-
-    def test_90_min_after_not_due(self) -> None:
-        assert self._is_due_at(hour=3, minute=30) is False
-
-    def test_midday_not_due(self) -> None:
-        assert self._is_due_at(hour=12, minute=0) is False
+        snap_today = SnapshotInfo(
+            snapshot_id="abc",
+            pvc_name="data",
+            timestamp=datetime(2026, 5, 20, 0, 5, 0, tzinfo=UTC).isoformat(),
+            deployment_name="prod",
+            trigger="scheduled",
+        )
+        self._stub_snapshots(scheduler, [snap_today])
+        rrule = {"FREQ": "DAILY", "BYHOUR": "2", "BYMINUTE": "0"}
+        # 02:30 Amsterdam — within catch-up window, would have been due.
+        with freeze_time(datetime(2026, 5, 20, 0, 30, tzinfo=UTC)):
+            assert self._due(scheduler, rrule) is False
 
     def test_custom_preferred_time(self) -> None:
-        assert self._is_due_at(hour=14, minute=30, byhour="14", byminute="30") is True
+        # 14:30 Amsterdam CEST = 12:30 UTC target. Frozen at 13:00 UTC = 15:00 Amsterdam,
+        # 30 min past target, within 4h catch-up.
+        within_custom_window = datetime(2026, 5, 20, 13, 0, tzinfo=UTC)
+        assert self._is_due_at_utc(within_custom_window, byhour="14", byminute="30") is True
+
+    def test_byhour_interpreted_in_amsterdam_not_utc(self) -> None:
+        """Regression: BYHOUR=2 must mean 02:00 Amsterdam, not 02:00 UTC."""
+        scheduler = _make_scheduler()
+        self._stub_snapshots(scheduler, [])
+        rrule = {"FREQ": "DAILY", "BYHOUR": "2", "BYMINUTE": "0"}
+        # 00:30 UTC = 02:30 Amsterdam — past today's 02:00 Amsterdam target.
+        with freeze_time(datetime(2026, 5, 20, 0, 30, tzinfo=UTC)):
+            assert self._due(scheduler, rrule) is True
+        # 23:30 UTC the day before = 01:30 Amsterdam today — before 02:00 target.
+        with freeze_time(datetime(2026, 5, 19, 23, 30, tzinfo=UTC)):
+            assert self._due(scheduler, rrule) is False
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +517,6 @@ class TestHandleBackupExecution:
             patch(f"{_thb}.create_project_file_handler") as mock_pfh,
             patch(f"{_thb}.DatabaseSecret") as mock_db_secret,
             patch(f"{_thb}.MinIOSecret") as mock_minio_secret,
-            patch(f"{_thb}.ServiceAdapter") as mock_sa,
             patch(f"{_thb}.generate_backup_run_id", return_value="20260325020000"),
         ):
             # Set up resolve to return a valid project/deployment
@@ -426,7 +528,6 @@ class TestHandleBackupExecution:
                 "rig-test-project",
                 "local",
             )
-            mock_sa.project_uses_infrastructure_namespace.return_value = False
 
             # PVC backup returns success
             pvc_result = MagicMock(success=True)
@@ -463,7 +564,6 @@ class TestHandleBackupExecution:
                 "project_file_handler": mock_pfh,
                 "db_secret": mock_db_secret,
                 "minio_secret": mock_minio_secret,
-                "service_adapter": mock_sa,
             }
 
     def test_all_resource_types_backed_up(self, backup_mocks) -> None:
@@ -643,6 +743,7 @@ class TestSchedulerToHandlerPipeline:
                 {
                     "name": "production",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {
                         "schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0",
                     },
@@ -653,7 +754,7 @@ class TestSchedulerToHandlerPipeline:
         projects_dict = {"webshop": project}
         with (
             patch("opi.services.project_service.get_project_service") as mock_get,
-            patch("opi.core.backup_scheduler._within_preferred_window", return_value=True),
+            freeze_time(_FROZEN_TIME),
         ):
             mock_get.return_value.get_all_projects.return_value = projects_dict
             _run(scheduler._check_and_schedule())
@@ -673,7 +774,7 @@ class TestSchedulerToHandlerPipeline:
         assert payload["project_name"] == "webshop"
         assert payload["deployment_name"] == "production"
         assert payload["resource_types"] == ["pvc", "database", "minio"]
-        assert payload["scheduled"] is True
+        assert payload["trigger"] == "scheduled"
 
     def test_schedule_removed_no_more_tasks(self) -> None:
         """After removing backup.schedule from YAML, no tasks are created."""
@@ -686,6 +787,7 @@ class TestSchedulerToHandlerPipeline:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     # No backup key at all
                 }
             ]
@@ -712,6 +814,7 @@ class TestSchedulerToHandlerPipeline:
                 {
                     "name": "prod",
                     "cluster": "local",
+                    "namespace": "test",
                     "backup": {"schedule": "FREQ=WEEKLY;BYHOUR=2;BYMINUTE=0"},
                 }
             ]

@@ -88,6 +88,9 @@ class SnapshotInfo:
     backup_run_id: str | None = None  # Groups PVCs from same backup run
     # Resource type for filtering (pvc, database, bucket)
     resource_type: str | None = None
+    # "scheduled" (subject to retention) or "manual" (protected). Legacy
+    # snapshots without the tag are treated as scheduled.
+    trigger: str = "scheduled"
     # Raw tags for debugging
     tags: dict[str, str] | None = None
 
@@ -135,62 +138,111 @@ class BackupLock:
         self._held = False
         self.lock_namespace = settings.ARGOCD_MANAGER
 
-    async def acquire(self, timeout_seconds: int = 3600) -> bool:
+    async def acquire(
+        self,
+        timeout_seconds: int = 3600,
+        wait_seconds: int | None = None,
+        poll_seconds: float = 5.0,
+    ) -> bool:
         """
-        Acquire the backup lock.
+        Acquire the backup lock, waiting for it to become free if held.
+
+        Uses ``kubectl create`` (not ``apply``) on the ConfigMap so the
+        Kubernetes API server provides atomic mutex semantics: exactly one
+        concurrent caller can create the resource; everyone else gets
+        ``AlreadyExists`` and loops back into the wait. Without this,
+        ``apply``'s upsert behavior lets two clients both believe they own
+        the lock when they GET-then-APPLY at the same time.
 
         Args:
-            timeout_seconds: Consider lock stale after this many seconds
+            timeout_seconds: Consider an existing lock stale after this many seconds
+                (orphan / hung backup) and take it over.
+            wait_seconds: How long to wait for the lock to become free before
+                giving up. Defaults to ``settings.BACKUP_LOCK_WAIT_SECONDS``.
+                Use 0 to fail immediately if the lock is held.
+            poll_seconds: How often to re-check while waiting.
 
         Returns:
-            True if lock acquired, False if already held by another process
+            True if lock acquired, False if held by another running process
+            past the wait window.
         """
-        try:
-            # Try to get existing lock
-            args = ["get", "configmap", self.LOCK_NAME, "-n", self.lock_namespace, "-o", "json"]
-            stdout, stderr, code = await self.kubectl.run_command(args)
+        if wait_seconds is None:
+            wait_seconds = settings.BACKUP_LOCK_WAIT_SECONDS
+        deadline = utc_now().timestamp() + max(0, wait_seconds)
+        logged_wait = False
 
-            if code == 0:
-                # Lock exists, check if stale
-                lock_data = json.loads(stdout)
-                data = lock_data.get("data", {})
-                locked_at_str = data.get("locked_at", "")
-                locked_by = data.get("locked_by", "unknown")
+        while True:
+            try:
+                # Inspect the current lock state.
+                args = ["get", "configmap", self.LOCK_NAME, "-n", self.lock_namespace, "-o", "json"]
+                stdout, _stderr, code = await self.kubectl.run_command(args)
 
-                if locked_at_str:
-                    locked_at = datetime.fromisoformat(locked_at_str)
-                    age_seconds = (utc_now() - locked_at).total_seconds()
+                lock_exists = code == 0
+                should_take_over = False
 
-                    # Check if the pod holding the lock still exists
-                    pod_exists = await self._check_pod_exists(locked_by)
+                if lock_exists:
+                    lock_data = json.loads(stdout)
+                    data = lock_data.get("data", {})
+                    locked_at_str = data.get("locked_at", "")
+                    locked_by = data.get("locked_by", "unknown")
 
-                    if not pod_exists:
-                        # Pod is gone, lock is orphaned - take over
-                        logger.warning(
-                            f"Taking over orphaned backup lock (pod {locked_by} no longer exists, "
-                            f"lock held for {age_seconds:.0f}s)"
-                        )
-                    elif age_seconds < timeout_seconds:
-                        # Lock is fresh and pod exists, cannot acquire
-                        logger.warning(
-                            f"Backup lock held by {locked_by} since {locked_at_str} ({age_seconds:.0f}s ago)"
-                        )
-                        return False
+                    if locked_at_str:
+                        locked_at = datetime.fromisoformat(locked_at_str)
+                        age_seconds = (utc_now() - locked_at).total_seconds()
+                        pod_exists = await self._check_pod_exists(locked_by)
+
+                        if not pod_exists:
+                            logger.warning(
+                                f"Taking over orphaned backup lock (pod {locked_by} no longer exists, "
+                                f"lock held for {age_seconds:.0f}s)"
+                            )
+                            should_take_over = True
+                        elif age_seconds < timeout_seconds:
+                            # Lock is held by a live pod. Wait for release.
+                            if utc_now().timestamp() >= deadline:
+                                logger.warning(
+                                    f"Backup lock held by {locked_by} since {locked_at_str} "
+                                    f"({age_seconds:.0f}s ago); gave up after {wait_seconds}s wait"
+                                )
+                                return False
+                            if not logged_wait:
+                                logger.info(
+                                    f"Backup lock held by {locked_by} ({age_seconds:.0f}s ago); "
+                                    f"waiting up to {wait_seconds}s"
+                                )
+                                logged_wait = True
+                            await asyncio.sleep(poll_seconds)
+                            continue
+                        else:
+                            logger.warning(
+                                f"Taking over stale backup lock (held for {age_seconds:.0f}s, "
+                                f"timeout is {timeout_seconds}s)"
+                            )
+                            should_take_over = True
                     else:
-                        # Lock is stale by timeout, take over
-                        logger.warning(
-                            f"Taking over stale backup lock (held for {age_seconds:.0f}s, "
-                            f"timeout is {timeout_seconds}s)"
-                        )
+                        # ConfigMap exists but has no locked_at — treat as orphan.
+                        should_take_over = True
 
-            # Create or update lock
-            lock_content = {
-                "locked_at": utc_now().isoformat(),
-                "locked_by": os.environ.get("HOSTNAME", "unknown"),
-            }
+                if should_take_over:
+                    # Delete the old lock so the atomic `kubectl create` below can succeed.
+                    # If someone beat us to it, the delete fails harmlessly; the create
+                    # below will see the new lock and we loop back.
+                    delete_args = [
+                        "delete",
+                        "configmap",
+                        self.LOCK_NAME,
+                        "-n",
+                        self.lock_namespace,
+                        "--ignore-not-found=true",
+                    ]
+                    await self.kubectl.run_command(delete_args)
 
-            # Use kubectl apply with configmap
-            configmap_yaml = f"""apiVersion: v1
+                # Atomically claim the lock.
+                lock_content = {
+                    "locked_at": utc_now().isoformat(),
+                    "locked_by": os.environ.get("HOSTNAME", "unknown"),
+                }
+                configmap_yaml = f"""apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {self.LOCK_NAME}
@@ -199,20 +251,29 @@ data:
   locked_at: "{lock_content["locked_at"]}"
   locked_by: "{lock_content["locked_by"]}"
 """
-            args = ["apply", "-f", "-"]
-            _, stderr, code = await self.kubectl.run_command(args, stdin_input=configmap_yaml)
+                create_args = ["create", "-f", "-"]
+                _, stderr, code = await self.kubectl.run_command(create_args, stdin_input=configmap_yaml)
 
-            if code == 0:
-                self._held = True
-                logger.info(f"Backup lock acquired by {lock_content['locked_by']}")
-                return True
-            else:
+                if code == 0:
+                    self._held = True
+                    logger.info(f"Backup lock acquired by {lock_content['locked_by']}")
+                    return True
+
+                # Someone else won the race. Loop back: re-inspect and wait.
+                if "alreadyexists" in stderr.lower().replace(" ", "") or "already exists" in stderr.lower():
+                    logger.debug("Backup lock claimed by another process during create; retrying")
+                    if utc_now().timestamp() >= deadline:
+                        logger.warning(f"Lost lock-creation race and gave up after {wait_seconds}s wait")
+                        return False
+                    await asyncio.sleep(poll_seconds)
+                    continue
+
                 logger.error(f"Failed to create backup lock: {stderr}")
                 return False
 
-        except Exception:
-            logger.exception("Error acquiring backup lock")
-            return False
+            except Exception:
+                logger.exception("Error acquiring backup lock")
+                return False
 
     async def release(self) -> bool:
         """
@@ -391,9 +452,10 @@ class BackupConfig:
     s3_use_tls: bool = False
     snapshot_class: str = "ocs-storagecluster-rbdplugin-snapclass"
     timeout_seconds: int = 3600
-    retention_keep_latest: int = 7
-    retention_keep_daily: int = 7
+    retention_keep_latest: int = 30
+    retention_keep_daily: int = 30
     retention_keep_weekly: int = 4
+    retention_keep_monthly: int = 12
 
     def get_bucket_name(
         self,
@@ -423,7 +485,47 @@ class BackupConfig:
             retention_keep_latest=settings.BACKUP_RETENTION_KEEP_LATEST,
             retention_keep_daily=settings.BACKUP_RETENTION_KEEP_DAILY,
             retention_keep_weekly=settings.BACKUP_RETENTION_KEEP_WEEKLY,
+            retention_keep_monthly=settings.BACKUP_RETENTION_KEEP_MONTHLY,
         )
+
+
+_KOPIA_USERNAME = "opi-backup"
+
+
+def kopia_backup_identity(
+    project_name: str | None,
+    deployment_name: str | None,
+    resource_kind: str,
+    resource_name: str | None,
+    trigger: str,
+) -> tuple[str, str]:
+    """Return (kopia_hostname, kopia_source) for a backup snapshot.
+
+    Each (project, deployment, resource) gets its own Kopia source identity so
+    retention runs per resource, and manual backups get a separate identity
+    (`-manual` suffix) so they're never targeted by scheduled retention.
+
+    - `kopia_hostname` is passed to `kopia snapshot create --override-hostname`.
+    - `kopia_source` is `opi-backup@<hostname>` — used for `kopia policy set`
+      and `kopia snapshot expire` to scope to this resource only.
+
+    Args:
+        project_name: Project name (None falls back to "unknown").
+        deployment_name: Deployment name (None falls back to "unknown").
+        resource_kind: "pvc" | "db" | "bucket".
+        resource_name: Storage name for PVC, reference name for DB/bucket.
+        trigger: "scheduled" or "manual".
+    """
+    parts = [
+        project_name or "unknown",
+        deployment_name or "unknown",
+        resource_kind,
+        resource_name or "unknown",
+    ]
+    hostname = "-".join(parts)
+    if trigger == "manual":
+        hostname += "-manual"
+    return hostname, f"{_KOPIA_USERNAME}@{hostname}"
 
 
 class BaseBackupManager:

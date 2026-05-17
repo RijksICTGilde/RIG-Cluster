@@ -18,14 +18,13 @@ from opi.core.backup_tasks import (
     _resolve_deployment_info,
     restore_items_with_progress,
 )
-from opi.core.cluster_config import get_prefixed_namespace
 from opi.handlers.project_file_handler import create_project_file_handler
 from opi.manager.backup import (
     create_backup_manager,
     create_bucket_backup_manager,
     create_database_backup_manager,
 )
-from opi.services import ServiceAdapter, ServiceType
+from opi.services import ServiceType
 from opi.utils.naming import generate_backup_run_id
 from opi.utils.secrets import DatabaseSecret, MinIOSecret
 
@@ -46,11 +45,13 @@ async def handle_backup(
     project_name = payload["project_name"]
     deployment_name = payload["deployment_name"]
     resource_types = payload.get("resource_types", DEFAULT_BACKUP_RESOURCE_TYPES)
+    # Default to scheduled for legacy tasks that predate the trigger field.
+    trigger = payload.get("trigger", "scheduled")
 
     # Task 1: Resolve project and deployment info
     resolve_task = progress.add_task("Project en deployment opzoeken")
     try:
-        project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
+        _project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
             project_name, deployment_name
         )
     except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
@@ -79,6 +80,7 @@ async def handle_backup(
                 namespace=app_namespace,
                 cluster=current_cluster,
                 backup_run_id=backup_run_id,
+                trigger=trigger,
             )
             total_results += len(app_results)
             failed = [r for r in app_results if not r.success]
@@ -87,16 +89,6 @@ async def handle_backup(
                 progress.fail_subtask(pvc_subtask, f"{len(failed)} PVC backup(s) mislukt")
             else:
                 progress.complete_subtask(pvc_subtask)
-
-            # Also backup infra namespace if applicable
-            if ServiceAdapter.project_uses_infrastructure_namespace(project.model_dump()):
-                raw_namespace = project_file_handler.extract_deployment_namespace(project_data, deployment_name)
-                infra_namespace = get_prefixed_namespace(current_cluster, f"{raw_namespace}-infra")
-                try:
-                    infra_results = await backup_manager.backup_namespace(infra_namespace)
-                    total_results += len(infra_results)
-                except (ValueError, RuntimeError, KeyError, OSError, ConnectionError):
-                    logger.exception("Failed to backup infra namespace %s", infra_namespace)
         except (ValueError, RuntimeError, OSError, ConnectionError) as e:
             all_success = False
             progress.fail_subtask(pvc_subtask, str(e))
@@ -149,6 +141,7 @@ async def handle_backup(
                     generation=generation,
                     cluster=current_cluster,
                     backup_run_id=backup_run_id,
+                    trigger=trigger,
                 )
                 total_results += 1
                 if not db_result.success:
@@ -203,6 +196,7 @@ async def handle_backup(
                     generation=generation,
                     cluster=current_cluster,
                     backup_run_id=backup_run_id,
+                    trigger=trigger,
                 )
                 total_results += 1
                 if not bucket_result.success:
