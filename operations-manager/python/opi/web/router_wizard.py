@@ -413,20 +413,16 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 @requires_sso
 async def wizard_edit_page(request: Request, flow_id: str, project_name: str) -> HTMLResponse:
     """Render the wizard page pre-filled from an existing project."""
-    from opi.services.project_service import get_project_service
+    from opi.web.router_detail_edit import _require_project_edit_access
 
     flow = get_flow(flow_id)
     user = get_current_user(request)
     templates = get_templates()
 
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
-
-    user_email = user.get("email", "").lower()
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+    # Enforce admin/owner role, mirroring the detail-edit flow. The wizard
+    # edit flow exposes the users/role and config fields as editable, so a
+    # plain member must not be able to enter it (project takeover).
+    project, _user_email = _require_project_edit_access(request, project_name)
 
     project_data = project.data
     if not project_data:
@@ -1877,15 +1873,31 @@ async def _save_existing_project(
     """Save updated data to an existing project."""
     from opi.handlers.project_file_handler import save_project_file
     from opi.services.project_service import get_project_service
+    from opi.web.router_detail_edit import _require_project_edit_access
+
+    # Re-check the role on the mutating request, keyed on the project name
+    # from the server-side wizard state. The GET-time check is not enough:
+    # the session could have been seeded by an authorized user and the POST
+    # replayed by another (TOCTOU), or the role could have been revoked.
+    project, _user_email = _require_project_edit_access(request, project_name)
 
     project_service = get_project_service()
-    project = project_service.get_project(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
-    # Merge with existing data (preserve system-managed fields)
+    # Merge with existing data while protecting privileged top-level keys.
+    # The wizard exposes users/role and the config block (api-key, AGE
+    # public/private keys) as editable fields. Allowing form output to
+    # overwrite them would let an authorized editor escalate or exfiltrate
+    # secrets, so these are always re-derived from the stored project and
+    # never taken from the submitted form data.
+    protected_keys = ("users", "config", "name", "clusters")
     existing_data = project.data or {}
-    existing_data.update(data)
+    merged_data = {**existing_data, **data}
+    for key in protected_keys:
+        if key in existing_data:
+            merged_data[key] = existing_data[key]
+        else:
+            merged_data.pop(key, None)
+    existing_data = merged_data
 
     save_project_file(project.filename, existing_data)
     project_service.load_project_from_data(existing_data, project.filename)
