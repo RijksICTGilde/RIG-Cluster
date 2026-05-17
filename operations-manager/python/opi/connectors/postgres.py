@@ -1622,18 +1622,6 @@ class PostgresConnector:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                dump_out, dump_err = await dump_process.communicate()
-
-                if dump_process.returncode != 0:
-                    raise Exception(f"pg_dump failed: {dump_err.decode()}")
-
-                rewritten_dump = re.sub(
-                    rb"^CREATE SCHEMA ",
-                    b"CREATE SCHEMA IF NOT EXISTS ",
-                    dump_out,
-                    flags=re.MULTILINE,
-                )
-
                 restore_process = await asyncio.create_subprocess_exec(
                     "psql",
                     "-d",
@@ -1645,7 +1633,42 @@ class PostgresConnector:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                clone_out, clone_err = await restore_process.communicate(input=rewritten_dump)
+
+                dump_stdout = dump_process.stdout
+                dump_stderr = dump_process.stderr
+                restore_stdin = restore_process.stdin
+                if dump_stdout is None or dump_stderr is None or restore_stdin is None:
+                    raise Exception("Failed to open pg_dump/psql pipes for streaming clone")
+
+                async def _pump_dump_to_restore() -> None:
+                    # Stream pg_dump -> psql line by line so the full dump is
+                    # never held in memory. The line-anchored rewrite replaces
+                    # the sed stage; extensions are pre-created in the target
+                    # schema so CREATE SCHEMA must become CREATE SCHEMA IF NOT
+                    # EXISTS to survive ON_ERROR_STOP=1. pg_dump emits each
+                    # statement on its own line so readline is bounded.
+                    create_schema = b"CREATE SCHEMA "
+                    try:
+                        while True:
+                            line = await dump_stdout.readline()
+                            if not line:
+                                break
+                            if line.startswith(create_schema):
+                                line = b"CREATE SCHEMA IF NOT EXISTS " + line[len(create_schema) :]
+                            restore_stdin.write(line)
+                            await restore_stdin.drain()
+                    finally:
+                        restore_stdin.close()
+
+                # Read pg_dump stdout (via the pump) and stderr concurrently;
+                # do not use communicate() on the dump process because the
+                # pump owns its stdout.
+                pump_task = asyncio.create_task(_pump_dump_to_restore())
+                dump_err_task = asyncio.create_task(dump_stderr.read())
+                clone_out, clone_err = await restore_process.communicate()
+                await pump_task
+                dump_err = await dump_err_task
+                await dump_process.wait()
 
             # Log only errors or important warnings
             combined_err = (dump_err or b"") + (clone_err or b"")
@@ -1656,6 +1679,9 @@ class PostgresConnector:
                     logger.error(f"pg_dump stderr: {stderr_text}")
                 elif stderr_text:
                     logger.debug(f"pg_dump stderr: {stderr_text}")
+
+            if dump_process.returncode != 0:
+                raise Exception(f"pg_dump failed: {dump_err.decode()}")
 
             # Check for errors
             if restore_process.returncode != 0:
