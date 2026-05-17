@@ -72,6 +72,28 @@ class TestAllowAllTemplateRemoved:
             "both call sites (infrastructure namespace + per-component) must emit the baseline template"
         )
 
+    def test_component_call_site_scopes_all_stateful_services(self):
+        """The per-component baseline must open egress for every stateful
+        service a component can request, not just Postgres/MinIO.
+
+        Redis (shared and namespace) resolves to a cross-namespace service and
+        SSO components run an OIDC back-channel to Keycloak. Under the
+        default-deny baseline, omitting these breaks Redis-using and
+        SSO-using tenant apps. This guards against the egress scoping
+        regressing back to Postgres/MinIO only.
+        """
+        with open(PROJECT_MANAGER) as f:
+            source = f.read()
+        # Locate the per-component baseline branch.
+        marker = 'if manifest_name == "tenant-baseline-network-policy":'
+        assert marker in source
+        branch = source[source.index(marker) : source.index(marker) + 2500]
+        assert "component_uses_postgresql" in branch
+        assert "component_uses_minio" in branch
+        assert "component_uses_redis" in branch, "Redis-using components must get egress to the Redis namespace"
+        assert "component_uses_sso" in branch, "SSO-using components must get egress for the Keycloak back-channel"
+        assert '"ingress-nginx"' in branch, "SSO public-hostname traffic hairpins through ingress-nginx"
+
 
 class TestBaselineIsLeastPrivilege:
     def test_renders_valid_yaml_networkpolicy(self):

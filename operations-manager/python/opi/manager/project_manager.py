@@ -4719,6 +4719,29 @@ class ProjectManager:
                         # project's infrastructure namespace.
                         datastore_namespaces.append(get_infrastructure_namespace(cluster, project_name))
 
+                    if component_uses_redis:
+                        # Both shared and namespace Redis are reached via
+                        # get_redis_server(), which resolves to
+                        # rig-redis.<cluster namespace>.svc.cluster.local
+                        # (see cluster_config). Without this egress rule a
+                        # Redis-using component cannot reach its cache and the
+                        # app breaks under the default-deny baseline.
+                        datastore_namespaces.append(get_cluster_namespace(cluster))
+
+                    if component_uses_sso:
+                        # SSO components run the OIDC back-channel against
+                        # Keycloak. The Keycloak service lives in the cluster
+                        # namespace, but tenant apps dial its public ingress
+                        # hostname, so traffic also hairpins through the
+                        # ingress controller. Allow both so login works under
+                        # the default-deny baseline.
+                        datastore_namespaces.append(get_cluster_namespace(cluster))
+                        datastore_namespaces.append("ingress-nginx")
+
+                    # Deduplicate while keeping deterministic output so the
+                    # generated manifest does not churn between runs.
+                    datastore_namespaces = sorted(set(datastore_namespaces))
+
                     minio_namespace = get_cluster_namespace(cluster) if component_uses_minio else None
 
                     baseline_variables = {
@@ -4740,7 +4763,8 @@ class ProjectManager:
                     created_files.append(f"{baseline_manifest_name}.yaml")
                     logger.info(
                         f"Created tenant baseline network policy for component '{component_name}': "
-                        f"{baseline_manifest_path} (datastores={datastore_namespaces}, minio={minio_namespace})"
+                        f"{baseline_manifest_path} (egress_namespaces={datastore_namespaces}, "
+                        f"minio={minio_namespace})"
                     )
                     continue
 
