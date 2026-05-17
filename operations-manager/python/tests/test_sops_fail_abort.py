@@ -21,7 +21,9 @@ fastapi/pydantic import break):
     uv run pytest tests/test_sops_fail_abort.py --noconftest
 """
 
+import ast
 import asyncio
+import inspect
 import os
 import subprocess
 from collections.abc import Iterator
@@ -241,3 +243,42 @@ def test_commit_and_push_aborts_before_staging_plaintext(git_repo, monkeypatch) 
         asyncio.run(connector.commit_and_push("zou secrets lekken"))
 
     assert ran_git == [], "git was invoked even though a plaintext secret was present"
+
+
+# ---------------------------------------------------------------------------
+# 4. No secret-bearing call site may use the bare encrypt_to_sops_files
+# ---------------------------------------------------------------------------
+
+
+def test_managers_never_call_bare_encrypt_to_sops_files() -> None:
+    """
+    Every secret-bearing call site must go through encrypt_to_sops_files_or_fail.
+
+    The bare encrypt_to_sops_files raises SOPSEncryptionError on failure but
+    does NOT re-check for leftover plaintext after a "successful" return. A
+    caller that uses it directly and relies on a now-dead `if not
+    encryption_success:` branch silently loses the fail-closed guarantee if
+    encrypt_to_sops_files is ever changed back to returning a bool. This test
+    parses the real manager sources and fails if any of them references the
+    bare function, so the original CVE cannot be reintroduced through a
+    refactor.
+    """
+    import opi.manager.argo_manager as argo_manager
+    import opi.manager.project_manager as project_manager
+
+    for module in (argo_manager, project_manager):
+        source = inspect.getsource(module)
+        tree = ast.parse(source)
+        called_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name):
+                    called_names.add(func.id)
+                elif isinstance(func, ast.Attribute):
+                    called_names.add(func.attr)
+        assert "encrypt_to_sops_files" not in called_names, (
+            f"{module.__name__} calls the bare encrypt_to_sops_files; "
+            "secret-bearing sites must use encrypt_to_sops_files_or_fail "
+            "so they stay fail-closed."
+        )

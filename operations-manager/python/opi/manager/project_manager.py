@@ -112,7 +112,7 @@ from opi.utils.secrets import (
     RegistrySecret,
     UserSecret,
 )
-from opi.utils.sops import encrypt_to_sops_files, encrypt_to_sops_files_or_fail
+from opi.utils.sops import encrypt_to_sops_files_or_fail
 from opi.utils.yaml_util import (
     dump_yaml_to_string,
     find_value_by_jsonpath,
@@ -3186,21 +3186,11 @@ class ProjectManager:
         for file_path in to_sops_files:
             logger.info(f"  - {os.path.basename(file_path)}")
 
-        encryption_success = encrypt_to_sops_files(target_path, public_key)
-        if not encryption_success:
-            raise RuntimeError(
-                f"Failed to encrypt helm values files for deployment: {deployment_name}. "
-                "This would commit secrets in plain text to git!"
-            )
-
-        # Verify all files were encrypted
-        remaining_to_sops_files = glob.glob(to_sops_pattern)
-        if remaining_to_sops_files:
-            file_names = [os.path.basename(f) for f in remaining_to_sops_files]
-            raise RuntimeError(
-                f"Found {len(remaining_to_sops_files)} .to-sops.yaml files that were NOT encrypted: "
-                f"{', '.join(file_names)}. This would commit secrets in plain text to git!"
-            )
+        encrypt_to_sops_files_or_fail(
+            target_path,
+            public_key,
+            f"helm values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
+        )
 
         logger.info("All helm values files successfully encrypted")
         logger.info(f"Helm chart deployment processing complete for: {deployment_name}")
@@ -3582,21 +3572,11 @@ class ProjectManager:
         for file_path in to_sops_files:
             logger.info(f"  - {os.path.basename(file_path)}")
 
-        encryption_success = encrypt_to_sops_files(target_path, public_key)
-        if not encryption_success:
-            raise RuntimeError(
-                f"Failed to encrypt helmfile values files for deployment: {deployment_name}. "
-                "This would commit secrets in plain text to git!"
-            )
-
-        # Verify all files were encrypted
-        remaining_to_sops_files = glob.glob(to_sops_pattern)
-        if remaining_to_sops_files:
-            file_names = [os.path.basename(f) for f in remaining_to_sops_files]
-            raise RuntimeError(
-                f"Found {len(remaining_to_sops_files)} .to-sops.yaml files that were NOT encrypted: "
-                f"{', '.join(file_names)}. This would commit secrets in plain text to git!"
-            )
+        encrypt_to_sops_files_or_fail(
+            target_path,
+            public_key,
+            f"helmfile values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
+        )
 
         logger.info("All helmfile values files successfully encrypted")
         logger.info(f"Helmfile deployment processing complete for: {deployment_name}")
