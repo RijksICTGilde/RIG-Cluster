@@ -1,35 +1,29 @@
-"""Regression test for the authorization-wall banner YAML injection (Vuln 2).
+"""Regression test for the authorization-wall YAML injection (Vuln 2).
 
-services/authorization-wall/config/banner is free-form user text from the
-project file. It was rendered as an unquoted YAML scalar inside the sidecar
-container's `args:` list:
+The authorization-wall sidecar template renders several user-derived project
+values into Kubernetes manifests. They were emitted as unquoted / naively
+double-quoted YAML scalars with Jinja2 autoescape=False, so a value containing
+a newline (and, for the quoted ones, a `"`) plus crafted indentation could
+break out of its scalar and inject sibling YAML keys. The generated manifests
+are committed and applied by ArgoCD, so this is privilege escalation:
 
-    - --banner={{ authorization_wall.banner }}
+  - container `args:` -> inject a privileged securityContext on the sidecar
+  - ConfigMap `metadata` -> attacker-chosen resource name/namespace, or
+    arbitrary sibling keys in another tenant's namespace
 
-A multi-line banner with crafted indentation could break out of the args list
-and inject sibling keys into the container spec (e.g. a privileged,
-runAsUser: 0 securityContext), which is then committed and applied by ArgoCD.
+The fix renders every user-derived scalar via `| tojson` (a JSON string is a
+valid YAML flow scalar; tojson escapes quotes and newlines).
 
-This test renders the real sidecar template with an injection payload and
-parses the result as YAML.
-
-Red (vulnerable template, unquoted scalar): the parsed container gains an
-attacker-controlled `securityContext.privileged: true` (or the YAML is
-restructured), so the assertion fails.
-Green (fixed template, value rendered via | tojson): the payload stays a
-single literal arg string, the container securityContext is unchanged.
+Red (vulnerable template): the parsed manifest gains attacker keys, so the
+assertions fail.
+Green (fixed template): every payload stays a single literal scalar.
 """
-
-import os
 
 from opi.generation.manifests import render_template
 from ruamel.yaml import YAML
 
-MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
-
-# A banner value that, rendered unquoted at 12-space indent inside `args:`,
-# closes the list item and injects a privileged securityContext as a sibling
-# key of the authorization-wall container mapping (10-space indent).
+# A value that, rendered unquoted/quoted in a YAML scalar, tries to close the
+# scalar and inject sibling keys with matching indentation.
 INJECTION_BANNER = (
     "pwn\n"
     "          securityContext:\n"
@@ -38,53 +32,118 @@ INJECTION_BANNER = (
     "            allowPrivilegeEscalation: true"
 )
 
+# Breaks out of a double-quoted scalar (leading `"`) then injects siblings.
+INJECTION_NAME = 'evil"\n  injectedKey: injected\n  notAName: "pwned'
+INJECTION_NAMESPACE = 'kube-system"\n  injectedNs: injected\n  x: "y'
+INJECTION_PROJECT = 'proj"\n  injectedProject: injected\n  z: "w'
 
-def _render_container() -> str:
-    return render_template(
-        "sidecar-authorization-wall.yaml.jinja",
-        {
-            "section": "container",
-            "application_port": 8080,
-            "hostname": "app.example.com",
-            "name": "myapp",
-            "authorization_wall": {
-                "issuer_url": "https://keycloak.example.com/realms/r",
-                "client_id": "myapp",
-                "banner": INJECTION_BANNER,
-                "keycloak_secret_name": "myapp-oidc",
-                "cookie_secret_name": "myapp-cookie",
-            },
-        },
-    )
+# Same class of payload for the OIDC args that the fix also touched.
+INJECTION_ISSUER = "https://evil/\n            injectedArg: true\n          x: y"
+INJECTION_CLIENT = "cid\n          injectedClient: true"
+INJECTION_HOSTNAME = "h\n          injectedHost: true"
+
+
+def _render_container(**overrides) -> str:
+    aw = {
+        "issuer_url": "https://keycloak.example.com/realms/r",
+        "client_id": "myapp",
+        "banner": INJECTION_BANNER,
+        "keycloak_secret_name": "myapp-oidc",
+        "cookie_secret_name": "myapp-cookie",
+    }
+    aw.update(overrides.pop("authorization_wall", {}))
+    ctx = {
+        "section": "container",
+        "application_port": 8080,
+        "hostname": "app.example.com",
+        "name": "myapp",
+        "authorization_wall": aw,
+    }
+    ctx.update(overrides)
+    return render_template("sidecar-authorization-wall.yaml.jinja", ctx)
+
+
+def _container(rendered: str) -> dict:
+    # The template emits a list item under an 8-space indent; wrap so it parses.
+    doc = YAML().load("containers:\n" + rendered)
+    containers = doc["containers"]
+    assert len(containers) == 1, f"injection altered container count: {containers}"
+    c = containers[0]
+    assert c["name"] == "authorization-wall"
+    return c
+
+
+def _assert_sidecar_not_escalated(container: dict) -> None:
+    sec = container.get("securityContext", {})
+    assert sec.get("privileged") is not True, "injected privileged securityContext"
+    assert sec.get("runAsUser") != 0, "injected runAsUser: 0"
+    assert sec.get("allowPrivilegeEscalation") is not True, "injected allowPrivilegeEscalation"
+    assert sec.get("runAsNonRoot") is True, "hardened securityContext was overwritten"
+    # No attacker key may have appeared at the container-mapping level.
+    for forbidden in ("injectedArg", "injectedClient", "injectedHost", "injectedKey"):
+        assert forbidden not in container, f"injected sibling key {forbidden!r} into container"
 
 
 def test_banner_cannot_inject_security_context() -> None:
-    rendered = _render_container()
-
-    # The sidecar template emits a list item (the container) under an 8-space
-    # indent. Wrap it so it parses as a standalone document.
-    doc = YAML().load("containers:\n" + rendered)
-    containers = doc["containers"]
-    assert len(containers) == 1, f"banner injection altered container count: {containers}"
-
-    container = containers[0]
-    assert container["name"] == "authorization-wall"
-
-    # The only securityContext must be the hardened one defined in the template.
-    sec = container.get("securityContext", {})
-    assert sec.get("privileged") is not True, "banner injected privileged securityContext"
-    assert sec.get("runAsUser") != 0, "banner injected runAsUser: 0"
-    assert sec.get("allowPrivilegeEscalation") is not True, "banner injected allowPrivilegeEscalation"
-    assert sec.get("runAsNonRoot") is True, "hardened securityContext was overwritten by injection"
-
-    # The banner must survive intact as exactly one literal arg.
+    container = _container(_render_container())
+    _assert_sidecar_not_escalated(container)
     banner_args = [a for a in container["args"] if str(a).startswith("--banner=")]
     assert len(banner_args) == 1
     assert banner_args[0] == f"--banner={INJECTION_BANNER}"
 
 
-def test_rendered_template_is_valid_single_structure() -> None:
-    """The injection must not produce extra top-level YAML documents/keys either."""
-    rendered = _render_container()
-    docs = list(YAML().load_all("containers:\n" + rendered))
-    assert len(docs) == 1, "banner injection produced extra YAML documents"
+def test_oidc_args_cannot_inject() -> None:
+    """issuer_url / client_id / hostname were also changed by the fix."""
+    container = _container(
+        _render_container(
+            hostname=INJECTION_HOSTNAME,
+            authorization_wall={
+                "issuer_url": INJECTION_ISSUER,
+                "client_id": INJECTION_CLIENT,
+                "banner": "",
+            },
+        )
+    )
+    _assert_sidecar_not_escalated(container)
+    args = container["args"]
+    assert f"--oidc-issuer-url={INJECTION_ISSUER}" in args
+    assert f"--client-id={INJECTION_CLIENT}" in args
+    assert f"--redirect-url=https://{INJECTION_HOSTNAME}/oauth2/callback" in args
+
+
+def test_configmap_metadata_cannot_inject() -> None:
+    """The configmap section: name/namespace/project.name were injectable."""
+    rendered = render_template(
+        "sidecar-authorization-wall.yaml.jinja",
+        {
+            "section": "configmap",
+            "name": INJECTION_NAME,
+            "namespace": INJECTION_NAMESPACE,
+            "project": {"name": INJECTION_PROJECT},
+        },
+    )
+    docs = list(YAML().load_all(rendered))
+    assert len(docs) == 1, "configmap injection produced extra YAML documents"
+    cm = docs[0]
+    assert cm["kind"] == "ConfigMap"
+    md = cm["metadata"]
+    # Names/namespace must be exactly the literal (escaped) payload, no siblings.
+    assert md["name"] == f"{INJECTION_NAME}-oauth2-signin"
+    assert md["namespace"] == INJECTION_NAMESPACE
+    assert md["labels"]["app"] == INJECTION_NAME
+    assert md["labels"]["project"] == INJECTION_PROJECT
+    for forbidden in ("injectedKey", "injectedNs", "injectedProject", "notAName"):
+        assert forbidden not in md, f"injected sibling key {forbidden!r} into ConfigMap metadata"
+    assert "injectedNs" not in cm, "injected sibling key into ConfigMap top level"
+    assert "injectedProject" not in cm, "injected sibling key into ConfigMap top level"
+
+
+def test_volumes_section_cannot_inject() -> None:
+    rendered = render_template(
+        "sidecar-authorization-wall.yaml.jinja",
+        {"section": "volumes", "name": INJECTION_NAME},
+    )
+    vols = YAML().load("volumes:\n" + rendered)["volumes"]
+    assert len(vols) == 1, f"volumes injection altered volume count: {vols}"
+    assert vols[0]["configMap"]["name"] == f"{INJECTION_NAME}-oauth2-signin"
+    assert "injectedKey" not in vols[0]
