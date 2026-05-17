@@ -38,10 +38,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/part-of: argocd
-    # Outbound HTTPS for Git, Helm repositories, container registries and the
-    # Kubernetes API server (manifest generation and cluster reconciliation).
+    # Outbound HTTPS for Git and the Kubernetes API server.
+    # Production ArgoCD pulls from external GitHub over https://
+    # (argocd-application-*.yaml repoURLs, odcn-production configmap) and
+    # talks to the Capsule-Proxy kube-API on 443 (no KUBERNETES_SERVICE_PORT
+    # override -> in-cluster default 443). No in-cluster Forgejo, no ssh://,
+    # no non-443 registries in production. 6443 is intentionally not allowed.
     - ports:
         - protocol: TCP
           port: 443
-        - protocol: TCP
-          port: 6443
