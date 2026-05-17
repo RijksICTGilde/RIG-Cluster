@@ -184,7 +184,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string" },
-        "url": { "type": "string" },
+        "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
         "username": { "type": "string" },
         "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
         "branch": { "type": "string" },
@@ -199,7 +199,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string" },
-        "url": { "type": "string" },
+        "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
         "username": { "type": "string" },
         "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
       }
@@ -314,7 +314,7 @@
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "type": { "type": "string" },
-        "image": { "type": "string" },
+        "image": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*\\Z" },
         "ports": {
           "type": "object",
           "additionalProperties": false,
@@ -416,7 +416,7 @@
       "additionalProperties": false,
       "properties": {
         "reference": { "type": "string" },
-        "image": { "type": "string" },
+        "image": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*\\Z" },
         "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
         "registry": { "type": "string" },
         "resources": { "$ref": "#/$defs/resources" },
@@ -564,7 +564,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string" },
-        "url": { "type": "string" },
+        "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
         "ref": { "type": "string" },
         "path": { "type": "string" },
         "files": {

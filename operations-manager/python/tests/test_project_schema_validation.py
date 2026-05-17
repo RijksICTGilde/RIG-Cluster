@@ -229,3 +229,91 @@ def test_mount_path_normal_value_is_accepted() -> None:
     project = _valid_project()
     project["components"][0]["storage"][0]["mount-path"] = "/data/v1.0/files"
     validate_project_schema(project)
+
+
+# ---------------------------------------------------------------------------
+# Image and repository-URL injection rejection
+# ---------------------------------------------------------------------------
+
+
+def test_image_with_shell_metacharacters_is_rejected() -> None:
+    """Container image must reject shell metacharacters.
+
+    `image: "nginx; rm -rf /"` would be rendered into deployment.yaml.jinja
+    as `image: "{{ imageURL }}"`; while PR #77 tightens the template, the
+    schema should also reject the obvious injection payload at the source.
+    """
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["image"] = "nginx; rm -rf /"
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_image_with_space_is_rejected() -> None:
+    """Spaces are not part of an image reference and could split shell args."""
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["image"] = "nginx latest"
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_image_with_newline_is_rejected() -> None:
+    """A newline in an image rendered as a bare YAML scalar would inject."""
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["image"] = "nginx\n  privileged: true"
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_image_normal_values_are_accepted() -> None:
+    """Sanity: regular image refs (incl. registry+port+tag+digest) still pass."""
+    valid_refs = [
+        "nginx",
+        "nginx:latest",
+        "tutum/hello-world",
+        "nginxdemos/hello",
+        "registry.example.com:5000/myorg/myimg:v1.2.3",
+        "ghcr.io/owner/repo:sha-abcdef",
+        "registry.example.com:5000/myorg/myimg@sha256:abc123",
+    ]
+    for ref in valid_refs:
+        project = _valid_project()
+        project["deployments"][0]["components"][0]["image"] = ref
+        validate_project_schema(project)  # must not raise
+
+
+def test_repository_url_with_shell_metacharacters_is_rejected() -> None:
+    """Repo url must reject injection payloads like `ssh://x; rm -rf /`."""
+    project = _valid_project()
+    project["repositories"][0]["url"] = "ssh://x; rm -rf /"
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_repository_url_with_unknown_scheme_is_rejected() -> None:
+    """Only https/http/ssh/git are accepted; `file://` and friends are not."""
+    project = _valid_project()
+    project["repositories"][0]["url"] = "file:///etc/passwd"
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_repository_url_with_newline_is_rejected() -> None:
+    project = _valid_project()
+    project["repositories"][0]["url"] = "https://example.com/r.git\n  injected: yes"
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_repository_url_normal_values_are_accepted() -> None:
+    """Sanity: real-world repo URLs still pass."""
+    valid_urls = [
+        "https://github.com/RijksICTGilde/rig-cluster-application-test.git",
+        "ssh://git@host.docker.internal:2222/srv/git/example-project-infra.git",
+        "http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad.git",
+        "git://anonymous.example.com/r.git",
+    ]
+    for url in valid_urls:
+        project = _valid_project()
+        project["repositories"][0]["url"] = url
+        validate_project_schema(project)
