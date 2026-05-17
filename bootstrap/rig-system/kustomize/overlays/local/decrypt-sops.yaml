@@ -7,3 +7,4 @@ metadata:
 files:
   - argocd-repo-users-applications-secret.yaml.sops.yaml
   - argocd-repo-secret-infrastructure-secret.yaml.sops.yaml
+  - argo-local-test-git-repo.yaml.sops.yaml
