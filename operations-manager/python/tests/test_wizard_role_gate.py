@@ -167,10 +167,12 @@ async def test_owner_save_cannot_overwrite_protected_keys(project_service: Proje
         patch("opi.web.router_detail_edit.get_current_user", return_value={"email": OWNER_EMAIL}),
         patch("opi.handlers.project_file_handler.save_project_file", side_effect=fake_save),
         patch.object(project_service, "load_project_from_data", return_value=True),
+        patch("opi.web.router_wizard.clear_wizard_state"),
     ):
         response = await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
 
     assert response.status_code == 200
+    assert "data" in captured, "save_project_file was not called; the save path did not complete"
     saved = captured["data"]
 
     # Protected keys re-derived from the stored project, NOT the payload.
@@ -182,3 +184,75 @@ async def test_owner_save_cannot_overwrite_protected_keys(project_service: Proje
     # Non-protected fields still applied.
     assert saved["display-name"] == "Renamed By Owner"
     assert saved["components"] == [{"name": "frontend", "image": "nginx:1.27"}]
+
+
+@pytest.mark.asyncio
+async def test_owner_save_protected_keys_survive_deletion_attack(project_service: ProjectService) -> None:
+    """Omitting a protected key from the payload must not drop it.
+
+    The deletion attack: submit a payload that does not contain ``users``
+    (or ``config``) at all, hoping the merge silently leaves them out so
+    an owner/admin disappears. The merge must re-derive the stored value
+    even when the key is absent from the form output.
+    """
+    captured: dict[str, Any] = {}
+
+    def fake_save(file_path: str, project_data: dict[str, Any]) -> None:
+        captured["data"] = project_data
+
+    # No users/config/name/clusters in the payload at all.
+    payload = {"display-name": "Slimmed Down"}
+
+    with (
+        patch("opi.web.router_detail_edit.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.handlers.project_file_handler.save_project_file", side_effect=fake_save),
+        patch.object(project_service, "load_project_from_data", return_value=True),
+        patch("opi.web.router_wizard.clear_wizard_state"),
+    ):
+        response = await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
+
+    assert response.status_code == 200
+    saved = captured["data"]
+
+    # Protected keys are still present and unchanged despite being absent
+    # from the submitted payload.
+    assert saved["users"] == STORED_DATA["users"]
+    assert saved["config"] == STORED_DATA["config"]
+    assert saved["name"] == PROJECT_NAME
+    assert saved["clusters"] == STORED_DATA["clusters"]
+    assert saved["display-name"] == "Slimmed Down"
+
+
+@pytest.mark.asyncio
+async def test_owner_save_blocks_nested_config_secret_exfiltration(project_service: ProjectService) -> None:
+    """A payload rewriting only a nested ``config`` secret must not stick.
+
+    The whole ``config`` block is re-derived from storage, so neither the
+    api-key nor the AGE private key can be replaced via form output even
+    when the rest of ``config`` is left intact in the payload.
+    """
+    captured: dict[str, Any] = {}
+
+    def fake_save(file_path: str, project_data: dict[str, Any]) -> None:
+        captured["data"] = project_data
+
+    payload = {
+        "display-name": "Same Name",
+        "config": {
+            "api-key": "attacker-key",
+            "age-public-key": "age1publicpublicpublic",
+            "age-private-key": "AGE-SECRET-KEY-STOLEN",
+        },
+    }
+
+    with (
+        patch("opi.web.router_detail_edit.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.handlers.project_file_handler.save_project_file", side_effect=fake_save),
+        patch.object(project_service, "load_project_from_data", return_value=True),
+        patch("opi.web.router_wizard.clear_wizard_state"),
+    ):
+        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
+
+    saved = captured["data"]
+    assert saved["config"]["api-key"] == "super-secret-api-key"
+    assert saved["config"]["age-private-key"] == "AGE-SECRET-KEY-PRIVATEPRIVATE"
