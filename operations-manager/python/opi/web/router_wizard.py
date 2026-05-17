@@ -1884,11 +1884,30 @@ async def _save_existing_project(
     project_service = get_project_service()
 
     # Merge with existing data while protecting privileged top-level keys.
-    # The wizard exposes users/role and the config block (api-key, AGE
-    # public/private keys) as editable fields. Allowing form output to
-    # overwrite them would let an authorized editor escalate or exfiltrate
-    # secrets, so these are always re-derived from the stored project and
-    # never taken from the submitted form data.
+    # Two different reasons per key:
+    #
+    # - `users`, `config`, `name`: the wizard exposes users/role and the
+    #   config block (api-key, AGE public/private keys) as editable fields.
+    #   Allowing form output to overwrite them would let an authorized editor
+    #   escalate (add an admin role) or exfiltrate (rotate the API key to a
+    #   known value, read the AGE private key out of the response). These
+    #   keys are re-derived from the stored project and never taken from the
+    #   submitted form data. `name` is locked because the file path on disk
+    #   is keyed on it; renaming would orphan the file.
+    #
+    # - `clusters`: not actually exposed in the edit-mode wizard at all
+    #   (`IDENTITY_EDIT_SECTION` in `forms/visualizers/wizard_sections.py`
+    #   only renders `display-name` and `description`; the create-mode
+    #   `IDENTITY_SECTION` is the one with the cluster picker). Cluster
+    #   editing is *not yet a supported feature*: no migration logic exists
+    #   for adding a cluster (new-cluster OPI must pick up + reconcile), for
+    #   removing one (leaving-cluster OPI must tear down, deployments still
+    #   targeting that cluster must be blocked or cascaded), or for the
+    #   distributed-model race when two OPIs see the same file at once.
+    #   See `features/futures/cluster-editing.md` for the open design.
+    #   Until that design lands, `clusters` is defense-in-depth-locked here
+    #   so a hypothetical future form that accidentally includes the field
+    #   cannot silently change it.
     protected_keys = ("users", "config", "name", "clusters")
     existing_data = project.data or {}
     merged_data = {**existing_data, **data}
