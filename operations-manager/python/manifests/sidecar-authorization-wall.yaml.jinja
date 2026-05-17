@@ -3,17 +3,17 @@
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
           args:
             - --provider=oidc
-            - --oidc-issuer-url={{ authorization_wall.issuer_url }}
-            - --client-id={{ authorization_wall.client_id }}
-            - --upstream=http://localhost:{{ application_port }}
+            - {{ ("--oidc-issuer-url=" ~ authorization_wall.issuer_url) | tojson }}
+            - {{ ("--client-id=" ~ authorization_wall.client_id) | tojson }}
+            - {{ ("--upstream=http://localhost:" ~ application_port) | tojson }}
             - --http-address=0.0.0.0:4180
-            - --redirect-url=https://{{ hostname }}/oauth2/callback
+            - {{ ("--redirect-url=https://" ~ hostname ~ "/oauth2/callback") | tojson }}
             - --email-domain=*
             - --cookie-secure=true
             - --skip-provider-button=false
             - --custom-templates-dir=/etc/oauth2-proxy/templates
 {% if authorization_wall.banner %}
-            - --banner={{ authorization_wall.banner }}
+            - {{ ("--banner=" ~ authorization_wall.banner) | tojson }}
 {% endif %}
             - --insecure-oidc-allow-unverified-email=true
             - --scope=openid profile email
@@ -21,12 +21,12 @@
             - name: OAUTH2_PROXY_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ authorization_wall.keycloak_secret_name }}
+                  name: {{ authorization_wall.keycloak_secret_name | tojson }}
                   key: OIDC_CLIENT_SECRET
             - name: OAUTH2_PROXY_COOKIE_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ authorization_wall.cookie_secret_name }}
+                  name: {{ authorization_wall.cookie_secret_name | tojson }}
                   key: cookie-secret
           ports:
             - containerPort: 4180
@@ -66,16 +66,16 @@
 {% elif section == 'volumes' %}
         - name: oauth2-signin-templates
           configMap:
-            name: {{ name }}-oauth2-signin
+            name: {{ (name ~ "-oauth2-signin") | tojson }}
 {% elif section == 'configmap' %}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: "{{ name }}-oauth2-signin"
-  namespace: "{{ namespace }}"
+  name: {{ (name ~ "-oauth2-signin") | tojson }}
+  namespace: {{ namespace | tojson }}
   labels:
-    app: "{{ name }}"
-    project: "{{ project.name }}"
+    app: {{ name | tojson }}
+    project: {{ project.name | tojson }}
     component: application
 data:
   sign_in.html: |
