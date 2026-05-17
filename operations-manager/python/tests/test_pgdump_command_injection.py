@@ -17,11 +17,16 @@ Green (fixed code, create_subprocess_exec + env): the payload is passed as
 literal data, never interpreted, the sentinel file is never created.
 """
 
+from __future__ import annotations
+
 import contextlib
 import uuid
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from opi.connectors.postgres import PostgresConnector
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 async def test_pgdump_clone_does_not_execute_injected_command(tmp_path: Path) -> None:
