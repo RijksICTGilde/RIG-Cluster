@@ -2,10 +2,14 @@
 
 Two confirmed cross-tenant vulnerabilities are covered here:
 
-1. ``ProjectManager.get_deployments`` must pin every deployment namespace to
-   the project name. A project file is attacker-controlled; an explicit
-   ``namespace`` pointing at another project would let OPI label and operate
-   on a victim namespace and generate ArgoCD resources targeting it.
+1. The deployment namespace must be pinned to the project name on every
+   path that turns a project file into namespace or ArgoCD actions. A
+   project file is attacker-controlled; an explicit ``namespace`` pointing
+   at another project would let OPI label and operate on a victim namespace
+   and generate ArgoCD resources targeting it. This is enforced both at
+   ``ProjectManager.get_deployments`` (API/wizard path) and at the
+   git-monitor path (a project committed directly to git), which reads the
+   project file without going through ``get_deployments``.
 
 2. The wizard "create project" flow must not overwrite an existing project
    file. Without an existence check a tenant could submit the wizard with
@@ -15,6 +19,7 @@ Two confirmed cross-tenant vulnerabilities are covered here:
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.core import git_monitor
 from opi.core.simple_background import process_project_yaml_background
 from opi.manager.project_manager import ProjectManager
 
@@ -198,3 +203,76 @@ class TestProjectTakeoverGuard:
 
         connector = self.created_connectors[0]
         connector.create_or_update_file.assert_awaited_once()
+
+
+class _SpyKubectl:
+    """Records every namespace write the git-monitor path attempts."""
+
+    def __init__(self):
+        self.namespace_exists = AsyncMock(return_value=False)
+        self.apply_manifest = AsyncMock(return_value=True)
+        self.apply_label_to_resource = AsyncMock(return_value=True)
+
+
+class TestGitMonitorNamespacePinning:
+    """VULN 1, git-monitor path: a project committed directly to git must
+    not be able to create or label another tenant's namespace.
+
+    Regression guard for the bypass where ``git_monitor`` reads the project
+    file directly and never goes through ``ProjectManager.get_deployments``,
+    so the chokepoint pin alone would not protect this path.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _spy_kubectl(self, monkeypatch):
+        self.kubectl = _SpyKubectl()
+        monkeypatch.setattr(
+            "opi.core.git_monitor.create_kubectl_connector",
+            lambda *a, **k: self.kubectl,
+        )
+
+    @pytest.mark.asyncio
+    async def test_foreign_namespace_is_rejected_and_nothing_created(self, monkeypatch):
+        """A foreign namespace must raise and never touch kubectl."""
+        monkeypatch.setattr(git_monitor.settings, "CLUSTER_MANAGER", "local")
+        project_data = {
+            "name": "attacker-project",
+            "deployments": [
+                {
+                    "name": "evil",
+                    "cluster": "local",
+                    "namespace": "victim-project",
+                }
+            ],
+        }
+
+        with pytest.raises(ValueError, match="victim-project"):
+            await git_monitor.check_and_create_namespaces(project_data)
+
+        self.kubectl.namespace_exists.assert_not_called()
+        self.kubectl.apply_manifest.assert_not_called()
+        self.kubectl.apply_label_to_resource.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_absent_namespace_defaults_to_project_name(self, monkeypatch):
+        """An absent namespace must be pinned to the project name, so the
+        namespace acted on derives from the project, not attacker input."""
+        monkeypatch.setattr(git_monitor.settings, "CLUSTER_MANAGER", "local")
+        monkeypatch.setattr(
+            "opi.core.git_monitor.get_prefixed_namespace",
+            lambda cluster, ns: ns,
+        )
+        monkeypatch.setattr(
+            "opi.core.git_monitor.get_argo_namespace",
+            lambda cluster: "argocd",
+        )
+        project_data = {
+            "name": "my-project",
+            "deployments": [{"name": "web", "cluster": "local"}],
+        }
+
+        result = await git_monitor.check_and_create_namespaces(project_data)
+
+        assert result is True
+        applied_namespace = self.kubectl.apply_manifest.await_args.args[1]["namespace"]
+        assert applied_namespace == "my-project"

@@ -14,7 +14,7 @@ from opi.connectors.git import start_monitoring_task
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
-from opi.manager.project_manager import ProjectManager
+from opi.manager.project_manager import ProjectManager, enforce_namespace_pin
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -38,6 +38,13 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
         True if all namespaces were checked/created successfully, False otherwise
     """
     kubectl = create_kubectl_connector()
+
+    # Tenant-isolation guard: this path reads the project file directly from
+    # git, bypassing ProjectManager.get_deployments. Without the same pin a
+    # tenant who commits a project file with another tenant's namespace would
+    # make OPI create and label that victim namespace. Pin (and fail closed)
+    # here too, using the shared helper so both paths stay in lockstep.
+    enforce_namespace_pin(project_data)
 
     project_name = project_data.get("name")
     logger.info(f"Checking namespaces for project: {project_name}")
@@ -143,7 +150,15 @@ async def file_change_handler(file_path: str, content: dict) -> None:
 
             # Task 1: Check and create namespaces for deployments
             logger.info("Task 1: Checking and creating namespaces for deployments...")
-            namespace_success = await check_and_create_namespaces(content)
+            try:
+                namespace_success = await check_and_create_namespaces(content)
+            except ValueError as exc:
+                # Tenant-isolation guard rejected a project file that declared
+                # a namespace not equal to its project name. Fail closed: do
+                # not create or label anything, and do not crash the polling
+                # loop - just log the rejected cross-tenant attempt.
+                logger.error(f"Rejected project '{project_name}' from git monitor: {exc}")
+                return
 
             if namespace_success:
                 logger.info("Namespace check/creation completed successfully")
