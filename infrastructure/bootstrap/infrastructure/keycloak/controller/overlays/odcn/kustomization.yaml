@@ -16,9 +16,16 @@ patches:
       - op: replace
         path: /spec/rules/0/host
         value: keycloak.rijksapp.nl
+      # keycloak.rijksapp.nl serveert op pad / zowel de admin-console ALS de
+      # publieke OIDC-endpoints (authorize/token/jwks). De oauth2-proxy-sidecar
+      # van elke gepubliceerde tenant-app stuurt de browser van eindgebruikers
+      # (publiek internet, niet op de ODCN-VPN) naar deze host voor de login.
+      # Een VPN-allowlist hier breekt de login van ALLE gepubliceerde apps.
+      # De admin-console wordt afgeschermd door Keycloaks eigen authenticatie;
+      # houd deze ingress daarom publiek bereikbaar.
       - op: add
         path: /metadata/annotations/haproxy.router.openshift.io~1ip_whitelist
-        value: 147.181.0.0/16 # ODCN VPN only
+        value: "0.0.0.0/0,::/0" # publiek: OIDC-flow voor eindgebruikers
       - op: add
         path: /metadata/annotations/external-dns.alpha.kubernetes.io~1target
         value: router.rijksapp.nl

@@ -7,7 +7,10 @@ metadata:
   name: keycloak-legacy
   namespace: rig-system
   annotations:
-    haproxy.router.openshift.io/ip_whitelist: 147.181.0.0/16 # ODCN VPN only
+    # Oude OIDC-host die nog door clients in transitie wordt geresolved.
+    # Net als keycloak.rijksapp.nl bedient deze host de publieke OIDC-flow;
+    # een VPN-allowlist breekt de login van apps die nog deze issuer gebruiken.
+    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0" # publiek: OIDC-flow
 spec:
   rules:
     - host: keycloak.rig.prd1.gn2.quattro.rijksapps.nl
