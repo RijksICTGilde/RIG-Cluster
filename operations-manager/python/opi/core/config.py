@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import os
 import pathlib
@@ -377,7 +379,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _enforce_secure_secret_key(self) -> Settings:
         """Fail closed at settings load when SECRET_KEY is unsafe for production."""
-        validate_secret_key(self.SECRET_KEY, self.DEBUG)
+        validate_secret_key(self.SECRET_KEY, self.CLUSTER_MANAGER)
         return self
 
 
